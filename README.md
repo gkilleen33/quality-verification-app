@@ -150,10 +150,44 @@ adb logcat -s ChatService
 ```
 
 `cacheRead` should be large from the second turn of a conversation onward. If it stays at
-zero, something is invalidating the prefix. Note the minimum cacheable prefix for
-`claude-sonnet-5` is **1024 tokens**; the shortest system prompt here is roughly 1,300, so
-all six clear it, but not by a wide margin — shortening `master.txt` substantially could
-silently disable caching for the smaller item types.
+zero, something is invalidating the prefix.
+
+Measured on a live three-turn conversation (`input` is the uncached remainder only):
+
+| Turn | input | cacheWrite | cacheRead |
+|---|---:|---:|---:|
+| 1 — text only | 2 | 0 | 1,639 |
+| 2 — adds a photo | 2 | 2,604 | 1,639 |
+| 3 — text follow-up | 2 | 148 | 4,243 |
+
+A photo is about 2,450 tokens and is resent on every later turn, so on a full 12-turn
+walkthrough with six photos this is roughly a **70% cut in input cost** (~$0.55 → ~$0.16
+per session at standard Sonnet 5 rates).
+
+**On the TTL choice:** the 5-minute default is strictly cheaper when turns arrive quickly
+(1.25× writes vs 2×, same 0.1× reads) — over the three turns above it would have cost
+$0.013 against $0.019. The 1-hour TTL wins by avoiding *misses*: one avoided miss on a
+4,000-token prefix saves ~3,600 tokens, which more than pays the extra write premium on a
+2,500-token write (~1,875). Since the checklists deliberately send users away to
+photograph — tipping a table, finding help with a sofa — at least one gap per session
+exceeding five minutes is near-certain. If real usage turns out to be fast-paced, drop the
+`ttl` field in `CacheControl.ONE_HOUR` and the default applies.
+
+Minimum cacheable prefix on `claude-sonnet-5` is **1024 tokens**. Measured system prompts
+(`count_tokens`), smallest first:
+
+| Item | Tokens |
+|---|---:|
+| wooden-table | 1,639 |
+| wooden-chair | 1,854 |
+| wooden-bed | 2,012 |
+| other | 2,379 |
+| upholstered-chair | 2,467 |
+| upholstered-sofa | 2,812 |
+
+All six clear the minimum with room to spare, the table prompt by 1.6×. Shortening
+`master.txt` by more than about a third would start to put the smaller item types at risk
+of silently not caching.
 
 ## Images
 
