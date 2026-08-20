@@ -225,6 +225,49 @@ cannot judge whether a table is level from a sideways photo.
 Deleting a session deletes its photos. Photos attached to a conversation that was never
 sent are cleaned up on the next visit to the home screen.
 
+## Getting a build onto a phone
+
+### From GitHub (no toolchain needed)
+
+Push a version tag to publish a permanent release:
+
+```bash
+git tag v0.1.0 && git push origin v0.1.0
+```
+
+Or, for a throwaway test build, open the repo's **Actions → Build APK → Run workflow**.
+That refreshes a rolling `nightly` prerelease instead of creating a new version.
+
+Then on the phone, open the release page and tap the `.apk`:
+
+```
+https://github.com/gkilleen33/quality-verification-app/releases/latest
+```
+
+Android will ask permission to install from your browser the first time — allow it for
+Chrome (or whichever browser you used), then tap the downloaded file again.
+
+Use **Actions → the run → Artifacts** only when you want the APK on a computer; artifacts
+require a GitHub login and download as a `.zip`, which a phone cannot install.
+
+**These are debug builds.** Each CI run generates its own throwaway signing key, so
+installing a new build over an older one fails with a signature error. Uninstall the app
+first, or ask for proper release signing (a keystore in repo secrets) if reinstalling
+gets tedious.
+
+### From this machine over USB
+
+Faster while iterating, and it keeps one stable signing key so builds install over each
+other. Enable Developer Options and USB debugging on the phone, plug it in, accept the
+debugging prompt, then:
+
+```bash
+./gradlew installDebug
+```
+
+If `adb devices` shows nothing, the cable or the on-phone authorisation prompt is usually
+the culprit.
+
 ## Contributing
 
 `main` is protected: changes go through a pull request, and review from the code owner

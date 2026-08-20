@@ -1,0 +1,87 @@
+name: Build APK
+
+# Three ways in:
+#  - pull_request: proves the build and tests pass, uploads the APK as an artifact
+#  - workflow_dispatch: "Run workflow" button, refreshes a rolling `nightly` prerelease
+#  - a `v*` tag: publishes a permanent release for that version
+#
+# Only GitHub-owned actions are used, plus the preinstalled `gh` CLI, so publishing
+# needs no third-party action with write access to this repo.
+
+on:
+  pull_request:
+  workflow_dispatch:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: gradle
+
+      # The runner image does not guarantee these, and AGP will not fetch them itself.
+      - name: Install the SDK packages this project needs
+        run: |
+          SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          yes | "$SDKMANAGER" --licenses > /dev/null 2>&1 || true
+          "$SDKMANAGER" "platforms;android-36" "build-tools;36.0.0" > /dev/null
+
+      - name: Build, test and lint
+        run: ./gradlew --no-daemon assembleDebug testDebugUnitTest lintDebug
+
+      - name: Name the APK after the version being built
+        id: name
+        run: |
+          version=$(grep -oE 'versionName = "[^"]+"' app/build.gradle.kts | cut -d'"' -f2)
+          if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
+            label="${GITHUB_REF_NAME}"
+          else
+            label="${version}-$(git rev-parse --short HEAD)"
+          fi
+          name="quality-verifier-${label}.apk"
+          cp app/build/outputs/apk/debug/app-debug.apk "$name"
+          echo "apk=$name" >> "$GITHUB_OUTPUT"
+          echo "label=$label" >> "$GITHUB_OUTPUT"
+          ls -lh "$name"
+
+      - name: Upload the APK as a build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.name.outputs.apk }}
+          path: ${{ steps.name.outputs.apk }}
+          if-no-files-found: error
+
+      # Artifacts need a GitHub login and arrive zipped, which a phone cannot install.
+      # Releases are a plain download, so that is what the phone uses.
+      - name: Publish a release for this tag
+        if: github.ref_type == 'tag'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${GITHUB_REF_NAME}" "${{ steps.name.outputs.apk }}" \
+            --title "${GITHUB_REF_NAME}" \
+            --notes "Debug build of ${GITHUB_REF_NAME}. Install on a phone with \"install unknown apps\" allowed for your browser."
+
+      - name: Refresh the rolling nightly prerelease
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # Recreate rather than update, so stale APKs never linger on the release.
+          gh release delete nightly --yes --cleanup-tag 2>/dev/null || true
+          gh release create nightly "${{ steps.name.outputs.apk }}" \
+            --title "Latest test build (${{ steps.name.outputs.label }})" \
+            --prerelease \
+            --notes "Unstable build from \`main\`, rebuilt on demand. Debug-signed: if an install fails with a signature error, uninstall the previous copy first."
