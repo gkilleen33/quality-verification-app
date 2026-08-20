@@ -27,15 +27,17 @@ Gradle must run on JDK 17; AGP 8.13 rejects newer launcher JVMs. Android Studio'
 bundled JDK is fine. From the command line, set it explicitly:
 
 ```bash
-JAVA_HOME=/opt/homebrew/opt/openjdk@17/libexec/openjdk.jdk/Contents/Home ./gradlew assembleDebug
+JAVA_HOME=$(/usr/libexec/java_home -v 17) ./gradlew assembleDebug
 ```
+
+(That is the macOS incantation; on Linux point `JAVA_HOME` at your JDK 17 install.)
 
 ## Updating prompts without shipping an app update
 
 Prompts live in `prompts/` and are fetched at runtime from:
 
 ```
-https://raw.githubusercontent.com/gkilleen/quality-verification-app/main/prompts/
+https://raw.githubusercontent.com/gkilleen33/quality-verification-app/main/prompts/
 ```
 
 Edit the files, push to `main`, and devices pick up the change within 24 hours
@@ -222,3 +224,25 @@ cannot judge whether a table is level from a sideways photo.
 
 Deleting a session deletes its photos. Photos attached to a conversation that was never
 sent are cleaned up on the next visit to the home screen.
+
+## Contributing
+
+`main` is protected: changes go through a pull request, and review from the code owner
+(`.github/CODEOWNERS`) is required. Fork, branch, and open a PR.
+
+Before opening one, please make sure this passes:
+
+```bash
+./gradlew assembleDebug testDebugUnitTest lintDebug
+```
+
+If you changed anything under `prompts/`, regenerate the compiled-in copies first or
+`DefaultPromptsInSyncTest` will fail:
+
+```bash
+python3 tools/generate_default_prompts.py
+```
+
+## License
+
+MIT — see [LICENSE](LICENSE).

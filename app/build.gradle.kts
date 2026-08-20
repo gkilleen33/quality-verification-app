@@ -23,7 +23,7 @@ android {
         buildConfigField(
             "String",
             "PROMPT_BASE_URL",
-            "\"https://raw.githubusercontent.com/gkilleen/quality-verification-app/main/prompts/\"",
+            "\"https://raw.githubusercontent.com/gkilleen33/quality-verification-app/main/prompts/\"",
         )
     }
 
