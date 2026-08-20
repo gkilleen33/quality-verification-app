@@ -103,6 +103,8 @@ fun AppNav() {
                 onSaved = { navController.popBackStack() },
                 title = "Replace API key",
                 saveLabel = "Save key",
+                body = "Enter the new Anthropic API key to use on this phone. " +
+                    "It replaces the key currently saved and is stored encrypted.",
             )
         }
     }

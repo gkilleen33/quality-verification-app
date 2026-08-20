@@ -54,6 +54,13 @@ class ChatViewModel(
     private val _error = MutableStateFlow<ChatError?>(null)
     val error: StateFlow<ChatError?> = _error.asStateFlow()
 
+    /**
+     * UI-level advisory (permission refused, and similar) — distinct from [error],
+     * which describes a failed send and therefore offers a retry.
+     */
+    private val _notice = MutableStateFlow<String?>(null)
+    val notice: StateFlow<String?> = _notice.asStateFlow()
+
     private val _itemType = MutableStateFlow(declaredItemType)
     val itemType: StateFlow<ItemType?> = _itemType.asStateFlow()
 
@@ -119,6 +126,14 @@ class ChatViewModel(
 
     fun dismissError() {
         _error.value = null
+    }
+
+    fun showNotice(message: String) {
+        _notice.value = message
+    }
+
+    fun dismissNotice() {
+        _notice.value = null
     }
 
     fun send(text: String) {

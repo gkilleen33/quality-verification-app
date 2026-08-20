@@ -81,6 +81,7 @@ fun ChatScreen(
     val pending by viewModel.pending.collectAsState()
     val sending by viewModel.sending.collectAsState()
     val error by viewModel.error.collectAsState()
+    val notice by viewModel.notice.collectAsState()
     val resolvedItemType by viewModel.itemType.collectAsState()
 
     var draft by remember { mutableStateOf("") }
@@ -108,7 +109,19 @@ fun ChatScreen(
 
     val requestCameraPermission = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
-    ) { granted -> if (granted) launchCamera() }
+    ) { granted ->
+        if (granted) {
+            launchCamera()
+        } else {
+            // Without this the camera button just does nothing, which reads as a broken
+            // app. Also covers the permanently-denied case, where the system dialog
+            // never appears at all.
+            viewModel.showNotice(
+                "Camera permission is off, so photos can't be taken. " +
+                    "You can turn it on in your phone's settings, or choose a photo instead.",
+            )
+        }
+    }
 
     val pickImages = rememberLauncherForActivityResult(
         ActivityResultContracts.PickMultipleVisualMedia(MAX_IMAGES_PER_PICK)
@@ -174,6 +187,8 @@ fun ChatScreen(
             }
 
             error?.let { chatError -> ErrorRow(chatError, viewModel, onOpenSettings) }
+
+            notice?.let { message -> NoticeRow(message, onDismiss = viewModel::dismissNotice) }
 
             if (pending.isNotEmpty()) {
                 LazyRow(
@@ -290,6 +305,24 @@ private fun ErrorRow(
                 }
                 TextButton(onClick = { viewModel.dismissError() }) { Text("Dismiss") }
             }
+        }
+    }
+}
+
+/** Advisory banner with no retry — the action failed for a reason retrying won't fix. */
+@Composable
+private fun NoticeRow(message: String, onDismiss: () -> Unit) {
+    Surface(
+        color = MaterialTheme.colorScheme.secondaryContainer,
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Column(Modifier.padding(horizontal = 16.dp, vertical = 12.dp)) {
+            Text(
+                message,
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSecondaryContainer,
+            )
+            TextButton(onClick = onDismiss) { Text("Dismiss") }
         }
     }
 }

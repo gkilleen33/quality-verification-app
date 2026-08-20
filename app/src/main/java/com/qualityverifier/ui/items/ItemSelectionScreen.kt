@@ -13,12 +13,18 @@ import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Bed
+import androidx.compose.material.icons.filled.Category
 import androidx.compose.material.icons.filled.Chair
+import androidx.compose.material.icons.filled.ChairAlt
+import androidx.compose.material.icons.filled.TableRestaurant
+import androidx.compose.material.icons.filled.Weekend
 import androidx.compose.material3.Card
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -31,6 +37,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
@@ -108,9 +115,10 @@ private fun ItemCard(
                     // No photo supplied yet — a neutral placeholder rather than a
                     // broken-image box. Drop `item_<slug>.jpg` into res/drawable to fill it.
                     Icon(
-                        imageVector = Icons.Filled.Chair,
+                        imageVector = itemType.placeholderIcon(),
                         contentDescription = null,
                         tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.size(48.dp),
                     )
                 }
             }
@@ -134,6 +142,16 @@ private fun ItemCard(
  * compiles with no item photos present, and adding one later is a pure asset drop with
  * no code change.
  */
+/** Distinct glyph per category, so the grid is scannable before real photos exist. */
+private fun ItemType.placeholderIcon(): ImageVector = when (this) {
+    ItemType.WOODEN_TABLE -> Icons.Filled.TableRestaurant
+    ItemType.WOODEN_CHAIR -> Icons.Filled.ChairAlt
+    ItemType.WOODEN_BED -> Icons.Filled.Bed
+    ItemType.UPHOLSTERED_CHAIR -> Icons.Filled.Chair
+    ItemType.UPHOLSTERED_SOFA -> Icons.Filled.Weekend
+    ItemType.OTHER -> Icons.Filled.Category
+}
+
 @SuppressLint("DiscouragedApi")
 private fun Context.itemDrawableOrNull(itemType: ItemType): Int? =
     resources.getIdentifier(itemType.drawableName, "drawable", packageName)

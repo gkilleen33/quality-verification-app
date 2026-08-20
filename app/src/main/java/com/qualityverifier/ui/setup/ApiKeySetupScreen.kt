@@ -41,6 +41,8 @@ fun ApiKeySetupScreen(
     onSaved: () -> Unit,
     title: String = "Welcome",
     saveLabel: String = "Save and continue",
+    body: String = "Enter your Anthropic API key to start checking furniture quality. " +
+        "It is stored encrypted on this phone and never shared.",
 ) {
     val container = appContainer()
     var key by remember { mutableStateOf("") }
@@ -56,11 +58,7 @@ fun ApiKeySetupScreen(
     ) {
         Text(title, style = MaterialTheme.typography.headlineMedium)
         Spacer(Modifier.height(12.dp))
-        Text(
-            "Enter your Anthropic API key to start checking furniture quality. " +
-                "It is stored encrypted on this phone and never shared.",
-            style = MaterialTheme.typography.bodyLarge,
-        )
+        Text(body, style = MaterialTheme.typography.bodyLarge)
         Spacer(Modifier.height(24.dp))
 
         OutlinedTextField(
@@ -100,7 +98,8 @@ fun ApiKeySetupScreen(
         if (error == null && key.isNotBlank() && !looksLikeAnthropicKey(key)) {
             Spacer(Modifier.height(8.dp))
             Text(
-                "This doesn't look like an Anthropic key — they usually start with \"sk-ant-\". " +
+                "This doesn\u2019t look like an Anthropic key \u2014 they usually start with " +
+                    "\u201csk-ant-\u201d. " +
                     "You can still save it.",
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
