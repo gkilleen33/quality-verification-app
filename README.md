@@ -125,6 +125,36 @@ migration.
   device grants unmetered access to its owner's Anthropic account to whoever holds the
   phone. Phase 2 moves the key server-side, which is the actual fix.
 
+## Prompt caching
+
+Every request sets two `cache_control` breakpoints — one on the system block, one on the
+last content block of the conversation — with a **1-hour TTL** rather than the 5-minute
+default. Caching is purely a request-level feature: there is nothing to enable in the
+Anthropic Console, and no beta header.
+
+The 1-hour TTL is deliberate. The walkthroughs send the user away to take a photo — tip
+the table over, find someone to help lift the sofa — so gaps between turns routinely
+exceed five minutes, and a default entry would expire mid-checklist. The doubled write
+premium (2x instead of 1.25x) needs three requests to pay off; a walkthrough is a dozen.
+
+Caching is a **prefix match**, so anything that varies per request must stay after the
+last breakpoint. Do not interpolate a timestamp, session id, or device id into the system
+prompt — it sits at the front of the prefix and would silently make every request a cache
+miss. There are currently no such values, and a test asserts that two identical sends
+serialize byte-identically.
+
+To confirm it is working, watch the log line the chat service emits per response:
+
+```bash
+adb logcat -s ChatService
+```
+
+`cacheRead` should be large from the second turn of a conversation onward. If it stays at
+zero, something is invalidating the prefix. Note the minimum cacheable prefix for
+`claude-sonnet-5` is **1024 tokens**; the shortest system prompt here is roughly 1,300, so
+all six clear it, but not by a wide margin — shortening `master.txt` substantially could
+silently disable caching for the smaller item types.
+
 ## Images
 
 Photos are stored as files under `filesDir/images/<sessionId>/`, not as database blobs.

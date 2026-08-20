@@ -3,11 +3,13 @@ package com.qualityverifier.data.chat
 import android.util.Base64
 import android.util.Log
 import com.qualityverifier.data.chat.dto.ApiMessage
+import com.qualityverifier.data.chat.dto.CacheControl
 import com.qualityverifier.data.chat.dto.ContentBlock
 import com.qualityverifier.data.chat.dto.ErrorEnvelope
 import com.qualityverifier.data.chat.dto.ImageSource
 import com.qualityverifier.data.chat.dto.MessagesRequest
 import com.qualityverifier.data.chat.dto.MessagesResponse
+import com.qualityverifier.data.chat.dto.SystemBlock
 import com.qualityverifier.data.keys.ApiKeyStore
 import com.qualityverifier.data.prompts.PromptRepository
 import com.qualityverifier.domain.ChatMessage
@@ -55,11 +57,20 @@ class AnthropicDirectChatService(
                 "No API key saved. Add your Anthropic API key in Settings.",
             )
 
+        // Two cache breakpoints, well inside the limit of four. The system prompt is
+        // identical for every conversation about this item type, and the message prefix
+        // grows by one exchange per turn -- a walkthrough is a dozen turns carrying
+        // several photos, so re-processing it each time is the dominant cost.
         val payload = MessagesRequest(
             model = MODEL,
             maxTokens = MAX_TOKENS,
-            system = promptRepository.systemPromptFor(itemType),
-            messages = history.toApiMessages(),
+            system = listOf(
+                SystemBlock(
+                    text = promptRepository.systemPromptFor(itemType),
+                    cacheControl = CacheControl.ONE_HOUR,
+                )
+            ),
+            messages = history.toApiMessages().withCacheBreakpointOnLastBlock(),
         )
         val body = json.encodeToString(payload)
 
@@ -112,6 +123,15 @@ class AnthropicDirectChatService(
                 ChatErrorKind.UNKNOWN,
                 "Could not read the response. Please try again.",
             )
+        decoded.usage?.let { usage ->
+            // The one reliable way to tell caching is working. If cacheRead stays at 0
+            // across turns of one conversation, something is changing the prefix.
+            Log.i(
+                TAG,
+                "tokens in=${usage.inputTokens} cacheWrite=${usage.cacheCreationInputTokens} " +
+                    "cacheRead=${usage.cacheReadInputTokens} out=${usage.outputTokens}",
+            )
+        }
         val text = decoded.content
             .filter { it.type == "text" }
             .mapNotNull { it.text }
@@ -183,6 +203,25 @@ class AnthropicDirectChatService(
                 content = blocks,
             )
         }
+    }
+
+    /**
+     * Puts a cache breakpoint on the final content block, so the next turn reads this
+     * whole conversation back from cache instead of re-processing it.
+     *
+     * A breakpoint searches back at most 20 content blocks for a prior entry. One
+     * exchange here adds at most seven blocks (five photos, a text block, the reply), so
+     * a single rolling breakpoint stays comfortably inside that window.
+     */
+    private fun List<ApiMessage>.withCacheBreakpointOnLastBlock(): List<ApiMessage> {
+        val last = lastOrNull() ?: return this
+        if (last.content.isEmpty()) return this
+        val marked = last.content.toMutableList()
+        marked[marked.lastIndex] = when (val block = marked.last()) {
+            is ContentBlock.Text -> block.copy(cacheControl = CacheControl.ONE_HOUR)
+            is ContentBlock.Image -> block.copy(cacheControl = CacheControl.ONE_HOUR)
+        }
+        return dropLast(1) + last.copy(content = marked)
     }
 
     companion object {

@@ -110,7 +110,10 @@ class AnthropicDirectChatServiceTest {
         val body = json.parseToJsonElement(request.body.readUtf8()).jsonObject
         assertEquals("claude-sonnet-5", body["model"]?.jsonPrimitive?.content)
         assertEquals(4096, body["max_tokens"]?.jsonPrimitive?.content?.toInt())
-        assertEquals("MASTER\n\nTABLE", body["system"]?.jsonPrimitive?.content)
+        assertEquals(
+            "MASTER\n\nTABLE",
+            body["system"]!!.jsonArray.single().jsonObject["text"]?.jsonPrimitive?.content,
+        )
     }
 
     @Test
@@ -176,6 +179,116 @@ class AnthropicDirectChatServiceTest {
         val messages = requestMessages()
         assertEquals(1, messages.size)
         assertEquals("still here", firstText(messages[0]))
+    }
+
+    @Test
+    fun `system prompt is sent as a cached block with a one hour ttl`() = runTest {
+        server.enqueue(MockResponse().setBody("""{"content":[{"type":"text","text":"ok"}]}"""))
+
+        service(systemPrompt = "MASTER\n\nCHECKLIST")
+            .send("s1", ItemType.WOODEN_TABLE, listOf(userTurn("hello")))
+
+        val system = requestBody().jsonObject["system"]!!.jsonArray
+        assertEquals(1, system.size)
+        val block = system.single().jsonObject
+        assertEquals("text", block["type"]?.jsonPrimitive?.content)
+        assertEquals("MASTER\n\nCHECKLIST", block["text"]?.jsonPrimitive?.content)
+        val cache = block["cache_control"]!!.jsonObject
+        assertEquals("ephemeral", cache["type"]?.jsonPrimitive?.content)
+        assertEquals("1h", cache["ttl"]?.jsonPrimitive?.content)
+    }
+
+    @Test
+    fun `the final content block carries a rolling cache breakpoint`() = runTest {
+        server.enqueue(MockResponse().setBody("""{"content":[{"type":"text","text":"ok"}]}"""))
+
+        val history = listOf(
+            userTurn("first"),
+            ChatMessage("a1", Role.ASSISTANT, "reply"),
+            userTurn("second"),
+        )
+        service().send("s1", ItemType.OTHER, history)
+
+        val messages = requestBody().jsonObject["messages"]!!.jsonArray
+        // Exactly one breakpoint in the messages, on the very last block.
+        val marked = messages.flatMap { it.jsonObject["content"]!!.jsonArray }
+            .count { it.jsonObject.containsKey("cache_control") }
+        assertEquals(1, marked)
+        val lastBlock = messages.last().jsonObject["content"]!!.jsonArray.last().jsonObject
+        assertEquals("1h", lastBlock["cache_control"]!!.jsonObject["ttl"]?.jsonPrimitive?.content)
+    }
+
+    @Test
+    fun `an image can carry the breakpoint when the turn has no text`() = runTest {
+        server.enqueue(MockResponse().setBody("""{"content":[{"type":"text","text":"ok"}]}"""))
+
+        service(imageBytes = byteArrayOf(9, 9)).send(
+            "s1",
+            ItemType.WOODEN_CHAIR,
+            listOf(userTurn("", listOf(Attachment("a1", "/tmp/photo.jpg")))),
+        )
+
+        val blocks = requestBody().jsonObject["messages"]!!.jsonArray
+            .single().jsonObject["content"]!!.jsonArray
+        assertEquals(1, blocks.size)
+        val image = blocks.single().jsonObject
+        assertEquals("image", image["type"]?.jsonPrimitive?.content)
+        assertEquals("1h", image["cache_control"]!!.jsonObject["ttl"]?.jsonPrimitive?.content)
+    }
+
+    @Test
+    fun `total breakpoints stay within the limit of four`() = runTest {
+        server.enqueue(MockResponse().setBody("""{"content":[{"type":"text","text":"ok"}]}"""))
+
+        // A long conversation with photos on several turns - the shape that would blow
+        // the limit if a breakpoint were added per turn.
+        val history = (1..8).flatMap { i ->
+            listOf(
+                userTurn("q$i", listOf(Attachment("a$i", "/tmp/$i.jpg"))),
+                ChatMessage("r$i", Role.ASSISTANT, "a$i"),
+            )
+        }
+        service(imageBytes = byteArrayOf(1)).send("s1", ItemType.UPHOLSTERED_SOFA, history)
+
+        val body = requestBody().jsonObject
+        val inSystem = body["system"]!!.jsonArray
+            .count { it.jsonObject.containsKey("cache_control") }
+        val inMessages = body["messages"]!!.jsonArray
+            .flatMap { it.jsonObject["content"]!!.jsonArray }
+            .count { it.jsonObject.containsKey("cache_control") }
+        assertEquals(2, inSystem + inMessages)
+        assertTrue(inSystem + inMessages <= 4)
+    }
+
+    @Test
+    fun `repeating a turn produces a byte-identical prefix`() = runTest {
+        // Prompt caching is a prefix match, so any per-request value in the prefix would
+        // silently defeat it. Two identical sends must serialize identically.
+        server.enqueue(MockResponse().setBody("""{"content":[{"type":"text","text":"ok"}]}"""))
+        server.enqueue(MockResponse().setBody("""{"content":[{"type":"text","text":"ok"}]}"""))
+
+        val history = listOf(userTurn("same question"))
+        val svc = service(imageBytes = byteArrayOf(4, 5, 6))
+        svc.send("s1", ItemType.WOODEN_BED, history)
+        svc.send("s1", ItemType.WOODEN_BED, history)
+
+        assertEquals(server.takeRequest().body.readUtf8(), server.takeRequest().body.readUtf8())
+    }
+
+    @Test
+    fun `cache usage figures are parsed from the response`() = runTest {
+        server.enqueue(
+            MockResponse().setBody(
+                """{"content":[{"type":"text","text":"ok"}],
+                   "usage":{"input_tokens":12,"output_tokens":34,
+                            "cache_creation_input_tokens":0,"cache_read_input_tokens":1543}}"""
+            )
+        )
+
+        val result = service().send("s1", ItemType.OTHER, listOf(userTurn("hi")))
+
+        // Parsing must not be disturbed by the extra field.
+        assertEquals(ChatResult.Success("ok"), result)
     }
 
     @Test
@@ -250,9 +363,10 @@ class AnthropicDirectChatServiceTest {
         assertEquals(ChatErrorKind.UNKNOWN, (result as ChatResult.Failure).kind)
     }
 
-    private fun requestMessages(): JsonArray =
+    private fun requestMessages(): JsonArray = requestBody().jsonObject["messages"]!!.jsonArray
+
+    private fun requestBody(): kotlinx.serialization.json.JsonElement =
         json.parseToJsonElement(server.takeRequest().body.readUtf8())
-            .jsonObject["messages"]!!.jsonArray
 
     private fun role(message: kotlinx.serialization.json.JsonElement): String =
         message.jsonObject["role"]!!.jsonPrimitive.content
