@@ -3,6 +3,7 @@ package com.qualityverifier.prompts
 import com.qualityverifier.data.prompts.DefaultPrompts
 import com.qualityverifier.data.prompts.GitHubPromptRepository
 import com.qualityverifier.data.prompts.PromptCache
+import com.qualityverifier.data.prompts.assembleSystemPrompt
 import com.qualityverifier.domain.ItemType
 import kotlinx.coroutines.test.runTest
 import okhttp3.OkHttpClient
@@ -79,6 +80,7 @@ class GitHubPromptRepositoryTest {
 
     @Test
     fun `with no network and no cache the compiled-in master prompt is used`() = runTest {
+        // WOODEN_CHAIR has no compiled-in item prompt, so master alone is expected here.
         server.shutdown()
 
         val prompt = repository().systemPromptFor(ItemType.WOODEN_CHAIR)
@@ -136,6 +138,54 @@ class GitHubPromptRepositoryTest {
         server.enqueue(MockResponse().setBody(""))
 
         assertEquals(DefaultPrompts.MASTER.trimEnd(), repository().systemPromptFor(ItemType.OTHER))
+    }
+
+    @Test
+    fun `offline with no cache still yields the table walkthrough checklist`() = runTest {
+        // The whole point of the compiled-in item fallback: a fresh install with no
+        // connectivity must still run the checklist, not fall back to master alone.
+        server.shutdown()
+
+        val prompt = repository().systemPromptFor(ItemType.WOODEN_TABLE)
+
+        assertTrue(prompt.startsWith(DefaultPrompts.MASTER.trimEnd()))
+        assertTrue(prompt.contains("I am going to walk you through assessing the table"))
+        assertTrue(prompt.contains("one step at a time"))
+        assertEquals(
+            assembleSystemPrompt(DefaultPrompts.MASTER, DefaultPrompts.forItem(ItemType.WOODEN_TABLE)),
+            prompt,
+        )
+    }
+
+    @Test
+    fun `items with no compiled-in prompt fall back to master alone`() = runTest {
+        server.shutdown()
+
+        assertEquals(
+            DefaultPrompts.MASTER.trimEnd(),
+            repository().systemPromptFor(ItemType.UPHOLSTERED_SOFA),
+        )
+    }
+
+    @Test
+    fun `a fetched item prompt overrides the compiled-in copy`() = runTest {
+        // Remote stays the source of truth, so prompts can be changed without a release.
+        server.enqueue(MockResponse().setBody("MASTER FROM REPO"))
+        server.enqueue(MockResponse().setBody("TABLE CHECKLIST V2"))
+
+        assertEquals(
+            "MASTER FROM REPO\n\nTABLE CHECKLIST V2",
+            repository().systemPromptFor(ItemType.WOODEN_TABLE),
+        )
+    }
+
+    @Test
+    fun `an item file emptied in the repo beats the compiled-in copy`() = runTest {
+        // Deliberate: clearing a prompt file upstream must actually clear it on devices.
+        server.enqueue(MockResponse().setBody("MASTER FROM REPO"))
+        server.enqueue(MockResponse().setBody(""))
+
+        assertEquals("MASTER FROM REPO", repository().systemPromptFor(ItemType.WOODEN_TABLE))
     }
 
     @Test

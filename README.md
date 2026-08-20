@@ -42,13 +42,28 @@ Edit the files, push to `main`, and devices pick up the change within 24 hours
 (the cache TTL). Settings → **Refresh prompts** forces it immediately.
 
 - `prompts/master.txt` — the system prompt, sent on every request
-- `prompts/items/<slug>.txt` — appended for the chosen item type; **all currently
-  empty placeholders**, intentionally
+- `prompts/items/<slug>.txt` — appended for the chosen item type; all empty
+  placeholders except `wooden-table.txt`
+
+- `prompts/items/wooden-table.txt` — a step-by-step photo walkthrough the assistant
+  runs at the start of a table conversation
 
 Resolution order per file is: fresh cache → network → stale cache → compiled-in
 default. The app therefore works offline, and works before this repo is even pushed.
-`DefaultPrompts.MASTER` is a byte-identical copy of `master.txt` — **edit both
-together**.
+
+The compiled-in copies live in `DefaultPrompts.kt`, which is **generated** — after
+editing anything under `prompts/`, regenerate it:
+
+```bash
+python3 tools/generate_default_prompts.py
+```
+
+Remote stays the source of truth: a value fetched from GitHub always wins over the
+compiled-in copy, **including an empty one**. So emptying a prompt file upstream really
+does clear it on devices.
+
+Note the assistant cannot send images — the app renders only text from Claude — so
+prompts must describe what a photo should show rather than offer to display an example.
 
 The base URL is one `buildConfigField` in [app/build.gradle.kts](app/build.gradle.kts).
 

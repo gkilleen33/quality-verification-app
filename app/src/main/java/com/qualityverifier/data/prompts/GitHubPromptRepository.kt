@@ -29,9 +29,10 @@ class GitHubPromptRepository(
 
     override suspend fun systemPromptFor(itemType: ItemType): String = withContext(io) {
         val master = load(MASTER_PATH, blankIsValid = false) { DefaultPrompts.MASTER }
-        // Item prompts are empty placeholders by design, so blank is a valid answer
-        // and a 404 (file not yet pushed) is not worth surfacing.
-        val item = load(itemType.promptPath, blankIsValid = true) { "" }
+        // Blank is a valid answer for an item: most item files are still empty
+        // placeholders, and a 404 (file not yet pushed) is not worth surfacing. The
+        // compiled-in copy covers the case where the file has never been fetched at all.
+        val item = load(itemType.promptPath, blankIsValid = true) { DefaultPrompts.forItem(itemType) }
         assembleSystemPrompt(master, item)
     }
 
