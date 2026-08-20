@@ -360,11 +360,19 @@ private fun MessageBubble(message: ChatMessage) {
                 tonalElevation = if (fromUser) 0.dp else 2.dp,
                 modifier = Modifier.fillMaxWidth(0.92f),
             ) {
-                Text(
-                    message.text,
-                    style = MaterialTheme.typography.bodyLarge,
-                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
-                )
+                if (fromUser) {
+                    Text(
+                        message.text,
+                        style = MaterialTheme.typography.bodyLarge,
+                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
+                    )
+                } else {
+                    MarkdownText(
+                        text = message.text,
+                        style = MaterialTheme.typography.bodyLarge,
+                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
+                    )
+                }
             }
         }
     }

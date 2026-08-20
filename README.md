@@ -125,6 +125,29 @@ migration.
   device grants unmetered access to its owner's Anthropic account to whoever holds the
   phone. Phase 2 moves the key server-side, which is the actual fix.
 
+## Assistant formatting
+
+Claude formats its advice with bold, headings and lists. The chat bubble renders that
+Markdown rather than showing the markers as literal characters, which for readers with
+varying literacy is pure noise.
+
+`text/Markdown.kt` is a small hand-rolled parser — no dependency, and being Compose-free
+it is fully unit-tested on the JVM. It covers what actually appears in furniture advice:
+headings, bullet and numbered lists, bold, italic, inline code, links and rules. Tables,
+block quotes and fenced code fall through as plain text rather than being mishandled.
+`ui/chat/MarkdownText.kt` renders it; `markdownToPlainText` flattens it for the history
+list, which cannot show styling.
+
+Two deliberate deviations from CommonMark, both chosen to surprise less in a chat bubble:
+
+- A single newline inside a paragraph stays a line break rather than collapsing to a
+  space, so a break Claude intended is honoured.
+- A single underscore never starts emphasis, so `item_wooden_table` survives intact.
+  Doubled `__bold__` is still recognised.
+
+Only assistant replies are parsed. The user's own text is rendered literally, so an
+asterisk they typed is never reinterpreted as formatting.
+
 ## Prompt caching
 
 Every request sets two `cache_control` breakpoints — one on the system block, one on the

@@ -11,6 +11,7 @@ import com.qualityverifier.domain.ChatMessage
 import com.qualityverifier.domain.ItemType
 import com.qualityverifier.domain.Role
 import com.qualityverifier.domain.SessionSummary
+import com.qualityverifier.text.markdownToPlainText
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 import java.util.UUID
@@ -76,7 +77,10 @@ class RoomSessionRepository(
 
     override suspend fun appendAssistantMessage(sessionId: String, text: String): ChatMessage {
         val message = insert(sessionId, Role.ASSISTANT, text, emptyList())
-        dao.touchSession(sessionId, message.createdAt, text.take(PREVIEW_LIMIT))
+        // The list cannot show styling, so flatten the formatting rather than print it.
+        // Flatten before truncating: cutting first can leave half a `**` pair behind.
+        val preview = markdownToPlainText(text).take(PREVIEW_LIMIT)
+        dao.touchSession(sessionId, message.createdAt, preview)
         return message
     }
 
