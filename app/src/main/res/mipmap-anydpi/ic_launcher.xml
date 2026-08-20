@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Pre-API-26 fallback: adaptive icons are unsupported below 26, so draw the
+     background and foreground into one vector. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <path android:fillColor="#6B4A2F" android:pathData="M0,0h108v108h-108z" />
+    <path android:fillColor="#FFFFFF" android:pathData="M38,30h6v30h-6z" />
+    <path android:fillColor="#FFFFFF" android:pathData="M64,30h6v30h-6z" />
+    <path android:fillColor="#FFFFFF" android:pathData="M34,56h40v7h-40z" />
+    <path android:fillColor="#FFFFFF" android:pathData="M36,63h6v18h-6z" />
+    <path android:fillColor="#FFFFFF" android:pathData="M66,63h6v18h-6z" />
+    <path android:fillColor="#FFFFFF" android:pathData="M40,38h28v6h-28z" />
+</vector>

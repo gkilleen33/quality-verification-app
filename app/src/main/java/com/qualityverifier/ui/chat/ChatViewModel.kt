@@ -1,0 +1,193 @@
+package com.qualityverifier.ui.chat
+
+import android.content.Context
+import android.net.Uri
+import androidx.core.content.FileProvider
+import androidx.lifecycle.ViewModel
+import androidx.lifecycle.ViewModelProvider
+import androidx.lifecycle.viewModelScope
+import androidx.lifecycle.viewmodel.initializer
+import androidx.lifecycle.viewmodel.viewModelFactory
+import com.qualityverifier.data.chat.ChatErrorKind
+import com.qualityverifier.data.chat.ChatResult
+import com.qualityverifier.data.chat.ChatService
+import com.qualityverifier.data.db.ImageFileStore
+import com.qualityverifier.data.session.SessionRepository
+import com.qualityverifier.di.AppContainer
+import com.qualityverifier.domain.Attachment
+import com.qualityverifier.domain.ChatMessage
+import com.qualityverifier.domain.ItemType
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import java.io.File
+import java.util.UUID
+
+/** An image the user has attached but not yet sent. */
+data class PendingImage(val id: String, val path: String)
+
+data class ChatError(val kind: ChatErrorKind, val message: String)
+
+class ChatViewModel(
+    private val sessionId: String,
+    private val declaredItemType: ItemType?,
+    private val sessions: SessionRepository,
+    private val chat: ChatService,
+    private val images: ImageFileStore,
+) : ViewModel() {
+
+    val messages: StateFlow<List<ChatMessage>> = sessions.observeMessages(sessionId)
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    private val _pending = MutableStateFlow<List<PendingImage>>(emptyList())
+    val pending: StateFlow<List<PendingImage>> = _pending.asStateFlow()
+
+    private val _sending = MutableStateFlow(false)
+    val sending: StateFlow<Boolean> = _sending.asStateFlow()
+
+    private val _error = MutableStateFlow<ChatError?>(null)
+    val error: StateFlow<ChatError?> = _error.asStateFlow()
+
+    private val _itemType = MutableStateFlow(declaredItemType)
+    val itemType: StateFlow<ItemType?> = _itemType.asStateFlow()
+
+    init {
+        if (declaredItemType == null) {
+            // Reopened from history: the item type lives in the session row.
+            viewModelScope.launch { _itemType.value = sessions.itemTypeOf(sessionId) }
+        }
+    }
+
+    /**
+     * Creates the destination file for a camera capture and returns a shareable URI.
+     * The file is registered as pending only once the capture actually succeeds.
+     */
+    fun prepareCapture(context: Context): Pair<Uri, File>? = runCatching {
+        val file = images.newImageFile(sessionId)
+        val uri = FileProvider.getUriForFile(
+            context,
+            "${context.packageName}.fileprovider",
+            file,
+        )
+        uri to file
+    }.getOrNull()
+
+    fun onCaptureResult(file: File, success: Boolean) {
+        viewModelScope.launch {
+            val kept = success && withContext(Dispatchers.IO) {
+                file.length() > 0 && images.normaliseInPlace(file)
+            }
+            if (kept) {
+                _pending.update { it + PendingImage(UUID.randomUUID().toString(), file.absolutePath) }
+            } else {
+                withContext(Dispatchers.IO) { images.delete(file) }
+            }
+        }
+    }
+
+    fun onGalleryPicked(uris: List<Uri>) {
+        if (uris.isEmpty()) return
+        viewModelScope.launch {
+            val imported = withContext(Dispatchers.IO) {
+                uris.mapNotNull { images.importFromUri(sessionId, it) }
+            }
+            if (imported.size < uris.size) {
+                _error.value = ChatError(
+                    ChatErrorKind.REQUEST,
+                    "Some photos could not be opened and were skipped.",
+                )
+            }
+            _pending.update { current ->
+                current + imported.map { PendingImage(UUID.randomUUID().toString(), it.absolutePath) }
+            }
+        }
+    }
+
+    fun removePending(id: String) {
+        val target = _pending.value.firstOrNull { it.id == id } ?: return
+        _pending.update { list -> list.filterNot { it.id == id } }
+        viewModelScope.launch {
+            withContext(Dispatchers.IO) { images.delete(File(target.path)) }
+        }
+    }
+
+    fun dismissError() {
+        _error.value = null
+    }
+
+    fun send(text: String) {
+        val trimmed = text.trim()
+        val attachments = _pending.value
+        if (trimmed.isEmpty() && attachments.isEmpty()) return
+        if (_sending.value) return
+
+        viewModelScope.launch {
+            _error.value = null
+            _sending.value = true
+            try {
+                val type = _itemType.value ?: ItemType.OTHER
+                if (!sessions.sessionExists(sessionId)) {
+                    sessions.createSession(sessionId, type)
+                }
+                sessions.appendUserMessage(
+                    sessionId = sessionId,
+                    text = trimmed,
+                    attachments = attachments.map { Attachment(it.id, it.path) },
+                )
+                _pending.value = emptyList()
+                deliver(type)
+            } finally {
+                _sending.value = false
+            }
+        }
+    }
+
+    /**
+     * Re-sends the conversation as it already stands. Used after a network failure,
+     * where the user's turn is already saved and must not be duplicated.
+     */
+    fun retry() {
+        if (_sending.value) return
+        viewModelScope.launch {
+            _error.value = null
+            _sending.value = true
+            try {
+                deliver(_itemType.value ?: ItemType.OTHER)
+            } finally {
+                _sending.value = false
+            }
+        }
+    }
+
+    private suspend fun deliver(type: ItemType) {
+        val history = sessions.messagesOnce(sessionId)
+        when (val result = chat.send(sessionId, type, history)) {
+            is ChatResult.Success -> sessions.appendAssistantMessage(sessionId, result.text)
+            is ChatResult.Failure -> _error.value = ChatError(result.kind, result.message)
+        }
+    }
+
+    companion object {
+        fun factory(
+            container: AppContainer,
+            sessionId: String,
+            itemType: ItemType?,
+        ): ViewModelProvider.Factory = viewModelFactory {
+            initializer {
+                ChatViewModel(
+                    sessionId = sessionId,
+                    declaredItemType = itemType,
+                    sessions = container.sessionRepository,
+                    chat = container.chatService,
+                    images = container.images,
+                )
+            }
+        }
+    }
+}
