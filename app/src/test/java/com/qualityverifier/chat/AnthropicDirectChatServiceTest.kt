@@ -292,6 +292,71 @@ class AnthropicDirectChatServiceTest {
     }
 
     @Test
+    fun `an empty conversation is opened with a synthetic user turn`() = runTest {
+        // The item prompts greet the user and ask for the first photo themselves, but the
+        // API needs messages[0] to be a user turn or there is nothing to send.
+        server.enqueue(MockResponse().setBody("""{"content":[{"type":"text","text":"ok"}]}"""))
+
+        service().send("s1", ItemType.WOODEN_TABLE, emptyList())
+
+        val messages = requestMessages()
+        assertEquals(1, messages.size)
+        assertEquals("user", role(messages.single()))
+        assertEquals(AnthropicDirectChatService.OPENING_TURN, firstText(messages.single()))
+    }
+
+    @Test
+    fun `a history starting with an assistant turn gets the opening turn prepended`() = runTest {
+        // The state after the walkthrough opened itself: the only stored turn is Claude's.
+        server.enqueue(MockResponse().setBody("""{"content":[{"type":"text","text":"ok"}]}"""))
+
+        service().send(
+            "s1",
+            ItemType.WOODEN_TABLE,
+            listOf(ChatMessage("a1", Role.ASSISTANT, "Welcome, send a photo")),
+        )
+
+        val messages = requestMessages()
+        assertEquals(listOf("user", "assistant"), messages.map { role(it) })
+        assertEquals(AnthropicDirectChatService.OPENING_TURN, firstText(messages[0]))
+    }
+
+    @Test
+    fun `a history already starting with the user is left alone`() = runTest {
+        server.enqueue(MockResponse().setBody("""{"content":[{"type":"text","text":"ok"}]}"""))
+
+        service().send("s1", ItemType.OTHER, listOf(userTurn("I have a stool")))
+
+        val messages = requestMessages()
+        assertEquals(1, messages.size)
+        assertEquals("I have a stool", firstText(messages.single()))
+    }
+
+    @Test
+    fun `the opening turn is stable, so the cached prefix survives`() = runTest {
+        // A varying opener would silently defeat prompt caching from turn two onward.
+        server.enqueue(MockResponse().setBody("""{"content":[{"type":"text","text":"ok"}]}"""))
+        server.enqueue(MockResponse().setBody("""{"content":[{"type":"text","text":"ok"}]}"""))
+
+        val svc = service()
+        svc.send("s1", ItemType.WOODEN_BED, emptyList())
+        svc.send("s1", ItemType.WOODEN_BED, emptyList())
+
+        assertEquals(server.takeRequest().body.readUtf8(), server.takeRequest().body.readUtf8())
+    }
+
+    @Test
+    fun `the cache breakpoint still lands on the last block after prepending`() = runTest {
+        server.enqueue(MockResponse().setBody("""{"content":[{"type":"text","text":"ok"}]}"""))
+
+        service().send("s1", ItemType.OTHER, emptyList())
+
+        val blocks = requestMessages().single().jsonObject["content"]!!.jsonArray
+        assertEquals("1h", blocks.last().jsonObject["cache_control"]!!
+            .jsonObject["ttl"]?.jsonPrimitive?.content)
+    }
+
+    @Test
     fun `a missing key fails as an auth error without any network call`() = runTest {
         val result = service(apiKey = null).send("s1", ItemType.OTHER, listOf(userTurn("hi")))
 

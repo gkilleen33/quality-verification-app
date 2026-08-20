@@ -23,7 +23,7 @@ import java.util.UUID
  * usable and unusable app on metered mobile data. Rotation matters for accuracy too:
  * Claude cannot judge whether a table is level from a sideways photo.
  */
-class ImageFileStore(private val context: Context) : ImageBytesSource {
+class ImageFileStore(private val context: Context) : ImageBytesSource, SessionImageStore {
 
     private val root: File get() = File(context.filesDir, "images")
 
@@ -31,7 +31,7 @@ class ImageFileStore(private val context: Context) : ImageBytesSource {
         File(root, sessionId).apply { mkdirs() }
 
     /** An empty file for the camera to write into, plus the file itself. */
-    fun newImageFile(sessionId: String): File =
+    override fun newImageFile(sessionId: String): File =
         File(sessionDir(sessionId), "${UUID.randomUUID()}.jpg")
 
     fun relativePathOf(file: File): String =
@@ -43,7 +43,7 @@ class ImageFileStore(private val context: Context) : ImageBytesSource {
         runCatching { File(root, sessionId).deleteRecursively() }
     }
 
-    fun delete(file: File) {
+    override fun delete(file: File) {
         runCatching { file.delete() }
     }
 
@@ -64,7 +64,7 @@ class ImageFileStore(private val context: Context) : ImageBytesSource {
      * Copies a gallery/document [uri] into the session directory, normalising it.
      * Returns null if the image could not be read or decoded.
      */
-    fun importFromUri(sessionId: String, uri: Uri): File? = try {
+    override fun importFromUri(sessionId: String, uri: Uri): File? = try {
         val raw = context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
             ?: return null
         val normalised = normalise(raw) ?: return null
@@ -78,7 +78,7 @@ class ImageFileStore(private val context: Context) : ImageBytesSource {
      * Rewrites a just-captured camera file in place, normalised. Returns false and
      * leaves the file alone if it could not be decoded.
      */
-    fun normaliseInPlace(file: File): Boolean = try {
+    override fun normaliseInPlace(file: File): Boolean = try {
         val normalised = normalise(file.readBytes())
         if (normalised == null) false else { file.writeBytes(normalised); true }
     } catch (e: Exception) {

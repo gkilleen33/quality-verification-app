@@ -11,7 +11,7 @@ import androidx.lifecycle.viewmodel.viewModelFactory
 import com.qualityverifier.data.chat.ChatErrorKind
 import com.qualityverifier.data.chat.ChatResult
 import com.qualityverifier.data.chat.ChatService
-import com.qualityverifier.data.db.ImageFileStore
+import com.qualityverifier.data.db.SessionImageStore
 import com.qualityverifier.data.session.SessionRepository
 import com.qualityverifier.di.AppContainer
 import com.qualityverifier.domain.Attachment
@@ -39,7 +39,7 @@ class ChatViewModel(
     private val declaredItemType: ItemType?,
     private val sessions: SessionRepository,
     private val chat: ChatService,
-    private val images: ImageFileStore,
+    private val images: SessionImageStore,
 ) : ViewModel() {
 
     val messages: StateFlow<List<ChatMessage>> = sessions.observeMessages(sessionId)
@@ -65,9 +65,36 @@ class ChatViewModel(
     val itemType: StateFlow<ItemType?> = _itemType.asStateFlow()
 
     init {
-        if (declaredItemType == null) {
-            // Reopened from history: the item type lives in the session row.
-            viewModelScope.launch { _itemType.value = sessions.itemTypeOf(sessionId) }
+        viewModelScope.launch {
+            if (declaredItemType == null) {
+                // Reopened from history: the item type lives in the session row.
+                _itemType.value = sessions.itemTypeOf(sessionId)
+            }
+            openConversationIfEmpty()
+        }
+    }
+
+    /**
+     * Asks the assistant to open the conversation, so the walkthrough starts as soon as
+     * the screen appears rather than waiting for the user to type something first.
+     *
+     * Keyed on the conversation being empty, not on the session being new: a session
+     * whose opening request failed has a row but no messages, and reopening it should
+     * try again rather than leave the user staring at an empty screen with no way in.
+     */
+    private suspend fun openConversationIfEmpty() {
+        if (_sending.value) return
+        if (sessions.messagesOnce(sessionId).isNotEmpty()) return
+
+        val type = _itemType.value ?: ItemType.OTHER
+        _sending.value = true
+        try {
+            if (!sessions.sessionExists(sessionId)) {
+                sessions.createSession(sessionId, type)
+            }
+            deliver(type)
+        } finally {
+            _sending.value = false
         }
     }
 
