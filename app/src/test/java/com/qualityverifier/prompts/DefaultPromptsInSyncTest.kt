@@ -50,6 +50,26 @@ class DefaultPromptsInSyncTest {
     }
 
     @Test
+    fun `upholstered checklists assess the frame as well as the covering`() {
+        // The frame is hidden under padding, so these prompts have to reach it
+        // indirectly. This is the requirement most easily lost in a future edit.
+        listOf(ItemType.UPHOLSTERED_CHAIR, ItemType.UPHOLSTERED_SOFA).forEach { itemType ->
+            val prompt = DefaultPrompts.forItem(itemType)
+            listOf(
+                "Judging the woodwork:",
+                "Judging the upholstery:",
+                "exposed",
+                "creak",
+                "foam",
+            ).forEach { expected ->
+                assert(prompt.contains(expected)) {
+                    "${itemType.id} prompt is missing \"$expected\""
+                }
+            }
+        }
+    }
+
+    @Test
     fun `every item type has a prompt file`() {
         ItemType.entries.forEach { itemType ->
             assert(promptFile("items/${itemType.id}.txt").isFile) {

@@ -42,11 +42,22 @@ Edit the files, push to `main`, and devices pick up the change within 24 hours
 (the cache TTL). Settings → **Refresh prompts** forces it immediately.
 
 - `prompts/master.txt` — the system prompt, sent on every request
-- `prompts/items/<slug>.txt` — appended for the chosen item type; all empty
-  placeholders except `wooden-table.txt`
+- `prompts/items/<slug>.txt` — appended for the chosen item type. All six are
+  populated with a guided photo walkthrough the assistant runs at the start of a
+  conversation
 
-- `prompts/items/wooden-table.txt` — a step-by-step photo walkthrough the assistant
-  runs at the start of a table conversation
+
+Each item prompt follows the same shape: an opening explanation, numbered steps taken
+one at a time, photo requests described in words, look-for-it questions that ask for a
+photo only when the answer is yes, then an evaluation against the master criteria.
+
+The two upholstered prompts assess the **frame as well as the covering**. The frame is
+hidden under the padding and cannot be photographed, so they reach it indirectly —
+exposed legs and trim, the underside, and physical tests the user performs and describes
+(lift by one corner and watch for twist, press the arms and back, feel for a rail
+through the padding). Those prompts are told to report frame and upholstery separately
+and to say plainly that the frame verdict is less certain, because a good frame with
+poor padding can be reupholstered while a weak frame cannot be fixed.
 
 Resolution order per file is: fresh cache → network → stale cache → compiled-in
 default. The app therefore works offline, and works before this repo is even pushed.

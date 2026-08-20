@@ -71,22 +71,45 @@ class GitHubPromptRepositoryTest {
     }
 
     @Test
-    fun `a missing item file falls back to no item prompt`() = runTest {
+    fun `a missing item file falls back to the compiled-in checklist`() = runTest {
         server.enqueue(MockResponse().setBody("MASTER TEXT"))
         server.enqueue(MockResponse().setResponseCode(404))
 
-        assertEquals("MASTER TEXT", repository().systemPromptFor(ItemType.WOODEN_BED))
+        val prompt = repository().systemPromptFor(ItemType.WOODEN_BED)
+
+        assertEquals(
+            assembleSystemPrompt("MASTER TEXT", DefaultPrompts.forItem(ItemType.WOODEN_BED)),
+            prompt,
+        )
+        assertTrue(prompt.contains("centre rail"))
     }
 
     @Test
-    fun `with no network and no cache the compiled-in master prompt is used`() = runTest {
-        // WOODEN_CHAIR has no compiled-in item prompt, so master alone is expected here.
+    fun `every item type has an offline checklist`() = runTest {
+        // All six item prompts are populated, so no category should ever fall back to
+        // the master prompt alone - that would silently drop the guided walkthrough.
         server.shutdown()
+        val repo = repository()
 
-        val prompt = repository().systemPromptFor(ItemType.WOODEN_CHAIR)
-
-        assertEquals(DefaultPrompts.MASTER.trimEnd(), prompt)
-        assertTrue(prompt.contains("furniture quality verification assistant"))
+        ItemType.entries.forEach { itemType ->
+            val prompt = repo.systemPromptFor(itemType)
+            assertTrue(
+                "${itemType.id} lost the master prompt",
+                prompt.contains("furniture quality verification assistant"),
+            )
+            assertTrue(
+                "${itemType.id} has no walkthrough",
+                prompt.contains("walk you through"),
+            )
+            assertTrue(
+                "${itemType.id} does not step through one item at a time",
+                prompt.contains("one step at a time"),
+            )
+            assertTrue(
+                "${itemType.id} should not offer example photos it cannot send",
+                !prompt.contains("(example photo)"),
+            )
+        }
     }
 
     @Test
@@ -154,16 +177,6 @@ class GitHubPromptRepositoryTest {
         assertEquals(
             assembleSystemPrompt(DefaultPrompts.MASTER, DefaultPrompts.forItem(ItemType.WOODEN_TABLE)),
             prompt,
-        )
-    }
-
-    @Test
-    fun `items with no compiled-in prompt fall back to master alone`() = runTest {
-        server.shutdown()
-
-        assertEquals(
-            DefaultPrompts.MASTER.trimEnd(),
-            repository().systemPromptFor(ItemType.UPHOLSTERED_SOFA),
         )
     }
 
