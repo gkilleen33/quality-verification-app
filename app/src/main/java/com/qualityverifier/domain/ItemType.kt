@@ -6,14 +6,25 @@ package com.qualityverifier.domain
  * [id] doubles as the prompt filename slug in the GitHub repo (`prompts/items/<id>.txt`)
  * and, with dashes swapped for underscores, as the drawable name the item grid looks for.
  * Adding a category means adding an entry here and a matching `prompts/items/<id>.txt`.
+ *
+ * [swahiliName] is the word a Nairobi buyer would actually use, shown under the English
+ * label. It is null where a reliable term has not been confirmed by a native speaker
+ * rather than guessed at — a wrong word in the user's own language costs more trust than
+ * no word at all.
  */
-enum class ItemType(val id: String, val displayName: String) {
-    WOODEN_TABLE("wooden-table", "Wooden Table"),
-    WOODEN_CHAIR("wooden-chair", "Wooden Chair"),
-    WOODEN_BED("wooden-bed", "Wooden Bed"),
-    UPHOLSTERED_CHAIR("upholstered-chair", "Upholstered Chair"),
-    UPHOLSTERED_SOFA("upholstered-sofa", "Upholstered Sofa"),
-    OTHER("other", "Other");
+enum class ItemType(
+    val id: String,
+    val displayName: String,
+    val swahiliName: String? = null,
+) {
+    WOODEN_TABLE("wooden-table", "Table", "Meza"),
+    WOODEN_CHAIR("wooden-chair", "Wooden chair", "Kiti"),
+    WOODEN_STOOL("wooden-stool", "Stool or bench", "Kigoda"),
+    WOODEN_BED("wooden-bed", "Bed", "Kitanda"),
+    WOODEN_CABINET("wooden-cabinet", "Cabinet or wardrobe", "Kabati"),
+    UPHOLSTERED_SOFA("upholstered-sofa", "Sofa", "Kochi"),
+    UPHOLSTERED_CHAIR("upholstered-chair", "Padded chair"),
+    OTHER("other", "Something else");
 
     /** Path of this item's prompt file, relative to the `prompts/` directory. */
     val promptPath: String get() = "items/$id.txt"

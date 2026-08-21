@@ -85,9 +85,9 @@ class GitHubPromptRepositoryTest {
     }
 
     @Test
-    fun `every item type has an offline checklist`() = runTest {
-        // All six item prompts are populated, so no category should ever fall back to
-        // the master prompt alone - that would silently drop the guided walkthrough.
+    fun `every item type has an offline protocol`() = runTest {
+        // Every item prompt is populated, so no category should ever fall back to the
+        // master prompt alone - that would silently drop the guided walkthrough.
         server.shutdown()
         val repo = repository()
 
@@ -95,15 +95,19 @@ class GitHubPromptRepositoryTest {
             val prompt = repo.systemPromptFor(itemType)
             assertTrue(
                 "${itemType.id} lost the master prompt",
-                prompt.contains("furniture quality verification assistant"),
+                prompt.contains("furniture quality inspector"),
             )
             assertTrue(
-                "${itemType.id} has no walkthrough",
-                prompt.contains("walk you through"),
+                "${itemType.id} has no photo plan",
+                prompt.contains("PHOTO PLAN"),
             )
             assertTrue(
-                "${itemType.id} does not step through one item at a time",
-                prompt.contains("one step at a time"),
+                "${itemType.id} has no hands-on tests",
+                prompt.contains("HANDS-ON TESTS"),
+            )
+            assertTrue(
+                "${itemType.id} does not step through one thing at a time",
+                prompt.contains("Ask for one thing at a time"),
             )
             assertTrue(
                 "${itemType.id} should not offer example photos it cannot send",
@@ -164,16 +168,17 @@ class GitHubPromptRepositoryTest {
     }
 
     @Test
-    fun `offline with no cache still yields the table walkthrough checklist`() = runTest {
+    fun `offline with no cache still yields the table protocol`() = runTest {
         // The whole point of the compiled-in item fallback: a fresh install with no
-        // connectivity must still run the checklist, not fall back to master alone.
+        // connectivity must still run the protocol, not fall back to master alone.
         server.shutdown()
 
         val prompt = repository().systemPromptFor(ItemType.WOODEN_TABLE)
 
         assertTrue(prompt.startsWith(DefaultPrompts.MASTER.trimEnd()))
-        assertTrue(prompt.contains("I am going to walk you through assessing the table"))
-        assertTrue(prompt.contains("one step at a time"))
+        assertTrue(prompt.contains("Item: a wooden table"))
+        assertTrue(prompt.contains("the bottle-top roll"))
+        assertTrue(prompt.contains("Ask for one thing at a time"))
         assertEquals(
             assembleSystemPrompt(DefaultPrompts.MASTER, DefaultPrompts.forItem(ItemType.WOODEN_TABLE)),
             prompt,

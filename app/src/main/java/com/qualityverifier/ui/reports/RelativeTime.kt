@@ -1,4 +1,4 @@
-package com.qualityverifier.ui.home
+package com.qualityverifier.ui.reports
 
 import java.text.SimpleDateFormat
 import java.util.Date

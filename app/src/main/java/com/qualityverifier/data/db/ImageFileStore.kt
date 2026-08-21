@@ -8,6 +8,9 @@ import android.net.Uri
 import android.util.Log
 import androidx.exifinterface.media.ExifInterface
 import com.qualityverifier.data.chat.ImageBytesSource
+import com.qualityverifier.images.ImageQuality
+import com.qualityverifier.images.lumaOf
+import com.qualityverifier.images.measureQuality as measureLuma
 import java.io.ByteArrayOutputStream
 import java.io.File
 import java.util.UUID
@@ -94,6 +97,36 @@ class ImageFileStore(private val context: Context) : ImageBytesSource, SessionIm
         null
     }
 
+    /**
+     * Decodes a small copy of [file] and measures it. Deliberately tiny: sharpness is a
+     * ratio, so a thumbnail answers the question, and doing this on a full frame would
+     * make the shutter feel slow on a 2GB phone.
+     */
+    override fun measureQuality(file: File): ImageQuality? {
+        return try {
+            val raw = file.readBytes()
+            val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+            BitmapFactory.decodeByteArray(raw, 0, raw.size, bounds)
+            if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return null
+
+            var sample = 1
+            while (maxOf(bounds.outWidth, bounds.outHeight) / (sample * 2) >= QUALITY_EDGE_PX) {
+                sample *= 2
+            }
+            val options = BitmapFactory.Options().apply { inSampleSize = sample }
+            val bitmap = BitmapFactory.decodeByteArray(raw, 0, raw.size, options) ?: return null
+            val width = bitmap.width
+            val height = bitmap.height
+            val pixels = IntArray(width * height)
+            bitmap.getPixels(pixels, 0, width, 0, 0, width, height)
+            bitmap.recycle()
+            measureLuma(lumaOf(pixels), width, height)
+        } catch (e: Exception) {
+            Log.w(TAG, "Could not measure ${file.name}", e)
+            null
+        }
+    }
+
     private fun normalise(raw: ByteArray): ByteArray? {
         val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
         BitmapFactory.decodeByteArray(raw, 0, raw.size, bounds)
@@ -148,6 +181,9 @@ class ImageFileStore(private val context: Context) : ImageBytesSource, SessionIm
         /** Anthropic downsamples above roughly this edge length, so sending more is waste. */
         const val MAX_EDGE_PX = 1568
         const val JPEG_QUALITY = 80
+
+        /** Long edge used for the blur and brightness check only. */
+        private const val QUALITY_EDGE_PX = 320
 
         internal fun sampleSizeFor(width: Int, height: Int): Int {
             var sample = 1

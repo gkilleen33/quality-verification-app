@@ -6,12 +6,15 @@ import com.qualityverifier.data.chat.ChatResult
 import com.qualityverifier.data.chat.ChatService
 import com.qualityverifier.data.db.SessionImageStore
 import com.qualityverifier.data.session.SessionRepository
+import com.qualityverifier.images.ImageQuality
 import com.qualityverifier.domain.Attachment
 import com.qualityverifier.domain.ChatMessage
 import com.qualityverifier.domain.ItemType
 import com.qualityverifier.domain.Role
 import com.qualityverifier.domain.SessionSummary
 import com.qualityverifier.ui.chat.ChatViewModel
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
@@ -145,16 +148,85 @@ class ChatViewModelStartTest {
 
     // ---- fakes ----
 
+    @Test
+    fun `a photo that measures fine is attached without interrupting`() = runTest {
+        val images = FakeImages(quality = null)
+        val model = viewModel(FakeSessions(), FakeChat(ChatResult.Success("hi")), images = images)
+        dispatcher.scheduler.advanceUntilIdle()
+
+        model.onPhotoCaptured(images.newImageFile("s1"))
+        dispatcher.scheduler.advanceUntilIdle()
+
+        assertEquals(1, model.pending.value.size)
+        assertNull("a usable photo must not stop the shot list", model.review.value)
+    }
+
+    @Test
+    fun `a blurred photo is held for the user to look at`() = runTest {
+        val images = FakeImages(quality = ImageQuality(sharpness = 3.0, brightness = 140.0))
+        val model = viewModel(FakeSessions(), FakeChat(ChatResult.Success("hi")), images = images)
+        dispatcher.scheduler.advanceUntilIdle()
+
+        model.onPhotoCaptured(images.newImageFile("s1"))
+        dispatcher.scheduler.advanceUntilIdle()
+
+        assertTrue(model.pending.value.isEmpty())
+        val review = model.review.value
+        assertNotNull("a blurred photo should be held back", review)
+        assertTrue(review!!.warning.contains("blurred"))
+
+        // The user has looked at it and decided; their call wins over the measurement.
+        model.keepReviewedPhoto()
+        assertNull(model.review.value)
+        assertEquals(1, model.pending.value.size)
+    }
+
+    @Test
+    fun `retaking a held photo deletes it and attaches nothing`() = runTest {
+        val images = FakeImages(quality = ImageQuality(sharpness = 3.0, brightness = 10.0))
+        val model = viewModel(FakeSessions(), FakeChat(ChatResult.Success("hi")), images = images)
+        dispatcher.scheduler.advanceUntilIdle()
+
+        val file = images.newImageFile("s1")
+        model.onPhotoCaptured(file)
+        dispatcher.scheduler.advanceUntilIdle()
+        assertNotNull("a dark, blurred photo should be held back", model.review.value)
+
+        model.discardReviewedPhoto()
+        dispatcher.scheduler.advanceUntilIdle()
+
+        assertNull(model.review.value)
+        assertTrue(model.pending.value.isEmpty())
+        assertTrue("the discarded file should be cleaned up", images.deleted.contains(file))
+    }
+
+    @Test
+    fun `a photo that cannot be decoded is dropped with an explanation`() = runTest {
+        val images = FakeImages(normalises = false)
+        val model = viewModel(FakeSessions(), FakeChat(ChatResult.Success("hi")), images = images)
+        dispatcher.scheduler.advanceUntilIdle()
+
+        model.onPhotoCaptured(images.newImageFile("s1"))
+        dispatcher.scheduler.advanceUntilIdle()
+
+        assertTrue(model.pending.value.isEmpty())
+        assertNull(model.review.value)
+        assertFalse(images.deleted.isEmpty())
+        assertTrue(model.notice.value.orEmpty().contains("could not be read"))
+    }
+
     private fun viewModel(
         sessions: SessionRepository,
         chat: ChatService,
         declaredItemType: ItemType? = ItemType.WOODEN_TABLE,
+        images: SessionImageStore = NoImages,
     ) = ChatViewModel(
         sessionId = "s1",
         declaredItemType = declaredItemType,
         sessions = sessions,
         chat = chat,
-        images = NoImages,
+        images = images,
+        io = dispatcher,
     )
 
     private class FakeChat(vararg results: ChatResult) : ChatService {
@@ -225,5 +297,32 @@ class ChatViewModelStartTest {
         override fun importFromUri(sessionId: String, uri: Uri): File? = null
         override fun normaliseInPlace(file: File) = false
         override fun delete(file: File) = Unit
+        override fun measureQuality(file: File): ImageQuality? = null
+    }
+
+    /**
+     * A store backed by a real temporary file, because the view model's capture path
+     * checks that the file exists and has length before doing anything with it.
+     */
+    private class FakeImages(
+        private val normalises: Boolean = true,
+        private val quality: ImageQuality? = null,
+    ) : SessionImageStore {
+        val deleted = mutableListOf<File>()
+
+        override fun newImageFile(sessionId: String): File =
+            File.createTempFile("capture", ".jpg").apply {
+                writeBytes(ByteArray(16))
+                deleteOnExit()
+            }
+
+        override fun importFromUri(sessionId: String, uri: Uri): File? = null
+        override fun normaliseInPlace(file: File) = normalises
+        override fun delete(file: File) {
+            deleted += file
+            file.delete()
+        }
+
+        override fun measureQuality(file: File): ImageQuality? = quality
     }
 }

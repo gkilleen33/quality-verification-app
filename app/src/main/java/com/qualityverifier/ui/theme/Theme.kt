@@ -13,6 +13,7 @@ import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.sp
 import androidx.core.view.WindowCompat
+import com.qualityverifier.domain.VerdictLevel
 
 private val Timber = Color(0xFF6B4A2F)
 private val TimberLight = Color(0xFF8A6444)
@@ -94,6 +95,39 @@ private val DarkColors = darkColorScheme(
 )
 
 /**
+ * Verdict badge colours, one pair per level.
+ *
+ * Deliberately outside the Material colour scheme: these do not mean "primary" or
+ * "error", they mean sound, fair and serious concerns, and a reader has to be able to
+ * tell them apart at a glance in daylight without reading the label. Only three, and
+ * never used for anything else, so the association stays learnable.
+ */
+data class VerdictColors(val container: Color, val onContainer: Color)
+
+object VerdictPalette {
+    val sound = VerdictColors(Color(0xFFD6E8CE), Color(0xFF1F3D14))
+    val fair = VerdictColors(Color(0xFFF7E3B8), Color(0xFF4A3305))
+    val serious = VerdictColors(Color(0xFFF6D6D2), Color(0xFF5B1410))
+    val unknown = VerdictColors(Color(0xFFE4DACD), Color(0xFF4E4237))
+
+    val soundDark = VerdictColors(Color(0xFF2E4222), Color(0xFFD6E8CE))
+    val fairDark = VerdictColors(Color(0xFF4B3A14), Color(0xFFF7E3B8))
+    val seriousDark = VerdictColors(Color(0xFF5A2320), Color(0xFFF6D6D2))
+    val unknownDark = VerdictColors(Color(0xFF3B322B), Color(0xFFD3C5B4))
+}
+
+@Composable
+fun verdictColors(level: VerdictLevel): VerdictColors {
+    val dark = isSystemInDarkTheme()
+    return when (level) {
+        VerdictLevel.SOUND -> if (dark) VerdictPalette.soundDark else VerdictPalette.sound
+        VerdictLevel.FAIR -> if (dark) VerdictPalette.fairDark else VerdictPalette.fair
+        VerdictLevel.SERIOUS -> if (dark) VerdictPalette.seriousDark else VerdictPalette.serious
+        VerdictLevel.UNKNOWN -> if (dark) VerdictPalette.unknownDark else VerdictPalette.unknown
+    }
+}
+
+/**
  * Type is a step larger than Material defaults throughout. The app is used outdoors,
  * on small phones, by people with varying literacy — legibility beats density.
  */
@@ -105,6 +139,14 @@ private val AppTypography = Typography().let { base ->
         bodyLarge = base.bodyLarge.copy(fontSize = 18.sp, lineHeight = 26.sp),
         bodyMedium = base.bodyMedium.copy(fontSize = 16.sp, lineHeight = 24.sp),
         labelLarge = base.labelLarge.copy(fontSize = 18.sp, fontWeight = FontWeight.SemiBold),
+        // The wordmark. Weight and letterspacing rather than a bundled typeface: the
+        // mockup's Bricolage and IBM Plex pairing would cost either a font download at
+        // first launch or a few hundred KB of APK, and buys nothing usable in a shed.
+        displaySmall = base.displaySmall.copy(
+            fontSize = 34.sp,
+            fontWeight = FontWeight.ExtraBold,
+            letterSpacing = (-0.5).sp,
+        ),
     )
 }
 

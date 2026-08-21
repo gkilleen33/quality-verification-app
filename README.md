@@ -1,12 +1,40 @@
-# Quality Verifier
+# Kagua
+
+*Jua kabla ya kununua — know before you buy.*
 
 Android app for furniture quality verification, aimed at buyers in East Africa
-(initially Uganda and Kenya). A user photographs a piece of furniture, and Claude
-assesses joinery, finishing, symmetry, and defects.
+(initially Uganda and Kenya). The app walks a buyer through photographing and
+physically testing a piece of furniture, then Claude gives a verdict they can act on
+before money changes hands.
+
+The Kotlin package stays `com.qualityverifier`, so the repository, the prompt URLs and
+the CI secrets are unaffected by the name.
 
 This is **Phase 1: serverless**. The app calls the Anthropic API directly with a key
 the user enters once, fetches prompts from this repo over raw GitHub URLs, and keeps
 history in a local Room database. There is no backend and no login.
+
+## Install it on a phone
+
+**→ [Download the newest build](https://github.com/gkilleen33/quality-verification-app/releases/tag/nightly)**
+
+Open that link *on the phone*, tap the `.apk` under **Assets**, and confirm the install.
+Android asks permission to install from your browser the first time — allow it for
+whichever browser you used, then tap the downloaded file again.
+
+On first launch the app asks for an Anthropic API key. It is stored encrypted on the
+device and is never sent anywhere but `api.anthropic.com`.
+
+Every merge to `main` refreshes that `nightly` build, so the link above always points at
+the newest code. Tagged versions are on the
+[releases page](https://github.com/gkilleen33/quality-verification-app/releases).
+
+Do not use `/releases/latest` — GitHub never counts a prerelease as "latest", so it skips
+`nightly` and lands on whatever was tagged last, or on the release list if nothing has
+been. The `tag/nightly` link above is the one that always resolves to the newest build.
+
+Builds published this way are signed with the persistent upload key, so a new one
+installs over an older one without uninstalling first.
 
 ## Build
 
@@ -99,16 +127,125 @@ The item selection grid looks up a drawable by name at runtime and falls back to
 neutral placeholder when none exists. To add real photos, drop files into
 `app/src/main/res/drawable/` using these exact names — no code change needed:
 
-| Item type          | Drawable name              |
-| ------------------ | -------------------------- |
-| Wooden Table       | `item_wooden_table`        |
-| Wooden Chair       | `item_wooden_chair`        |
-| Wooden Bed         | `item_wooden_bed`          |
-| Upholstered Chair  | `item_upholstered_chair`   |
-| Upholstered Sofa   | `item_upholstered_sofa`    |
-| Other              | `item_other`               |
+| Item type           | Drawable name              |
+| ------------------- | -------------------------- |
+| Table               | `item_wooden_table`        |
+| Wooden chair        | `item_wooden_chair`        |
+| Stool or bench      | `item_wooden_stool`        |
+| Bed                 | `item_wooden_bed`          |
+| Cabinet or wardrobe | `item_wooden_cabinet`      |
+| Sofa                | `item_upholstered_sofa`    |
+| Padded chair        | `item_upholstered_chair`   |
+| Something else      | `item_other`               |
 
 Any drawable extension works (`.jpg`, `.png`, `.webp`). Cards crop to 4:3.
+
+## The assessment
+
+Every category has its own protocol under `prompts/items/`, and `prompts/master.txt`
+drives the sequence they all share:
+
+1. **Context** — buying or already own it, price quoted, intended use. The same loose
+   joint matters far more on a stool used daily in a kitchen than on a chair guests sit
+   in twice a year.
+2. **Depth** — a full assessment, or a rapid one. Full is recommended and is a guided
+   photo plan plus hands-on tests. Rapid is two wide photos, for triaging several pieces
+   in one shop, and says plainly that it is likelier to miss something.
+3. **Photos** — one shot at a time, with the framing described in words.
+4. **Hands-on tests** — racking, bottle-top roll, sighting along a surface, fingernail
+   press, drawer pull, foam press. The buyer's hands are the instrument.
+5. **Verdict** — sound, fair, or serious concerns, as cards.
+6. **Follow-up** — questions grounded in what was actually seen.
+
+Two rules the prompts hold to, both covered by tests in
+[`DefaultPromptsInSyncTest`](app/src/test/java/com/qualityverifier/prompts/DefaultPromptsInSyncTest.kt):
+
+- **No money.** No shilling figures, no typical price ranges, no repair-cost estimates.
+  There is no price data behind them, and a wrong number quoted back to a seller in a
+  negotiation is worse than no number.
+- **Mirror the language.** Swahili in, Swahili out; mixed in, mixed out.
+
+Swahili category labels are shown only where a term could be sourced. `ItemType`
+deliberately leaves the two upholstered ones English-only rather than guessing — a wrong
+word in the user's own language costs more trust than a missing one.
+
+### Language of the report
+
+The verdict cards, the reports badges and the share message take their wording from
+[`ReportLabels`](app/src/main/java/com/qualityverifier/text/ReportLabels.kt), keyed on
+**the language of the assessment rather than the language of the phone**. The assistant
+mirrors whatever the customer writes, so a Swahili conversation on a handset set to
+English was putting Swahili findings under English headings, which reads as a
+half-finished app. The verdict therefore declares its own `language`, and the reports
+row stores it alongside the verdict level.
+
+**The Swahili in that file is unreviewed.** It needs a native speaker before any pilot,
+and the three verdict levels need it most: a verdict is a judgement somebody acts on in
+front of the person who built the furniture, and the tone of the word carries as much as
+its meaning. The design brief lists this as an open question, and this is the file to fix
+when it is answered. Treat it as better than English, not as finished copy.
+
+The rest of the app's chrome — home, reports and profile — is still English only, driven
+by nothing. Full localisation of those is a separate piece of work.
+
+## Blocks the app parses out of a reply
+
+Two fenced blocks in an assistant message are addressed to the app rather than the
+reader, and are stripped from the bubble by
+[`AssistantBlocks.kt`](app/src/main/java/com/qualityverifier/text/AssistantBlocks.kt):
+
+````
+```qv-options
+Solid, no movement
+A little give, corner to corner
+Rocks clearly at the joints
+```
+````
+
+becomes tappable reply chips, and
+
+````
+```qv-verdict
+{ "verdict": "fair", "headline": "...", "defects": [ ... ] }
+```
+````
+
+becomes the verdict cards.
+
+They travel inside the message text rather than through a tool call or a second request.
+That keeps `ChatService` returning plain text, so the Phase 2 swap stays a one-file
+change, and keeps the whole assessment in a single cached prefix instead of paying for a
+second system prompt.
+
+The prompt writes the verdict twice — prose, then the block — and the app shows whichever
+survived. It costs a few hundred output tokens and buys a readable answer for somebody
+standing in a shop when a parse fails, which is the worst possible moment to show
+nothing. A `qv-verdict` block that will not parse is dropped rather than printed, so raw
+JSON never reaches the bubble.
+
+Renaming a tag in the prompt without renaming it in `AssistantBlocks` would silently stop
+the cards and chips from ever appearing, with no error anywhere. A test asserts both tags
+are still documented in the master prompt.
+
+## Capture
+
+Photos are taken in-app with CameraX rather than by handing off to the system camera,
+because the shot instruction has to sit on top of the live preview. In a shop the user is
+holding the phone in one hand, is being watched by the person who built the furniture, and
+has been told to frame something specific; a camera app that has forgotten the
+instruction means they come back with the wrong photo.
+
+The instruction shown is the assistant's last message, because the protocol asks for
+exactly one photo at a time — no extra prompt machinery, nothing to drift out of sync.
+
+Each capture is measured on-device for blur (variance of the Laplacian) and darkness
+(mean luma) before being attached. The check is advisory: a photo it dislikes is held up
+with an explanation and a "use it anyway", and a photo it cannot measure is attached
+without comment. Both thresholds in
+[`ImageQuality.kt`](app/src/main/java/com/qualityverifier/images/ImageQuality.kt) are
+engineering judgement, not measurement — they have not been calibrated against real
+photos from real workshops, which is why they sit low enough to fire only on obvious
+cases.
 
 ## Architecture
 
@@ -232,7 +369,8 @@ which matters on metered mobile data. Rotation is applied for accuracy too: Clau
 cannot judge whether a table is level from a sideways photo.
 
 Deleting a session deletes its photos. Photos attached to a conversation that was never
-sent are cleaned up on the next visit to the home screen.
+sent are cleaned up on the next launch, from the home screen, which is the one
+destination guaranteed to be reached.
 
 ## Getting a build onto a phone
 
@@ -252,14 +390,9 @@ Or rebuild the rolling `nightly` on demand from **Actions → Build APK → Run 
 without waiting for a merge. Tagging leaves `nightly` untouched, so a permanent release and
 the rolling build never overwrite each other.
 
-Then on the phone, open the release page and tap the `.apk`:
-
-```
-https://github.com/gkilleen33/quality-verification-app/releases/latest
-```
-
-Android will ask permission to install from your browser the first time — allow it for
-Chrome (or whichever browser you used), then tap the downloaded file again.
+Then on the phone, open the release page and tap the `.apk` — see
+[Install it on a phone](#install-it-on-a-phone) above for the link and the
+first-run permission prompt.
 
 **Merging a PR into `main` refreshes the `nightly` build automatically**, so the latest
 merged state is always downloadable without doing anything.
@@ -271,9 +404,8 @@ A warm publish run takes a couple of minutes; the ten-minute figure was a cold G
 cache on a branch that had never built before. Since the build now happens on merge, it
 runs without you waiting on it — the APK is on the releases page by the time you look.
 
-Published builds are **release builds signed with the persistent upload key**, so a new
-one installs over an older one without uninstalling. Pull request builds stay on debug —
-a PR from a fork cannot read secrets, and the signature is irrelevant for review.
+Pull request builds stay on debug — a PR from a fork cannot read secrets, and the
+signature is irrelevant for review.
 
 ### Signing setup (once)
 
@@ -297,14 +429,16 @@ password prompt.** Modern keytool writes PKCS12, which does not support a key pa
 that differs from the store password and silently ignores one if you give it. That is why
 `KEY_PASSWORD` and `KEYSTORE_PASSWORD` below hold the same value.
 
-Then load the four secrets. Run from the repo root so `gh` picks the right repository:
+Then load the three secrets. Run from the repo root so `gh` picks the right repository:
+
+The alias is not one of them: `upload` is the default in `app/build.gradle.kts`, and it
+lives inside the keystore anyway. Holding it as a secret was actively harmful — GitHub
+redacts every occurrence of a secret's value in logs, so the word "upload" came back as
+`***` in unrelated places. Override it with `QV_KEY_ALIAS` or a `keyAlias` line in
+`keystore.properties` if your keystore uses something else.
 
 ```bash
 base64 -i ~/keys/quality-verifier-upload.jks | gh secret set KEYSTORE_BASE64
-```
-
-```bash
-gh secret set KEY_ALIAS --body upload
 ```
 
 ```bash
@@ -336,7 +470,6 @@ To build a signed release locally, create `keystore.properties` in the repo root
 ```properties
 storeFile=/Users/you/keys/quality-verifier-upload.jks
 storePassword=...
-keyAlias=upload
 keyPassword=...
 ```
 

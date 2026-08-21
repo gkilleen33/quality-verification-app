@@ -7,6 +7,8 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -27,11 +29,13 @@ import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.PhotoCamera
 import androidx.compose.material.icons.filled.PhotoLibrary
+import androidx.compose.material.icons.filled.Share
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.AssistChip
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
@@ -59,10 +63,15 @@ import com.qualityverifier.data.chat.ChatErrorKind
 import com.qualityverifier.domain.ChatMessage
 import com.qualityverifier.domain.ItemType
 import com.qualityverifier.domain.Role
+import com.qualityverifier.text.AssistantContent
+import com.qualityverifier.ui.capture.CaptureScreen
+import com.qualityverifier.ui.capture.captureInstruction
+import com.qualityverifier.text.parseAssistantContent
 import com.qualityverifier.ui.appContainer
+import com.qualityverifier.ui.rememberReportLabels
 import java.io.File
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
 fun ChatScreen(
     sessionId: String,
@@ -83,35 +92,36 @@ fun ChatScreen(
     val error by viewModel.error.collectAsState()
     val notice by viewModel.notice.collectAsState()
     val resolvedItemType by viewModel.itemType.collectAsState()
+    val review by viewModel.review.collectAsState()
 
     var draft by remember { mutableStateOf("") }
-    var captureTarget by remember { mutableStateOf<File?>(null) }
+    var capturing by remember { mutableStateOf(false) }
     val listState = rememberLazyListState()
 
-    val takePicture = rememberLauncherForActivityResult(
-        ActivityResultContracts.TakePicture()
-    ) { success ->
-        captureTarget?.let { viewModel.onCaptureResult(it, success) }
-        captureTarget = null
+    // Parsing is keyed on the message list so it happens once per new turn rather than
+    // on every recomposition — a long assessment is a lot of text to re-scan while the
+    // user is typing.
+    val parsed = remember(messages) {
+        messages.associate { it.id to parseAssistantContent(it.text) }
     }
-
-    fun launchCamera() {
-        val prepared = viewModel.prepareCapture(context) ?: return
-        captureTarget = prepared.second
-        // A device with no camera app would otherwise throw ActivityNotFoundException
-        // and take the whole app down.
-        val launched = runCatching { takePicture.launch(prepared.first) }.isSuccess
-        if (!launched) {
-            captureTarget = null
-            viewModel.onCaptureResult(prepared.second, success = false)
-        }
+    val lastAssistant = messages.lastOrNull()?.takeIf { it.role == Role.ASSISTANT }
+    val replyOptions = if (sending) emptyList() else {
+        parsed[lastAssistant?.id]?.options.orEmpty()
     }
+    // The most recent verdict is the one worth sharing: a later one supersedes an
+    // earlier one in the same conversation.
+    val shareable = messages.asReversed().firstNotNullOfOrNull { message ->
+        parsed[message.id]?.verdict?.let { message to it }
+    }
+    // Resolved here rather than in the click handler, so it reads the device language
+    // in composable scope.
+    val shareLabels = rememberReportLabels(shareable?.second?.language)
 
     val requestCameraPermission = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
     ) { granted ->
         if (granted) {
-            launchCamera()
+            capturing = true
         } else {
             // Without this the camera button just does nothing, which reads as a broken
             // app. Also covers the permanently-denied case, where the system dialog
@@ -127,18 +137,68 @@ fun ChatScreen(
         ActivityResultContracts.PickMultipleVisualMedia(MAX_IMAGES_PER_PICK)
     ) { uris -> viewModel.onGalleryPicked(uris) }
 
+    // One shot, then back to the conversation: the protocol asks for the next photo
+    // only after looking at this one, so staying in the camera would be misleading.
+    LaunchedEffect(pending.size) {
+        if (capturing && review == null && pending.isNotEmpty()) capturing = false
+    }
+
     // Keep the newest turn in view as the conversation grows.
     LaunchedEffect(messages.size, sending) {
         if (messages.isNotEmpty()) listState.animateScrollToItem(messages.lastIndex)
     }
 
+    if (capturing) {
+        CaptureScreen(
+            // The assistant asks for one photo at a time, so its last message is the
+            // shot instruction. Nothing to keep in sync.
+            instruction = captureInstruction(parsed[lastAssistant?.id]?.displayProse),
+            reviewPhotoPath = review?.path,
+            warning = review?.warning,
+            createFile = viewModel::newCaptureFile,
+            onCaptured = viewModel::onPhotoCaptured,
+            onKeep = {
+                viewModel.keepReviewedPhoto()
+                capturing = false
+            },
+            onRetake = viewModel::discardReviewedPhoto,
+            onClose = {
+                // Leaving with a photo still under review discards it: it was never
+                // attached, and keeping it would mean an unexplained thumbnail appearing
+                // in the composer.
+                viewModel.discardReviewedPhoto()
+                capturing = false
+            },
+        )
+        return
+    }
+
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text(resolvedItemType?.displayName ?: "Quality check") },
+                title = { Text(resolvedItemType?.displayName ?: "Assessment") },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+                    }
+                },
+                actions = {
+                    // Only offered once there is a verdict: sharing a half-finished
+                    // walkthrough would send somebody a report that says nothing.
+                    if (shareable != null) {
+                        IconButton(
+                            onClick = {
+                                shareReport(
+                                    context = context,
+                                    itemType = resolvedItemType ?: ItemType.OTHER,
+                                    verdict = shareable.second,
+                                    at = shareable.first.createdAt,
+                                    labels = shareLabels,
+                                )
+                            },
+                        ) {
+                            Icon(Icons.Filled.Share, contentDescription = "Share this report")
+                        }
                     }
                 },
             )
@@ -168,7 +228,13 @@ fun ChatScreen(
                         contentPadding = androidx.compose.foundation.layout.PaddingValues(16.dp),
                         verticalArrangement = Arrangement.spacedBy(12.dp),
                     ) {
-                        items(messages, key = { it.id }) { message -> MessageBubble(message) }
+                        items(messages, key = { it.id }) { message ->
+                            MessageBubble(
+                                message = message,
+                                content = parsed[message.id],
+                                onAskQuestion = { question -> viewModel.send(question) },
+                            )
+                        }
                     }
                 }
             }
@@ -192,6 +258,29 @@ fun ChatScreen(
             error?.let { chatError -> ErrorRow(chatError, viewModel, onOpenSettings) }
 
             notice?.let { message -> NoticeRow(message, onDismiss = viewModel::dismissNotice) }
+
+            if (replyOptions.isNotEmpty()) {
+                // The question is in the message too, so these are a shortcut rather
+                // than the only way to answer — typing something else still works.
+                //
+                // Wrapping rather than scrolling horizontally: on the emulator a row of
+                // three Swahili options ran off the screen edge with no hint that
+                // anything was there, so a third of the answers were invisible.
+                FlowRow(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 4.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(4.dp),
+                ) {
+                    replyOptions.forEach { option ->
+                        AssistChip(
+                            onClick = { viewModel.send(option) },
+                            label = { Text(option) },
+                        )
+                    }
+                }
+            }
 
             if (pending.isNotEmpty()) {
                 LazyRow(
@@ -241,7 +330,7 @@ fun ChatScreen(
                                 context,
                                 Manifest.permission.CAMERA,
                             ) == PackageManager.PERMISSION_GRANTED
-                            if (granted) launchCamera() else {
+                            if (granted) capturing = true else {
                                 requestCameraPermission.launch(Manifest.permission.CAMERA)
                             }
                         },
@@ -331,7 +420,11 @@ private fun NoticeRow(message: String, onDismiss: () -> Unit) {
 }
 
 @Composable
-private fun MessageBubble(message: ChatMessage) {
+private fun MessageBubble(
+    message: ChatMessage,
+    content: AssistantContent?,
+    onAskQuestion: (String) -> Unit,
+) {
     val fromUser = message.role == Role.USER
     Column(
         modifier = Modifier.fillMaxWidth(),
@@ -352,7 +445,21 @@ private fun MessageBubble(message: ChatMessage) {
             }
             Spacer(Modifier.height(6.dp))
         }
-        if (message.text.isNotBlank()) {
+        // An assistant turn is shown as the verdict cards when it carries one, and as a
+        // bubble otherwise. The prose duplicate the prompt also produced is only used
+        // when the structured block failed to parse — see AssistantContent.
+        val verdict = if (fromUser) null else content?.verdict
+        if (verdict != null) {
+            VerdictCards(
+                verdict = verdict,
+                onAskQuestion = onAskQuestion,
+                modifier = Modifier.fillMaxWidth(),
+            )
+            return@Column
+        }
+
+        val body = if (fromUser) message.text else content?.displayProse ?: message.text
+        if (body.isNotBlank()) {
             Surface(
                 color = if (fromUser) {
                     MaterialTheme.colorScheme.primaryContainer
@@ -365,13 +472,13 @@ private fun MessageBubble(message: ChatMessage) {
             ) {
                 if (fromUser) {
                     Text(
-                        message.text,
+                        body,
                         style = MaterialTheme.typography.bodyLarge,
                         modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
                     )
                 } else {
                     MarkdownText(
-                        text = message.text,
+                        text = body,
                         style = MaterialTheme.typography.bodyLarge,
                         modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
                     )
