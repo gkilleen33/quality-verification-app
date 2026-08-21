@@ -208,6 +208,63 @@ class AssistantBlocksTest {
         assertEquals(VerdictLevel.FAIR, content.verdict!!.level)
     }
 
+    @Test
+    fun `a plan shows only its opening paragraph, not the plan a second time`() {
+        // The assistant writes an acknowledgement and then, left to itself, lists every
+        // shot in prose as well. The card draws that list directly underneath, so showing
+        // both put the whole plan on screen twice and buried the start-camera button.
+        val content = parseAssistantContent(
+            """
+            Got it, a table for daily use. I'll look hardest at the leg joints.
+
+            Here's what I need: seven photos and four checks.
+
+            1. Whole table, one corner.
+            2. Top from directly above.
+
+            ```qv-plan
+            {"photos":[{"title":"Whole table"},{"title":"Top from above"}]}
+            ```
+            """.trimIndent(),
+        )
+        assertEquals(2, content.plan!!.photos.size)
+        assertEquals(
+            "Got it, a table for daily use. I'll look hardest at the leg joints.",
+            content.displayProse,
+        )
+        // The full prose is still there for anything that needs it.
+        assertTrue(content.prose.contains("Whole table, one corner"))
+    }
+
+    @Test
+    fun `a plan with a single paragraph of prose keeps all of it`() {
+        val content = parseAssistantContent(
+            "Right, let's look at the joints.\n```qv-plan\n{\"photos\":[{\"title\":\"A\"}]}\n```",
+        )
+        assertEquals("Right, let's look at the joints.", content.displayProse)
+    }
+
+    @Test
+    fun `prose is untouched when the plan block failed to parse`() {
+        // The fallback has to stay whole: if the card is not going to appear, the prose
+        // list is the only thing telling the customer what to photograph.
+        val content = parseAssistantContent(
+            """
+            Here is the plan.
+
+            1. Whole table.
+            2. Underside.
+
+            ```qv-plan
+            { not json
+            ```
+            """.trimIndent(),
+        )
+        assertNull(content.plan)
+        assertTrue(content.displayProse.contains("1. Whole table."))
+        assertTrue(content.displayProse.contains("2. Underside."))
+    }
+
     private companion object {
         val PLAN_MESSAGE = """
             Here is the plan. I will guide each shot.

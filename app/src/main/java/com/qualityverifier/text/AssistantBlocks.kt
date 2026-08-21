@@ -22,8 +22,25 @@ data class AssistantContent(
     val verdict: Verdict? = null,
     val plan: AssessmentPlan? = null,
 ) {
-    /** What to put in the message bubble. Empty when the verdict cards say it already. */
-    val displayProse: String get() = if (verdict != null) "" else prose
+    /**
+     * What to put in the message bubble.
+     *
+     * Empty for a verdict, whose cards say all of it already. For a plan, only the first
+     * paragraph: the plan card draws the shots and tests immediately below, so anything
+     * after that opening acknowledgement is the same plan a second time. Left whole it
+     * buried the start-camera button under a numbered list of every shot, which read as
+     * the assistant asking for photos one at a time — exactly the behaviour the plan
+     * exists to replace.
+     *
+     * The prompt also asks for one short paragraph, but that is a request; this is the
+     * guarantee.
+     */
+    val displayProse: String
+        get() = when {
+            verdict != null -> ""
+            plan != null -> prose.substringBefore("\n\n").trim()
+            else -> prose
+        }
 }
 
 private const val FENCE = "```"

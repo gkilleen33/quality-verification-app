@@ -111,6 +111,18 @@ class DefaultPromptsInSyncTest {
     }
 
     @Test
+    fun `the plan is not asked for in prose as well as in the block`() {
+        // Listing the shots in both places put the whole plan on screen twice and buried
+        // the start-camera button under it, which read as the assistant asking for photos
+        // one at a time -- the exact behaviour the plan block exists to replace.
+        val master = DefaultPrompts.MASTER
+        assertTrue(
+            "the prompt no longer forbids listing the shots in the prose",
+            master.contains("Do not list the shots or the tests in that paragraph"),
+        )
+    }
+
+    @Test
     fun `only diagrams the app can draw are offered to the prompt`() {
         // The drawings ship in the APK while the prompts do not, so the prompt must
         // name only what this build has. A name it invents draws nothing, silently.

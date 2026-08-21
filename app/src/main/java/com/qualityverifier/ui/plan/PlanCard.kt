@@ -40,11 +40,8 @@ import java.io.File
 fun PlanCard(
     run: PlanRun,
     labels: ReportLabels,
-    onStartCamera: () -> Unit,
-    onStartTests: () -> Unit,
     onRetakeShot: (Int) -> Unit,
     onChangeAnswer: (Int) -> Unit,
-    onSubmit: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     Card(modifier.fillMaxWidth()) {
@@ -90,19 +87,41 @@ fun PlanCard(
                 }
             }
 
-            Spacer(Modifier.height(16.dp))
-            val (label, action) = when {
-                !run.photosDone -> labels.startCamera to onStartCamera
-                run.nextTest != null -> labels.continueToTests to onStartTests
-                else -> labels.sendForInspection to onSubmit
-            }
-            Button(
-                onClick = action,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(58.dp),
-            ) { Text(label) }
         }
+    }
+}
+
+/**
+ * The one thing to do next, pinned above the composer rather than sitting at the foot of
+ * the card.
+ *
+ * A seven-shot plan with four tests is taller than the screen, so in the card the button
+ * that starts the camera was below the fold — on the screen whose entire purpose is to
+ * start the camera. Pinned, the next action is always one tap away, including on the way
+ * back through for a retake.
+ */
+@Composable
+fun PlanActionBar(
+    run: PlanRun,
+    labels: ReportLabels,
+    onStartCamera: () -> Unit,
+    onStartTests: () -> Unit,
+    onSubmit: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val (label, action) = when {
+        !run.photosDone -> labels.startCamera to onStartCamera
+        run.nextTest != null -> labels.continueToTests to onStartTests
+        else -> labels.sendForInspection to onSubmit
+    }
+    Surface(tonalElevation = 3.dp, modifier = modifier.fillMaxWidth()) {
+        Button(
+            onClick = action,
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 10.dp)
+                .height(58.dp),
+        ) { Text(label) }
     }
 }
 

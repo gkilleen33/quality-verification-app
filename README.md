@@ -282,6 +282,16 @@ That keeps `ChatService` returning plain text, so the Phase 2 swap stays a one-f
 change, and keeps the whole assessment in a single cached prefix instead of paying for a
 second system prompt.
 
+A plan is treated the same way but not identically: its prose opening is the assistant
+acknowledging what it was told, which is worth keeping, so only the **first paragraph**
+survives when the block parses. Left whole, the assistant listed all seven shots in prose
+as well, the card drew the same list directly underneath, and the button that starts the
+camera ended up below the fold on the screen whose entire purpose is to start the camera.
+The prompt now asks for one short paragraph; the parser guarantees it.
+
+For the same reason the plan's next action is pinned above the composer rather than sitting
+at the foot of the card, which a seven-shot plan pushes off-screen.
+
 The prompt writes the verdict twice — prose, then the block — and the app shows whichever
 survived. It costs a few hundred output tokens and buys a readable answer for somebody
 standing in a shop when a parse fails, which is the worst possible moment to show
