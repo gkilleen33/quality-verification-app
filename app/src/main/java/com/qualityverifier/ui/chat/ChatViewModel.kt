@@ -12,12 +12,14 @@ import com.qualityverifier.data.chat.ChatService
 import com.qualityverifier.data.db.SessionImageStore
 import com.qualityverifier.data.session.SessionRepository
 import com.qualityverifier.di.AppContainer
+import com.qualityverifier.domain.AssessmentContext
 import com.qualityverifier.domain.AssessmentPlan
 import com.qualityverifier.domain.Attachment
 import com.qualityverifier.domain.ChatMessage
 import com.qualityverifier.domain.ItemType
 import com.qualityverifier.domain.Role
 import com.qualityverifier.text.ReportLabels
+import com.qualityverifier.text.buildIntakeMessage
 import com.qualityverifier.text.buildSubmissionText
 import com.qualityverifier.text.parseAssistantContent
 import kotlinx.coroutines.CoroutineDispatcher
@@ -133,13 +135,23 @@ class ChatViewModel(
     /** Plans already collected against, so a run is never offered twice. */
     private val fulfilled = mutableSetOf<String>()
 
+    /**
+     * True when this conversation has not started yet, so the app should ask its own
+     * questions before sending anything.
+     *
+     * Read once from the database rather than derived from [messages], which starts empty
+     * and would flash the intake over an existing conversation for a frame.
+     */
+    private val _needsIntake = MutableStateFlow(false)
+    val needsIntake: StateFlow<Boolean> = _needsIntake.asStateFlow()
+
     init {
         viewModelScope.launch {
             if (declaredItemType == null) {
                 // Reopened from history: the item type lives in the session row.
                 _itemType.value = sessions.itemTypeOf(sessionId)
             }
-            openConversationIfEmpty()
+            _needsIntake.value = sessions.messagesOnce(sessionId).isEmpty()
         }
         // A plan in the newest assistant turn opens a run. Watching the message list
         // rather than the send path means a conversation reopened from history picks up
@@ -156,26 +168,34 @@ class ChatViewModel(
     }
 
     /**
-     * Asks the assistant to open the conversation, so the walkthrough starts as soon as
-     * the screen appears rather than waiting for the user to type something first.
+     * Starts the conversation from what the app collected, in one request.
      *
-     * Keyed on the conversation being empty, not on the session being new: a session
-     * whose opening request failed has a row but no messages, and reopening it should
-     * try again rather than leave the user staring at an empty screen with no way in.
+     * This replaces the old behaviour of firing a request the moment the screen opened.
+     * That was there to solve a real problem — the walkthrough used to begin only once
+     * the customer typed something, because the API requires the first turn to be theirs
+     * — but it solved it by making the first thing anybody saw a spinner, and then spent
+     * three more round trips on questions no model was needed for. The intake keeps the
+     * fix and drops the waiting: the customer's first turn is their own answers.
      */
-    private suspend fun openConversationIfEmpty() {
+    fun submitIntake(context: AssessmentContext, labels: ReportLabels) {
         if (_sending.value) return
-        if (sessions.messagesOnce(sessionId).isNotEmpty()) return
+        _needsIntake.value = false
 
-        val type = _itemType.value ?: ItemType.OTHER
-        _sending.value = true
-        try {
-            if (!sessions.sessionExists(sessionId)) {
-                sessions.createSession(sessionId, type)
+        viewModelScope.launch {
+            _error.value = null
+            _sending.value = true
+            try {
+                val type = _itemType.value ?: ItemType.OTHER
+                if (!sessions.sessionExists(sessionId)) sessions.createSession(sessionId, type)
+                sessions.appendUserMessage(
+                    sessionId = sessionId,
+                    text = buildIntakeMessage(context, labels),
+                    attachments = emptyList(),
+                )
+                deliver(type)
+            } finally {
+                _sending.value = false
             }
-            deliver(type)
-        } finally {
-            _sending.value = false
         }
     }
 

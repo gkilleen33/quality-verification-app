@@ -144,10 +144,55 @@ class DefaultPromptsInSyncTest {
     }
 
     @Test
-    fun `the master prompt mirrors the user's language`() {
+    fun `the language is taken from the customer's choice, not guessed`() {
+        // Left to inference the assistant picked a language from the item name and then
+        // would not switch when written to in the other one. The app asks outright now,
+        // and the prompt has to honour that rather than re-deriving it.
+        val master = DefaultPrompts.MASTER
         assertTrue(
-            "language mirroring is gone, so every reply comes back in English",
-            DefaultPrompts.MASTER.contains("Reply in whatever language the customer writes in"),
+            "the prompt no longer takes the language from the opening message",
+            master.contains("first message tells you which language to answer in"),
+        )
+        assertTrue(
+            "the prompt no longer follows a mid-conversation language switch",
+            master.contains("If they later write to you in a different language"),
+        )
+    }
+
+    @Test
+    fun `the context questions are not asked again over the network`() {
+        // The app collects ownership, price, usage and language on the phone before any
+        // request is made. If the prompt starts asking for them too, every assessment
+        // pays for three round trips it does not need, and the customer is asked things
+        // they have already answered.
+        val master = DefaultPrompts.MASTER
+        assertTrue(
+            "Stage 1 no longer says the context is normally collected",
+            master.contains("Normally collected already"),
+        )
+        assertTrue(
+            "the prompt no longer forbids re-asking what it was told",
+            master.contains("Do not ask again for anything that message tells you"),
+        )
+        assertTrue(
+            "the depth is no longer expected in the opening message",
+            master.contains("Stage 2, the depth. Normally chosen already"),
+        )
+    }
+
+    @Test
+    fun `the assistant takes over when the intake was abandoned`() {
+        // The app's questions are buttons, and somebody whose answer is not one of them
+        // hands the conversation over. If the prompt does not know that can happen, it
+        // either ignores a half-answered context or barrels on to a plan it cannot make.
+        val master = DefaultPrompts.MASTER
+        assertTrue(
+            "the prompt does not expect a partial context",
+            master.contains("Sometimes it will not tell you everything"),
+        )
+        assertTrue(
+            "the prompt does not know to ask only for what is missing",
+            master.contains("ask only for what is missing"),
         )
     }
 

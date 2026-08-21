@@ -68,7 +68,9 @@ import com.qualityverifier.ui.capture.CaptureScreen
 import com.qualityverifier.ui.capture.captureInstruction
 import com.qualityverifier.ui.plan.InspectingScreen
 import com.qualityverifier.ui.plan.PhysicalTestsScreen
+import com.qualityverifier.ui.intake.IntakeScreen
 import com.qualityverifier.ui.plan.PlanCard
+import com.qualityverifier.text.ReportLabels
 import com.qualityverifier.text.parseAssistantContent
 import com.qualityverifier.ui.appContainer
 import com.qualityverifier.ui.rememberReportLabels
@@ -99,6 +101,7 @@ fun ChatScreen(
     val run by viewModel.run.collectAsState()
     val submitting by viewModel.submitting.collectAsState()
     val submittedRun by viewModel.submittedRun.collectAsState()
+    val needsIntake by viewModel.needsIntake.collectAsState()
 
     var draft by remember { mutableStateOf("") }
     var capturing by remember { mutableStateOf(false) }
@@ -160,6 +163,20 @@ fun ChatScreen(
 
     // Inspecting comes first: once submitted there is nothing else worth showing, and
     // the run has already been cleared from the view model.
+    if (needsIntake) {
+        IntakeScreen(
+            itemType = resolvedItemType ?: ItemType.OTHER,
+            onComplete = { context ->
+                viewModel.submitIntake(
+                    context = context,
+                    labels = ReportLabels.forLanguage(context.language?.code),
+                )
+            },
+            onBack = onBack,
+        )
+        return
+    }
+
     submittedRun?.takeIf { submitting }?.let { inFlight ->
         InspectingScreen(inFlight, rememberReportLabels(inFlight.plan.language))
         return
@@ -277,7 +294,7 @@ fun ChatScreen(
             Box(Modifier.weight(1f)) {
                 if (messages.isEmpty() && !sending) {
                     Text(
-                        "Take a photo of the furniture, or describe it, and I'll check the quality.",
+                        "Starting the assessment…",
                         style = MaterialTheme.typography.bodyLarge,
                         textAlign = TextAlign.Center,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
