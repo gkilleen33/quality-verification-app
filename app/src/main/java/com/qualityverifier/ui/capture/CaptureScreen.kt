@@ -8,6 +8,7 @@ import androidx.camera.core.Preview
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.view.PreviewView
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -16,14 +17,11 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.systemBarsPadding
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.FlashOff
@@ -50,6 +48,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
@@ -203,6 +202,7 @@ private fun TopBar(
     onToggleTorch: () -> Unit,
     onClose: () -> Unit,
 ) {
+    var truncated by remember { mutableStateOf(false) }
     Column {
         Row(
             Modifier.fillMaxWidth().padding(horizontal = 4.dp),
@@ -223,24 +223,36 @@ private fun TopBar(
             }
         }
         instruction?.takeIf { it.isNotBlank() }?.let { text ->
+            var expanded by remember { mutableStateOf(false) }
             Surface(
                 color = Color.Black.copy(alpha = 0.65f),
                 contentColor = Color.White,
                 shape = RoundedCornerShape(12.dp),
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 12.dp),
+                    .padding(horizontal = 12.dp)
+                    .clickable { expanded = !expanded },
             ) {
-                Text(
-                    text = text,
-                    style = MaterialTheme.typography.bodyLarge,
-                    modifier = Modifier
-                        // Capped so the instruction never swallows the viewfinder, and
-                        // scrollable so a long one is still readable in full.
-                        .heightIn(max = 180.dp)
-                        .verticalScroll(rememberScrollState())
-                        .padding(14.dp),
-                )
+                Column(Modifier.padding(14.dp)) {
+                    // Clipped by whole lines, not by height. A fixed-height scrolling box
+                    // sliced the last line through the middle of the glyphs, which reads
+                    // as a broken screen rather than as more text below.
+                    Text(
+                        text = text,
+                        style = MaterialTheme.typography.bodyLarge,
+                        maxLines = if (expanded) EXPANDED_LINES else COLLAPSED_LINES,
+                        overflow = TextOverflow.Ellipsis,
+                        onTextLayout = { result -> truncated = result.hasVisualOverflow },
+                    )
+                    if (truncated || expanded) {
+                        Spacer(Modifier.height(6.dp))
+                        Text(
+                            text = if (expanded) "Tap to shorten" else "Tap to read it all",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = Color.White.copy(alpha = 0.75f),
+                        )
+                    }
+                }
             }
         }
     }
@@ -307,6 +319,10 @@ private fun Notice(message: String, modifier: Modifier = Modifier) {
         )
     }
 }
+
+/** Four lines leaves most of the viewfinder visible; twelve fits any single shot direction. */
+private const val COLLAPSED_LINES = 4
+private const val EXPANDED_LINES = 12
 
 /**
  * The instruction to show over the preview: the assistant's own words, flattened,

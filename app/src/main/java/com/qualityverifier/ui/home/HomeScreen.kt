@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -28,7 +29,7 @@ import androidx.compose.material.icons.filled.Bed
 import androidx.compose.material.icons.filled.Category
 import androidx.compose.material.icons.filled.Chair
 import androidx.compose.material.icons.filled.ChairAlt
-import androidx.compose.material.icons.filled.Kitchen
+import androidx.compose.material.icons.filled.DoorSliding
 import androidx.compose.material.icons.filled.TableBar
 import androidx.compose.material.icons.filled.TableRestaurant
 import androidx.compose.material.icons.filled.Weekend
@@ -48,6 +49,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.qualityverifier.R
@@ -160,7 +162,11 @@ private fun ItemCard(
     @DrawableRes imageRes: Int?,
     onClick: () -> Unit,
 ) {
-    Card(modifier = Modifier.clickable(onClick = onClick)) {
+    Card(
+        modifier = Modifier
+            .fillMaxHeight()
+            .clickable(onClick = onClick),
+    ) {
         Column(Modifier.fillMaxWidth()) {
             Box(
                 modifier = Modifier
@@ -187,6 +193,11 @@ private fun ItemCard(
                     )
                 }
             }
+            // The Swahili line is rendered whether or not it has a term, so a card
+            // without one does not sit shorter than its neighbours. Height differences
+            // from a wrapping English label are absorbed by the card filling its grid
+            // row instead — reserving a second title line here would leave a visible
+            // gap under every one-line label.
             Column(
                 Modifier
                     .fillMaxWidth()
@@ -196,19 +207,21 @@ private fun ItemCard(
                     text = itemType.displayName,
                     style = MaterialTheme.typography.titleMedium,
                     textAlign = TextAlign.Center,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.fillMaxWidth(),
                 )
-                // Shown only where a native speaker has confirmed the word — see
-                // ItemType.swahiliName.
-                itemType.swahiliName?.let { swahili ->
-                    Text(
-                        text = swahili,
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        textAlign = TextAlign.Center,
-                        modifier = Modifier.fillMaxWidth(),
-                    )
-                }
+                // Rendered even when absent, so the row keeps its height. A term is only
+                // shown where one could be sourced — see ItemType.swahiliName.
+                Text(
+                    text = itemType.swahiliName.orEmpty(),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    textAlign = TextAlign.Center,
+                    minLines = 1,
+                    maxLines = 1,
+                    modifier = Modifier.fillMaxWidth(),
+                )
             }
         }
     }
@@ -220,7 +233,7 @@ private fun ItemType.placeholderIcon(): ImageVector = when (this) {
     ItemType.WOODEN_CHAIR -> Icons.Filled.ChairAlt
     ItemType.WOODEN_STOOL -> Icons.Filled.TableBar
     ItemType.WOODEN_BED -> Icons.Filled.Bed
-    ItemType.WOODEN_CABINET -> Icons.Filled.Kitchen
+    ItemType.WOODEN_CABINET -> Icons.Filled.DoorSliding
     ItemType.UPHOLSTERED_CHAIR -> Icons.Filled.Chair
     ItemType.UPHOLSTERED_SOFA -> Icons.Filled.Weekend
     ItemType.OTHER -> Icons.Filled.Category

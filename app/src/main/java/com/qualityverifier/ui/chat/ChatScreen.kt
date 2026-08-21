@@ -7,6 +7,8 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -68,7 +70,7 @@ import com.qualityverifier.text.parseAssistantContent
 import com.qualityverifier.ui.appContainer
 import java.io.File
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
 fun ChatScreen(
     sessionId: String,
@@ -255,13 +257,18 @@ fun ChatScreen(
             if (replyOptions.isNotEmpty()) {
                 // The question is in the message too, so these are a shortcut rather
                 // than the only way to answer — typing something else still works.
-                LazyRow(
+                //
+                // Wrapping rather than scrolling horizontally: on the emulator a row of
+                // three Swahili options ran off the screen edge with no hint that
+                // anything was there, so a third of the answers were invisible.
+                FlowRow(
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(horizontal = 16.dp, vertical = 4.dp),
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(4.dp),
                 ) {
-                    items(replyOptions, key = { it }) { option ->
+                    replyOptions.forEach { option ->
                         AssistChip(
                             onClick = { viewModel.send(option) },
                             label = { Text(option) },
