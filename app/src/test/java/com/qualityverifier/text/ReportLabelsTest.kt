@@ -99,6 +99,15 @@ class ReportLabelsTest {
     }
 
     @Test
+    fun `counters substitute both numbers in either language`() {
+        assertEquals("Shot 3 of 6", ReportLabels.ENGLISH.shotOf(3, 6))
+        assertEquals("Picha 3 ya 6", ReportLabels.SWAHILI.shotOf(3, 6))
+        assertEquals("Test 1 of 2", ReportLabels.ENGLISH.testOf(1, 2))
+        assertEquals("6 of 6 photos taken", ReportLabels.ENGLISH.photosTaken(6, 6))
+        assertEquals("Picha 6 kati ya 6 zimepigwa", ReportLabels.SWAHILI.photosTaken(6, 6))
+    }
+
+    @Test
     fun `the two label sets are complete against each other`() {
         // A heading added to one language and forgotten in the other is the failure
         // this catches: it would ship a card that is half translated.
@@ -118,6 +127,21 @@ class ReportLabelsTest {
             en.shareWhatToLookAt to sw.shareWhatToLookAt,
             en.shareNotChecked to sw.shareNotChecked,
             en.shareSignOff to sw.shareSignOff,
+            en.photosHeading to sw.photosHeading,
+            en.testsHeading to sw.testsHeading,
+            en.startCamera to sw.startCamera,
+            en.continueToTests to sw.continueToTests,
+            en.sendForInspection to sw.sendForInspection,
+            en.retake to sw.retake,
+            en.inspecting to sw.inspecting,
+            en.stagePreparing to sw.stagePreparing,
+            en.stageSending to sw.stageSending,
+            en.stageExamining to sw.stageExamining,
+            en.seeVerdict to sw.seeVerdict,
+            en.submissionTestsHeading to sw.submissionTestsHeading,
+            en.notDone to sw.notDone,
+            en.cannotDoThis to sw.cannotDoThis,
+            en.inThisInspection to sw.inThisInspection,
         ).forEach { (english, swahili) ->
             assertTrue("a heading is empty", english.isNotBlank() && swahili.isNotBlank())
             assertTrue("\"$english\" was not translated", english != swahili)

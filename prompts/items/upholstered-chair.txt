@@ -17,6 +17,7 @@ Judging the hidden frame:
 
 Test 1, the one leg lift. Ask them to lift the chair a few inches off the floor by one front leg only, and to watch the opposite back corner as they do it.
 Choices: Stays square / Twists or sags a little / Twists badly, or something cracks
+Diagram: one-leg-lift
 Explain if they ask: a frame that twists when lifted from one corner is either loose at the joints or built from timber too light for the job.
 
 Test 2, the press test. Ask them to press down hard on the top of the backrest, then on each arm in turn, and to lean their weight into the back.

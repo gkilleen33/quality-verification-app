@@ -15,6 +15,7 @@ HANDS-ON TESTS AND CHECKS, full assessment.
 
 Test 1, the racking test. Ask them to put the stool on flat ground, hold two opposite corners or edges of the seat, and push gently corner to corner, as if wringing out a cloth. Tell them to feel for movement in the frame, not in the floor.
 Choices: Solid, feels like one piece / A little give, corner to corner / Rocks clearly at the joints
+Diagram: racking
 
 Test 2, the bottle-top roll. Ask them to set a marble or a soda bottle-top in the middle of the seat and watch it for three seconds.
 Choices: Stays put / Drifts slowly to one edge / Rolls straight off

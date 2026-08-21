@@ -66,6 +66,9 @@ import com.qualityverifier.domain.Role
 import com.qualityverifier.text.AssistantContent
 import com.qualityverifier.ui.capture.CaptureScreen
 import com.qualityverifier.ui.capture.captureInstruction
+import com.qualityverifier.ui.plan.InspectingScreen
+import com.qualityverifier.ui.plan.PhysicalTestsScreen
+import com.qualityverifier.ui.plan.PlanCard
 import com.qualityverifier.text.parseAssistantContent
 import com.qualityverifier.ui.appContainer
 import com.qualityverifier.ui.rememberReportLabels
@@ -93,9 +96,15 @@ fun ChatScreen(
     val notice by viewModel.notice.collectAsState()
     val resolvedItemType by viewModel.itemType.collectAsState()
     val review by viewModel.review.collectAsState()
+    val run by viewModel.run.collectAsState()
+    val submitting by viewModel.submitting.collectAsState()
+    val submittedRun by viewModel.submittedRun.collectAsState()
 
     var draft by remember { mutableStateOf("") }
     var capturing by remember { mutableStateOf(false) }
+    // Which part of a collection run is on screen. Kept here rather than in the view
+    // model because it is navigation, not state worth surviving a process death.
+    var runMode by remember { mutableStateOf(RunMode.NONE) }
     val listState = rememberLazyListState()
 
     // Parsing is keyed on the message list so it happens once per new turn rather than
@@ -116,12 +125,13 @@ fun ChatScreen(
     // Resolved here rather than in the click handler, so it reads the device language
     // in composable scope.
     val shareLabels = rememberReportLabels(shareable?.second?.language)
+    val runLabels = rememberReportLabels(run?.plan?.language)
 
     val requestCameraPermission = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
     ) { granted ->
         if (granted) {
-            capturing = true
+            if (viewModel.run.value != null) runMode = RunMode.CAPTURE else capturing = true
         } else {
             // Without this the camera button just does nothing, which reads as a broken
             // app. Also covers the permanently-denied case, where the system dialog
@@ -146,6 +156,60 @@ fun ChatScreen(
     // Keep the newest turn in view as the conversation grows.
     LaunchedEffect(messages.size, sending) {
         if (messages.isNotEmpty()) listState.animateScrollToItem(messages.lastIndex)
+    }
+
+    // Inspecting comes first: once submitted there is nothing else worth showing, and
+    // the run has already been cleared from the view model.
+    submittedRun?.takeIf { submitting }?.let { inFlight ->
+        InspectingScreen(inFlight, rememberReportLabels(inFlight.plan.language))
+        return
+    }
+
+    val active = run
+    if (active != null && runMode == RunMode.TESTS) {
+        val testIndex = active.nextTest
+        if (testIndex == null) {
+            runMode = RunMode.NONE
+        } else {
+            PhysicalTestsScreen(
+                test = active.plan.tests[testIndex],
+                index = testIndex,
+                total = active.plan.tests.size,
+                labels = runLabels,
+                onAnswer = { answer -> viewModel.answerTest(testIndex, answer) },
+                onSkip = { viewModel.skipTest(testIndex) },
+                onBack = { runMode = RunMode.NONE },
+            )
+            return
+        }
+    }
+
+    if (active != null && runMode == RunMode.CAPTURE) {
+        val shotIndex = active.nextShot
+        if (shotIndex == null) {
+            // Straight into the tests when the shots are done, as the mockup does. The
+            // plan card is the review step afterwards.
+            runMode = if (active.nextTest != null) RunMode.TESTS else RunMode.NONE
+        } else {
+            val shot = active.plan.photos[shotIndex]
+            CaptureScreen(
+                instruction = shot.instruction.ifBlank { shot.note }.ifBlank { shot.title },
+                reviewPhotoPath = review?.path,
+                warning = review?.warning,
+                createFile = viewModel::newCaptureFile,
+                onCaptured = { file -> viewModel.onPhotoCaptured(file, shotIndex) },
+                onKeep = viewModel::keepReviewedPhoto,
+                onRetake = viewModel::discardReviewedPhoto,
+                onClose = {
+                    viewModel.discardReviewedPhoto()
+                    runMode = RunMode.NONE
+                },
+                counter = runLabels.shotOf(shotIndex + 1, active.plan.photos.size),
+                skipLabel = runLabels.cannotDoThis,
+                onSkip = { viewModel.skipShot(shotIndex) },
+            )
+            return
+        }
     }
 
     if (capturing) {
@@ -234,6 +298,30 @@ fun ChatScreen(
                                 content = parsed[message.id],
                                 onAskQuestion = { question -> viewModel.send(question) },
                             )
+                            if (active != null && message.id == active.sourceMessageId) {
+                                Spacer(Modifier.height(10.dp))
+                                PlanCard(
+                                    run = active,
+                                    labels = runLabels,
+                                    onStartCamera = {
+                                        val granted = ContextCompat.checkSelfPermission(
+                                            context,
+                                            Manifest.permission.CAMERA,
+                                        ) == PackageManager.PERMISSION_GRANTED
+                                        if (granted) {
+                                            runMode = RunMode.CAPTURE
+                                        } else {
+                                            requestCameraPermission.launch(
+                                                Manifest.permission.CAMERA,
+                                            )
+                                        }
+                                    },
+                                    onStartTests = { runMode = RunMode.TESTS },
+                                    onRetakeShot = viewModel::retakeShot,
+                                    onChangeAnswer = viewModel::changeTestAnswer,
+                                    onSubmit = { viewModel.submitRun(runLabels) },
+                                )
+                            }
                         }
                     }
                 }
@@ -489,3 +577,6 @@ private fun MessageBubble(
 }
 
 private const val MAX_IMAGES_PER_PICK = 5
+
+/** Which screen of a collection run is showing. */
+private enum class RunMode { NONE, CAPTURE, TESTS }

@@ -106,8 +106,8 @@ class GitHubPromptRepositoryTest {
                 prompt.contains("HANDS-ON TESTS"),
             )
             assertTrue(
-                "${itemType.id} does not step through one thing at a time",
-                prompt.contains("Ask for one thing at a time"),
+                "${itemType.id} does not describe the plan block",
+                prompt.contains("qv-plan"),
             )
             assertTrue(
                 "${itemType.id} should not offer example photos it cannot send",
@@ -178,7 +178,7 @@ class GitHubPromptRepositoryTest {
         assertTrue(prompt.startsWith(DefaultPrompts.MASTER.trimEnd()))
         assertTrue(prompt.contains("Item: a wooden table"))
         assertTrue(prompt.contains("the bottle-top roll"))
-        assertTrue(prompt.contains("Ask for one thing at a time"))
+        assertTrue(prompt.contains("Do not ask for photos one at a time"))
         assertEquals(
             assembleSystemPrompt(DefaultPrompts.MASTER, DefaultPrompts.forItem(ItemType.WOODEN_TABLE)),
             prompt,

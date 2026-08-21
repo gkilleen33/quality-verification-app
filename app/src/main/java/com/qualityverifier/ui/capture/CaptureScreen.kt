@@ -81,6 +81,11 @@ fun CaptureScreen(
     onKeep: () -> Unit,
     onRetake: () -> Unit,
     onClose: () -> Unit,
+    /** "Shot 3 of 6" while working through a plan; null for a one-off photo. */
+    counter: String? = null,
+    /** Offered only inside a plan, where skipping a shot is a recorded outcome. */
+    skipLabel: String? = null,
+    onSkip: (() -> Unit)? = null,
 ) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
@@ -143,6 +148,7 @@ fun CaptureScreen(
             Column(Modifier.fillMaxSize().systemBarsPadding()) {
                 TopBar(
                     instruction = instruction,
+                    counter = counter,
                     showTorch = reviewPhotoPath == null && camera?.cameraInfo?.hasFlashUnit() == true,
                     torchOn = torchOn,
                     onToggleTorch = {
@@ -161,6 +167,16 @@ fun CaptureScreen(
                 if (reviewPhotoPath != null) {
                     ReviewControls(warning = warning, onKeep = onKeep, onRetake = onRetake)
                 } else if (bindError == null) {
+                    onSkip?.let { skip ->
+                        if (skipLabel != null) {
+                            Box(Modifier.fillMaxWidth().padding(horizontal = 16.dp)) {
+                                OutlinedButton(
+                                    onClick = skip,
+                                    modifier = Modifier.align(Alignment.Center),
+                                ) { Text(skipLabel, color = Color.White) }
+                            }
+                        }
+                    }
                     Shutter(
                         busy = busy,
                         enabled = imageCapture != null,
@@ -197,6 +213,7 @@ fun CaptureScreen(
 @Composable
 private fun TopBar(
     instruction: String?,
+    counter: String?,
     showTorch: Boolean,
     torchOn: Boolean,
     onToggleTorch: () -> Unit,
@@ -210,6 +227,13 @@ private fun TopBar(
         ) {
             IconButton(onClick = onClose) {
                 Icon(Icons.Filled.Close, contentDescription = "Close the camera", tint = Color.White)
+            }
+            counter?.let { text ->
+                Text(
+                    text = text,
+                    style = MaterialTheme.typography.labelLarge,
+                    color = Color.White,
+                )
             }
             Spacer(Modifier.weight(1f))
             if (showTorch) {

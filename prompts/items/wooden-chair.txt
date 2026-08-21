@@ -13,6 +13,7 @@ HANDS-ON TESTS AND CHECKS, full assessment.
 
 Test 1, the racking test. Ask them to stand the chair on flat ground, hold two opposite corners of the seat, and push gently corner to corner, as if wringing out a cloth. Tell them to feel for movement in the frame, not in the floor.
 Choices: Solid, feels like one piece / A little give, corner to corner / Rocks clearly at the joints
+Diagram: racking
 
 Test 2, the sit and lean. Ask them to sit on it and lean back properly, then shift their weight from side to side.
 Choices: Firm and quiet / Creaks a little / Flexes or feels loose

@@ -1,6 +1,7 @@
 package com.qualityverifier.text
 
 import com.qualityverifier.domain.Severity
+import com.qualityverifier.domain.TestDiagram
 import com.qualityverifier.domain.VerdictLevel
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
@@ -124,7 +125,126 @@ class AssistantBlocksTest {
         assertEquals(listOf("Ask about the joint", "Share this report"), content.options)
     }
 
+    @Test
+    fun `a plan block becomes a runnable plan`() {
+        val content = parseAssistantContent(PLAN_MESSAGE)
+        val plan = content.plan!!
+        assertEquals("6 photos and 2 quick tests, about two minutes.", plan.summary)
+        assertEquals("sw", plan.language)
+        assertEquals(2, plan.photos.size)
+        assertEquals("Full view, front", plan.photos[0].title)
+        assertEquals("Whole stool in frame, arm's length", plan.photos[0].note)
+        assertTrue(plan.photos[0].instruction.startsWith("Stand back"))
+        assertEquals(1, plan.tests.size)
+        assertEquals(TestDiagram.RACKING, plan.tests[0].diagramKind)
+        assertEquals(3, plan.tests[0].options.size)
+        assertEquals("Solid, no movement", plan.tests[0].options[0].label)
+        assertEquals("Frame feels like one piece", plan.tests[0].options[0].detail)
+        assertEquals(3, plan.stepCount)
+        // The prose survives: it is what the plan screen shows above the list.
+        assertTrue(content.prose.startsWith("Here is the plan."))
+    }
+
+    @Test
+    fun `a follow-up plan may ask for photos only, or tests only`() {
+        val photosOnly = parseAssistantContent(
+            """
+            One more shot.
+
+            ```qv-plan
+            {"photos":[{"title":"Under the rail","instruction":"Phone lower, looking up."}]}
+            ```
+            """.trimIndent(),
+        ).plan!!
+        assertEquals(1, photosOnly.photos.size)
+        assertTrue(photosOnly.tests.isEmpty())
+        assertTrue(photosOnly.isRunnable)
+
+        val testsOnly = parseAssistantContent(
+            """```qv-plan
+            {"tests":[{"title":"Rock it","options":[{"label":"Solid"},{"label":"Wobbles"}]}]}
+            ```""".trimIndent(),
+        ).plan!!
+        assertTrue(testsOnly.photos.isEmpty())
+        assertEquals(1, testsOnly.tests.size)
+    }
+
+    @Test
+    fun `an empty plan is treated as no plan`() {
+        val content = parseAssistantContent("Nothing to collect.\n```qv-plan\n{\"photos\":[]}\n```")
+        assertNull(content.plan)
+        assertEquals("Nothing to collect.", content.displayProse)
+    }
+
+    @Test
+    fun `a malformed plan is dropped rather than printed`() {
+        val content = parseAssistantContent("Take these shots.\n\n```qv-plan\n{ not json\n```")
+        assertNull(content.plan)
+        // The prose lists the shots in words, so a parse failure is recoverable.
+        assertEquals("Take these shots.", content.displayProse)
+    }
+
+    @Test
+    fun `an unknown diagram name degrades to no diagram`() {
+        val plan = parseAssistantContent(
+            """```qv-plan
+            {"tests":[{"title":"T","diagram":"interpretive-dance","options":[{"label":"a"}]}]}
+            ```""".trimIndent(),
+        ).plan!!
+        // The drawings ship in the app; a prompt naming one this build has never heard
+        // of must not render a placeholder box.
+        assertNull(plan.tests[0].diagramKind)
+        assertEquals("interpretive-dance", plan.tests[0].diagram)
+    }
+
+    @Test
+    fun `a plan and a verdict never both apply, but both parse`() {
+        // Guards the ordering in the renderer: a follow-up plan arriving in the same
+        // turn as a verdict would otherwise be silently dropped.
+        val content = parseAssistantContent(
+            VERDICT_MESSAGE + "\n\n```qv-plan\n{\"photos\":[{\"title\":\"X\"}]}\n```",
+        )
+        assertEquals(1, content.plan!!.photos.size)
+        assertEquals(VerdictLevel.FAIR, content.verdict!!.level)
+    }
+
     private companion object {
+        val PLAN_MESSAGE = """
+            Here is the plan. I will guide each shot.
+
+            ```qv-plan
+            {
+              "summary": "6 photos and 2 quick tests, about two minutes.",
+              "language": "sw",
+              "photos": [
+                {
+                  "title": "Full view, front",
+                  "note": "Whole stool in frame, arm's length",
+                  "instruction": "Stand back far enough that the whole stool is in the frame."
+                },
+                {
+                  "title": "Leg joint, close",
+                  "note": "Where a rail meets the leg",
+                  "instruction": "Get close enough that the joint fills the frame."
+                }
+              ],
+              "tests": [
+                {
+                  "title": "The wobble test",
+                  "subtitle": "Jaribu kutikisa",
+                  "instruction": "Hold two opposite corners and push corner to corner.",
+                  "diagram": "racking",
+                  "options": [
+                    { "label": "Solid, no movement", "detail": "Frame feels like one piece" },
+                    { "label": "A little give", "detail": "Corner to corner" },
+                    { "label": "Rocks clearly", "detail": "Visible movement at the joints" }
+                  ]
+                }
+              ]
+            }
+            ```
+        """.trimIndent()
+
         val VERDICT_MESSAGE = """
             This stool is fair. The rear joint is open, which will loosen with daily use.
 
