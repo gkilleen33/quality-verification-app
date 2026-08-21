@@ -182,7 +182,10 @@ fun ChatScreen(
                 ) {
                     CircularProgressIndicator(Modifier.size(20.dp))
                     Spacer(Modifier.width(12.dp))
-                    Text("Looking at the furniture…", style = MaterialTheme.typography.bodyMedium)
+                    Text(
+                        if (messages.isEmpty()) "Starting the check…" else "Looking at the furniture…",
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
                 }
             }
 

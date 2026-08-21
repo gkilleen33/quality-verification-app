@@ -70,7 +70,7 @@ class AnthropicDirectChatService(
                     cacheControl = CacheControl.ONE_HOUR,
                 )
             ),
-            messages = history.toApiMessages().withCacheBreakpointOnLastBlock(),
+            messages = history.toApiMessages().withOpeningTurn().withCacheBreakpointOnLastBlock(),
         )
         val body = json.encodeToString(payload)
 
@@ -199,11 +199,30 @@ class AnthropicDirectChatService(
             null
         } else {
             ApiMessage(
-                role = if (message.role == Role.USER) "user" else "assistant",
+                role = if (message.role == Role.USER) ROLE_USER else "assistant",
                 content = blocks,
             )
         }
     }
+
+    /**
+     * Guarantees the conversation starts with a user turn.
+     *
+     * The item prompts open the conversation themselves — greeting the user and asking
+     * for the first photo — but the API requires `messages[0]` to be a user turn, so
+     * there is nothing to send until the user speaks first. That is why the walkthrough
+     * used to begin only after the user typed something. This supplies the opening turn
+     * so the assistant can lead.
+     *
+     * The text is a fixed constant, so the prefix stays byte-identical across turns and
+     * prompt caching still hits. It is never shown in the transcript.
+     */
+    private fun List<ApiMessage>.withOpeningTurn(): List<ApiMessage> =
+        if (firstOrNull()?.role == ROLE_USER) {
+            this
+        } else {
+            listOf(ApiMessage(ROLE_USER, listOf(ContentBlock.Text(OPENING_TURN)))) + this
+        }
 
     /**
      * Puts a cache breakpoint on the final content block, so the next turn reads this
@@ -228,6 +247,10 @@ class AnthropicDirectChatService(
         const val ANTHROPIC_MESSAGES_URL = "https://api.anthropic.com/v1/messages"
         const val ANTHROPIC_VERSION = "2023-06-01"
         const val MODEL = "claude-sonnet-5"
+
+        /** Opens the conversation so the assistant can lead the walkthrough. */
+        const val OPENING_TURN = "Let's get started."
+        private const val ROLE_USER = "user"
         const val MAX_TOKENS = 4096
         private const val MAX_RETRIES = 1
         private const val RETRY_DELAY_MILLIS = 1500L
