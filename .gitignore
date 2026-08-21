@@ -12,3 +12,9 @@ app/build/
 build/
 *.apk
 *.keystore
+
+# Signing material. The keystore is the only retrievable copy of the release key —
+# keep it outside the repo and backed up somewhere durable.
+keystore.properties
+*.jks
+*.keystore

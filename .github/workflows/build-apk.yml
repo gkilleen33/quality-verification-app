@@ -1,17 +1,30 @@
 name: Build APK
 
-# Three ways in:
-#  - pull_request: proves the build and tests pass, uploads the APK as an artifact
-#  - workflow_dispatch: "Run workflow" button, refreshes a rolling `nightly` prerelease
+# Pull requests run checks only — no APK. Nobody installs a PR artifact, and building
+# one added roughly two minutes to every run. Tests and lint run as separate jobs so the
+# wall clock is the slower of the two rather than their sum.
+#
+# APKs are built when something lands or is released:
+#  - push to `main`: every merged PR refreshes the rolling `nightly` prerelease
+#  - workflow_dispatch: same, on demand from the "Run workflow" button
 #  - a `v*` tag: publishes a permanent release for that version
 #
-# Only GitHub-owned actions are used, plus the preinstalled `gh` CLI, so publishing
-# needs no third-party action with write access to this repo.
+# Published builds are release builds signed with the persistent upload key from repo
+# secrets, so a new build installs over an older one.
+#
+# Each job is a single Gradle invocation. Splitting checks across jobs looked appealing,
+# but every extra job pays its own checkout, toolchain setup and cold JVM start — which
+# costs more than the parallelism saves once a build is only one invocation long.
+#
+# Only GitHub-owned actions are used, plus the preinstalled `gh` CLI, so nothing
+# third-party gets write access to this repo or sight of the signing key.
 
 on:
   pull_request:
   workflow_dispatch:
   push:
+    branches:
+      - main
     tags:
       - 'v*'
 
@@ -19,27 +32,65 @@ permissions:
   contents: write
 
 jobs:
-  build:
+  check:
+    # Pull requests get checks only. No APK: nobody installs a PR artifact, and building
+    # one added roughly two minutes to every run.
+    if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
-
     steps:
       - uses: actions/checkout@v7
+      - uses: ./.github/actions/android-toolchain
+      - run: ./gradlew --no-daemon testDebugUnitTest lintDebug
 
-      - uses: actions/setup-java@v5
-        with:
-          distribution: temurin
-          java-version: '17'
-          cache: gradle
+  publish:
+    # Anything that is not a pull request produces a downloadable build. The checks run
+    # in the same invocation rather than in a job this one waits on: a merge commit is
+    # not always what the PR tested, and publishing off an unverified merge is how a
+    # broken build reaches testers.
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    # Serialised: the nightly release is deleted and recreated, so two builds landing
+    # together could otherwise leave it deleted or carrying the older APK.
+    concurrency:
+      group: publish
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/android-toolchain
 
-      # The runner image does not guarantee these, and AGP will not fetch them itself.
-      - name: Install the SDK packages this project needs
+      - name: Check the tag matches the app version
+        if: github.ref_type == 'tag'
         run: |
-          SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
-          yes | "$SDKMANAGER" --licenses > /dev/null 2>&1 || true
-          "$SDKMANAGER" "platforms;android-36" "build-tools;36.0.0" > /dev/null
+          version=$(grep -oE 'versionName = "[^"]+"' app/build.gradle.kts | cut -d'"' -f2)
+          if [ "${GITHUB_REF_NAME}" != "v${version}" ]; then
+            echo "::error::Tag ${GITHUB_REF_NAME} does not match versionName ${version}."
+            echo "::error::A release named ${GITHUB_REF_NAME} containing an app that reports"
+            echo "::error::${version} is confusing for anyone reporting a bug. Either bump"
+            echo "::error::versionName (and versionCode) in app/build.gradle.kts, or tag v${version}."
+            exit 1
+          fi
 
-      - name: Build, test and lint
-        run: ./gradlew --no-daemon assembleDebug testDebugUnitTest lintDebug
+      - name: Restore the signing keystore
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+        run: |
+          if [ -z "$KEYSTORE_BASE64" ]; then
+            echo "::error::KEYSTORE_BASE64 is not set. Published builds must be signed with"
+            echo "::error::the persistent upload key, or they will not install over an"
+            echo "::error::earlier build. See the Signing section of the README."
+            exit 1
+          fi
+          printf '%s' "$KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/upload.jks"
+          # Outside the workspace, so it is never picked up by an upload step.
+          echo "Keystore restored ($(stat -c%s "$RUNNER_TEMP/upload.jks") bytes)"
+
+      - name: Test, lint and build the signed release APK
+        env:
+          QV_KEYSTORE_FILE: ${{ runner.temp }}/upload.jks
+          QV_KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          QV_KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          QV_KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+        run: ./gradlew --no-daemon testDebugUnitTest lintDebug assembleRelease -PrequireReleaseSigning
 
       - name: Name the APK after the version being built
         id: name
@@ -50,18 +101,27 @@ jobs:
           else
             label="${version}-$(git rev-parse --short HEAD)"
           fi
+          built=app/build/outputs/apk/release/app-release.apk
+          if [ ! -f "$built" ]; then
+            echo "::error::Expected APK at $built but it is missing"
+            exit 1
+          fi
           name="quality-verifier-${label}.apk"
-          cp app/build/outputs/apk/debug/app-debug.apk "$name"
+          cp "$built" "$name"
           echo "apk=$name" >> "$GITHUB_OUTPUT"
           echo "label=$label" >> "$GITHUB_OUTPUT"
           ls -lh "$name"
 
-      - name: Upload the APK as a build artifact
-        uses: actions/upload-artifact@v7
-        with:
-          name: ${{ steps.name.outputs.apk }}
-          path: ${{ steps.name.outputs.apk }}
-          if-no-files-found: error
+      - name: Confirm the APK carries the upload key, not a debug key
+        run: |
+          APKSIGNER=$(ls "$ANDROID_HOME"/build-tools/*/apksigner | tail -1)
+          certs=$("$APKSIGNER" verify --print-certs "${{ steps.name.outputs.apk }}")
+          echo "$certs"
+          if echo "$certs" | grep -q "CN=Android Debug"; then
+            echo "::error::This APK is debug-signed and will not install over an earlier"
+            echo "::error::build. Check the KEYSTORE_* secrets."
+            exit 1
+          fi
 
       # Artifacts need a GitHub login and arrive zipped, which a phone cannot install.
       # Releases are a plain download, so that is what the phone uses.
@@ -72,10 +132,10 @@ jobs:
         run: |
           gh release create "${GITHUB_REF_NAME}" "${{ steps.name.outputs.apk }}" \
             --title "${GITHUB_REF_NAME}" \
-            --notes "Debug build of ${GITHUB_REF_NAME}. Install on a phone with \"install unknown apps\" allowed for your browser."
+            --notes "Signed release build of ${GITHUB_REF_NAME}. Install on a phone with \"install unknown apps\" allowed for your browser."
 
       - name: Refresh the rolling nightly prerelease
-        if: github.event_name == 'workflow_dispatch'
+        if: github.ref_type != 'tag'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -84,4 +144,4 @@ jobs:
           gh release create nightly "${{ steps.name.outputs.apk }}" \
             --title "Latest test build (${{ steps.name.outputs.label }})" \
             --prerelease \
-            --notes "Unstable build from \`main\`, rebuilt on demand. Debug-signed: if an install fails with a signature error, uninstall the previous copy first."
+            --notes "Unstable build from \`main\`, refreshed on every merge. Signed with the upload key, so it installs over an earlier build without uninstalling."
