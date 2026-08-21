@@ -141,8 +141,18 @@ fun PhysicalTestsScreen(
             }
 
             Spacer(Modifier.height(8.dp))
-            // Skipping is a real answer, and gets said out loud in what is sent. A test
-            // nobody could safely do must not read as a test that passed.
+            // Two ways out, and they mean different things. "Not sure" is an answer -- they
+            // tried and learned nothing definite. "Can't do this one" is the absence of an
+            // attempt, often because the piece is too heavy to tip alone.
+            //
+            // Added by the app rather than left to the plan, so they are on every test
+            // whatever the model emitted. Neither is a failure: the prompt is told to put
+            // both in the verdict's unverified list, because a wobble test nobody could
+            // perform is not a wobbly stool.
+            TextButton(
+                onClick = { onAnswer(labels.notSure) },
+                modifier = Modifier.fillMaxWidth(),
+            ) { Text(labels.notSure) }
             TextButton(onClick = onSkip, modifier = Modifier.fillMaxWidth()) {
                 Text(labels.cannotDoThis)
             }

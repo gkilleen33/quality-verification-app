@@ -103,6 +103,7 @@ fun ChatScreen(
     val submitting by viewModel.submitting.collectAsState()
     val submittedRun by viewModel.submittedRun.collectAsState()
     val needsIntake by viewModel.needsIntake.collectAsState()
+    val awaitingOpeningPhoto by viewModel.awaitingOpeningPhoto.collectAsState()
 
     var draft by remember { mutableStateOf("") }
     var capturing by remember { mutableStateOf(false) }
@@ -178,6 +179,26 @@ fun ChatScreen(
         return
     }
 
+    // Straight from the last intake question into one photo of the whole piece, which is
+    // sent with the context so the assistant can check its protocol against the actual
+    // piece before planning seven shots of it.
+    awaitingOpeningPhoto?.let { context ->
+        val labels = rememberReportLabels(context.language?.code)
+        CaptureScreen(
+            instruction = labels.openingShotInstruction,
+            reviewPhotoPath = review?.path,
+            warning = review?.warning,
+            createFile = viewModel::newCaptureFile,
+            onCaptured = { file -> viewModel.onPhotoCaptured(file, CaptureTarget.Opening) },
+            onKeep = viewModel::keepReviewedPhoto,
+            onRetake = viewModel::discardReviewedPhoto,
+            // Backing out starts the conversation without the photo rather than trapping
+            // them on a camera screen.
+            onClose = viewModel::skipOpeningPhoto,
+        )
+        return
+    }
+
     submittedRun?.takeIf { submitting }?.let { inFlight ->
         InspectingScreen(inFlight, rememberReportLabels(inFlight.plan.language))
         return
@@ -215,7 +236,9 @@ fun ChatScreen(
                 reviewPhotoPath = review?.path,
                 warning = review?.warning,
                 createFile = viewModel::newCaptureFile,
-                onCaptured = { file -> viewModel.onPhotoCaptured(file, shotIndex) },
+                onCaptured = { file ->
+                    viewModel.onPhotoCaptured(file, CaptureTarget.PlanShot(shotIndex))
+                },
                 onKeep = viewModel::keepReviewedPhoto,
                 onRetake = viewModel::discardReviewedPhoto,
                 onClose = {

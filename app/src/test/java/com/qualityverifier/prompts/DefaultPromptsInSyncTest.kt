@@ -106,7 +106,48 @@ class DefaultPromptsInSyncTest {
         )
         assertTrue(
             "the prompt no longer says everything is asked for at once",
-            master.contains("Ask for everything you need in the first plan"),
+            master.contains("Ask for everything you need in the one plan"),
+        )
+    }
+
+    @Test
+    fun `the checklist is checked against the piece before it is committed to`() {
+        // The item protocols describe a typical piece of that kind. Committing to seven
+        // shots of wooden joinery before looking is how somebody ends up being asked to
+        // photograph the grain on a steel leg. The app sends a photo of the whole piece
+        // with the context so the protocol can be checked against it first.
+        val master = DefaultPrompts.MASTER
+        assertTrue(
+            "the prompt no longer expects a photo with the opening message",
+            master.contains("opening message arrives with a photo already attached"),
+        )
+        assertTrue(
+            "the prompt no longer looks at it before planning",
+            master.contains("Start by looking at the photo attached to their opening message"),
+        )
+        assertTrue(
+            "the prompt no longer adapts the checklist to what it saw",
+            master.contains("decide, for each one, whether it still applies"),
+        )
+        assertTrue(
+            "the prompt may now ask again for the photo it already has",
+            master.contains("Never include the photo of the whole piece"),
+        )
+    }
+
+    @Test
+    fun `a test that did not happen is not treated as a failure`() {
+        // A wobble test nobody could perform is not a wobbly stool. Without this the
+        // absence of a result reads as a defect, which is the worst possible direction for
+        // an error in this app to go.
+        val master = DefaultPrompts.MASTER
+        assertTrue(
+            "the prompt no longer knows about the app's two escape answers",
+            master.contains("I cannot do this one"),
+        )
+        assertTrue(
+            "the prompt no longer forbids reading a missing result as a defect",
+            master.contains("Never treat it as evidence of a defect"),
         )
     }
 
