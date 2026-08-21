@@ -19,6 +19,12 @@ import kotlinx.serialization.Serializable
 @Serializable
 data class Verdict(
     @SerialName("verdict") val levelId: String = "",
+    /**
+     * The language the assistant wrote this verdict in, so the app can put its own
+     * headings in the same language. Blank when the model left it out, which the UI
+     * treats as "fall back to the device language".
+     */
+    val language: String = "",
     val headline: String = "",
     val summary: String = "",
     val defects: List<Defect> = emptyList(),
@@ -45,14 +51,19 @@ data class Defect(
     val severity: Severity get() = Severity.fromId(severityId)
 }
 
-/** The three headline levels. Deliberately not a numeric score — see the master prompt. */
-enum class VerdictLevel(val id: String, val label: String) {
-    SOUND("sound", "Sound"),
-    FAIR("fair", "Fair"),
-    SERIOUS("serious_concerns", "Serious concerns"),
+/**
+ * The three headline levels. Deliberately not a numeric score — see the master prompt.
+ *
+ * Carries no display text: what a level is called depends on the language of the
+ * assessment, so the words live in [com.qualityverifier.text.ReportLabels].
+ */
+enum class VerdictLevel(val id: String) {
+    SOUND("sound"),
+    FAIR("fair"),
+    SERIOUS("serious_concerns"),
 
     /** The model returned something we do not recognise. Render it without a badge. */
-    UNKNOWN("", "Assessment");
+    UNKNOWN("");
 
     companion object {
         fun fromId(id: String): VerdictLevel =
@@ -60,12 +71,12 @@ enum class VerdictLevel(val id: String, val label: String) {
     }
 }
 
-enum class Severity(val id: String, val label: String) {
-    SERIOUS("serious", "Serious"),
-    MODERATE("moderate", "Moderate"),
-    MINOR("minor", "Minor"),
-    COSMETIC("cosmetic", "Cosmetic"),
-    UNKNOWN("", "");
+enum class Severity(val id: String) {
+    SERIOUS("serious"),
+    MODERATE("moderate"),
+    MINOR("minor"),
+    COSMETIC("cosmetic"),
+    UNKNOWN("");
 
     companion object {
         fun fromId(id: String): Severity =

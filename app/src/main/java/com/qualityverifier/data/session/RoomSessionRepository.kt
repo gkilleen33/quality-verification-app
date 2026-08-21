@@ -36,6 +36,7 @@ class RoomSessionRepository(
                     preview = row.previewText,
                     messageCount = row.messageCount,
                     verdictLevel = row.verdictLevelId?.let(VerdictLevel::fromId),
+                    verdictLanguage = row.verdictLanguage,
                 )
             }
         }
@@ -88,7 +89,7 @@ class RoomSessionRepository(
             // Flatten before truncating: cutting first can leave half a `**` pair behind.
             ?: markdownToPlainText(content.prose.ifBlank { text })
         dao.touchSession(sessionId, message.createdAt, preview.take(PREVIEW_LIMIT))
-        content.verdict?.let { dao.setVerdictLevel(sessionId, it.level.id) }
+        content.verdict?.let { dao.setVerdict(sessionId, it.level.id, it.language) }
         return message
     }
 

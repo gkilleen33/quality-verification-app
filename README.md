@@ -14,6 +14,28 @@ This is **Phase 1: serverless**. The app calls the Anthropic API directly with a
 the user enters once, fetches prompts from this repo over raw GitHub URLs, and keeps
 history in a local Room database. There is no backend and no login.
 
+## Install it on a phone
+
+**→ [Download the newest build](https://github.com/gkilleen33/quality-verification-app/releases/tag/nightly)**
+
+Open that link *on the phone*, tap the `.apk` under **Assets**, and confirm the install.
+Android asks permission to install from your browser the first time — allow it for
+whichever browser you used, then tap the downloaded file again.
+
+On first launch the app asks for an Anthropic API key. It is stored encrypted on the
+device and is never sent anywhere but `api.anthropic.com`.
+
+Every merge to `main` refreshes that `nightly` build, so the link above always points at
+the newest code. Tagged versions are on the
+[releases page](https://github.com/gkilleen33/quality-verification-app/releases).
+
+Do not use `/releases/latest` — GitHub never counts a prerelease as "latest", so it skips
+`nightly` and lands on whatever was tagged last, or on the release list if nothing has
+been. The `tag/nightly` link above is the one that always resolves to the newest build.
+
+Builds published this way are signed with the persistent upload key, so a new one
+installs over an older one without uninstalling first.
+
 ## Build
 
 Requires JDK 17 and the Android SDK (platform 36, build-tools 36).
@@ -146,6 +168,25 @@ Two rules the prompts hold to, both covered by tests in
 Swahili category labels are shown only where a term could be sourced. `ItemType`
 deliberately leaves the two upholstered ones English-only rather than guessing — a wrong
 word in the user's own language costs more trust than a missing one.
+
+### Language of the report
+
+The verdict cards, the reports badges and the share message take their wording from
+[`ReportLabels`](app/src/main/java/com/qualityverifier/text/ReportLabels.kt), keyed on
+**the language of the assessment rather than the language of the phone**. The assistant
+mirrors whatever the customer writes, so a Swahili conversation on a handset set to
+English was putting Swahili findings under English headings, which reads as a
+half-finished app. The verdict therefore declares its own `language`, and the reports
+row stores it alongside the verdict level.
+
+**The Swahili in that file is unreviewed.** It needs a native speaker before any pilot,
+and the three verdict levels need it most: a verdict is a judgement somebody acts on in
+front of the person who built the furniture, and the tone of the word carries as much as
+its meaning. The design brief lists this as an open question, and this is the file to fix
+when it is answered. Treat it as better than English, not as finished copy.
+
+The rest of the app's chrome — home, reports and profile — is still English only, driven
+by nothing. Full localisation of those is a separate piece of work.
 
 ## Blocks the app parses out of a reply
 
@@ -349,14 +390,9 @@ Or rebuild the rolling `nightly` on demand from **Actions → Build APK → Run 
 without waiting for a merge. Tagging leaves `nightly` untouched, so a permanent release and
 the rolling build never overwrite each other.
 
-Then on the phone, open the release page and tap the `.apk`:
-
-```
-https://github.com/gkilleen33/quality-verification-app/releases/latest
-```
-
-Android will ask permission to install from your browser the first time — allow it for
-Chrome (or whichever browser you used), then tap the downloaded file again.
+Then on the phone, open the release page and tap the `.apk` — see
+[Install it on a phone](#install-it-on-a-phone) above for the link and the
+first-run permission prompt.
 
 **Merging a PR into `main` refreshes the `nightly` build automatically**, so the latest
 merged state is always downloadable without doing anything.
@@ -368,9 +404,8 @@ A warm publish run takes a couple of minutes; the ten-minute figure was a cold G
 cache on a branch that had never built before. Since the build now happens on merge, it
 runs without you waiting on it — the APK is on the releases page by the time you look.
 
-Published builds are **release builds signed with the persistent upload key**, so a new
-one installs over an older one without uninstalling. Pull request builds stay on debug —
-a PR from a fork cannot read secrets, and the signature is irrelevant for review.
+Pull request builds stay on debug — a PR from a fork cannot read secrets, and the
+signature is irrelevant for review.
 
 ### Signing setup (once)
 

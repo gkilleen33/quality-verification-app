@@ -83,6 +83,12 @@ class DefaultPromptsInSyncTest {
         listOf("sound", "fair", "serious_concerns").forEach { level ->
             assertTrue("verdict level $level is undocumented", master.contains(level))
         }
+        // Without this field the app cannot tell which language to put its own card
+        // headings in, and lands back on English headings over Swahili findings.
+        assertTrue(
+            "the verdict no longer declares its language",
+            master.contains("the two letter code for the language"),
+        )
     }
 
     @Test

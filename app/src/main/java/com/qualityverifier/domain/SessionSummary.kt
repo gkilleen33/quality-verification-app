@@ -10,4 +10,6 @@ data class SessionSummary(
     val messageCount: Int,
     /** Null while the assessment is still in progress. */
     val verdictLevel: VerdictLevel? = null,
+    /** Language the verdict was written in; null when it was not recorded. */
+    val verdictLanguage: String? = null,
 )

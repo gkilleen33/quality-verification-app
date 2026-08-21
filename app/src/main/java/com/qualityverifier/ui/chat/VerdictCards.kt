@@ -24,7 +24,8 @@ import androidx.compose.ui.unit.dp
 import com.qualityverifier.domain.Defect
 import com.qualityverifier.domain.Severity
 import com.qualityverifier.domain.Verdict
-import com.qualityverifier.ui.reports.VerdictBadge
+import com.qualityverifier.text.ReportLabels
+import com.qualityverifier.ui.rememberReportLabels
 import com.qualityverifier.ui.theme.verdictColors
 
 /**
@@ -40,18 +41,21 @@ fun VerdictCards(
     onAskQuestion: (String) -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    // Headings follow the assessment's language, not the phone's — a Swahili finding
+    // under an English heading reads as an unfinished app.
+    val labels = rememberReportLabels(verdict.language)
     Column(modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        HeadlineCard(verdict)
-        verdict.defects.forEach { DefectCard(it) }
-        if (verdict.unverified.isNotEmpty()) UnverifiedCard(verdict.unverified)
+        HeadlineCard(verdict, labels)
+        verdict.defects.forEach { DefectCard(it, labels) }
+        if (verdict.unverified.isNotEmpty()) UnverifiedCard(verdict.unverified, labels)
         if (verdict.questions.isNotEmpty()) {
-            QuestionChips(verdict.questions, onAskQuestion)
+            QuestionChips(verdict.questions, labels, onAskQuestion)
         }
     }
 }
 
 @Composable
-private fun HeadlineCard(verdict: Verdict) {
+private fun HeadlineCard(verdict: Verdict, labels: ReportLabels) {
     val colors = verdictColors(verdict.level)
     Card(
         colors = CardDefaults.cardColors(
@@ -62,7 +66,7 @@ private fun HeadlineCard(verdict: Verdict) {
     ) {
         Column(Modifier.padding(16.dp)) {
             Text(
-                "VERDICT",
+                labels.verdictHeading,
                 style = MaterialTheme.typography.labelSmall,
                 fontWeight = FontWeight.Bold,
             )
@@ -79,19 +83,19 @@ private fun HeadlineCard(verdict: Verdict) {
 }
 
 @Composable
-private fun DefectCard(defect: Defect) {
+private fun DefectCard(defect: Defect, labels: ReportLabels) {
     Card(Modifier.fillMaxWidth()) {
         Column(Modifier.padding(16.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                SeverityChip(defect.severity, defect.area)
+                SeverityChip(defect.severity, defect.area, labels)
             }
             if (defect.title.isNotBlank()) {
                 Spacer(Modifier.height(8.dp))
                 Text(defect.title, style = MaterialTheme.typography.titleMedium)
             }
-            Field("What I see", defect.whatISee)
-            Field("What it means for you", defect.whatItMeans)
-            Field("What to do", defect.whatToDo)
+            Field(labels.whatISeeHeading, defect.whatISee)
+            Field(labels.whatItMeansHeading, defect.whatItMeans)
+            Field(labels.whatToDoHeading, defect.whatToDo)
             defect.askSeller?.takeIf { it.isNotBlank() }?.let { line ->
                 Spacer(Modifier.height(12.dp))
                 Surface(
@@ -101,7 +105,7 @@ private fun DefectCard(defect: Defect) {
                 ) {
                     Column(Modifier.padding(12.dp)) {
                         Text(
-                            "SAY THIS TO THE SELLER",
+                            labels.sayToSellerHeading,
                             style = MaterialTheme.typography.labelSmall,
                             fontWeight = FontWeight.Bold,
                         )
@@ -123,7 +127,7 @@ private fun Field(label: String, value: String) {
     if (value.isBlank()) return
     Spacer(Modifier.height(10.dp))
     Text(
-        label.uppercase(),
+        label,
         style = MaterialTheme.typography.labelSmall,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
         fontWeight = FontWeight.Bold,
@@ -133,10 +137,10 @@ private fun Field(label: String, value: String) {
 }
 
 @Composable
-private fun SeverityChip(severity: Severity, area: String) {
+private fun SeverityChip(severity: Severity, area: String, labels: ReportLabels) {
     val label = listOfNotNull(
-        area.takeIf { it.isNotBlank() }?.uppercase(),
-        severity.label.takeIf { it.isNotBlank() }?.uppercase(),
+        area.takeIf { it.isNotBlank() }?.let(labels::area),
+        labels.severity(severity).takeIf { it.isNotBlank() }?.uppercase(),
     ).joinToString(" · ")
     if (label.isEmpty()) return
 
@@ -162,7 +166,7 @@ private fun SeverityChip(severity: Severity, area: String) {
 }
 
 @Composable
-private fun UnverifiedCard(items: List<String>) {
+private fun UnverifiedCard(items: List<String>, labels: ReportLabels) {
     Card(
         colors = CardDefaults.cardColors(
             containerColor = MaterialTheme.colorScheme.surfaceVariant,
@@ -172,7 +176,7 @@ private fun UnverifiedCard(items: List<String>) {
     ) {
         Column(Modifier.padding(16.dp)) {
             Text(
-                "COULDN'T VERIFY",
+                labels.couldNotVerifyHeading,
                 style = MaterialTheme.typography.labelSmall,
                 fontWeight = FontWeight.Bold,
             )
@@ -186,10 +190,14 @@ private fun UnverifiedCard(items: List<String>) {
 
 @OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
 @Composable
-private fun QuestionChips(questions: List<String>, onAsk: (String) -> Unit) {
+private fun QuestionChips(
+    questions: List<String>,
+    labels: ReportLabels,
+    onAsk: (String) -> Unit,
+) {
     Column {
         Text(
-            "Ask about this piece",
+            labels.askAboutThis,
             style = MaterialTheme.typography.labelLarge,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )

@@ -3,6 +3,7 @@ package com.qualityverifier.share
 import com.qualityverifier.domain.Defect
 import com.qualityverifier.domain.ItemType
 import com.qualityverifier.domain.Verdict
+import com.qualityverifier.text.ReportLabels
 import com.qualityverifier.ui.chat.buildShareText
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -31,6 +32,7 @@ class ShareReportTest {
                 unverified = listOf("Whether the timber is seasoned."),
             ),
             date = "21 Aug",
+            labels = ReportLabels.ENGLISH,
         )
         assertEquals(
             """
@@ -53,11 +55,43 @@ class ShareReportTest {
     }
 
     @Test
+    fun `a Swahili assessment shares with Swahili headings`() {
+        val text = buildShareText(
+            itemType = ItemType.WOODEN_STOOL,
+            verdict = Verdict(
+                levelId = "serious_concerns",
+                language = "sw",
+                headline = "Kiungo kilicholegea",
+                defects = listOf(
+                    Defect(
+                        title = "Pengo kwenye kiungo",
+                        severityId = "serious",
+                        whatItMeans = "Kitalegea zaidi kila siku.",
+                    ),
+                ),
+                unverified = listOf("Kama mbao ilikauka vizuri."),
+            ),
+            date = "21 Aug",
+            labels = ReportLabels.forLanguage("sw"),
+        )
+        assertTrue(text.startsWith("RIPOTI YA KAGUA · Kigoda · 21 Aug"))
+        assertTrue(text.contains("UAMUZI: MATATIZO MAKUBWA — Kiungo kilicholegea"))
+        assertTrue(text.contains("Ya kuangalia:"))
+        assertTrue(text.contains("(kubwa)"))
+        assertTrue(text.contains("Hayakuthibitishwa:"))
+        assertTrue(text.contains("Imekaguliwa na Kagua"))
+        // Nothing English should survive into a Swahili report.
+        assertFalse(text.contains("VERDICT"))
+        assertFalse(text.contains("Not checked"))
+    }
+
+    @Test
     fun `a clean verdict has no empty sections`() {
         val text = buildShareText(
             itemType = ItemType.WOODEN_TABLE,
             verdict = Verdict(levelId = "sound", headline = "Nothing to worry about"),
             date = "3 Sep",
+            labels = ReportLabels.ENGLISH,
         )
         assertTrue(text.startsWith("KAGUA REPORT · Table · 3 Sep"))
         assertTrue(text.contains("VERDICT: SOUND — Nothing to worry about"))
@@ -71,6 +105,7 @@ class ShareReportTest {
             itemType = ItemType.OTHER,
             verdict = Verdict(levelId = "haijulikani", summary = "Needs a closer look."),
             date = "1 Jan",
+            labels = ReportLabels.ENGLISH,
         )
         assertTrue(text.contains("VERDICT: ASSESSMENT"))
         assertTrue(text.contains("Needs a closer look."))

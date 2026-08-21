@@ -68,6 +68,7 @@ import com.qualityverifier.ui.capture.CaptureScreen
 import com.qualityverifier.ui.capture.captureInstruction
 import com.qualityverifier.text.parseAssistantContent
 import com.qualityverifier.ui.appContainer
+import com.qualityverifier.ui.rememberReportLabels
 import java.io.File
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
@@ -112,6 +113,9 @@ fun ChatScreen(
     val shareable = messages.asReversed().firstNotNullOfOrNull { message ->
         parsed[message.id]?.verdict?.let { message to it }
     }
+    // Resolved here rather than in the click handler, so it reads the device language
+    // in composable scope.
+    val shareLabels = rememberReportLabels(shareable?.second?.language)
 
     val requestCameraPermission = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
@@ -189,6 +193,7 @@ fun ChatScreen(
                                     itemType = resolvedItemType ?: ItemType.OTHER,
                                     verdict = shareable.second,
                                     at = shareable.first.createdAt,
+                                    labels = shareLabels,
                                 )
                             },
                         ) {

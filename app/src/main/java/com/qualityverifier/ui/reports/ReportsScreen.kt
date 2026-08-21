@@ -38,7 +38,9 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.qualityverifier.domain.SessionSummary
 import com.qualityverifier.domain.VerdictLevel
+import com.qualityverifier.text.ReportLabels
 import com.qualityverifier.ui.appContainer
+import com.qualityverifier.ui.rememberReportLabels
 import com.qualityverifier.ui.theme.verdictColors
 
 @Composable
@@ -122,21 +124,24 @@ private fun ReportRow(
             modifier = Modifier.padding(start = 16.dp, top = 12.dp, bottom = 12.dp, end = 4.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
+            // The badge and the "in progress" line follow the language the assessment
+            // was written in, so they match the preview text underneath them.
+            val labels = rememberReportLabels(session.verdictLanguage)
             Column(Modifier.weight(1f)) {
                 // Null while an assessment is still running, which is the honest state:
                 // a row with no badge has not reached a verdict, and should not look as
                 // though it has.
-                session.verdictLevel?.let { VerdictBadge(it) }
+                session.verdictLevel?.let { VerdictBadge(it, labels) }
                 if (session.verdictLevel == null) {
                     Text(
-                        "In progress",
+                        labels.inProgress,
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
                 Spacer(Modifier.height(6.dp))
                 Text(
-                    "${session.itemType.displayName} · ${relativeTime(session.updatedAt)}",
+                    "${labels.itemName(session.itemType)} · ${relativeTime(session.updatedAt)}",
                     style = MaterialTheme.typography.titleMedium,
                 )
                 if (session.preview.isNotBlank()) {
@@ -158,7 +163,7 @@ private fun ReportRow(
 }
 
 @Composable
-fun VerdictBadge(level: VerdictLevel) {
+fun VerdictBadge(level: VerdictLevel, labels: ReportLabels) {
     val colors = verdictColors(level)
     Surface(
         color = colors.container,
@@ -166,7 +171,7 @@ fun VerdictBadge(level: VerdictLevel) {
         shape = RoundedCornerShape(6.dp),
     ) {
         Text(
-            text = level.label.uppercase(),
+            text = labels.level(level).uppercase(),
             style = MaterialTheme.typography.labelSmall,
             fontWeight = FontWeight.Bold,
             modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),

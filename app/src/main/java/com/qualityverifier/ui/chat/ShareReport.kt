@@ -4,6 +4,7 @@ import android.content.Context
 import android.content.Intent
 import com.qualityverifier.domain.ItemType
 import com.qualityverifier.domain.Verdict
+import com.qualityverifier.text.ReportLabels
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -20,21 +21,22 @@ fun buildShareText(
     itemType: ItemType,
     verdict: Verdict,
     date: String,
+    labels: ReportLabels,
 ): String = buildString {
-    appendLine("KAGUA REPORT · ${itemType.displayName} · $date")
-    val level = verdict.level.label.uppercase()
+    appendLine("${labels.shareHeader} · ${labels.itemName(itemType)} · $date")
+    val level = labels.level(verdict.level).uppercase()
     if (verdict.headline.isBlank()) {
-        appendLine("VERDICT: $level")
+        appendLine("${labels.shareVerdict}: $level")
     } else {
-        appendLine("VERDICT: $level — ${verdict.headline}")
+        appendLine("${labels.shareVerdict}: $level — ${verdict.headline}")
     }
     if (verdict.summary.isNotBlank()) appendLine(verdict.summary)
 
     if (verdict.defects.isNotEmpty()) {
         appendLine()
-        appendLine("What to look at:")
+        appendLine(labels.shareWhatToLookAt)
         verdict.defects.forEachIndexed { index, defect ->
-            val severity = defect.severity.label.lowercase()
+            val severity = labels.severity(defect.severity).lowercase()
             val heading = listOfNotNull(
                 defect.title.takeIf { it.isNotBlank() },
                 severity.takeIf { it.isNotBlank() }?.let { "($it)" },
@@ -47,24 +49,33 @@ fun buildShareText(
 
     if (verdict.unverified.isNotEmpty()) {
         appendLine()
-        appendLine("Not checked:")
+        appendLine(labels.shareNotChecked)
         verdict.unverified.forEach { appendLine("- $it") }
     }
 
     appendLine()
-    append("Checked with Kagua — jua kabla ya kununua.")
+    append(labels.shareSignOff)
 }
 
 /**
  * Hands the report to the system share sheet. WhatsApp is the destination in practice,
  * but choosing it here would break on a phone that does not have it installed.
  */
-fun shareReport(context: Context, itemType: ItemType, verdict: Verdict, at: Long) {
+fun shareReport(
+    context: Context,
+    itemType: ItemType,
+    verdict: Verdict,
+    at: Long,
+    labels: ReportLabels,
+) {
+    // The date follows the phone rather than the assessment: it is a number the reader
+    // recognises either way, and month names in the wrong language would be worse than
+    // the phone's own formatting.
     val date = SimpleDateFormat("d MMM", Locale.getDefault()).format(Date(at))
     val intent = Intent(Intent.ACTION_SEND).apply {
         type = "text/plain"
-        putExtra(Intent.EXTRA_TEXT, buildShareText(itemType, verdict, date))
-        putExtra(Intent.EXTRA_SUBJECT, "Kagua report — ${itemType.displayName}")
+        putExtra(Intent.EXTRA_TEXT, buildShareText(itemType, verdict, date, labels))
+        putExtra(Intent.EXTRA_SUBJECT, "${labels.shareHeader} — ${labels.itemName(itemType)}")
     }
     context.startActivity(Intent.createChooser(intent, "Share this report"))
 }

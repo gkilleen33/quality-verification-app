@@ -23,6 +23,11 @@ data class SessionEntity(
      * arrives, which is the normal state for an assessment still in progress.
      */
     val verdictLevelId: String? = null,
+    /**
+     * Language of that verdict, so the reports list can badge it in the same language
+     * the assessment was written in. Null for a verdict stored before this was recorded.
+     */
+    val verdictLanguage: String? = null,
 )
 
 @Entity(

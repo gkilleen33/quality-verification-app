@@ -24,6 +24,7 @@ data class SessionSummaryRow(
     val previewText: String,
     val messageCount: Int,
     val verdictLevelId: String?,
+    val verdictLanguage: String?,
 )
 
 @Dao
@@ -37,6 +38,7 @@ interface SessionDao {
                s.updatedAt AS updatedAt,
                s.previewText AS previewText,
                s.verdictLevelId AS verdictLevelId,
+               s.verdictLanguage AS verdictLanguage,
                COUNT(m.id) AS messageCount
         FROM sessions s
         LEFT JOIN messages m ON m.sessionId = s.id
@@ -55,8 +57,11 @@ interface SessionDao {
     @Query("UPDATE sessions SET updatedAt = :updatedAt, previewText = :preview WHERE id = :sessionId")
     suspend fun touchSession(sessionId: String, updatedAt: Long, preview: String)
 
-    @Query("UPDATE sessions SET verdictLevelId = :levelId WHERE id = :sessionId")
-    suspend fun setVerdictLevel(sessionId: String, levelId: String?)
+    @Query(
+        "UPDATE sessions SET verdictLevelId = :levelId, verdictLanguage = :language " +
+            "WHERE id = :sessionId"
+    )
+    suspend fun setVerdict(sessionId: String, levelId: String?, language: String?)
 
     @Query("SELECT id FROM sessions")
     suspend fun allSessionIds(): List<String>

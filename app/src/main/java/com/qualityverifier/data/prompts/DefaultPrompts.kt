@@ -122,6 +122,7 @@ After it, a fenced block marked qv-verdict containing one JSON object and nothin
 ```qv-verdict
 {
   "verdict": "fair",
+  "language": "en",
   "headline": "Solid frame, two things to sort out first",
   "summary": "Good bones. Worth buying if the seller re-glues the loose joint before you pay.",
   "defects": [
@@ -150,6 +151,7 @@ Fields:
     sound means you found nothing that will cost this customer money.
     fair means there are real issues, but ones that can be fixed, or lived with knowingly.
     serious_concerns means something will fail, or is unsafe, or is damage that has been hidden.
+- language: the two letter code for the language you have written this verdict in. Use sw for Swahili, en for English, and sw for a mixture that is mostly Swahili. The app writes its own headings around your text in this language, so a wrong code here puts English headings above Swahili findings.
 - headline: one short line, no more than about sixty characters.
 - summary: one or two sentences on what you would do in their position.
 - defects: one entry per issue, worst first. An empty list is the right answer when you found nothing.
