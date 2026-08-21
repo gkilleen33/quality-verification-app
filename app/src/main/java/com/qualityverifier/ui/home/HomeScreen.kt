@@ -1,166 +1,240 @@
 package com.qualityverifier.ui.home
 
+import android.annotation.SuppressLint
+import android.content.Context
+import androidx.annotation.DrawableRes
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.GridItemSpan
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.Delete
-import androidx.compose.material.icons.filled.Settings
-import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Button
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
+import androidx.compose.material.icons.filled.Bed
+import androidx.compose.material.icons.filled.Category
+import androidx.compose.material.icons.filled.Chair
+import androidx.compose.material.icons.filled.ChairAlt
+import androidx.compose.material.icons.filled.Kitchen
+import androidx.compose.material.icons.filled.TableBar
+import androidx.compose.material.icons.filled.TableRestaurant
+import androidx.compose.material.icons.filled.Weekend
 import androidx.compose.material3.Card
-import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
-import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
-import com.qualityverifier.domain.SessionSummary
+import com.qualityverifier.R
+import com.qualityverifier.domain.ItemType
 import com.qualityverifier.ui.appContainer
 
-@OptIn(ExperimentalMaterial3Api::class)
+/**
+ * The starting point: the wordmark, and the question the whole app answers.
+ *
+ * The category grid lives here rather than behind a button because choosing what you are
+ * looking at is the first thing that happens in a shop, and one fewer tap matters when
+ * the phone is in one hand and a stool is in the other.
+ */
 @Composable
 fun HomeScreen(
-    onNewEvaluation: () -> Unit,
-    onOpenSession: (sessionId: String) -> Unit,
-    onOpenSettings: () -> Unit,
+    contentPadding: PaddingValues,
+    onItemChosen: (ItemType) -> Unit,
+    onOpenReports: () -> Unit,
 ) {
     val container = appContainer()
     val viewModel: HomeViewModel = viewModel(factory = HomeViewModel.factory(container))
-    val sessions by viewModel.sessions.collectAsState()
-    var pendingDelete by remember { mutableStateOf<SessionSummary?>(null) }
+    val reportCount by viewModel.reportCount.collectAsState()
 
-    Scaffold(
-        topBar = {
-            TopAppBar(
-                title = { Text("Quality Verifier") },
-                actions = {
-                    IconButton(onClick = onOpenSettings) {
-                        Icon(Icons.Filled.Settings, contentDescription = "Settings")
-                    }
-                },
-            )
-        },
-    ) { padding ->
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(padding)
-                .padding(horizontal = 16.dp),
-        ) {
-            Spacer(Modifier.height(16.dp))
-            Button(
-                onClick = onNewEvaluation,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(64.dp),
-            ) {
-                Icon(Icons.Filled.Add, contentDescription = null)
-                Spacer(Modifier.width(12.dp))
-                Text("Evaluate New Item")
-            }
-
-            Spacer(Modifier.height(24.dp))
-            Text("Past checks", style = MaterialTheme.typography.titleMedium)
-            Spacer(Modifier.height(8.dp))
-
-            if (sessions.isEmpty()) {
-                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.TopCenter) {
-                    Text(
-                        "No checks yet. Tap “Evaluate New Item” to look at a piece of furniture.",
-                        style = MaterialTheme.typography.bodyLarge,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(top = 32.dp),
-                    )
-                }
-            } else {
-                LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    items(sessions, key = { it.id }) { session ->
-                        SessionRow(
-                            session = session,
-                            onClick = { onOpenSession(session.id) },
-                            onDelete = { pendingDelete = session },
-                        )
-                    }
-                }
-            }
-        }
+    val context = LocalContext.current
+    // Resolved once per composition: the set of drawables cannot change at runtime.
+    val artwork = remember(context) {
+        ItemType.entries.associateWith { context.itemDrawableOrNull(it) }
     }
 
-    pendingDelete?.let { session ->
-        AlertDialog(
-            onDismissRequest = { pendingDelete = null },
-            title = { Text("Delete this check?") },
-            text = { Text("The conversation and its photos will be removed from this phone.") },
-            confirmButton = {
-                TextButton(onClick = {
-                    viewModel.delete(session.id)
-                    pendingDelete = null
-                }) { Text("Delete") }
-            },
-            dismissButton = {
-                TextButton(onClick = { pendingDelete = null }) { Text("Cancel") }
-            },
-        )
+    LazyVerticalGrid(
+        columns = GridCells.Fixed(2),
+        modifier = Modifier.fillMaxSize(),
+        contentPadding = PaddingValues(
+            start = 16.dp,
+            end = 16.dp,
+            top = contentPadding.calculateTopPadding() + 16.dp,
+            bottom = contentPadding.calculateBottomPadding() + 16.dp,
+        ),
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        item(span = { GridItemSpan(maxLineSpan) }) {
+            Column {
+                Text(
+                    text = stringResource(R.string.app_name).uppercase(),
+                    style = MaterialTheme.typography.displaySmall,
+                    color = MaterialTheme.colorScheme.primary,
+                )
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    text = stringResource(R.string.app_tagline),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Spacer(Modifier.height(20.dp))
+                Text(
+                    text = "Karibu. What are you looking at today?",
+                    style = MaterialTheme.typography.titleMedium,
+                )
+                Spacer(Modifier.height(4.dp))
+            }
+        }
+
+        items(ItemType.entries, key = { it.id }) { itemType ->
+            ItemCard(
+                itemType = itemType,
+                imageRes = artwork[itemType],
+                onClick = { onItemChosen(itemType) },
+            )
+        }
+
+        item(span = { GridItemSpan(maxLineSpan) }) {
+            MyReportsRow(count = reportCount, onClick = onOpenReports)
+        }
     }
 }
 
 @Composable
-private fun SessionRow(
-    session: SessionSummary,
-    onClick: () -> Unit,
-    onDelete: () -> Unit,
-) {
-    Card(modifier = Modifier.fillMaxWidth().clickable(onClick = onClick)) {
+private fun MyReportsRow(count: Int, onClick: () -> Unit) {
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(top = 8.dp)
+            .clickable(onClick = onClick),
+    ) {
         Row(
-            modifier = Modifier.padding(start = 16.dp, top = 12.dp, bottom = 12.dp, end = 4.dp),
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(64.dp)
+                .padding(horizontal = 16.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Column(Modifier.weight(1f)) {
-                Text(session.itemType.displayName, style = MaterialTheme.typography.titleMedium)
-                Spacer(Modifier.height(2.dp))
-                Text(
-                    relativeTime(session.updatedAt),
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                if (session.preview.isNotBlank()) {
-                    Spacer(Modifier.height(4.dp))
-                    Text(
-                        session.preview,
-                        style = MaterialTheme.typography.bodyMedium,
-                        maxLines = 2,
-                        overflow = TextOverflow.Ellipsis,
+            Text(
+                text = if (count == 0) "My reports" else "My reports  $count",
+                style = MaterialTheme.typography.titleMedium,
+                modifier = Modifier.weight(1f),
+            )
+            Icon(
+                Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+    }
+}
+
+@Composable
+private fun ItemCard(
+    itemType: ItemType,
+    @DrawableRes imageRes: Int?,
+    onClick: () -> Unit,
+) {
+    Card(modifier = Modifier.clickable(onClick = onClick)) {
+        Column(Modifier.fillMaxWidth()) {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .aspectRatio(4f / 3f)
+                    .background(MaterialTheme.colorScheme.surfaceVariant),
+                contentAlignment = Alignment.Center,
+            ) {
+                if (imageRes != null) {
+                    Image(
+                        painter = painterResource(imageRes),
+                        contentDescription = itemType.displayName,
+                        contentScale = ContentScale.Crop,
+                        modifier = Modifier.fillMaxSize(),
+                    )
+                } else {
+                    // No photo supplied yet — a neutral placeholder rather than a
+                    // broken-image box. Drop `item_<slug>.jpg` into res/drawable to fill it.
+                    Icon(
+                        imageVector = itemType.placeholderIcon(),
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.size(48.dp),
                     )
                 }
             }
-            IconButton(onClick = onDelete) {
-                Icon(Icons.Filled.Delete, contentDescription = "Delete check")
+            Column(
+                Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 10.dp, horizontal = 8.dp),
+            ) {
+                Text(
+                    text = itemType.displayName,
+                    style = MaterialTheme.typography.titleMedium,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                // Shown only where a native speaker has confirmed the word — see
+                // ItemType.swahiliName.
+                itemType.swahiliName?.let { swahili ->
+                    Text(
+                        text = swahili,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        textAlign = TextAlign.Center,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                }
             }
         }
     }
 }
+
+/** Distinct glyph per category, so the grid is scannable before real photos exist. */
+private fun ItemType.placeholderIcon(): ImageVector = when (this) {
+    ItemType.WOODEN_TABLE -> Icons.Filled.TableRestaurant
+    ItemType.WOODEN_CHAIR -> Icons.Filled.ChairAlt
+    ItemType.WOODEN_STOOL -> Icons.Filled.TableBar
+    ItemType.WOODEN_BED -> Icons.Filled.Bed
+    ItemType.WOODEN_CABINET -> Icons.Filled.Kitchen
+    ItemType.UPHOLSTERED_CHAIR -> Icons.Filled.Chair
+    ItemType.UPHOLSTERED_SOFA -> Icons.Filled.Weekend
+    ItemType.OTHER -> Icons.Filled.Category
+}
+
+/**
+ * Looks up `res/drawable/item_<slug>` by name, returning null when the photo has not
+ * been added yet.
+ *
+ * Resolving by name rather than through `R.drawable.*` is deliberate: the project
+ * compiles with no item photos present, and adding one later is a pure asset drop with
+ * no code change.
+ */
+@SuppressLint("DiscouragedApi")
+private fun Context.itemDrawableOrNull(itemType: ItemType): Int? =
+    resources.getIdentifier(itemType.drawableName, "drawable", packageName)
+        .takeIf { it != 0 }

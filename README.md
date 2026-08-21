@@ -1,8 +1,14 @@
-# Quality Verifier
+# Kagua
+
+*Jua kabla ya kununua — know before you buy.*
 
 Android app for furniture quality verification, aimed at buyers in East Africa
-(initially Uganda and Kenya). A user photographs a piece of furniture, and Claude
-assesses joinery, finishing, symmetry, and defects.
+(initially Uganda and Kenya). The app walks a buyer through photographing and
+physically testing a piece of furniture, then Claude gives a verdict they can act on
+before money changes hands.
+
+The Kotlin package stays `com.qualityverifier`, so the repository, the prompt URLs and
+the CI secrets are unaffected by the name.
 
 This is **Phase 1: serverless**. The app calls the Anthropic API directly with a key
 the user enters once, fetches prompts from this repo over raw GitHub URLs, and keeps
@@ -99,16 +105,106 @@ The item selection grid looks up a drawable by name at runtime and falls back to
 neutral placeholder when none exists. To add real photos, drop files into
 `app/src/main/res/drawable/` using these exact names — no code change needed:
 
-| Item type          | Drawable name              |
-| ------------------ | -------------------------- |
-| Wooden Table       | `item_wooden_table`        |
-| Wooden Chair       | `item_wooden_chair`        |
-| Wooden Bed         | `item_wooden_bed`          |
-| Upholstered Chair  | `item_upholstered_chair`   |
-| Upholstered Sofa   | `item_upholstered_sofa`    |
-| Other              | `item_other`               |
+| Item type           | Drawable name              |
+| ------------------- | -------------------------- |
+| Table               | `item_wooden_table`        |
+| Wooden chair        | `item_wooden_chair`        |
+| Stool or bench      | `item_wooden_stool`        |
+| Bed                 | `item_wooden_bed`          |
+| Cabinet or wardrobe | `item_wooden_cabinet`      |
+| Sofa                | `item_upholstered_sofa`    |
+| Padded chair        | `item_upholstered_chair`   |
+| Something else      | `item_other`               |
 
 Any drawable extension works (`.jpg`, `.png`, `.webp`). Cards crop to 4:3.
+
+## The assessment
+
+Every category has its own protocol under `prompts/items/`, and `prompts/master.txt`
+drives the sequence they all share:
+
+1. **Context** — buying or already own it, price quoted, intended use. The same loose
+   joint matters far more on a stool used daily in a kitchen than on a chair guests sit
+   in twice a year.
+2. **Depth** — a full assessment, or a rapid one. Full is recommended and is a guided
+   photo plan plus hands-on tests. Rapid is two wide photos, for triaging several pieces
+   in one shop, and says plainly that it is likelier to miss something.
+3. **Photos** — one shot at a time, with the framing described in words.
+4. **Hands-on tests** — racking, bottle-top roll, sighting along a surface, fingernail
+   press, drawer pull, foam press. The buyer's hands are the instrument.
+5. **Verdict** — sound, fair, or serious concerns, as cards.
+6. **Follow-up** — questions grounded in what was actually seen.
+
+Two rules the prompts hold to, both covered by tests in
+[`DefaultPromptsInSyncTest`](app/src/test/java/com/qualityverifier/prompts/DefaultPromptsInSyncTest.kt):
+
+- **No money.** No shilling figures, no typical price ranges, no repair-cost estimates.
+  There is no price data behind them, and a wrong number quoted back to a seller in a
+  negotiation is worse than no number.
+- **Mirror the language.** Swahili in, Swahili out; mixed in, mixed out.
+
+Swahili category labels are shown only where a term could be sourced. `ItemType`
+deliberately leaves the two upholstered ones English-only rather than guessing — a wrong
+word in the user's own language costs more trust than a missing one.
+
+## Blocks the app parses out of a reply
+
+Two fenced blocks in an assistant message are addressed to the app rather than the
+reader, and are stripped from the bubble by
+[`AssistantBlocks.kt`](app/src/main/java/com/qualityverifier/text/AssistantBlocks.kt):
+
+````
+```qv-options
+Solid, no movement
+A little give, corner to corner
+Rocks clearly at the joints
+```
+````
+
+becomes tappable reply chips, and
+
+````
+```qv-verdict
+{ "verdict": "fair", "headline": "...", "defects": [ ... ] }
+```
+````
+
+becomes the verdict cards.
+
+They travel inside the message text rather than through a tool call or a second request.
+That keeps `ChatService` returning plain text, so the Phase 2 swap stays a one-file
+change, and keeps the whole assessment in a single cached prefix instead of paying for a
+second system prompt.
+
+The prompt writes the verdict twice — prose, then the block — and the app shows whichever
+survived. It costs a few hundred output tokens and buys a readable answer for somebody
+standing in a shop when a parse fails, which is the worst possible moment to show
+nothing. A `qv-verdict` block that will not parse is dropped rather than printed, so raw
+JSON never reaches the bubble.
+
+Renaming a tag in the prompt without renaming it in `AssistantBlocks` would silently stop
+the cards and chips from ever appearing, with no error anywhere. A test asserts both tags
+are still documented in the master prompt.
+
+## Capture
+
+Photos are taken in-app with CameraX rather than by handing off to the system camera,
+because the shot instruction has to sit on top of the live preview. In a shop the user is
+holding the phone in one hand, is being watched by the person who built the furniture, and
+has been told to frame something specific; a camera app that has forgotten the
+instruction means they come back with the wrong photo.
+
+The instruction shown is the assistant's last message, because the protocol asks for
+exactly one photo at a time — no extra prompt machinery, nothing to drift out of sync.
+
+Each capture is measured on-device for blur (variance of the Laplacian) and darkness
+(mean luma) before being attached. The check is advisory: a photo it dislikes is held up
+with an explanation and a "use it anyway", and a photo it cannot measure is attached
+without comment. Both thresholds in
+[`ImageQuality.kt`](app/src/main/java/com/qualityverifier/images/ImageQuality.kt) are
+engineering judgement, not measurement — they have not been calibrated against real
+photos from real workshops, which is why they sit low enough to fire only on obvious
+cases.
 
 ## Architecture
 
@@ -232,7 +328,8 @@ which matters on metered mobile data. Rotation is applied for accuracy too: Clau
 cannot judge whether a table is level from a sideways photo.
 
 Deleting a session deletes its photos. Photos attached to a conversation that was never
-sent are cleaned up on the next visit to the home screen.
+sent are cleaned up on the next launch, from the home screen, which is the one
+destination guaranteed to be reached.
 
 ## Getting a build onto a phone
 

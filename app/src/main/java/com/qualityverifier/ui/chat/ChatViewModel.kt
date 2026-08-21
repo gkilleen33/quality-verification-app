@@ -1,8 +1,6 @@
 package com.qualityverifier.ui.chat
 
-import android.content.Context
 import android.net.Uri
-import androidx.core.content.FileProvider
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
@@ -17,6 +15,7 @@ import com.qualityverifier.di.AppContainer
 import com.qualityverifier.domain.Attachment
 import com.qualityverifier.domain.ChatMessage
 import com.qualityverifier.domain.ItemType
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -32,6 +31,13 @@ import java.util.UUID
 /** An image the user has attached but not yet sent. */
 data class PendingImage(val id: String, val path: String)
 
+/**
+ * A just-taken photo held back for the user to look at, because the on-device check
+ * thinks it may be unusable. Only ever set when there is something to say — a photo that
+ * measures fine is attached without interrupting the shot-by-shot flow.
+ */
+data class CaptureReview(val path: String, val warning: String)
+
 data class ChatError(val kind: ChatErrorKind, val message: String)
 
 class ChatViewModel(
@@ -40,6 +46,13 @@ class ChatViewModel(
     private val sessions: SessionRepository,
     private val chat: ChatService,
     private val images: SessionImageStore,
+    /**
+     * Where file work happens. Injected so that tests can drive it with the same
+     * scheduler as the main dispatcher — otherwise a capture's normalise-and-measure
+     * step runs on a real thread pool and no amount of advancing the test clock waits
+     * for it.
+     */
+    private val io: CoroutineDispatcher = Dispatchers.IO,
 ) : ViewModel() {
 
     val messages: StateFlow<List<ChatMessage>> = sessions.observeMessages(sessionId)
@@ -63,6 +76,9 @@ class ChatViewModel(
 
     private val _itemType = MutableStateFlow(declaredItemType)
     val itemType: StateFlow<ItemType?> = _itemType.asStateFlow()
+
+    private val _review = MutableStateFlow<CaptureReview?>(null)
+    val review: StateFlow<CaptureReview?> = _review.asStateFlow()
 
     init {
         viewModelScope.launch {
@@ -98,37 +114,58 @@ class ChatViewModel(
         }
     }
 
-    /**
-     * Creates the destination file for a camera capture and returns a shareable URI.
-     * The file is registered as pending only once the capture actually succeeds.
-     */
-    fun prepareCapture(context: Context): Pair<Uri, File>? = runCatching {
-        val file = images.newImageFile(sessionId)
-        val uri = FileProvider.getUriForFile(
-            context,
-            "${context.packageName}.fileprovider",
-            file,
-        )
-        uri to file
-    }.getOrNull()
+    /** Destination for the next shot. The camera screen writes straight into it. */
+    fun newCaptureFile(): File? = runCatching { images.newImageFile(sessionId) }.getOrNull()
 
-    fun onCaptureResult(file: File, success: Boolean) {
+    /**
+     * Normalises a freshly captured file and either attaches it or holds it for review.
+     *
+     * The check is advisory, so it only ever interrupts: a photo it cannot measure, or
+     * measures as fine, goes straight into the pending list so the user can keep working
+     * through the shot list without confirming every frame.
+     */
+    fun onPhotoCaptured(file: File) {
         viewModelScope.launch {
-            val kept = success && withContext(Dispatchers.IO) {
+            val prepared = withContext(io) {
                 file.length() > 0 && images.normaliseInPlace(file)
             }
-            if (kept) {
-                _pending.update { it + PendingImage(UUID.randomUUID().toString(), file.absolutePath) }
+            if (!prepared) {
+                withContext(io) { images.delete(file) }
+                _notice.value = "That photo could not be read. Please take it again."
+                return@launch
+            }
+            val warning = withContext(io) { images.measureQuality(file)?.warning }
+            if (warning != null) {
+                _review.value = CaptureReview(file.absolutePath, warning)
             } else {
-                withContext(Dispatchers.IO) { images.delete(file) }
+                attach(file)
             }
         }
+    }
+
+    /** Keeps a photo the check complained about. The user has looked at it; they decide. */
+    fun keepReviewedPhoto() {
+        val reviewed = _review.value ?: return
+        _review.value = null
+        attach(File(reviewed.path))
+    }
+
+    fun discardReviewedPhoto() {
+        val reviewed = _review.value ?: return
+        _review.value = null
+        viewModelScope.launch {
+            withContext(io) { images.delete(File(reviewed.path)) }
+        }
+    }
+
+    private fun attach(file: File) {
+        _pending.update { it + PendingImage(UUID.randomUUID().toString(), file.absolutePath) }
     }
 
     fun onGalleryPicked(uris: List<Uri>) {
         if (uris.isEmpty()) return
         viewModelScope.launch {
-            val imported = withContext(Dispatchers.IO) {
+            val imported = withContext(io) {
                 uris.mapNotNull { images.importFromUri(sessionId, it) }
             }
             if (imported.size < uris.size) {
@@ -147,7 +184,7 @@ class ChatViewModel(
         val target = _pending.value.firstOrNull { it.id == id } ?: return
         _pending.update { list -> list.filterNot { it.id == id } }
         viewModelScope.launch {
-            withContext(Dispatchers.IO) { images.delete(File(target.path)) }
+            withContext(io) { images.delete(File(target.path)) }
         }
     }
 
