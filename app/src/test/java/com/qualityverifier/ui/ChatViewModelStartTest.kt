@@ -13,6 +13,7 @@ import com.qualityverifier.domain.ItemType
 import com.qualityverifier.domain.Role
 import com.qualityverifier.domain.SessionSummary
 import com.qualityverifier.domain.AssessmentContext
+import com.qualityverifier.domain.AssessmentDepth
 import com.qualityverifier.domain.AssessmentLanguage
 import com.qualityverifier.domain.Ownership
 import com.qualityverifier.domain.Usage
@@ -96,6 +97,7 @@ class ChatViewModelStartTest {
         assertTrue(opening, opening.contains("Muuzaji anataka 3500."))
         assertTrue(opening, opening.contains("kila siku"))
         assertTrue(opening, opening.contains("Kiswahili"))
+        assertTrue(opening, opening.contains("ukaguzi kamili"))
     }
 
     @Test
@@ -345,12 +347,14 @@ class ChatViewModelStartTest {
             ownership = Ownership.BUYING,
             quotedPrice = "3500",
             usage = Usage.DAILY,
+            depth = AssessmentDepth.FULL,
         )
 
         val ENGLISH_CONTEXT = AssessmentContext(
             language = AssessmentLanguage.ENGLISH,
             ownership = Ownership.ALREADY_OWN,
             usage = Usage.OCCASIONAL,
+            depth = AssessmentDepth.RAPID,
         )
     }
 

@@ -3,22 +3,31 @@ package com.qualityverifier.domain
 /**
  * What the app asks before it asks Claude anything.
  *
- * These three or four answers used to be the assistant's first four turns: a request per
- * question, each one a wait on a network round trip, and the whole thing kicked off
- * automatically when the screen opened so that the first thing a customer saw was a
- * spinner. None of it needed a model — they are a language, two multiple-choice questions
- * and a number.
+ * These answers used to be the assistant's first five turns: a request per question, each
+ * one a wait on a network round trip, and the whole thing kicked off automatically when
+ * the screen opened so that the first thing a customer saw was a spinner. None of it
+ * needed a model — they are a language, three multiple-choice questions and a number.
  *
- * Collecting them on the device means the chat opens instantly and the first request
- * carries the context with it.
+ * Every field is nullable because the intake can be **abandoned part way**. A customer who
+ * cannot find their answer among the buttons hands the conversation over instead, and
+ * whatever they had already chosen goes with them rather than being thrown away. See
+ * [isComplete] and [com.qualityverifier.text.buildIntakeMessage].
  */
 data class AssessmentContext(
-    val language: AssessmentLanguage,
-    val ownership: Ownership,
-    /** Blank when not buying, or when they did not want to say. */
+    val language: AssessmentLanguage? = null,
+    val ownership: Ownership? = null,
+    /** Blank when not buying, when skipped, or when the intake was abandoned first. */
     val quotedPrice: String = "",
-    val usage: Usage,
-)
+    val usage: Usage? = null,
+    val depth: AssessmentDepth? = null,
+) {
+    /**
+     * True when the app answered everything, so the assistant can go straight to a plan.
+     * False means it must pick up the questions itself.
+     */
+    val isComplete: Boolean
+        get() = language != null && ownership != null && usage != null && depth != null
+}
 
 /**
  * The languages the app can conduct an assessment in.
@@ -35,3 +44,6 @@ enum class AssessmentLanguage(val code: String, val ownName: String) {
 enum class Ownership { BUYING, ALREADY_OWN }
 
 enum class Usage { DAILY, OCCASIONAL, BUSINESS }
+
+/** How thorough the assessment should be. Recommended answer is [FULL]. */
+enum class AssessmentDepth { FULL, RAPID }

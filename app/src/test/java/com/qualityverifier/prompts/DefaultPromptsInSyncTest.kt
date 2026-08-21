@@ -167,12 +167,32 @@ class DefaultPromptsInSyncTest {
         // they have already answered.
         val master = DefaultPrompts.MASTER
         assertTrue(
-            "Stage 1 no longer says the context is already collected",
-            master.contains("Already collected"),
+            "Stage 1 no longer says the context is normally collected",
+            master.contains("Normally collected already"),
         )
         assertTrue(
-            "the prompt no longer forbids re-asking the context",
-            master.contains("Do not ask any of it again"),
+            "the prompt no longer forbids re-asking what it was told",
+            master.contains("Do not ask again for anything that message tells you"),
+        )
+        assertTrue(
+            "the depth is no longer expected in the opening message",
+            master.contains("Stage 2, the depth. Normally chosen already"),
+        )
+    }
+
+    @Test
+    fun `the assistant takes over when the intake was abandoned`() {
+        // The app's questions are buttons, and somebody whose answer is not one of them
+        // hands the conversation over. If the prompt does not know that can happen, it
+        // either ignores a half-answered context or barrels on to a plan it cannot make.
+        val master = DefaultPrompts.MASTER
+        assertTrue(
+            "the prompt does not expect a partial context",
+            master.contains("Sometimes it will not tell you everything"),
+        )
+        assertTrue(
+            "the prompt does not know to ask only for what is missing",
+            master.contains("ask only for what is missing"),
         )
     }
 

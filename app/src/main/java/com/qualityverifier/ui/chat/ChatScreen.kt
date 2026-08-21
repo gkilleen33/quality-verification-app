@@ -169,7 +169,7 @@ fun ChatScreen(
             onComplete = { context ->
                 viewModel.submitIntake(
                     context = context,
-                    labels = ReportLabels.forLanguage(context.language.code),
+                    labels = ReportLabels.forLanguage(context.language?.code),
                 )
             },
             onBack = onBack,
