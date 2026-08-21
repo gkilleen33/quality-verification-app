@@ -13,6 +13,7 @@ import com.qualityverifier.data.db.SessionImageStore
 import com.qualityverifier.data.session.SessionRepository
 import com.qualityverifier.di.AppContainer
 import com.qualityverifier.domain.AssessmentContext
+import com.qualityverifier.domain.AssessmentDepth
 import com.qualityverifier.domain.AssessmentPlan
 import com.qualityverifier.domain.Attachment
 import com.qualityverifier.domain.ChatMessage
@@ -46,9 +47,19 @@ data class PendingImage(val id: String, val path: String)
 data class CaptureReview(
     val path: String,
     val warning: String,
-    /** Which planned shot this belongs to, or null for a photo taken outside a plan. */
-    val shotIndex: Int? = null,
+    val target: CaptureTarget,
 )
+
+/** What a photo being taken is for, so a kept one goes to the right place. */
+sealed interface CaptureTarget {
+    /** Attached to the composer, to send with whatever the user types. */
+    data object Composer : CaptureTarget
+
+    /** Sent with the intake, so the assistant can see the piece before planning. */
+    data object Opening : CaptureTarget
+
+    data class PlanShot(val index: Int) : CaptureTarget
+}
 
 /**
  * A collection run in progress: the plan the assistant issued, and what has been
@@ -145,6 +156,21 @@ class ChatViewModel(
     private val _needsIntake = MutableStateFlow(false)
     val needsIntake: StateFlow<Boolean> = _needsIntake.asStateFlow()
 
+    /**
+     * A finished intake waiting on its opening photo.
+     *
+     * A full assessment sends one photo of the whole piece with the context, so that the
+     * assistant can check the item's protocol against the piece in front of the customer
+     * before committing to seven shots. The item protocols describe a *typical* table, and
+     * the one being bought may be on welded steel legs.
+     *
+     * The app takes that photo rather than asking the assistant to request it. Asked for
+     * in the prompt it was simply ignored — the pull towards issuing the whole plan at once
+     * was stronger — and doing it here costs one fewer round trip anyway.
+     */
+    private val _awaitingOpeningPhoto = MutableStateFlow<AssessmentContext?>(null)
+    val awaitingOpeningPhoto: StateFlow<AssessmentContext?> = _awaitingOpeningPhoto.asStateFlow()
+
     init {
         viewModelScope.launch {
             if (declaredItemType == null) {
@@ -181,6 +207,42 @@ class ChatViewModel(
         if (_sending.value) return
         _needsIntake.value = false
 
+        // A full assessment collects its opening photo first. A rapid one does not: its
+        // whole point is speed, and its plan is two wide photos anyway. An abandoned
+        // intake does not either, since nobody has said which it is.
+        if (context.depth == AssessmentDepth.FULL) {
+            _awaitingOpeningPhoto.value = context
+            return
+        }
+        send(context, labels, openingPhoto = null)
+    }
+
+    /**
+     * Abandons the opening photo and starts the conversation without it.
+     *
+     * Reached by backing out of that camera. Better than trapping somebody there; the
+     * assistant just plans from the item's protocol as written, without having seen the
+     * piece.
+     */
+    fun skipOpeningPhoto() {
+        val context = _awaitingOpeningPhoto.value ?: return
+        _awaitingOpeningPhoto.value = null
+        send(context, labelsFor(context), openingPhoto = null)
+    }
+
+    /**
+     * A complete intake always names its language, so this needs no device fallback: the
+     * depth is only set on the last question, and reaching it means every earlier one was
+     * answered.
+     */
+    private fun labelsFor(context: AssessmentContext): ReportLabels =
+        ReportLabels.forLanguage(context.language?.code)
+
+    private fun send(
+        context: AssessmentContext,
+        labels: ReportLabels,
+        openingPhoto: String?,
+    ) {
         viewModelScope.launch {
             _error.value = null
             _sending.value = true
@@ -190,7 +252,9 @@ class ChatViewModel(
                 sessions.appendUserMessage(
                     sessionId = sessionId,
                     text = buildIntakeMessage(context, labels),
-                    attachments = emptyList(),
+                    attachments = listOfNotNull(
+                        openingPhoto?.let { Attachment(UUID.randomUUID().toString(), it) },
+                    ),
                 )
                 deliver(type)
             } finally {
@@ -290,7 +354,7 @@ class ChatViewModel(
      * measures as fine, goes straight into the pending list so the user can keep working
      * through the shot list without confirming every frame.
      */
-    fun onPhotoCaptured(file: File, shotIndex: Int? = null) {
+    fun onPhotoCaptured(file: File, target: CaptureTarget = CaptureTarget.Composer) {
         viewModelScope.launch {
             val prepared = withContext(io) {
                 file.length() > 0 && images.normaliseInPlace(file)
@@ -302,9 +366,9 @@ class ChatViewModel(
             }
             val warning = withContext(io) { images.measureQuality(file)?.warning }
             if (warning != null) {
-                _review.value = CaptureReview(file.absolutePath, warning, shotIndex)
+                _review.value = CaptureReview(file.absolutePath, warning, target)
             } else {
-                accept(file, shotIndex)
+                accept(file, target)
             }
         }
     }
@@ -313,15 +377,19 @@ class ChatViewModel(
     fun keepReviewedPhoto() {
         val reviewed = _review.value ?: return
         _review.value = null
-        accept(File(reviewed.path), reviewed.shotIndex)
+        accept(File(reviewed.path), reviewed.target)
     }
 
-    private fun accept(file: File, shotIndex: Int?) {
-        if (shotIndex == null) {
-            attach(file)
-        } else {
-            _run.update { current ->
-                current?.copy(shots = current.shots + (shotIndex to file.absolutePath))
+    private fun accept(file: File, target: CaptureTarget) {
+        when (target) {
+            CaptureTarget.Composer -> attach(file)
+            CaptureTarget.Opening -> {
+                val context = _awaitingOpeningPhoto.value ?: return
+                _awaitingOpeningPhoto.value = null
+                send(context, labelsFor(context), openingPhoto = file.absolutePath)
+            }
+            is CaptureTarget.PlanShot -> _run.update { current ->
+                current?.copy(shots = current.shots + (target.index to file.absolutePath))
             }
         }
     }

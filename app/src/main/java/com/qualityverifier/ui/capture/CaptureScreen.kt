@@ -49,6 +49,8 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.items
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
@@ -86,6 +88,12 @@ fun CaptureScreen(
     /** Offered only inside a plan, where skipping a shot is a recorded outcome. */
     skipLabel: String? = null,
     onSkip: (() -> Unit)? = null,
+    /**
+     * Shots already taken in this run, oldest first. Shown as a strip above the shutter
+     * so each capture visibly lands — without a confirm step, which would cost a tap per
+     * photo on a seven-shot plan.
+     */
+    takenPaths: List<String> = emptyList(),
 ) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
@@ -167,6 +175,25 @@ fun CaptureScreen(
                 if (reviewPhotoPath != null) {
                     ReviewControls(warning = warning, onKeep = onKeep, onRetake = onRetake)
                 } else if (bindError == null) {
+                    if (takenPaths.isNotEmpty()) {
+                        LazyRow(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 16.dp, vertical = 6.dp),
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        ) {
+                            items(takenPaths) { path ->
+                                AsyncImage(
+                                    model = File(path),
+                                    contentDescription = null,
+                                    contentScale = ContentScale.Crop,
+                                    modifier = Modifier
+                                        .size(52.dp)
+                                        .clip(RoundedCornerShape(6.dp)),
+                                )
+                            }
+                        }
+                    }
                     onSkip?.let { skip ->
                         if (skipLabel != null) {
                             Box(Modifier.fillMaxWidth().padding(horizontal = 16.dp)) {

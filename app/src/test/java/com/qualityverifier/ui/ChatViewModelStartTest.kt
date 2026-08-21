@@ -18,6 +18,7 @@ import com.qualityverifier.domain.AssessmentLanguage
 import com.qualityverifier.domain.Ownership
 import com.qualityverifier.domain.Usage
 import com.qualityverifier.text.ReportLabels
+import com.qualityverifier.ui.chat.CaptureTarget
 import com.qualityverifier.ui.chat.ChatViewModel
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
@@ -77,6 +78,66 @@ class ChatViewModelStartTest {
     }
 
     @Test
+    fun `a full assessment waits for its opening photo before sending`() = runTest {
+        // The photo of the whole piece goes with the context, so the assistant can check
+        // the item's protocol against the actual piece before planning seven shots of it.
+        val sessions = FakeSessions()
+        val chat = FakeChat(ChatResult.Success("here is the plan"))
+        val images = FakeImages()
+
+        val vm = viewModel(sessions, chat, images = images)
+        dispatcher.scheduler.advanceUntilIdle()
+        vm.submitIntake(SWAHILI_CONTEXT, ReportLabels.SWAHILI)
+        dispatcher.scheduler.advanceUntilIdle()
+
+        // Nothing sent yet: the camera is waiting.
+        assertEquals(0, chat.calls)
+        assertNotNull(vm.awaitingOpeningPhoto.value)
+
+        vm.onPhotoCaptured(images.newImageFile("s1"), CaptureTarget.Opening)
+        dispatcher.scheduler.advanceUntilIdle()
+
+        assertEquals(1, chat.calls)
+        assertNull(vm.awaitingOpeningPhoto.value)
+        val opening = sessions.messages.first()
+        assertEquals(Role.USER, opening.role)
+        assertEquals(1, opening.attachments.size)
+    }
+
+    @Test
+    fun `a rapid assessment sends straight away, with no opening photo`() = runTest {
+        // Rapid exists for speed and its plan is two wide photos anyway.
+        val sessions = FakeSessions()
+        val chat = FakeChat(ChatResult.Success("two photos please"))
+
+        val vm = viewModel(sessions, chat)
+        dispatcher.scheduler.advanceUntilIdle()
+        vm.submitIntake(ENGLISH_CONTEXT, ReportLabels.ENGLISH)
+        dispatcher.scheduler.advanceUntilIdle()
+
+        assertEquals(1, chat.calls)
+        assertNull(vm.awaitingOpeningPhoto.value)
+        assertTrue(sessions.messages.first().attachments.isEmpty())
+    }
+
+    @Test
+    fun `backing out of the opening photo starts the conversation anyway`() = runTest {
+        // Better than trapping somebody on a camera screen.
+        val sessions = FakeSessions()
+        val chat = FakeChat(ChatResult.Success("ok"))
+
+        val vm = viewModel(sessions, chat)
+        dispatcher.scheduler.advanceUntilIdle()
+        vm.submitIntake(SWAHILI_CONTEXT, ReportLabels.SWAHILI)
+        dispatcher.scheduler.advanceUntilIdle()
+        vm.skipOpeningPhoto()
+        dispatcher.scheduler.advanceUntilIdle()
+
+        assertEquals(1, chat.calls)
+        assertTrue(sessions.messages.first().attachments.isEmpty())
+    }
+
+    @Test
     fun `the intake sends one request whose first turn is the customer's own answers`() = runTest {
         val sessions = FakeSessions()
         val chat = FakeChat(ChatResult.Success("Sawa. Full or rapid?"))
@@ -84,7 +145,7 @@ class ChatViewModelStartTest {
         val vm = viewModel(sessions, chat)
         dispatcher.scheduler.advanceUntilIdle()
 
-        vm.submitIntake(SWAHILI_CONTEXT, ReportLabels.SWAHILI)
+        vm.submitIntake(SWAHILI_RAPID, ReportLabels.SWAHILI)
         dispatcher.scheduler.advanceUntilIdle()
 
         assertEquals(1, chat.calls)
@@ -97,7 +158,7 @@ class ChatViewModelStartTest {
         assertTrue(opening, opening.contains("Muuzaji anataka 3500."))
         assertTrue(opening, opening.contains("kila siku"))
         assertTrue(opening, opening.contains("Kiswahili"))
-        assertTrue(opening, opening.contains("ukaguzi kamili"))
+        assertTrue(opening, opening.contains("ukaguzi wa haraka"))
     }
 
     @Test
@@ -107,7 +168,7 @@ class ChatViewModelStartTest {
 
         val vm = viewModel(sessions, chat)
         dispatcher.scheduler.advanceUntilIdle()
-        vm.submitIntake(SWAHILI_CONTEXT, ReportLabels.SWAHILI)
+        vm.submitIntake(SWAHILI_RAPID, ReportLabels.SWAHILI)
         dispatcher.scheduler.advanceUntilIdle()
 
         val history = chat.histories.first()
@@ -342,6 +403,15 @@ class ChatViewModelStartTest {
     }
 
     private companion object {
+        /** Rapid, so it sends without waiting on an opening photo. */
+        val SWAHILI_RAPID = AssessmentContext(
+            language = AssessmentLanguage.SWAHILI,
+            ownership = Ownership.BUYING,
+            quotedPrice = "3500",
+            usage = Usage.DAILY,
+            depth = AssessmentDepth.RAPID,
+        )
+
         val SWAHILI_CONTEXT = AssessmentContext(
             language = AssessmentLanguage.SWAHILI,
             ownership = Ownership.BUYING,

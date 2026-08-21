@@ -60,6 +60,34 @@ class PlanSubmissionTest {
     }
 
     @Test
+    fun `unsure and could-not-do are reported as different things`() {
+        // Both are checks that did not happen, and neither is a failure -- but they are
+        // not the same. "Not sure" means they tried; "not done" means they did not, often
+        // because the piece was too heavy to tip alone. The assistant is told to treat
+        // both as unverified, and it can only do that if it can see which is which.
+        val text = buildSubmissionText(
+            plan = plan,
+            shots = mapOf(0 to "/a.jpg", 1 to "/b.jpg"),
+            answers = mapOf(0 to ReportLabels.ENGLISH.notSure, 1 to null),
+            labels = ReportLabels.ENGLISH,
+        )
+        assertTrue(text.contains("- The wobble test: I'm not sure"))
+        assertTrue(text.contains("- The bottle-top roll: not done"))
+    }
+
+    @Test
+    fun `unsure travels in the assessment's language`() {
+        val text = buildSubmissionText(
+            plan = plan,
+            shots = emptyMap(),
+            answers = mapOf(0 to ReportLabels.SWAHILI.notSure, 1 to null),
+            labels = ReportLabels.SWAHILI,
+        )
+        assertTrue(text.contains("Sina uhakika"))
+        assertTrue(text.contains("haikufanyika"))
+    }
+
+    @Test
     fun `a photos-only follow-up plan has no test section`() {
         val text = buildSubmissionText(
             plan = AssessmentPlan(photos = listOf(PlannedShot(title = "Under the rail"))),

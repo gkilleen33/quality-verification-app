@@ -53,6 +53,11 @@ data class ReportLabels(
     /** Said of a step the customer could not do — never left silent. */
     val notDone: String,
     val cannotDoThis: String,
+    /**
+     * Answered, but with nothing learned. Distinct from [cannotDoThis]: having tried and
+     * been unsure is not the same as never having tried, and neither is a failure.
+     */
+    val notSure: String,
     val inThisInspection: String,
     // The local intake, before anything is sent.
     val intakeOwnershipQuestion: String,
@@ -73,6 +78,7 @@ data class ReportLabels(
     val intakeDepthRapid: String,
     val intakeDepthRapidDetail: String,
     val intakeSomethingElse: String,
+    val openingShotInstruction: String,
     // The opening turn the intake writes on the customer's behalf.
     val intakeSaysBuying: String,
     val intakeSaysAlreadyOwn: String,
@@ -183,6 +189,7 @@ data class ReportLabels(
             submissionTestsHeading = "Test results",
             notDone = "not done",
             cannotDoThis = "I can't do this one",
+            notSure = "I'm not sure",
             inThisInspection = "In this inspection",
             intakeOwnershipQuestion = "Are you buying this, or checking one you already own?",
             intakeBuying = "I'm buying it",
@@ -202,6 +209,9 @@ data class ReportLabels(
             intakeDepthRapid = "Rapid assessment",
             intakeDepthRapidDetail = "Two photos and a quick opinion. Likelier to miss something.",
             intakeSomethingElse = "Something else — let me explain",
+            openingShotInstruction = "One photo of the whole thing to start. Stand back far " +
+                "enough that all of it is in the frame, including where it meets the floor. " +
+                "This lets me see what I am dealing with before asking for close-ups.",
             intakeSaysBuying = "I am buying this.",
             intakeSaysAlreadyOwn = "I already own this one.",
             intakeSaysPriceUnknown = "I do not know what price is being asked.",
@@ -272,6 +282,7 @@ data class ReportLabels(
             submissionTestsHeading = "Majibu ya majaribio",
             notDone = "haikufanyika",
             cannotDoThis = "Siwezi kufanya hili",
+            notSure = "Sina uhakika",
             inThisInspection = "Katika ukaguzi huu",
             intakeOwnershipQuestion = "Unanunua hii, au unakagua uliyo nayo?",
             intakeBuying = "Ninanunua",
@@ -291,6 +302,9 @@ data class ReportLabels(
             intakeDepthRapid = "Ukaguzi wa haraka",
             intakeDepthRapidDetail = "Picha mbili na maoni ya haraka. Ni rahisi kukosa kitu.",
             intakeSomethingElse = "Kitu kingine — niambie mwenyewe",
+            openingShotInstruction = "Picha moja ya kitu kizima kwa kuanzia. Simama mbali " +
+                "kiasi ili kiwe chote kwenye picha, pamoja na pale kinapogusa sakafu. " +
+                "Hii inanisaidia kuona ninachoshughulika nacho kabla ya kuomba picha za karibu.",
             intakeSaysBuying = "Ninanunua hii.",
             intakeSaysAlreadyOwn = "Hii ninayo tayari.",
             intakeSaysPriceUnknown = "Sijui bei inayotakiwa.",

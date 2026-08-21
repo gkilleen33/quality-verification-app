@@ -149,7 +149,8 @@ drives the sequence they all share:
    quoted, intended use, and how thorough to be. **Nothing is sent while this happens.**
    The same loose joint matters far more on a stool used daily in a kitchen than on a chair
    guests sit in twice a year, and the assessment knows which it is before it starts.
-   Because the depth is chosen here too, the assistant's *first* reply is the plan itself.
+   A full assessment then takes **one photo of the whole piece** and sends it with the
+   context, so the assistant's *first* reply is a plan that already fits the actual piece.
 2. **A plan** — the assistant issues the whole shot list and test list in one message,
    as a `qv-plan` block.
 3. **Collection** — the app walks the buyer through every shot and every test *locally*,
@@ -282,6 +283,16 @@ That keeps `ChatService` returning plain text, so the Phase 2 swap stays a one-f
 change, and keeps the whole assessment in a single cached prefix instead of paying for a
 second system prompt.
 
+A plan is treated the same way but not identically: its prose opening is the assistant
+acknowledging what it was told, which is worth keeping, so only the **first paragraph**
+survives when the block parses. Left whole, the assistant listed all seven shots in prose
+as well, the card drew the same list directly underneath, and the button that starts the
+camera ended up below the fold on the screen whose entire purpose is to start the camera.
+The prompt now asks for one short paragraph; the parser guarantees it.
+
+For the same reason the plan's next action is pinned above the composer rather than sitting
+at the foot of the card, which a seven-shot plan pushes off-screen.
+
 The prompt writes the verdict twice — prose, then the block — and the app shows whichever
 survived. It costs a few hundred output tokens and buys a readable answer for somebody
 standing in a shop when a parse fails, which is the worst possible moment to show
@@ -291,6 +302,41 @@ JSON never reaches the bubble.
 Renaming a tag in the prompt without renaming it in `AssistantBlocks` would silently stop
 the cards and chips from ever appearing, with no error anywhere. A test asserts both tags
 are still documented in the master prompt.
+
+## Planning for the piece in front of you
+
+The item protocols under `prompts/items/` describe a *typical* piece of that kind. The one
+being bought may be on welded steel legs, or have a drawer nobody mentioned, or turn out not
+to be the category the buyer picked at all.
+
+So a full assessment sends one photo of the whole piece along with the context, and the
+prompt is told to check its protocol against that photo before planning: use the shots that
+still apply, change the ones that do not, and say in a sentence what changed.
+
+**The app takes that photo rather than asking the assistant to request it.** Asked for in
+the prompt it was simply ignored — twice, even after the contradicting rule was removed —
+because the pull towards issuing the whole plan at once was stronger. Doing it on the device
+is also one round trip cheaper, since the photo rides along with the context that was going
+to be sent anyway.
+
+It works: handed the emulator's virtual scene, the assistant identified the piece as a TV
+stand rather than the table the category claimed, and planned accordingly.
+
+One known imperfection: the prompt says never to re-ask for the photo it already has, and
+the model sometimes asks for a second wide shot anyway. Costs one photo out of seven, and a
+second angle is not useless, so it is left as an instruction rather than enforced.
+
+## Tests that did not happen
+
+Every hands-on test carries two answers the app adds itself, so they are present whatever
+the plan contained: **"I'm not sure"** and **"I can't do this one"**. They mean different
+things — having tried and learned nothing is not the same as never having tried, usually
+because the piece was too heavy to tip alone — and both are reported distinctly.
+
+Neither is a failure. The prompt is told explicitly never to read a missing result as
+evidence of a defect and to put it in the verdict's unverified list instead: a wobble test
+nobody could perform is not a wobbly stool. That is the worst direction for an error in this
+app to go, so it is asserted by a test.
 
 ## Waiting
 
