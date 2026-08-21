@@ -23,14 +23,27 @@ Requires JDK 17 and the Android SDK (platform 36, build-tools 36).
 `local.properties` points at the SDK and is machine-specific (gitignored) — recreate it
 with `sdk.dir=<your-android-sdk>` when cloning.
 
-Gradle must run on JDK 17; AGP 8.13 rejects newer launcher JVMs. Android Studio's
-bundled JDK is fine. From the command line, set it explicitly:
+Gradle must run on JDK 17; AGP 8.13 rejects newer launcher JVMs. Android Studio's bundled
+JDK is fine.
+
+If `java -version` or `keytool` reports **"unable to locate a Java Runtime"**, a JDK is
+installed but not registered with macOS — Homebrew's `openjdk@17` is keg-only, so nothing
+is linked into the system location and the `/usr/bin` wrappers have nothing to find.
+Register it once:
 
 ```bash
-JAVA_HOME=$(/usr/libexec/java_home -v 17) ./gradlew assembleDebug
+sudo ln -sfn /opt/homebrew/opt/openjdk@17/libexec/openjdk.jdk /Library/Java/JavaVirtualMachines/openjdk-17.jdk
 ```
 
-(That is the macOS incantation; on Linux point `JAVA_HOME` at your JDK 17 install.)
+After that `java`, `keytool` and `/usr/libexec/java_home` all work, and Gradle picks the
+JDK up on its own. If you would rather not use `sudo`, point `JAVA_HOME` at it per shell
+instead:
+
+```bash
+export JAVA_HOME=/opt/homebrew/opt/openjdk@17/libexec/openjdk.jdk/Contents/Home
+```
+
+On Linux, or with a JDK from elsewhere, point `JAVA_HOME` at that install.
 
 ## Updating prompts without shipping an app update
 
@@ -168,14 +181,10 @@ prompt — it sits at the front of the prefix and would silently make every requ
 miss. There are currently no such values, and a test asserts that two identical sends
 serialize byte-identically.
 
-To confirm it is working, watch the log line the chat service emits per response:
-
-```bash
-adb logcat -s ChatService
-```
-
-`cacheRead` should be large from the second turn of a conversation onward. If it stays at
-zero, something is invalidating the prefix.
+To confirm it is working, look at the usage breakdown in the Anthropic Console: cached
+input tokens should dominate from the second turn of a conversation onward. If they stay at
+zero, something is invalidating the prefix. The app also logs
+`in/cacheWrite/cacheRead/out` per response for anyone debugging with a device attached.
 
 Measured on a live three-turn conversation (`input` is the uncached remainder only):
 
@@ -235,8 +244,13 @@ Push a version tag to publish a permanent release:
 git tag v0.1.0 && git push origin v0.1.0
 ```
 
-Or, for a throwaway test build, open the repo's **Actions → Build APK → Run workflow**.
-That refreshes a rolling `nightly` prerelease instead of creating a new version.
+The tag must match `versionName` in `app/build.gradle.kts` or the run fails: a release
+called `v0.2.0` containing an app that reports `0.1.0` is confusing for anyone reporting a
+bug. Bump `versionName` **and** `versionCode` before tagging.
+
+Or rebuild the rolling `nightly` on demand from **Actions → Build APK → Run workflow**,
+without waiting for a merge. Tagging leaves `nightly` untouched, so a permanent release and
+the rolling build never overwrite each other.
 
 Then on the phone, open the release page and tap the `.apk`:
 
@@ -247,26 +261,88 @@ https://github.com/gkilleen33/quality-verification-app/releases/latest
 Android will ask permission to install from your browser the first time — allow it for
 Chrome (or whichever browser you used), then tap the downloaded file again.
 
-Use **Actions → the run → Artifacts** only when you want the APK on a computer; artifacts
-require a GitHub login and download as a `.zip`, which a phone cannot install.
+**Merging a PR into `main` refreshes the `nightly` build automatically**, so the latest
+merged state is always downloadable without doing anything.
 
-**These are debug builds.** Each CI run generates its own throwaway signing key, so
-installing a new build over an older one fails with a signature error. Uninstall the app
-first, or ask for proper release signing (a keystore in repo secrets) if reinstalling
-gets tedious.
+Pull requests themselves do not build an APK — they run tests and lint only. Building an
+APK on every PR added about two minutes per run for an artifact nobody installs.
 
-### From this machine over USB
+A warm publish run takes a couple of minutes; the ten-minute figure was a cold Gradle
+cache on a branch that had never built before. Since the build now happens on merge, it
+runs without you waiting on it — the APK is on the releases page by the time you look.
 
-Faster while iterating, and it keeps one stable signing key so builds install over each
-other. Enable Developer Options and USB debugging on the phone, plug it in, accept the
-debugging prompt, then:
+Published builds are **release builds signed with the persistent upload key**, so a new
+one installs over an older one without uninstalling. Pull request builds stay on debug —
+a PR from a fork cannot read secrets, and the signature is irrelevant for review.
+
+### Signing setup (once)
+
+Publishing needs an upload key. Generate one, keeping it **outside the repo**:
 
 ```bash
-./gradlew installDebug
+mkdir -p ~/keys && keytool -genkeypair -v -keystore ~/keys/quality-verifier-upload.jks -alias upload -keyalg RSA -keysize 4096 -validity 10000
 ```
 
-If `adb devices` shows nothing, the cable or the on-phone authorisation prompt is usually
-the culprit.
+If that fails with "unable to locate a Java Runtime", see the JDK note under
+[Build](#build) — either register the JDK once with `sudo ln -sfn`, or run the JDK's own
+copy directly:
+
+```bash
+mkdir -p ~/keys && /opt/homebrew/opt/openjdk@17/bin/keytool -genkeypair -v -keystore ~/keys/quality-verifier-upload.jks -alias upload -keyalg RSA -keysize 4096 -validity 10000
+```
+
+keytool asks for a keystore password, then certificate details (any sensible values —
+they only appear in the certificate), then a key password. **Press Return at the key
+password prompt.** Modern keytool writes PKCS12, which does not support a key password
+that differs from the store password and silently ignores one if you give it. That is why
+`KEY_PASSWORD` and `KEYSTORE_PASSWORD` below hold the same value.
+
+Then load the four secrets. Run from the repo root so `gh` picks the right repository:
+
+```bash
+base64 -i ~/keys/quality-verifier-upload.jks | gh secret set KEYSTORE_BASE64
+```
+
+```bash
+gh secret set KEY_ALIAS --body upload
+```
+
+```bash
+printf 'Keystore password: ' && read -rs KS && echo && printf '%s' "$KS" | gh secret set KEYSTORE_PASSWORD && printf '%s' "$KS" | gh secret set KEY_PASSWORD && unset KS && echo done
+```
+
+That prompts once with the password hidden and sets both secrets from it, so it never
+reaches your shell history. It uses `printf` for the prompt rather than `read -p`, which
+is a bashism — in zsh `-p` means "read from a coprocess" and the command fails with
+`read: -p: no coprocess`. This form works in both shells.
+
+Check all four landed:
+
+```bash
+gh secret list
+```
+
+**Back the keystore up somewhere durable, and keep the passwords in a password manager.**
+GitHub secrets are write-only: once loaded they cannot be read back, so the `.jks` file is
+the only retrievable copy. Losing it means never being able to ship an update that
+installs over an existing one.
+
+CI fails loudly rather than silently falling back: a published build with no keystore
+stops the run, and the signature is checked afterwards to confirm it is not a debug key.
+
+To build a signed release locally, create `keystore.properties` in the repo root
+(gitignored):
+
+```properties
+storeFile=/Users/you/keys/quality-verifier-upload.jks
+storePassword=...
+keyAlias=upload
+keyPassword=...
+```
+
+Then `./gradlew assembleRelease` produces an APK with the same signature as a CI build.
+Without it, `assembleRelease` still works but signs with the debug key and says so — fine
+for a local smoke test, not for anything you hand out.
 
 ## Contributing
 

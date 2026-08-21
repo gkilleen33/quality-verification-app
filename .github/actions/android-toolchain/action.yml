@@ -1,0 +1,20 @@
+name: Android toolchain
+description: JDK 17 with a Gradle cache, plus the SDK packages this project builds against.
+
+# Shared by the test, lint and publish jobs. Without this the same four steps would be
+# copied three times and drift apart.
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-java@v5
+      with:
+        distribution: temurin
+        java-version: '17'
+        cache: gradle
+
+    # The runner image does not guarantee these, and AGP will not fetch them itself.
+    - shell: bash
+      run: |
+        SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+        yes | "$SDKMANAGER" --licenses > /dev/null 2>&1 || true
+        "$SDKMANAGER" "platforms;android-36" "build-tools;36.0.0" > /dev/null
