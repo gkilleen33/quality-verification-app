@@ -10,7 +10,8 @@ name: Build APK
 #  - a `v*` tag: publishes a permanent release for that version
 #
 # Published builds are release builds signed with the persistent upload key from repo
-# secrets, so a new build installs over an older one.
+# secrets, so a new build installs over an older one. The key alias is not a secret and
+# comes from a default in app/build.gradle.kts.
 #
 # Each job is a single Gradle invocation. Splitting checks across jobs looked appealing,
 # but every extra job pays its own checkout, toolchain setup and cold JVM start — which
@@ -88,7 +89,6 @@ jobs:
         env:
           QV_KEYSTORE_FILE: ${{ runner.temp }}/upload.jks
           QV_KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
-          QV_KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
           QV_KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
         run: ./gradlew --no-daemon testDebugUnitTest lintDebug assembleRelease -PrequireReleaseSigning
 

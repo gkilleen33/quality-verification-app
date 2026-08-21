@@ -297,14 +297,16 @@ password prompt.** Modern keytool writes PKCS12, which does not support a key pa
 that differs from the store password and silently ignores one if you give it. That is why
 `KEY_PASSWORD` and `KEYSTORE_PASSWORD` below hold the same value.
 
-Then load the four secrets. Run from the repo root so `gh` picks the right repository:
+Then load the three secrets. Run from the repo root so `gh` picks the right repository:
+
+The alias is not one of them: `upload` is the default in `app/build.gradle.kts`, and it
+lives inside the keystore anyway. Holding it as a secret was actively harmful — GitHub
+redacts every occurrence of a secret's value in logs, so the word "upload" came back as
+`***` in unrelated places. Override it with `QV_KEY_ALIAS` or a `keyAlias` line in
+`keystore.properties` if your keystore uses something else.
 
 ```bash
 base64 -i ~/keys/quality-verifier-upload.jks | gh secret set KEYSTORE_BASE64
-```
-
-```bash
-gh secret set KEY_ALIAS --body upload
 ```
 
 ```bash
@@ -336,7 +338,6 @@ To build a signed release locally, create `keystore.properties` in the repo root
 ```properties
 storeFile=/Users/you/keys/quality-verifier-upload.jks
 storePassword=...
-keyAlias=upload
 keyPassword=...
 ```
 
