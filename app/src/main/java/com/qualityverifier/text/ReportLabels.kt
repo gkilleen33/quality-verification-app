@@ -37,7 +37,47 @@ data class ReportLabels(
     val shareWhatToLookAt: String,
     val shareNotChecked: String,
     val shareSignOff: String,
+    // Chrome for the collection run: the plan card, the test screens, the wait.
+    val photosHeading: String,
+    val testsHeading: String,
+    val startCamera: String,
+    val continueToTests: String,
+    val sendForInspection: String,
+    val retake: String,
+    val inspecting: String,
+    val stagePreparing: String,
+    val stageSending: String,
+    val stageExamining: String,
+    val seeVerdict: String,
+    val submissionTestsHeading: String,
+    /** Said of a step the customer could not do — never left silent. */
+    val notDone: String,
+    val cannotDoThis: String,
+    val inThisInspection: String,
+    private val photoCountFormat: String,
+    private val testResultCountFormat: String,
+    private val sentFormat: String,
+    private val shotOfFormat: String,
+    private val testOfFormat: String,
+    private val photosTakenFormat: String,
 ) {
+    /** "Shot 3 of 6", above the viewfinder. */
+    fun shotOf(index: Int, total: Int): String =
+        shotOfFormat.replace("{n}", index.toString()).replace("{total}", total.toString())
+
+    fun testOf(index: Int, total: Int): String =
+        testOfFormat.replace("{n}", index.toString()).replace("{total}", total.toString())
+
+    /** "6 of 6 photos taken", on the plan card and in the submitted turn. */
+    fun photosTaken(taken: Int, total: Int): String =
+        photosTakenFormat.replace("{n}", taken.toString()).replace("{total}", total.toString())
+
+    fun photoCount(n: Int): String = photoCountFormat.replace("{n}", n.toString())
+
+    fun testResultCount(n: Int): String = testResultCountFormat.replace("{n}", n.toString())
+
+    fun sent(size: String): String = sentFormat.replace("{size}", size)
+
     fun level(level: VerdictLevel): String = levels[level] ?: levels.getValue(VerdictLevel.UNKNOWN)
 
     fun severity(severity: Severity): String = severities[severity].orEmpty()
@@ -95,6 +135,27 @@ data class ReportLabels(
             shareWhatToLookAt = "What to look at:",
             shareNotChecked = "Not checked:",
             shareSignOff = "Checked with Kagua — jua kabla ya kununua.",
+            photosHeading = "Photos",
+            testsHeading = "Physical tests",
+            startCamera = "Start camera",
+            continueToTests = "Continue to the tests",
+            sendForInspection = "Send for inspection",
+            retake = "Retake",
+            inspecting = "Inspecting",
+            stagePreparing = "Preparing the photos",
+            stageSending = "Sending",
+            stageExamining = "Looking at the furniture",
+            seeVerdict = "See the verdict",
+            submissionTestsHeading = "Test results",
+            notDone = "not done",
+            cannotDoThis = "I can't do this one",
+            inThisInspection = "In this inspection",
+            photoCountFormat = "{n} photos",
+            testResultCountFormat = "{n} test results",
+            sentFormat = "{size} sent",
+            shotOfFormat = "Shot {n} of {total}",
+            testOfFormat = "Test {n} of {total}",
+            photosTakenFormat = "{n} of {total} photos taken",
         )
 
         val SWAHILI = ReportLabels(
@@ -134,6 +195,27 @@ data class ReportLabels(
             shareWhatToLookAt = "Ya kuangalia:",
             shareNotChecked = "Hayakuthibitishwa:",
             shareSignOff = "Imekaguliwa na Kagua — jua kabla ya kununua.",
+            photosHeading = "Picha",
+            testsHeading = "Majaribio ya mikono",
+            startCamera = "Anza kamera",
+            continueToTests = "Endelea na majaribio",
+            sendForInspection = "Tuma kwa ukaguzi",
+            retake = "Piga tena",
+            inspecting = "Inakagua",
+            stagePreparing = "Inatayarisha picha",
+            stageSending = "Inatuma",
+            stageExamining = "Inaangalia samani",
+            seeVerdict = "Ona uamuzi",
+            submissionTestsHeading = "Majibu ya majaribio",
+            notDone = "haikufanyika",
+            cannotDoThis = "Siwezi kufanya hili",
+            inThisInspection = "Katika ukaguzi huu",
+            photoCountFormat = "Picha {n}",
+            testResultCountFormat = "Majibu {n} ya majaribio",
+            sentFormat = "{size} zimetumwa",
+            shotOfFormat = "Picha {n} ya {total}",
+            testOfFormat = "Jaribio {n} la {total}",
+            photosTakenFormat = "Picha {n} kati ya {total} zimepigwa",
         )
 
         /**

@@ -22,6 +22,7 @@ Choices: Stays put and closes flush / Swings shut or drifts open / Catches on th
 
 Test 3, the racking test. Ask them to put both hands on two opposite front corners of the cabinet and push gently, one away and one towards themselves. Tell them to feel for movement in the box itself.
 Choices: Solid, feels like one piece / A little give at the corners / Racks clearly, the box moves
+Diagram: racking
 
 Test 4, the back panel. Ask them to press a hand against the middle of the back panel from the outside.
 Choices: Firm, barely moves / Flexes like thin board / Loose, or held on by staples only

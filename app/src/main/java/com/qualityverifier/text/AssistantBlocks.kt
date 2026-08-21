@@ -1,14 +1,16 @@
 package com.qualityverifier.text
 
+import com.qualityverifier.domain.AssessmentPlan
 import com.qualityverifier.domain.Verdict
 import kotlinx.serialization.json.Json
 
 /**
  * An assistant turn split into the parts the UI renders differently.
  *
- * The assistant sends one string. Two fenced blocks inside it are meant for the app
- * rather than for the reader: `qv-options` becomes tappable reply chips, and
- * `qv-verdict` becomes the verdict cards. Both are stripped out of [prose].
+ * The assistant sends one string. Three fenced blocks inside it are meant for the app
+ * rather than for the reader: `qv-options` becomes tappable reply chips, `qv-plan`
+ * becomes a run of capture and test screens, and `qv-verdict` becomes the verdict cards.
+ * All three are stripped out of [prose].
  *
  * When [verdict] is present the prompt has also written the same assessment in prose, so
  * that a parse failure still leaves the customer with a readable answer. [prose] is
@@ -18,6 +20,7 @@ data class AssistantContent(
     val prose: String,
     val options: List<String> = emptyList(),
     val verdict: Verdict? = null,
+    val plan: AssessmentPlan? = null,
 ) {
     /** What to put in the message bubble. Empty when the verdict cards say it already. */
     val displayProse: String get() = if (verdict != null) "" else prose
@@ -26,6 +29,7 @@ data class AssistantContent(
 private const val FENCE = "```"
 private const val OPTIONS_TAG = "qv-options"
 private const val VERDICT_TAG = "qv-verdict"
+private const val PLAN_TAG = "qv-plan"
 
 /** At most this many chips; more than a handful stops being a choice and starts being a list. */
 private const val MAX_OPTIONS = 5
@@ -49,6 +53,7 @@ fun parseAssistantContent(text: String): AssistantContent {
     val prose = StringBuilder()
     var options = emptyList<String>()
     var verdict: Verdict? = null
+    var plan: AssessmentPlan? = null
 
     val lines = text.lines()
     var i = 0
@@ -70,6 +75,12 @@ fun parseAssistantContent(text: String): AssistantContent {
 
         when (tag.lowercase()) {
             OPTIONS_TAG -> options = parseOptions(body)
+            PLAN_TAG -> {
+                // Same reasoning as the verdict: a block addressed to us that will not
+                // parse is dropped, never printed. The prose alongside it lists the
+                // shots in words, so the customer is not left with nothing.
+                plan = parsePlan(body.joinToString("\n"))
+            }
             VERDICT_TAG -> {
                 // A block the model addressed to us. If it will not parse, drop it
                 // rather than showing raw JSON to somebody standing in a shop — the
@@ -101,6 +112,7 @@ fun parseAssistantContent(text: String): AssistantContent {
         prose = prose.toString().trim(),
         options = options,
         verdict = verdict?.takeIf { it.isRenderable },
+        plan = plan?.takeIf { it.isRunnable },
     )
 }
 
@@ -121,8 +133,12 @@ private fun parseOptions(body: List<String>): List<String> =
         .take(MAX_OPTIONS)
         .toList()
 
-private fun parseVerdict(body: String): Verdict? {
+private fun parseVerdict(body: String): Verdict? = decode(body)
+
+private fun parsePlan(body: String): AssessmentPlan? = decode(body)
+
+private inline fun <reified T> decode(body: String): T? {
     val trimmed = body.trim()
     if (!trimmed.startsWith("{")) return null
-    return runCatching { json.decodeFromString<Verdict>(trimmed) }.getOrNull()
+    return runCatching { json.decodeFromString<T>(trimmed) }.getOrNull()
 }

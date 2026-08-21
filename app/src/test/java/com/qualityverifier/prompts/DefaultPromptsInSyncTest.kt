@@ -2,6 +2,7 @@ package com.qualityverifier.prompts
 
 import com.qualityverifier.data.prompts.DefaultPrompts
 import com.qualityverifier.domain.ItemType
+import com.qualityverifier.domain.TestDiagram
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -80,6 +81,7 @@ class DefaultPromptsInSyncTest {
         val master = DefaultPrompts.MASTER
         assertTrue("qv-options is undocumented", master.contains("qv-options"))
         assertTrue("qv-verdict is undocumented", master.contains("qv-verdict"))
+        assertTrue("qv-plan is undocumented", master.contains("qv-plan"))
         listOf("sound", "fair", "serious_concerns").forEach { level ->
             assertTrue("verdict level $level is undocumented", master.contains(level))
         }
@@ -89,6 +91,45 @@ class DefaultPromptsInSyncTest {
             "the verdict no longer declares its language",
             master.contains("the two letter code for the language"),
         )
+    }
+
+    @Test
+    fun `collection is asked for in one batch, not shot by shot`() {
+        // Reverting to one photo per turn costs a network round trip per shot, and
+        // because every turn re-sends the earlier images, the token cost of an
+        // assessment grows with the square of its shot count. This is the instruction
+        // that stops it, and it is easy to lose in a rewrite.
+        val master = DefaultPrompts.MASTER
+        assertTrue(
+            "the prompt no longer forbids asking shot by shot",
+            master.contains("Do not ask for photos one at a time"),
+        )
+        assertTrue(
+            "the prompt no longer says everything is asked for at once",
+            master.contains("Ask for everything you need in the first plan"),
+        )
+    }
+
+    @Test
+    fun `only diagrams the app can draw are offered to the prompt`() {
+        // The drawings ship in the APK while the prompts do not, so the prompt must
+        // name only what this build has. A name it invents draws nothing, silently.
+        val master = DefaultPrompts.MASTER
+        val drawable = TestDiagram.entries.map { it.id }
+        drawable.forEach { id ->
+            assertTrue("diagram $id is not offered in the prompt", master.contains(id))
+        }
+        // And every diagram named in an item protocol has to be one of those.
+        ItemType.entries.forEach { itemType ->
+            Regex("""Diagram:\s*(\S+)""").findAll(DefaultPrompts.forItem(itemType))
+                .map { it.groupValues[1] }
+                .forEach { named ->
+                    assertTrue(
+                        "${itemType.id} names diagram '$named', which the app cannot draw",
+                        named in drawable,
+                    )
+                }
+        }
     }
 
     @Test

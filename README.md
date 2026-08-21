@@ -151,11 +151,33 @@ drives the sequence they all share:
 2. **Depth** — a full assessment, or a rapid one. Full is recommended and is a guided
    photo plan plus hands-on tests. Rapid is two wide photos, for triaging several pieces
    in one shop, and says plainly that it is likelier to miss something.
-3. **Photos** — one shot at a time, with the framing described in words.
-4. **Hands-on tests** — racking, bottle-top roll, sighting along a surface, fingernail
-   press, drawer pull, foam press. The buyer's hands are the instrument.
-5. **Verdict** — sound, fair, or serious concerns, as cards.
-6. **Follow-up** — questions grounded in what was actually seen.
+3. **A plan** — the assistant issues the whole shot list and test list in one message,
+   as a `qv-plan` block.
+4. **Collection** — the app walks the buyer through every shot and every test *locally*,
+   without going back to the model in between, then sends the whole set as one turn.
+5. **Inspection** — the assistant examines everything at once and either asks for what is
+   still missing, as another short plan, or gives the verdict.
+6. **Verdict** — sound, fair, or serious concerns, as cards.
+7. **Follow-up** — questions grounded in what was actually seen.
+
+Steps 3 and 4 are why the app, not the conversation, holds the state of a collection run.
+Asking shot by shot cost a network round trip per photo — a dozen waits for a full
+assessment — and because every turn re-sends all the earlier images, the token cost grew
+with the *square* of the shot count rather than linearly. Collection is now one request.
+
+The hands-on tests are racking, bottle-top roll, sighting along a surface, fingernail
+press, drawer pull, foam press and the one-leg lift. Three of them — racking, sighting
+along, and the one-leg lift — get a schematic diagram, drawn in
+[`TestDiagrams.kt`](app/src/main/java/com/qualityverifier/ui/plan/TestDiagrams.kt) rather
+than shipped as vector XML, because each needs the furniture in one colour and the motion
+in another and a tinted drawable cannot do that. The rest get none: "press your thumbnail
+into the underside" does not need a picture, and a drawing on every test teaches the
+reader to skip all of them.
+
+`TestDiagram` is a closed set, and a plan naming a diagram this build has never heard of
+draws nothing rather than a placeholder. Prompts are data and can change without a
+release; drawings cannot. A test asserts every diagram named in `prompts/items/` is one
+the app can actually draw.
 
 Two rules the prompts hold to, both covered by tests in
 [`DefaultPromptsInSyncTest`](app/src/test/java/com/qualityverifier/prompts/DefaultPromptsInSyncTest.kt):
@@ -190,7 +212,7 @@ by nothing. Full localisation of those is a separate piece of work.
 
 ## Blocks the app parses out of a reply
 
-Two fenced blocks in an assistant message are addressed to the app rather than the
+Three fenced blocks in an assistant message are addressed to the app rather than the
 reader, and are stripped from the bubble by
 [`AssistantBlocks.kt`](app/src/main/java/com/qualityverifier/text/AssistantBlocks.kt):
 
@@ -210,7 +232,8 @@ becomes tappable reply chips, and
 ```
 ````
 
-becomes the verdict cards.
+becomes the verdict cards. A third, `qv-plan`, carries the shot list and the tests, and
+becomes the plan card plus the capture and test screens.
 
 They travel inside the message text rather than through a tool call or a second request.
 That keeps `ChatService` returning plain text, so the Phase 2 swap stays a one-file
@@ -226,6 +249,18 @@ JSON never reaches the bubble.
 Renaming a tag in the prompt without renaming it in `AssistantBlocks` would silently stop
 the cards and chips from ever appearing, with no error anywhere. A test asserts both tags
 are still documented in the master prompt.
+
+## Waiting
+
+The Inspecting screen ticks off the steps the app genuinely completed — the photos it
+prepared, the payload it sent — and spins on the one that is actually outstanding. It
+also lists what is in the inspection, taken from the plan.
+
+What it deliberately does **not** do is animate its way through content areas the way the
+mockup's checklist does. This is one request with no streaming, so the app has no idea
+whether the model has looked at the joints yet. Ticking those off on a timer would be
+theatre, and inventing certainty is the thing this product cannot do anywhere — including
+in a progress indicator.
 
 ## Capture
 
