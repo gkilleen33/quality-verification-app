@@ -53,7 +53,7 @@ class AppContainer(context: Context) {
         appContext,
         AppDatabase::class.java,
         "quality_verifier.db",
-    ).build()
+    ).addMigrations(*AppDatabase.MIGRATIONS).build()
 
     val images: ImageFileStore = ImageFileStore(appContext)
 

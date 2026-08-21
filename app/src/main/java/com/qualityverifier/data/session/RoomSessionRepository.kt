@@ -11,7 +11,9 @@ import com.qualityverifier.domain.ChatMessage
 import com.qualityverifier.domain.ItemType
 import com.qualityverifier.domain.Role
 import com.qualityverifier.domain.SessionSummary
+import com.qualityverifier.domain.VerdictLevel
 import com.qualityverifier.text.markdownToPlainText
+import com.qualityverifier.text.parseAssistantContent
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 import java.util.UUID
@@ -33,6 +35,7 @@ class RoomSessionRepository(
                     updatedAt = row.updatedAt,
                     preview = row.previewText,
                     messageCount = row.messageCount,
+                    verdictLevel = row.verdictLevelId?.let(VerdictLevel::fromId),
                 )
             }
         }
@@ -77,10 +80,15 @@ class RoomSessionRepository(
 
     override suspend fun appendAssistantMessage(sessionId: String, text: String): ChatMessage {
         val message = insert(sessionId, Role.ASSISTANT, text, emptyList())
-        // The list cannot show styling, so flatten the formatting rather than print it.
-        // Flatten before truncating: cutting first can leave half a `**` pair behind.
-        val preview = markdownToPlainText(text).take(PREVIEW_LIMIT)
-        dao.touchSession(sessionId, message.createdAt, preview)
+        val content = parseAssistantContent(text)
+        // A verdict turn is stored twice over: the level badges the reports row, and its
+        // headline is a far better preview than the opening words of the prose.
+        val preview = content.verdict?.headline?.ifBlank { null }
+            // The list cannot show styling, so flatten the formatting rather than print it.
+            // Flatten before truncating: cutting first can leave half a `**` pair behind.
+            ?: markdownToPlainText(content.prose.ifBlank { text })
+        dao.touchSession(sessionId, message.createdAt, preview.take(PREVIEW_LIMIT))
+        content.verdict?.let { dao.setVerdictLevel(sessionId, it.level.id) }
         return message
     }
 

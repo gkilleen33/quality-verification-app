@@ -23,6 +23,8 @@ import androidx.compose.material.icons.filled.Bed
 import androidx.compose.material.icons.filled.Category
 import androidx.compose.material.icons.filled.Chair
 import androidx.compose.material.icons.filled.ChairAlt
+import androidx.compose.material.icons.filled.Kitchen
+import androidx.compose.material.icons.filled.TableBar
 import androidx.compose.material.icons.filled.TableRestaurant
 import androidx.compose.material.icons.filled.Weekend
 import androidx.compose.material3.Card
@@ -146,7 +148,9 @@ private fun ItemCard(
 private fun ItemType.placeholderIcon(): ImageVector = when (this) {
     ItemType.WOODEN_TABLE -> Icons.Filled.TableRestaurant
     ItemType.WOODEN_CHAIR -> Icons.Filled.ChairAlt
+    ItemType.WOODEN_STOOL -> Icons.Filled.TableBar
     ItemType.WOODEN_BED -> Icons.Filled.Bed
+    ItemType.WOODEN_CABINET -> Icons.Filled.Kitchen
     ItemType.UPHOLSTERED_CHAIR -> Icons.Filled.Chair
     ItemType.UPHOLSTERED_SOFA -> Icons.Filled.Weekend
     ItemType.OTHER -> Icons.Filled.Category

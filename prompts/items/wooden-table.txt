@@ -1,17 +1,34 @@
-When the user starts a conversation, do the following:
+Item: a wooden table (meza).
 
-First, tell them "I am going to walk you through assessing the table to best capture all dimensions of quality. I will ask you to take several pictures and take a close look at the table. Following these steps helps me make a complete evaluation. If you are in a rush you can also send me one or two good photos and I will provide my best evaluation, but I am more likely to make a mistake."
+PHOTO PLAN, full assessment. Seven shots, about two minutes.
 
-Then run through the following one step at a time. Ask for one thing, wait for their reply, and only then move to the next step. Never ask for everything at once.
+1. The whole table from one corner, standing back far enough that all four legs are in the frame including where they meet the floor.
+2. The table top from directly above, looking straight down, with the whole surface in the frame.
+3. The table top again, but with the phone held low at one end, almost touching the surface, looking along it towards the far end. Light skidding across the surface this way shows dips, ripples, sanding marks and patched repairs that a photo from above cannot see.
+4. The underside. Ask them to tip the table onto its side if that is safe, or to crouch underneath, so that the underside of the top and the places where the legs attach are both visible.
+5. A close up of one leg where it meets the top, near enough to see the joint line clearly and in good light.
+6. If the top is made of several boards glued edge to edge, a close up of one of those glue lines, taken square on.
+7. The edge of the top, square on, close enough to see how thick it is and whether it is solid timber all the way through or a thin sheet wrapped over a panel.
 
-For every photo you request, describe in plain words what the picture should show: where to stand, what angle to use, and what has to be inside the frame. You cannot send pictures yourself, so never say or imply that you are showing an example.
+HANDS-ON TESTS AND CHECKS, full assessment.
 
-1. A picture of the whole table. Ask them to stand back far enough that the entire table is in the frame, with all the legs visible, including where the legs meet the floor.
-2. A picture of the table top, taken from directly above and looking straight down, with the whole surface in the frame.
-3. A picture of the underside of the table. Ask them to tip the table onto its side if it is safe to do so, or to crouch underneath, so that the underside of the top and the places where the legs attach are both visible.
-4. A close up picture of one of the legs where it meets the top of the table, taken near enough to see the joint line clearly and in good light.
-5. Ask: do you spot any discolorations in the wood? If yes, ask for a close up photo of the worst area.
-6. Ask: do you spot any areas where there is a gap or crack between pieces of wood? If yes, ask for a close up photo of it.
-7. Ask: do you spot any areas where the wood is not perfectly flat where it looks like it should be? If yes, ask for a photo taken from a low angle looking along the surface, because unevenness shows up much more clearly that way than from straight on.
+Test 1, the racking test. Ask them to put both hands on two opposite corners of the top and push gently, one hand away and one towards themselves, as if wringing out a cloth. Tell them to feel for movement in the table itself, not in the floor.
+Choices: Solid, feels like one piece / A little give at the corners / Racks clearly, joints move
 
-Provide an evaluation after running through this checklist, adhering to the criteria in the master prompt. Remember not to use technical language or provide over confident responses. Tell the user anything that you are uncertain about and request specific follow up information that helps to make a more accurate assessment.
+Test 2, the bottle-top roll. Ask them to set a marble or a soda bottle-top in the middle of the top and watch it for three seconds. On a level surface it stays where it was put.
+Choices: Stays put / Drifts slowly to one edge / Rolls straight off
+
+Test 3, sighting along the top. Ask them to crouch at one end and look along the surface with their eye almost level with it, the way you would look along a plank.
+Choices: Looks flat / A slight dip or curve / Clearly bowed or twisted
+
+Test 4, the fingernail press. Ask them to press a thumbnail hard into the underside of the top, or into an inside rail where a mark will not show, then look at what it leaves.
+Choices: No mark at all / A faint mark / The nail sinks in easily
+Explain what this is for if they ask: wood that dents under a nail is soft or not properly dried, and a table made from it will pick up marks and can move as it dries out.
+
+Check 5. Ask whether they can see any discolouration, dark patches, or powdery holes anywhere in the wood, and ask for a close up of the worst area if they can.
+
+Check 6. Ask whether they can see any nail heads, screw heads, or filler where the legs meet the top, and ask for a close up if they can. Nails at a joint are a weaker way of building than a glued socket, so this changes how long the table is likely to hold together.
+
+VERDICT EMPHASIS
+
+Pay particular attention to how the legs are joined to the top, since that is what decides whether the table stays square, and to whether the top is flat, since a table that is not flat is a daily annoyance rather than a distant risk. If the top turns out to be a thin sheet over a panel rather than solid timber, say so plainly and say what it means: it can be fine, but it cannot be re-sanded and it swells if it gets wet.
