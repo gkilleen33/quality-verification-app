@@ -144,10 +144,35 @@ class DefaultPromptsInSyncTest {
     }
 
     @Test
-    fun `the master prompt mirrors the user's language`() {
+    fun `the language is taken from the customer's choice, not guessed`() {
+        // Left to inference the assistant picked a language from the item name and then
+        // would not switch when written to in the other one. The app asks outright now,
+        // and the prompt has to honour that rather than re-deriving it.
+        val master = DefaultPrompts.MASTER
         assertTrue(
-            "language mirroring is gone, so every reply comes back in English",
-            DefaultPrompts.MASTER.contains("Reply in whatever language the customer writes in"),
+            "the prompt no longer takes the language from the opening message",
+            master.contains("first message tells you which language to answer in"),
+        )
+        assertTrue(
+            "the prompt no longer follows a mid-conversation language switch",
+            master.contains("If they later write to you in a different language"),
+        )
+    }
+
+    @Test
+    fun `the context questions are not asked again over the network`() {
+        // The app collects ownership, price, usage and language on the phone before any
+        // request is made. If the prompt starts asking for them too, every assessment
+        // pays for three round trips it does not need, and the customer is asked things
+        // they have already answered.
+        val master = DefaultPrompts.MASTER
+        assertTrue(
+            "Stage 1 no longer says the context is already collected",
+            master.contains("Already collected"),
+        )
+        assertTrue(
+            "the prompt no longer forbids re-asking the context",
+            master.contains("Do not ask any of it again"),
         )
     }
 

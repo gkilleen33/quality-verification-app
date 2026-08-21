@@ -145,9 +145,10 @@ Any drawable extension works (`.jpg`, `.png`, `.webp`). Cards crop to 4:3.
 Every category has its own protocol under `prompts/items/`, and `prompts/master.txt`
 drives the sequence they all share:
 
-1. **Context** — buying or already own it, price quoted, intended use. The same loose
-   joint matters far more on a stool used daily in a kitchen than on a chair guests sit
-   in twice a year.
+1. **Context, collected on the phone** — language, buying or already own it, the price
+   quoted, intended use. **Nothing is sent while this happens.** The same loose joint
+   matters far more on a stool used daily in a kitchen than on a chair guests sit in twice
+   a year, and the assessment knows which it is before it starts.
 2. **Depth** — a full assessment, or a rapid one. Full is recommended and is a guided
    photo plan plus hands-on tests. Rapid is two wide photos, for triaging several pieces
    in one shop, and says plainly that it is likelier to miss something.
@@ -190,6 +191,33 @@ Two rules the prompts hold to, both covered by tests in
 Swahili category labels are shown only where a term could be sourced. `ItemType`
 deliberately leaves the two upholstered ones English-only rather than guessing — a wrong
 word in the user's own language costs more trust than a missing one.
+
+### Before anything is sent
+
+Opening an assessment used to fire a request immediately, so the first thing a customer
+saw was a spinner — and then three more round trips went on a language, an ownership and a
+usage question that needed no model at all.
+
+[`IntakeScreen`](app/src/main/java/com/qualityverifier/ui/intake/IntakeScreen.kt) asks
+those on the device. The chat opens instantly, and the customer's answers become their own
+first turn, written in the language they chose by
+[`buildIntakeMessage`](app/src/main/java/com/qualityverifier/text/IntakeMessage.kt).
+
+That first turn is also how the model learns the language. Left to inference it picked one
+from the item name and then would not switch when written to in the other — a Swahili-only
+assessment, with no way back. Now the choice is stated, and `master.txt` is told the
+context is already collected and must not be asked for again. Both are asserted by tests,
+because either regressing costs three round trips and asks the customer things they have
+already answered.
+
+Sending it as a message rather than as a field on `ChatService` is deliberate: it is
+something the customer is telling the assistant, it belongs in their conversation where
+they can see it, and keeping it out of the system prompt means every language shares one
+cached prefix instead of splitting it.
+
+The price step only appears for a buyer, so how many steps there are is unknowable until
+the ownership question is answered — which is why the step counter appears from the second
+screen rather than showing a total it may have to change.
 
 ### Language of the report
 

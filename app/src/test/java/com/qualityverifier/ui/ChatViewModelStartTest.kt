@@ -12,6 +12,11 @@ import com.qualityverifier.domain.ChatMessage
 import com.qualityverifier.domain.ItemType
 import com.qualityverifier.domain.Role
 import com.qualityverifier.domain.SessionSummary
+import com.qualityverifier.domain.AssessmentContext
+import com.qualityverifier.domain.AssessmentLanguage
+import com.qualityverifier.domain.Ownership
+import com.qualityverifier.domain.Usage
+import com.qualityverifier.text.ReportLabels
 import com.qualityverifier.ui.chat.ChatViewModel
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
@@ -33,9 +38,17 @@ import java.io.File
 import java.util.UUID
 
 /**
- * The walkthrough used to begin only once the user typed something, because the API
- * requires the first turn to be theirs. These cover the fix: the conversation opens
- * itself, exactly once, and only when there is nothing in it yet.
+ * How an assessment begins.
+ *
+ * There have been three answers to this. Originally the walkthrough started only once the
+ * user typed something, because the API requires the first turn to be theirs. Then the
+ * conversation opened itself, which fixed that but meant the first thing anybody saw was a
+ * spinner, followed by three more round trips for a language, an ownership and a usage
+ * question that needed no model at all.
+ *
+ * Now the app asks those itself and the customer's answers *are* the first turn. These
+ * tests pin that down: opening sends nothing, and the intake sends exactly one request
+ * carrying the context.
  */
 @OptIn(ExperimentalCoroutinesApi::class)
 class ChatViewModelStartTest {
@@ -49,74 +62,106 @@ class ChatViewModelStartTest {
     fun tearDown() = Dispatchers.resetMain()
 
     @Test
-    fun `a new conversation opens itself without the user sending anything`() = runTest {
+    fun `opening a new conversation sends nothing and asks for the intake`() = runTest {
         val sessions = FakeSessions()
-        val chat = FakeChat(ChatResult.Success("Welcome — send a photo of the whole table."))
+        val chat = FakeChat(ChatResult.Success("should not be called"))
 
-        viewModel(sessions, chat)
+        val vm = viewModel(sessions, chat)
+        dispatcher.scheduler.advanceUntilIdle()
+
+        // The whole point: no network on open. The screen appears immediately.
+        assertEquals(0, chat.calls)
+        assertTrue(sessions.messages.isEmpty())
+        assertTrue(vm.needsIntake.value)
+    }
+
+    @Test
+    fun `the intake sends one request whose first turn is the customer's own answers`() = runTest {
+        val sessions = FakeSessions()
+        val chat = FakeChat(ChatResult.Success("Sawa. Full or rapid?"))
+
+        val vm = viewModel(sessions, chat)
+        dispatcher.scheduler.advanceUntilIdle()
+
+        vm.submitIntake(SWAHILI_CONTEXT, ReportLabels.SWAHILI)
         dispatcher.scheduler.advanceUntilIdle()
 
         assertEquals(1, chat.calls)
-        assertEquals(listOf(ItemType.WOODEN_TABLE), chat.itemTypes)
-        // The assistant's greeting is the only stored turn; nothing was faked as the user.
-        assertEquals(listOf(Role.ASSISTANT), sessions.messages.map { it.role })
+        assertEquals(false, vm.needsIntake.value)
         assertTrue(sessions.created)
+        // The user turn comes first, so the service never has to synthesise an opener.
+        assertEquals(listOf(Role.USER, Role.ASSISTANT), sessions.messages.map { it.role })
+        val opening = sessions.messages.first().text
+        assertTrue(opening, opening.contains("Ninanunua hii."))
+        assertTrue(opening, opening.contains("Muuzaji anataka 3500."))
+        assertTrue(opening, opening.contains("kila siku"))
+        assertTrue(opening, opening.contains("Kiswahili"))
     }
 
     @Test
-    fun `the assistant is handed an empty history so the service supplies the opener`() = runTest {
+    fun `the history handed to the service already holds the context`() = runTest {
         val sessions = FakeSessions()
-        val chat = FakeChat(ChatResult.Success("hello"))
+        val chat = FakeChat(ChatResult.Success("ok"))
 
-        viewModel(sessions, chat)
+        val vm = viewModel(sessions, chat)
+        dispatcher.scheduler.advanceUntilIdle()
+        vm.submitIntake(SWAHILI_CONTEXT, ReportLabels.SWAHILI)
         dispatcher.scheduler.advanceUntilIdle()
 
-        assertTrue("history should be empty: ${chat.histories.first()}", chat.histories.first().isEmpty())
+        val history = chat.histories.first()
+        assertEquals(1, history.size)
+        assertEquals(Role.USER, history.first().role)
     }
 
     @Test
-    fun `reopening a conversation that already has turns does not send anything`() = runTest {
+    fun `reopening a conversation that already has turns skips the intake entirely`() = runTest {
         val sessions = FakeSessions(
             existing = listOf(ChatMessage("a1", Role.ASSISTANT, "Welcome")),
             sessionExists = true,
         )
         val chat = FakeChat(ChatResult.Success("should not be called"))
 
-        viewModel(sessions, chat, declaredItemType = null)
+        val vm = viewModel(sessions, chat, declaredItemType = null)
         dispatcher.scheduler.advanceUntilIdle()
 
+        assertEquals(0, chat.calls)
+        assertEquals(false, vm.needsIntake.value)
+    }
+
+    @Test
+    fun `a session row with no messages still gets the intake`() = runTest {
+        // A row with no messages is the wreckage of an assessment abandoned during the
+        // intake. Keying on the session existing rather than on it being empty would
+        // strand the user with a conversation they cannot start.
+        val sessions = FakeSessions(existing = emptyList(), sessionExists = true)
+        val chat = FakeChat(ChatResult.Success("Welcome, second time lucky"))
+
+        val vm = viewModel(sessions, chat, declaredItemType = null)
+        dispatcher.scheduler.advanceUntilIdle()
+
+        assertTrue(vm.needsIntake.value)
         assertEquals(0, chat.calls)
     }
 
     @Test
-    fun `a session whose opening failed tries again when reopened`() = runTest {
-        // A row with no messages is the wreckage of a failed opening request. Keying on
-        // the session existing rather than on it being empty would strand the user.
-        val sessions = FakeSessions(existing = emptyList(), sessionExists = true)
-        val chat = FakeChat(ChatResult.Success("Welcome, second time lucky"))
-
-        viewModel(sessions, chat, declaredItemType = null)
-        dispatcher.scheduler.advanceUntilIdle()
-
-        assertEquals(1, chat.calls)
-        assertEquals(listOf(Role.ASSISTANT), sessions.messages.map { it.role })
-    }
-
-    @Test
-    fun `a failed opening surfaces an error and stores nothing`() = runTest {
+    fun `a failed opening surfaces an error and keeps the customer's turn for retry`() = runTest {
         val sessions = FakeSessions()
         val chat = FakeChat(ChatResult.Failure(ChatErrorKind.NETWORK, "No internet connection"))
 
         val vm = viewModel(sessions, chat)
         dispatcher.scheduler.advanceUntilIdle()
+        vm.submitIntake(ENGLISH_CONTEXT, ReportLabels.ENGLISH)
+        dispatcher.scheduler.advanceUntilIdle()
 
         assertEquals(ChatErrorKind.NETWORK, vm.error.value?.kind)
-        assertTrue(sessions.messages.isEmpty())
+        // Their turn is stored, so retrying does not ask them the questions again.
+        assertEquals(listOf(Role.USER), sessions.messages.map { it.role })
         assertEquals(false, vm.sending.value)
+        assertEquals(false, vm.needsIntake.value)
     }
 
     @Test
-    fun `retrying after a failed opening sends again and stores the greeting`() = runTest {
+    fun `retrying after a failed opening sends again without duplicating the turn`() = runTest {
         val sessions = FakeSessions()
         val chat = FakeChat(
             ChatResult.Failure(ChatErrorKind.NETWORK, "offline"),
@@ -125,6 +170,8 @@ class ChatViewModelStartTest {
 
         val vm = viewModel(sessions, chat)
         dispatcher.scheduler.advanceUntilIdle()
+        vm.submitIntake(ENGLISH_CONTEXT, ReportLabels.ENGLISH)
+        dispatcher.scheduler.advanceUntilIdle()
         assertEquals(1, chat.calls)
 
         vm.retry()
@@ -132,7 +179,7 @@ class ChatViewModelStartTest {
 
         assertEquals(2, chat.calls)
         assertNull(vm.error.value)
-        assertEquals(listOf(Role.ASSISTANT), sessions.messages.map { it.role })
+        assertEquals(listOf(Role.USER, Role.ASSISTANT), sessions.messages.map { it.role })
     }
 
     @Test
@@ -140,13 +187,13 @@ class ChatViewModelStartTest {
         val sessions = FakeSessions(itemType = null)
         val chat = FakeChat(ChatResult.Success("hello"))
 
-        viewModel(sessions, chat, declaredItemType = null)
+        val vm = viewModel(sessions, chat, declaredItemType = null)
+        dispatcher.scheduler.advanceUntilIdle()
+        vm.submitIntake(ENGLISH_CONTEXT, ReportLabels.ENGLISH)
         dispatcher.scheduler.advanceUntilIdle()
 
         assertEquals(listOf(ItemType.OTHER), chat.itemTypes)
     }
-
-    // ---- fakes ----
 
     @Test
     fun `a photo that measures fine is attached without interrupting`() = runTest {
@@ -290,6 +337,21 @@ class ChatViewModelStartTest {
 
         override suspend fun deleteSession(sessionId: String) = Unit
         override suspend fun pruneOrphanImages() = Unit
+    }
+
+    private companion object {
+        val SWAHILI_CONTEXT = AssessmentContext(
+            language = AssessmentLanguage.SWAHILI,
+            ownership = Ownership.BUYING,
+            quotedPrice = "3500",
+            usage = Usage.DAILY,
+        )
+
+        val ENGLISH_CONTEXT = AssessmentContext(
+            language = AssessmentLanguage.ENGLISH,
+            ownership = Ownership.ALREADY_OWN,
+            usage = Usage.OCCASIONAL,
+        )
     }
 
     private object NoImages : SessionImageStore {
