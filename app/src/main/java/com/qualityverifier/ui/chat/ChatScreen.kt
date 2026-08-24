@@ -168,10 +168,11 @@ fun ChatScreen(
     if (needsIntake) {
         IntakeScreen(
             itemType = resolvedItemType ?: ItemType.OTHER,
-            onComplete = { context ->
+            onComplete = { context, resolvedItemType ->
                 viewModel.submitIntake(
                     context = context,
                     labels = ReportLabels.forLanguage(context.language?.code),
+                    resolvedItemType = resolvedItemType,
                 )
             },
             onBack = onBack,

@@ -64,10 +64,11 @@ import com.qualityverifier.text.ReportLabels
 @Composable
 fun IntakeScreen(
     itemType: ItemType,
-    onComplete: (AssessmentContext) -> Unit,
+    onComplete: (AssessmentContext, ItemType) -> Unit,
     onBack: () -> Unit,
 ) {
     var language by remember { mutableStateOf<AssessmentLanguage?>(null) }
+    var upholstered by remember { mutableStateOf<Boolean?>(null) }
     var ownership by remember { mutableStateOf<Ownership?>(null) }
     var price by remember { mutableStateOf("") }
     var priceAnswered by remember { mutableStateOf(false) }
@@ -76,13 +77,17 @@ fun IntakeScreen(
     var handedOver by remember { mutableStateOf(false) }
 
     val labels = language?.let { ReportLabels.forLanguage(it.code) } ?: ReportLabels.ENGLISH
+    // One grid entry covers both chair protocols, so which one applies is asked here.
+    val needsUpholstery = itemType.needsUpholsteryQuestion
+    val resolvedItem = upholstered?.let { itemType.withUpholstery(it) } ?: itemType
     val needsPrice = ownership == Ownership.BUYING
-    val totalSteps = if (needsPrice) 5 else 4
+    val totalSteps = 4 + (if (needsPrice) 1 else 0) + (if (needsUpholstery) 1 else 0)
 
     val step = when {
         language == null -> 1
-        ownership == null -> 2
-        needsPrice && !priceAnswered -> 3
+        needsUpholstery && upholstered == null -> 2
+        ownership == null -> if (needsUpholstery) 3 else 2
+        needsPrice && !priceAnswered -> totalSteps - 2
         usage == null -> totalSteps - 1
         else -> totalSteps
     }
@@ -97,6 +102,7 @@ fun IntakeScreen(
             usage != null -> usage = null
             needsPrice && priceAnswered -> priceAnswered = false
             ownership != null -> ownership = null
+            needsUpholstery && upholstered != null -> upholstered = null
             language != null -> language = null
             else -> onBack()
         }
@@ -109,7 +115,13 @@ fun IntakeScreen(
             TopAppBar(
                 title = {
                     Column {
-                        Text(labels.itemName(itemType))
+                        Text(
+                            if (needsUpholstery && upholstered == null) {
+                                labels.neutralItemName(itemType)
+                            } else {
+                                labels.itemName(resolvedItem)
+                            },
+                        )
                         if (showCounter) {
                             Text(
                                 "$step / $totalSteps",
@@ -141,6 +153,12 @@ fun IntakeScreen(
                         Choice(option.ownName) { language = option }
                     }
                 }
+
+                needsUpholstery && upholstered == null ->
+                    Question(labels.intakeUpholsteryQuestion) {
+                        Choice(labels.intakeUpholsteryYes) { upholstered = true }
+                        Choice(labels.intakeUpholsteryNo) { upholstered = false }
+                    }
 
                 ownership == null -> Question(labels.intakeOwnershipQuestion) {
                     Choice(labels.intakeBuying) { ownership = Ownership.BUYING }
@@ -211,7 +229,7 @@ fun IntakeScreen(
 
     // In a LaunchedEffect, not in the composition: calling onComplete inline would fire
     // again on every recomposition, and each firing sends a request.
-    LaunchedEffect(language, ownership, price, usage, depth, handedOver) {
+    LaunchedEffect(language, upholstered, ownership, price, usage, depth, handedOver) {
         val finished = depth != null
         if (!finished && !handedOver) return@LaunchedEffect
         onComplete(
@@ -222,6 +240,9 @@ fun IntakeScreen(
                 usage = usage,
                 depth = depth,
             ),
+            // Unanswered when the intake was handed over early, in which case the grid's
+            // default protocol stands and the assistant can ask.
+            resolvedItem,
         )
     }
 }

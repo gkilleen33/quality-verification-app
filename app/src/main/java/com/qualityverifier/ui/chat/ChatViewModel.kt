@@ -203,9 +203,19 @@ class ChatViewModel(
      * three more round trips on questions no model was needed for. The intake keeps the
      * fix and drops the waiting: the customer's first turn is their own answers.
      */
-    fun submitIntake(context: AssessmentContext, labels: ReportLabels) {
+    fun submitIntake(
+        context: AssessmentContext,
+        labels: ReportLabels,
+        /**
+         * The protocol the intake settled on. The home grid offers one chair entry and
+         * the intake asks whether it is upholstered, so the type that gets stored is not
+         * always the type the grid handed over.
+         */
+        resolvedItemType: ItemType = _itemType.value ?: ItemType.OTHER,
+    ) {
         if (_sending.value) return
         _needsIntake.value = false
+        _itemType.value = resolvedItemType
 
         // A full assessment collects its opening photo first. A rapid one does not: its
         // whole point is speed, and its plan is two wide photos anyway. An abandoned

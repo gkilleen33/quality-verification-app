@@ -16,9 +16,18 @@ enum class ItemType(
     val id: String,
     val displayName: String,
     val swahiliName: String? = null,
+    /**
+     * What the home grid calls this, where it differs from [displayName].
+     *
+     * The two chair protocols are one entry on that grid. "Padded chair" sitting beside
+     * "Wooden chair" was easy to miss, and it asked a buyer to classify their own chair
+     * before the app had asked them anything — so the grid offers "Chair" and the intake
+     * settles which protocol applies.
+     */
+    private val gridLabel: String? = null,
 ) {
     WOODEN_TABLE("wooden-table", "Table", "Meza"),
-    WOODEN_CHAIR("wooden-chair", "Wooden chair", "Kiti"),
+    WOODEN_CHAIR("wooden-chair", "Wooden chair", "Kiti", gridLabel = "Chair"),
     WOODEN_STOOL("wooden-stool", "Stool or bench", "Kigoda"),
     WOODEN_BED("wooden-bed", "Bed", "Kitanda"),
     WOODEN_CABINET("wooden-cabinet", "Cabinet or wardrobe", "Kabati"),
@@ -37,7 +46,31 @@ enum class ItemType(
      */
     val drawableName: String get() = "item_" + id.replace('-', '_')
 
+    /** Label for the home grid. Falls back to [displayName] for everything else. */
+    val homeLabel: String get() = gridLabel ?: displayName
+
+    /**
+     * True where one grid entry covers more than one protocol, so the intake has to ask
+     * which. Only the chairs: a sofa is always upholstered and a table never is.
+     */
+    val needsUpholsteryQuestion: Boolean
+        get() = this == WOODEN_CHAIR || this == UPHOLSTERED_CHAIR
+
+    /** Resolves the grid's single chair entry to the protocol that actually applies. */
+    fun withUpholstery(upholstered: Boolean): ItemType = when {
+        !needsUpholsteryQuestion -> this
+        upholstered -> UPHOLSTERED_CHAIR
+        else -> WOODEN_CHAIR
+    }
+
     companion object {
         fun fromId(id: String): ItemType? = entries.firstOrNull { it.id == id }
+
+        /**
+         * What the home grid offers, which is not the same as the protocol list:
+         * [UPHOLSTERED_CHAIR] is reachable only by answering the intake's upholstery
+         * question, so it is absent here.
+         */
+        val homeChoices: List<ItemType> = entries.filterNot { it == UPHOLSTERED_CHAIR }
     }
 }

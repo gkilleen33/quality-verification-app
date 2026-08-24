@@ -185,11 +185,47 @@ Two rules the prompts hold to, both covered by tests in
 - **No money.** No shilling figures, no typical price ranges, no repair-cost estimates.
   There is no price data behind them, and a wrong number quoted back to a seller in a
   negotiation is worse than no number.
+- **No negotiating, and no coaching one.** The app assesses the piece; what the buyer pays
+  for it is theirs to decide. No suggesting a discount, no holding out for a better price, no
+  proposing a line to bargain with.
+
+  Two things it *does* do, and the distinction is the whole rule:
+
+  - **Describing a repair.** *"The joint needs opening out, re-gluing and clamping"* is an
+    objective fact about the furniture. That is what the verdict's `what_to_do` field carries
+    — written as the work, not as a move in a negotiation.
+  - **Suggesting questions for the seller.** *"Ask how long the timber has been drying"*,
+    *"ask whether the top has been sealed"*. Often the only way to settle something a
+    photograph cannot show, so it is encouraged, and unresolved points go in `unverified` as
+    what would settle them. This is finishing the assessment, not haggling.
+
+  The first pass at this ban caught the second category too, which was wrong; a test now
+  asserts clarifying questions stay permitted, so tightening the ban again cannot quietly
+  re-break it.
+
+  There used to be an `ask_seller` field holding a scripted line for the customer to say out
+  loud, and a "SAY THIS TO THE SELLER" card. Those are gone — a script to recite in a shop is
+  a negotiation aid, not an assessment — and a test asserts the field does not come back.
 - **Mirror the language.** Swahili in, Swahili out; mixed in, mixed out.
 
 Swahili category labels are shown only where a term could be sourced. `ItemType`
 deliberately leaves the two upholstered ones English-only rather than guessing — a wrong
 word in the user's own language costs more trust than a missing one.
+
+### One chair on the grid, two protocols behind it
+
+The home grid offers **Chair**, not "Wooden chair" and "Padded chair" side by side. The
+second was easy to miss, and it asked a buyer to classify their own chair before the app had
+asked them anything.
+
+So `ItemType.homeChoices` omits `UPHOLSTERED_CHAIR`, and the intake asks whether the chair
+has cushioning. `withUpholstery()` turns that answer into the protocol that actually applies,
+and the session stores the resolved type — so a reports row still reads "Padded chair" once it
+is known. While the question is on screen the heading uses `neutralItemName()`, because
+"Wooden chair" above "does this chair have cushioning?" answers its own question.
+
+Only the chairs work this way. A sofa is always upholstered and a table never is, so asking
+would be noise; `needsUpholsteryQuestion` is asserted to be true for exactly those two.
 
 ### Before anything is sent
 
