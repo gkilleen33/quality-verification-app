@@ -96,28 +96,6 @@ private fun DefectCard(defect: Defect, labels: ReportLabels) {
             Field(labels.whatISeeHeading, defect.whatISee)
             Field(labels.whatItMeansHeading, defect.whatItMeans)
             Field(labels.whatToDoHeading, defect.whatToDo)
-            defect.askSeller?.takeIf { it.isNotBlank() }?.let { line ->
-                Spacer(Modifier.height(12.dp))
-                Surface(
-                    color = MaterialTheme.colorScheme.secondaryContainer,
-                    contentColor = MaterialTheme.colorScheme.onSecondaryContainer,
-                    shape = RoundedCornerShape(10.dp),
-                ) {
-                    Column(Modifier.padding(12.dp)) {
-                        Text(
-                            labels.sayToSellerHeading,
-                            style = MaterialTheme.typography.labelSmall,
-                            fontWeight = FontWeight.Bold,
-                        )
-                        Spacer(Modifier.height(4.dp))
-                        Text(
-                            "“$line”",
-                            style = MaterialTheme.typography.bodyLarge,
-                            fontStyle = FontStyle.Italic,
-                        )
-                    }
-                }
-            }
         }
     }
 }

@@ -50,6 +50,19 @@ class ReportLabelsTest {
     }
 
     @Test
+    fun `the neutral name does not answer the question being asked`() {
+        // The heading over "does this chair have cushioning?" must not already say
+        // "Wooden chair".
+        assertEquals("Chair", ReportLabels.ENGLISH.neutralItemName(ItemType.WOODEN_CHAIR))
+        assertEquals("Kiti", ReportLabels.SWAHILI.neutralItemName(ItemType.WOODEN_CHAIR))
+        // Everything else is already unambiguous, so it reads the same either way.
+        assertEquals(
+            ReportLabels.ENGLISH.itemName(ItemType.WOODEN_TABLE),
+            ReportLabels.ENGLISH.neutralItemName(ItemType.WOODEN_TABLE),
+        )
+    }
+
+    @Test
     fun `a category with no sourced Swahili term keeps its English name`() {
         // Falling back beats inventing a word — the same rule ItemType follows.
         assertEquals("Padded chair", ReportLabels.SWAHILI.itemName(ItemType.UPHOLSTERED_CHAIR))
@@ -119,7 +132,6 @@ class ReportLabelsTest {
             en.whatISeeHeading to sw.whatISeeHeading,
             en.whatItMeansHeading to sw.whatItMeansHeading,
             en.whatToDoHeading to sw.whatToDoHeading,
-            en.sayToSellerHeading to sw.sayToSellerHeading,
             en.askAboutThis to sw.askAboutThis,
             en.inProgress to sw.inProgress,
             en.shareHeader to sw.shareHeader,
@@ -143,6 +155,9 @@ class ReportLabelsTest {
             en.cannotDoThis to sw.cannotDoThis,
             en.notSure to sw.notSure,
             en.inThisInspection to sw.inThisInspection,
+            en.intakeUpholsteryQuestion to sw.intakeUpholsteryQuestion,
+            en.intakeUpholsteryYes to sw.intakeUpholsteryYes,
+            en.intakeUpholsteryNo to sw.intakeUpholsteryNo,
             en.intakeOwnershipQuestion to sw.intakeOwnershipQuestion,
             en.intakeBuying to sw.intakeBuying,
             en.intakeAlreadyOwn to sw.intakeAlreadyOwn,

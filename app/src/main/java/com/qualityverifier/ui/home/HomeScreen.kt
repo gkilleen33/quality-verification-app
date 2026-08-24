@@ -76,7 +76,7 @@ fun HomeScreen(
     val context = LocalContext.current
     // Resolved once per composition: the set of drawables cannot change at runtime.
     val artwork = remember(context) {
-        ItemType.entries.associateWith { context.itemDrawableOrNull(it) }
+        ItemType.homeChoices.associateWith { context.itemDrawableOrNull(it) }
     }
 
     LazyVerticalGrid(
@@ -113,7 +113,7 @@ fun HomeScreen(
             }
         }
 
-        items(ItemType.entries, key = { it.id }) { itemType ->
+        items(ItemType.homeChoices, key = { it.id }) { itemType ->
             ItemCard(
                 itemType = itemType,
                 imageRes = artwork[itemType],
@@ -204,7 +204,7 @@ private fun ItemCard(
                     .padding(vertical = 10.dp, horizontal = 8.dp),
             ) {
                 Text(
-                    text = itemType.displayName,
+                    text = itemType.homeLabel,
                     style = MaterialTheme.typography.titleMedium,
                     textAlign = TextAlign.Center,
                     maxLines = 2,

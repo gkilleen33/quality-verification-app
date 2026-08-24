@@ -45,8 +45,8 @@ data class Defect(
     @SerialName("severity") val severityId: String = "",
     @SerialName("what_i_see") val whatISee: String = "",
     @SerialName("what_it_means") val whatItMeans: String = "",
+    /** What putting the defect right involves — a fact about the furniture, not advice. */
     @SerialName("what_to_do") val whatToDo: String = "",
-    @SerialName("ask_seller") val askSeller: String? = null,
 ) {
     val severity: Severity get() = Severity.fromId(severityId)
 }

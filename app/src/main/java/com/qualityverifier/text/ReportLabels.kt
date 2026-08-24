@@ -26,7 +26,6 @@ data class ReportLabels(
     val whatISeeHeading: String,
     val whatItMeansHeading: String,
     val whatToDoHeading: String,
-    val sayToSellerHeading: String,
     val askAboutThis: String,
     val inProgress: String,
     private val levels: Map<VerdictLevel, String>,
@@ -60,6 +59,9 @@ data class ReportLabels(
     val notSure: String,
     val inThisInspection: String,
     // The local intake, before anything is sent.
+    val intakeUpholsteryQuestion: String,
+    val intakeUpholsteryYes: String,
+    val intakeUpholsteryNo: String,
     val intakeOwnershipQuestion: String,
     val intakeBuying: String,
     val intakeAlreadyOwn: String,
@@ -135,6 +137,17 @@ data class ReportLabels(
         else -> itemType.displayName
     }
 
+    /**
+     * What to call the piece before the intake has settled which protocol applies.
+     *
+     * "Wooden chair" as the heading over the question "does this chair have cushioning?"
+     * answers the question it is asking. The grid's own label is the neutral one.
+     */
+    fun neutralItemName(itemType: ItemType): String = when (code) {
+        SWAHILI_CODE -> itemType.swahiliName ?: itemType.homeLabel
+        else -> itemType.homeLabel
+    }
+
     companion object {
         private const val SWAHILI_CODE = "sw"
 
@@ -144,8 +157,7 @@ data class ReportLabels(
             couldNotVerifyHeading = "COULDN'T VERIFY",
             whatISeeHeading = "WHAT I SEE",
             whatItMeansHeading = "WHAT IT MEANS FOR YOU",
-            whatToDoHeading = "WHAT TO DO",
-            sayToSellerHeading = "SAY THIS TO THE SELLER",
+            whatToDoHeading = "THE FIX",
             askAboutThis = "Ask about this piece",
             inProgress = "In progress",
             levels = mapOf(
@@ -191,6 +203,9 @@ data class ReportLabels(
             cannotDoThis = "I can't do this one",
             notSure = "I'm not sure",
             inThisInspection = "In this inspection",
+            intakeUpholsteryQuestion = "Does this chair have cushioning, or is it bare wood?",
+            intakeUpholsteryYes = "It has cushioning or fabric",
+            intakeUpholsteryNo = "Bare wood, no padding",
             intakeOwnershipQuestion = "Are you buying this, or checking one you already own?",
             intakeBuying = "I'm buying it",
             intakeAlreadyOwn = "I already own it",
@@ -237,8 +252,7 @@ data class ReportLabels(
             couldNotVerifyHeading = "SIKUWEZA KUTHIBITISHA",
             whatISeeHeading = "NINACHOKIONA",
             whatItMeansHeading = "MAANA YAKE KWAKO",
-            whatToDoHeading = "LA KUFANYA",
-            sayToSellerHeading = "MWAMBIE MUUZAJI HIVI",
+            whatToDoHeading = "MATENGENEZO",
             askAboutThis = "Uliza kuhusu kipande hiki",
             inProgress = "Inaendelea",
             levels = mapOf(
@@ -284,6 +298,9 @@ data class ReportLabels(
             cannotDoThis = "Siwezi kufanya hili",
             notSure = "Sina uhakika",
             inThisInspection = "Katika ukaguzi huu",
+            intakeUpholsteryQuestion = "Kiti hiki kina sponji, au ni mbao tupu?",
+            intakeUpholsteryYes = "Kina sponji au kitambaa",
+            intakeUpholsteryNo = "Mbao tupu, hakuna sponji",
             intakeOwnershipQuestion = "Unanunua hii, au unakagua uliyo nayo?",
             intakeBuying = "Ninanunua",
             intakeAlreadyOwn = "Ninayo tayari",

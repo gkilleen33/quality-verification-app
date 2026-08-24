@@ -62,7 +62,6 @@ class AssistantBlocksTest {
         assertEquals("Solid frame, one thing to sort out", verdict.headline)
         assertEquals(1, verdict.defects.size)
         assertEquals(Severity.MODERATE, verdict.defects[0].severity)
-        assertEquals("Can you re-glue this joint?", verdict.defects[0].askSeller)
         assertEquals(listOf("Whether the timber is seasoned."), verdict.unverified)
 
         // The prose is still available, but not shown, because the cards say the same thing.
@@ -317,8 +316,7 @@ class AssistantBlocksTest {
                   "severity": "moderate",
                   "what_i_see": "The stretcher is not seated fully into the leg.",
                   "what_it_means": "It will work loose with daily use.",
-                  "what_to_do": "Ask for it to be re-glued before you pay.",
-                  "ask_seller": "Can you re-glue this joint?"
+                  "what_to_do": "The joint needs opening out, re-gluing and clamping."
                 }
               ],
               "unverified": ["Whether the timber is seasoned."],

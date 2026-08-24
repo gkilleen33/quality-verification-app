@@ -74,6 +74,40 @@ class DefaultPromptsInSyncTest {
     }
 
     @Test
+    fun `the assistant assesses the piece and does not coach a negotiation`() {
+        // Quality is what this app is for. What the customer then pays, and what they say
+        // in the shop, is theirs. Describing a repair is objective and stays; telling
+        // somebody to ask for a discount is advice about a negotiation we are not in.
+        val master = DefaultPrompts.MASTER
+        assertTrue(
+            "the negotiation ban is gone from the master prompt",
+            master.contains("Do not negotiate, and do not coach the customer to"),
+        )
+        assertTrue(
+            "the prompt no longer forbids suggesting a discount",
+            master.contains("Never suggest asking for a discount"),
+        )
+        // The field that used to carry a script for the customer to say out loud.
+        assertFalse("ask_seller is back in the verdict schema", master.contains("ask_seller"))
+    }
+
+    @Test
+    fun `asking the seller a question is still allowed`() {
+        // The first attempt at the negotiation ban went too far and forbade this too.
+        // A question that settles something a photograph cannot show is how an
+        // assessment gets finished, not how a price gets haggled over.
+        val master = DefaultPrompts.MASTER
+        assertTrue(
+            "clarifying questions are no longer permitted",
+            master.contains("Asking the seller a question is a different thing, and is welcome"),
+        )
+        assertTrue(
+            "the prompt no longer gives examples of what to ask",
+            master.contains("whether the top has been sealed"),
+        )
+    }
+
+    @Test
     fun `the master prompt defines both app-directed blocks`() {
         // The app parses these two fence tags. Renaming one in the prompt without
         // renaming it in AssistantBlocks would silently stop the cards and the chips
