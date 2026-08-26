@@ -1,8 +1,10 @@
 package com.qualityverifier.data.session
 
+import com.qualityverifier.domain.AssessmentContext
 import com.qualityverifier.domain.Attachment
 import com.qualityverifier.domain.ChatMessage
 import com.qualityverifier.domain.ItemType
+import com.qualityverifier.domain.SessionStart
 import com.qualityverifier.domain.SessionSummary
 import kotlinx.coroutines.flow.Flow
 
@@ -19,10 +21,25 @@ interface SessionRepository {
 
     suspend fun messagesOnce(sessionId: String): List<ChatMessage>
 
-    suspend fun itemTypeOf(sessionId: String): ItemType?
+    /**
+     * What an existing assessment was started with. Null when there is no row yet, which
+     * is the normal state until the first send.
+     */
+    suspend fun startOf(sessionId: String): SessionStart?
 
-    /** Creates the session row. Called on the first send, not on item selection. */
-    suspend fun createSession(sessionId: String, itemType: ItemType)
+    /**
+     * Creates the session row. Called on the first send, not on item selection.
+     *
+     * [previousSessionId] and [intake] are what make one assessment lead into the next:
+     * the link back is what the comparison reads, and the answers are what the next
+     * piece's intake carries forward instead of asking again.
+     */
+    suspend fun createSession(
+        sessionId: String,
+        itemType: ItemType,
+        previousSessionId: String? = null,
+        intake: AssessmentContext? = null,
+    )
 
     suspend fun sessionExists(sessionId: String): Boolean
 

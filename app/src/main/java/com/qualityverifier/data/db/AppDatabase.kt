@@ -7,7 +7,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
 
 @Database(
     entities = [SessionEntity::class, MessageEntity::class, AttachmentEntity::class],
-    version = 3,
+    version = 4,
     exportSchema = true,
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -39,6 +39,21 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
-        val MIGRATIONS = arrayOf(MIGRATION_1_2, MIGRATION_2_3)
+        /**
+         * Adds `sessions.previousSessionId` and `sessions.intakeAnswers`, which together
+         * let one assessment lead into the next: the answers carry forward so the second
+         * piece asks only for its price, and the link back makes the two comparable.
+         *
+         * Both are null for every row that already exists, which is the right answer —
+         * an assessment recorded before this was a single piece on its own.
+         */
+        val MIGRATION_3_4 = object : Migration(3, 4) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE sessions ADD COLUMN previousSessionId TEXT")
+                db.execSQL("ALTER TABLE sessions ADD COLUMN intakeAnswers TEXT")
+            }
+        }
+
+        val MIGRATIONS = arrayOf(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4)
     }
 }

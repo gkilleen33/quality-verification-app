@@ -81,6 +81,13 @@ data class ReportLabels(
     val intakeDepthRapidDetail: String,
     val intakeSomethingElse: String,
     val openingShotInstruction: String,
+    // Carrying one assessment into the next, and comparing the two.
+    val intakeCarriedHeading: String,
+    val intakeStartOver: String,
+    val nextStepsHeading: String,
+    val assessDifferent: String,
+    val compareFoundHeading: String,
+    val compareAsk: String,
     // The opening turn the intake writes on the customer's behalf.
     val intakeSaysBuying: String,
     val intakeSaysAlreadyOwn: String,
@@ -93,6 +100,20 @@ data class ReportLabels(
     val intakeSaysRapid: String,
     val intakeSaysTakeOver: String,
     private val intakeSaysPriceFormat: String,
+    /**
+     * These three name the piece in English and deliberately do not in Swahili.
+     *
+     * "Another table" needs the word for "another" to agree with the noun's class —
+     * *meza nyingine*, but *kiti kingine* — and getting that wrong on a button is the
+     * kind of mistake that tells a customer the app was not written for them. Rather
+     * than guess per item, the Swahili wording talks about the assessment instead of
+     * the furniture, which needs no agreement: "another assessment of this kind".
+     * The `{item}` placeholder is simply absent from those strings, so nothing is
+     * substituted into them.
+     */
+    private val assessAnotherFormat: String,
+    private val compareWithFormat: String,
+    private val compareIntroFormat: String,
     private val photoCountFormat: String,
     private val testResultCountFormat: String,
     private val sentFormat: String,
@@ -119,6 +140,17 @@ data class ReportLabels(
 
     fun intakeSaysPrice(price: String): String =
         intakeSaysPriceFormat.replace("{price}", price)
+
+    /** "Check another table", on the card that follows a verdict. */
+    fun assessAnother(itemName: String): String =
+        assessAnotherFormat.replace("{item}", itemName)
+
+    fun compareWith(itemName: String): String =
+        compareWithFormat.replace("{item}", itemName)
+
+    /** Opens the turn that asks for the two pieces to be compared. */
+    fun compareIntro(itemName: String): String =
+        compareIntroFormat.replace("{item}", itemName)
 
     fun level(level: VerdictLevel): String = levels[level] ?: levels.getValue(VerdictLevel.UNKNOWN)
 
@@ -224,6 +256,13 @@ data class ReportLabels(
             intakeDepthRapid = "Rapid assessment",
             intakeDepthRapidDetail = "Two photos and a quick opinion. Likelier to miss something.",
             intakeSomethingElse = "Something else — let me explain",
+            intakeCarriedHeading = "Same answers as last time",
+            intakeStartOver = "Ask me all the questions again",
+            nextStepsHeading = "What next?",
+            assessDifferent = "Check a different kind of item",
+            compareFoundHeading = "Found on it:",
+            compareAsk = "Tell me the differences that matter between the two, " +
+                "and say what you cannot compare.",
             openingShotInstruction = "One photo of the whole thing to start. Stand back far " +
                 "enough that all of it is in the frame, including where it meets the floor. " +
                 "This lets me see what I am dealing with before asking for close-ups.",
@@ -238,6 +277,10 @@ data class ReportLabels(
             intakeSaysRapid = "I would like a rapid assessment.",
             intakeSaysTakeOver = "I could not answer the rest with the buttons, so please ask me yourself.",
             intakeSaysPriceFormat = "The seller is asking {price}.",
+            assessAnotherFormat = "Check another {item}",
+            compareWithFormat = "Compare with the last {item}",
+            compareIntroFormat = "Compare this one with the {item} I checked before. " +
+                "These are the findings on it:",
             photoCountFormat = "{n} photos",
             testResultCountFormat = "{n} test results",
             sentFormat = "{size} sent",
@@ -319,6 +362,13 @@ data class ReportLabels(
             intakeDepthRapid = "Ukaguzi wa haraka",
             intakeDepthRapidDetail = "Picha mbili na maoni ya haraka. Ni rahisi kukosa kitu.",
             intakeSomethingElse = "Kitu kingine — niambie mwenyewe",
+            intakeCarriedHeading = "Majibu yale yale ya mwisho",
+            intakeStartOver = "Niulize maswali yote tena",
+            nextStepsHeading = "Sasa nini?",
+            assessDifferent = "Kagua kitu cha aina nyingine",
+            compareFoundHeading = "Yaliyoonekana:",
+            compareAsk = "Nieleze tofauti muhimu kati ya hizi mbili, na useme kile " +
+                "ambacho hakiwezi kulinganishwa.",
             openingShotInstruction = "Picha moja ya kitu kizima kwa kuanzia. Simama mbali " +
                 "kiasi ili kiwe chote kwenye picha, pamoja na pale kinapogusa sakafu. " +
                 "Hii inanisaidia kuona ninachoshughulika nacho kabla ya kuomba picha za karibu.",
@@ -333,6 +383,10 @@ data class ReportLabels(
             intakeSaysRapid = "Nataka ukaguzi wa haraka.",
             intakeSaysTakeOver = "Sikuweza kujibu mengine kwa vitufe, tafadhali niulize wewe mwenyewe.",
             intakeSaysPriceFormat = "Muuzaji anataka {price}.",
+            assessAnotherFormat = "Anza ukaguzi mwingine wa aina hii",
+            compareWithFormat = "Linganisha na ukaguzi uliopita",
+            compareIntroFormat = "Linganisha hii na kipande nilichokagua awali. " +
+                "Haya ni matokeo yake:",
             photoCountFormat = "Picha {n}",
             testResultCountFormat = "Majibu {n} ya majaribio",
             sentFormat = "{size} zimetumwa",

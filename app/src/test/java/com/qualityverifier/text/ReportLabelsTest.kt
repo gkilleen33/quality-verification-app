@@ -121,6 +121,20 @@ class ReportLabelsTest {
     }
 
     @Test
+    fun `the item is named in English and deliberately not in Swahili`() {
+        // "Another table" needs the word for "another" to agree with the noun's class —
+        // meza nyingine, but kiti kingine — so the Swahili wording talks about the
+        // assessment instead of the furniture and needs no agreement. What must never
+        // happen is the placeholder itself reaching a button.
+        assertEquals("Check another Table", ReportLabels.ENGLISH.assessAnother("Table"))
+        listOf(
+            ReportLabels.SWAHILI.assessAnother("Meza"),
+            ReportLabels.SWAHILI.compareWith("Meza"),
+            ReportLabels.SWAHILI.compareIntro("Meza"),
+        ).forEach { assertTrue("a placeholder leaked: $it", !it.contains("{item}")) }
+    }
+
+    @Test
     fun `the two label sets are complete against each other`() {
         // A heading added to one language and forgotten in the other is the failure
         // this catches: it would ship a card that is half translated.
@@ -186,6 +200,15 @@ class ReportLabelsTest {
             en.intakeSaysOccasional to sw.intakeSaysOccasional,
             en.intakeSaysBusiness to sw.intakeSaysBusiness,
             en.intakeSaysUseLanguage to sw.intakeSaysUseLanguage,
+            en.intakeCarriedHeading to sw.intakeCarriedHeading,
+            en.intakeStartOver to sw.intakeStartOver,
+            en.nextStepsHeading to sw.nextStepsHeading,
+            en.assessDifferent to sw.assessDifferent,
+            en.compareFoundHeading to sw.compareFoundHeading,
+            en.compareAsk to sw.compareAsk,
+            en.assessAnother("Table") to sw.assessAnother("Meza"),
+            en.compareWith("Table") to sw.compareWith("Meza"),
+            en.compareIntro("Table") to sw.compareIntro("Meza"),
         ).forEach { (english, swahili) ->
             assertTrue("a heading is empty", english.isNotBlank() && swahili.isNotBlank())
             assertTrue("\"$english\" was not translated", english != swahili)
