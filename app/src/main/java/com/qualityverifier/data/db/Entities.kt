@@ -28,6 +28,23 @@ data class SessionEntity(
      * the assessment was written in. Null for a verdict stored before this was recorded.
      */
     val verdictLanguage: String? = null,
+    /**
+     * The assessment this one was started from, when the customer tapped "check another"
+     * at the end of it. Null for an assessment started from the grid, which is most.
+     *
+     * Deliberately not a foreign key. Deleting the earlier report must not cascade into
+     * this one, and a dangling id is a state the app already handles: no earlier verdict
+     * to read means the comparison is simply not offered.
+     */
+    val previousSessionId: String? = null,
+    /**
+     * This assessment's own intake answers, in the form
+     * [com.qualityverifier.text.encodeIntake] writes, so that "check another" can carry
+     * them into the next piece even after the conversation has been reopened from
+     * history. Null when the intake was handed over to the assistant part way, since
+     * there is then no complete set to carry.
+     */
+    val intakeAnswers: String? = null,
 )
 
 @Entity(

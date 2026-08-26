@@ -6,12 +6,16 @@ import com.qualityverifier.data.db.MessageEntity
 import com.qualityverifier.data.db.MessageWithAttachments
 import com.qualityverifier.data.db.SessionDao
 import com.qualityverifier.data.db.SessionEntity
+import com.qualityverifier.domain.AssessmentContext
 import com.qualityverifier.domain.Attachment
 import com.qualityverifier.domain.ChatMessage
 import com.qualityverifier.domain.ItemType
 import com.qualityverifier.domain.Role
+import com.qualityverifier.domain.SessionStart
 import com.qualityverifier.domain.SessionSummary
 import com.qualityverifier.domain.VerdictLevel
+import com.qualityverifier.text.decodeIntake
+import com.qualityverifier.text.encodeIntake
 import com.qualityverifier.text.markdownToPlainText
 import com.qualityverifier.text.parseAssistantContent
 import kotlinx.coroutines.flow.Flow
@@ -47,13 +51,24 @@ class RoomSessionRepository(
     override suspend fun messagesOnce(sessionId: String): List<ChatMessage> =
         dao.getMessages(sessionId).map { it.toDomain() }
 
-    override suspend fun itemTypeOf(sessionId: String): ItemType? =
-        dao.findSession(sessionId)?.let { ItemType.fromId(it.itemTypeId) }
+    override suspend fun startOf(sessionId: String): SessionStart? =
+        dao.findSession(sessionId)?.let { row ->
+            SessionStart(
+                itemType = ItemType.fromId(row.itemTypeId),
+                previousSessionId = row.previousSessionId,
+                intake = decodeIntake(row.intakeAnswers),
+            )
+        }
 
     override suspend fun sessionExists(sessionId: String): Boolean =
         dao.findSession(sessionId) != null
 
-    override suspend fun createSession(sessionId: String, itemType: ItemType) {
+    override suspend fun createSession(
+        sessionId: String,
+        itemType: ItemType,
+        previousSessionId: String?,
+        intake: AssessmentContext?,
+    ) {
         val timestamp = now()
         dao.insertSession(
             SessionEntity(
@@ -62,6 +77,10 @@ class RoomSessionRepository(
                 createdAt = timestamp,
                 updatedAt = timestamp,
                 previewText = "",
+                previousSessionId = previousSessionId,
+                // Null when the intake was not finished on the phone, which is exactly
+                // when there is nothing whole to carry into the next piece.
+                intakeAnswers = intake?.let(::encodeIntake),
             )
         )
     }

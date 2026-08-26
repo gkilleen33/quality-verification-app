@@ -19,7 +19,9 @@ import com.qualityverifier.domain.Attachment
 import com.qualityverifier.domain.ChatMessage
 import com.qualityverifier.domain.ItemType
 import com.qualityverifier.domain.Role
+import com.qualityverifier.domain.Verdict
 import com.qualityverifier.text.ReportLabels
+import com.qualityverifier.text.buildComparisonRequest
 import com.qualityverifier.text.buildIntakeMessage
 import com.qualityverifier.text.buildSubmissionText
 import com.qualityverifier.text.parseAssistantContent
@@ -91,6 +93,14 @@ data class ChatError(val kind: ChatErrorKind, val message: String)
 class ChatViewModel(
     private val sessionId: String,
     private val declaredItemType: ItemType?,
+    /**
+     * Intake answers carried in from the assessment this one was started from, so a
+     * second piece in the same shop asks for its price and nothing else. Null for an
+     * assessment started from the grid, which gets the whole intake.
+     */
+    intakePrefill: AssessmentContext? = null,
+    /** The assessment this one was started from, when it was started from one. */
+    declaredPreviousSessionId: String? = null,
     private val sessions: SessionRepository,
     private val chat: ChatService,
     private val images: SessionImageStore,
@@ -171,13 +181,53 @@ class ChatViewModel(
     private val _awaitingOpeningPhoto = MutableStateFlow<AssessmentContext?>(null)
     val awaitingOpeningPhoto: StateFlow<AssessmentContext?> = _awaitingOpeningPhoto.asStateFlow()
 
+    /** Prefilled answers for the intake. Read once, when the screen decides what to ask. */
+    val intakePrefill: AssessmentContext? = intakePrefill
+
+    /**
+     * This assessment's own answers, for the next piece to inherit.
+     *
+     * Held here and in the session row both: in memory for the assessment that has just
+     * been done, and in the row so that a report reopened from history can still start
+     * the next piece without asking five questions again.
+     */
+    private val _carryForward = MutableStateFlow(intakePrefill?.takeIf { it.isComplete })
+    val carryForward: StateFlow<AssessmentContext?> = _carryForward.asStateFlow()
+
+    /**
+     * The verdict on the piece this one was started from, once there is one to compare
+     * against. Null means no comparison is offered — there was no earlier piece, it was
+     * a different kind of thing, or its assessment never reached a verdict.
+     */
+    private val _previousVerdict = MutableStateFlow<Verdict?>(null)
+    val previousVerdict: StateFlow<Verdict?> = _previousVerdict.asStateFlow()
+
+    /** True once a comparison has been asked for, so it is not asked for twice. */
+    private val _comparisonRequested = MutableStateFlow(false)
+    val comparisonRequested: StateFlow<Boolean> = _comparisonRequested.asStateFlow()
+
+    /**
+     * Not a StateFlow: nothing renders it, and it has to be readable synchronously when
+     * the session row is written. Resolved from the row when a conversation is reopened.
+     */
+    private var previousSessionId: String? = declaredPreviousSessionId
+
+    /** What kind of piece that earlier assessment was, so a like-for-like check can be redone. */
+    private var previousItemType: ItemType? = null
+
     init {
         viewModelScope.launch {
+            // One read for everything the row remembers: the protocol, the piece this
+            // one came from, and the answers to carry into the next piece.
+            val start = sessions.startOf(sessionId)
             if (declaredItemType == null) {
                 // Reopened from history: the item type lives in the session row.
-                _itemType.value = sessions.itemTypeOf(sessionId)
+                _itemType.value = start?.itemType
             }
+            if (_carryForward.value == null) _carryForward.value = start?.intake
+            previousSessionId = previousSessionId ?: start?.previousSessionId
             _needsIntake.value = sessions.messagesOnce(sessionId).isEmpty()
+            loadPreviousVerdict()
         }
         // A plan in the newest assistant turn opens a run. Watching the message list
         // rather than the send path means a conversation reopened from history picks up
@@ -216,6 +266,15 @@ class ChatViewModel(
         if (_sending.value) return
         _needsIntake.value = false
         _itemType.value = resolvedItemType
+        // Kept only when it is whole. Half an intake carried into the next piece would
+        // silently answer questions nobody answered.
+        _carryForward.value = context.takeIf { it.isComplete }
+        // The intake can land on a different protocol than the grid handed over — a chair
+        // with cushions is not the same piece as a bare one — and that can stop the
+        // earlier assessment being a like-for-like comparison after all.
+        if (previousItemType != null && previousItemType != resolvedItemType) {
+            _previousVerdict.value = null
+        }
 
         // A full assessment collects its opening photo first. A rapid one does not: its
         // whole point is speed, and its plan is two wide photos anyway. An abandoned
@@ -258,7 +317,14 @@ class ChatViewModel(
             _sending.value = true
             try {
                 val type = _itemType.value ?: ItemType.OTHER
-                if (!sessions.sessionExists(sessionId)) sessions.createSession(sessionId, type)
+                if (!sessions.sessionExists(sessionId)) {
+                    sessions.createSession(
+                        sessionId = sessionId,
+                        itemType = type,
+                        previousSessionId = previousSessionId,
+                        intake = context,
+                    )
+                }
                 sessions.appendUserMessage(
                     sessionId = sessionId,
                     text = buildIntakeMessage(context, labels),
@@ -271,6 +337,47 @@ class ChatViewModel(
                 _sending.value = false
             }
         }
+    }
+
+    /**
+     * Reads the verdict on the piece this assessment was started from.
+     *
+     * Only offered for two pieces of the same kind. "Which of these two tables is better
+     * made" is a question worth answering; a chair against a table is not a comparison,
+     * it is two separate assessments, and pretending otherwise would produce a paragraph
+     * of invented differences.
+     */
+    private suspend fun loadPreviousVerdict() {
+        val previous = previousSessionId ?: return
+        val start = sessions.startOf(previous) ?: return
+        if (start.itemType != _itemType.value) return
+        previousItemType = start.itemType
+        // The last verdict in that conversation: a later one supersedes an earlier one,
+        // the same rule the share button follows.
+        _previousVerdict.value = sessions.messagesOnce(previous)
+            .asReversed()
+            .firstNotNullOfOrNull { parseAssistantContent(it.text).verdict }
+            ?.takeIf { it.isRenderable }
+    }
+
+    /**
+     * Asks for the two pieces to be compared, carrying the earlier one's findings into
+     * this conversation.
+     *
+     * Sent as an ordinary turn, so the customer can see what was asked on their behalf
+     * and can follow it up in their own words.
+     */
+    fun compareWithPrevious(labels: ReportLabels) {
+        val previous = _previousVerdict.value ?: return
+        if (_sending.value || _comparisonRequested.value) return
+        _comparisonRequested.value = true
+        send(
+            buildComparisonRequest(
+                previousItemName = labels.itemName(_itemType.value ?: ItemType.OTHER),
+                previous = previous,
+                labels = labels,
+            )
+        )
     }
 
     /** Destination for the next shot. The camera screen writes straight into it. */
@@ -511,11 +618,15 @@ class ChatViewModel(
             container: AppContainer,
             sessionId: String,
             itemType: ItemType?,
+            intakePrefill: AssessmentContext? = null,
+            previousSessionId: String? = null,
         ): ViewModelProvider.Factory = viewModelFactory {
             initializer {
                 ChatViewModel(
                     sessionId = sessionId,
                     declaredItemType = itemType,
+                    intakePrefill = intakePrefill,
+                    declaredPreviousSessionId = previousSessionId,
                     sessions = container.sessionRepository,
                     chat = container.chatService,
                     images = container.images,

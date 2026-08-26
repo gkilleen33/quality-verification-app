@@ -108,6 +108,41 @@ class DefaultPromptsInSyncTest {
     }
 
     @Test
+    fun `a comparison stays evidence-bound and issues no verdict of its own`() {
+        // Two pieces are never evenly evidenced: this one is in front of you in
+        // photographs, the earlier one only in your own notes. A comparison that forgets
+        // that starts inventing differences, and one that emits a verdict block would
+        // overwrite a report the customer already has.
+        val master = DefaultPrompts.MASTER
+        assertTrue(
+            "the comparison rules are gone from the master prompt",
+            master.contains("Comparing two pieces:"),
+        )
+        assertTrue(
+            "the uneven evidence caveat is gone",
+            master.contains("The two are not evenly evidenced"),
+        )
+        assertTrue(
+            "nothing stops absence of a finding reading as absence of the defect",
+            master.contains(
+                "A defect recorded on one piece and not on the other is not evidence",
+            ),
+        )
+        assertTrue(
+            "a comparison may now emit a verdict block over the top of an existing one",
+            master.contains("No verdict block and no plan block in a comparison"),
+        )
+        assertTrue(
+            "the comparison may now pick a winner for the customer",
+            master.contains("Do not declare an overall winner"),
+        )
+        assertTrue(
+            "the money ban is not restated where the temptation is strongest",
+            master.contains("Say nothing about price, value for money"),
+        )
+    }
+
+    @Test
     fun `the master prompt defines both app-directed blocks`() {
         // The app parses these two fence tags. Renaming one in the prompt without
         // renaming it in AssistantBlocks would silently stop the cards and the chips

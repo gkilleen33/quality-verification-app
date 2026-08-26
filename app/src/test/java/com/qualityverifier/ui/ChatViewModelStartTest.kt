@@ -11,6 +11,7 @@ import com.qualityverifier.domain.Attachment
 import com.qualityverifier.domain.ChatMessage
 import com.qualityverifier.domain.ItemType
 import com.qualityverifier.domain.Role
+import com.qualityverifier.domain.SessionStart
 import com.qualityverifier.domain.SessionSummary
 import com.qualityverifier.domain.AssessmentContext
 import com.qualityverifier.domain.AssessmentDepth
@@ -374,10 +375,17 @@ class ChatViewModelStartTest {
             MutableStateFlow(all())
 
         override suspend fun messagesOnce(sessionId: String) = all()
-        override suspend fun itemTypeOf(sessionId: String) = itemType
+        override suspend fun startOf(sessionId: String) =
+            if (sessionExists) SessionStart(itemType, null, null) else null
+
         override suspend fun sessionExists(sessionId: String) = sessionExists
 
-        override suspend fun createSession(sessionId: String, itemType: ItemType) {
+        override suspend fun createSession(
+            sessionId: String,
+            itemType: ItemType,
+            previousSessionId: String?,
+            intake: AssessmentContext?,
+        ) {
             created = true
             sessionExists = true
         }

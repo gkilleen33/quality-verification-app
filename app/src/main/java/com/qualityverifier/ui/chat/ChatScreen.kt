@@ -60,6 +60,7 @@ import androidx.core.content.ContextCompat
 import androidx.lifecycle.viewmodel.compose.viewModel
 import coil.compose.AsyncImage
 import com.qualityverifier.data.chat.ChatErrorKind
+import com.qualityverifier.domain.AssessmentContext
 import com.qualityverifier.domain.ChatMessage
 import com.qualityverifier.domain.ItemType
 import com.qualityverifier.domain.Role
@@ -82,14 +83,28 @@ import java.io.File
 fun ChatScreen(
     sessionId: String,
     itemType: ItemType?,
+    /** Intake answers carried in from the assessment this one was started from. */
+    intakePrefill: AssessmentContext? = null,
+    /** The assessment this one was started from, which it can be compared against. */
+    previousSessionId: String? = null,
     onBack: () -> Unit,
     onOpenSettings: () -> Unit,
+    /** Starts another assessment of the same kind, carrying this one's answers. */
+    onAssessAnother: (ItemType, AssessmentContext?) -> Unit = { _, _ -> },
+    /** Back to the grid: a different kind of piece needs its own intake. */
+    onAssessDifferent: () -> Unit = {},
 ) {
     val context = LocalContext.current
     val container = appContainer()
     val viewModel: ChatViewModel = viewModel(
         key = sessionId,
-        factory = ChatViewModel.factory(container, sessionId, itemType),
+        factory = ChatViewModel.factory(
+            container = container,
+            sessionId = sessionId,
+            itemType = itemType,
+            intakePrefill = intakePrefill,
+            previousSessionId = previousSessionId,
+        ),
     )
 
     val messages by viewModel.messages.collectAsState()
@@ -104,6 +119,9 @@ fun ChatScreen(
     val submittedRun by viewModel.submittedRun.collectAsState()
     val needsIntake by viewModel.needsIntake.collectAsState()
     val awaitingOpeningPhoto by viewModel.awaitingOpeningPhoto.collectAsState()
+    val carryForward by viewModel.carryForward.collectAsState()
+    val previousVerdict by viewModel.previousVerdict.collectAsState()
+    val comparisonRequested by viewModel.comparisonRequested.collectAsState()
 
     var draft by remember { mutableStateOf("") }
     var capturing by remember { mutableStateOf(false) }
@@ -131,6 +149,9 @@ fun ChatScreen(
     // in composable scope.
     val shareLabels = rememberReportLabels(shareable?.second?.language)
     val runLabels = rememberReportLabels(run?.plan?.language)
+    // Drawn as the last item in the list rather than under the verdict, so follow-up
+    // questions do not push it out of reach.
+    val showNextSteps = shareable != null && run == null && !sending
 
     val requestCameraPermission = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
@@ -158,9 +179,14 @@ fun ChatScreen(
         if (capturing && review == null && pending.isNotEmpty()) capturing = false
     }
 
-    // Keep the newest turn in view as the conversation grows.
-    LaunchedEffect(messages.size, sending) {
-        if (messages.isNotEmpty()) listState.animateScrollToItem(messages.lastIndex)
+    // Keep the newest turn in view as the conversation grows — and the card after it,
+    // when there is one. Scrolling only as far as the last message left "check another"
+    // just below the fold, which is how the duplicated plan buried its own camera
+    // button before it.
+    LaunchedEffect(messages.size, sending, showNextSteps) {
+        if (messages.isNotEmpty()) {
+            listState.animateScrollToItem(messages.lastIndex + if (showNextSteps) 1 else 0)
+        }
     }
 
     // Inspecting comes first: once submitted there is nothing else worth showing, and
@@ -168,6 +194,10 @@ fun ChatScreen(
     if (needsIntake) {
         IntakeScreen(
             itemType = resolvedItemType ?: ItemType.OTHER,
+            prefill = viewModel.intakePrefill,
+            // Inherited from the piece before it, which already settled which protocol
+            // applies — so there is nothing for the upholstery question to decide.
+            protocolSettled = previousSessionId != null,
             onComplete = { context, resolvedItemType ->
                 viewModel.submitIntake(
                     context = context,
@@ -348,6 +378,29 @@ fun ChatScreen(
                                     labels = runLabels,
                                     onRetakeShot = viewModel::retakeShot,
                                     onChangeAnswer = viewModel::changeTestAnswer,
+                                )
+                            }
+                        }
+                        // Pinned to the end of the conversation rather than under the
+                        // verdict itself, so that follow-up questions do not push it
+                        // out of reach.
+                        if (showNextSteps) {
+                            item(key = "next-steps") {
+                                Spacer(Modifier.height(6.dp))
+                                NextStepsCard(
+                                    itemName = shareLabels.itemName(
+                                        resolvedItemType ?: ItemType.OTHER,
+                                    ),
+                                    canCompare = previousVerdict != null && !comparisonRequested,
+                                    labels = shareLabels,
+                                    onAssessAnother = {
+                                        onAssessAnother(
+                                            resolvedItemType ?: ItemType.OTHER,
+                                            carryForward,
+                                        )
+                                    },
+                                    onCompare = { viewModel.compareWithPrevious(shareLabels) },
+                                    onAssessDifferent = onAssessDifferent,
                                 )
                             }
                         }

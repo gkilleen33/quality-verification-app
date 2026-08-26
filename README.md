@@ -159,6 +159,8 @@ drives the sequence they all share:
    still missing, as another short plan, or gives the verdict.
 5. **Verdict** — sound, fair, or serious concerns, as cards.
 6. **Follow-up** — questions grounded in what was actually seen.
+7. **The next piece** — check another of the same kind carrying the same answers, or
+   compare the two. See [The next piece in the same shop](#the-next-piece-in-the-same-shop).
 
 Steps 2 and 3 are why the app, not the conversation, holds the state of a collection run.
 Asking shot by shot cost a network round trip per photo — a dozen waits for a full
@@ -288,6 +290,64 @@ when it is answered. Treat it as better than English, not as finished copy.
 
 The rest of the app's chrome — home, reports and profile — is still English only, driven
 by nothing. Full localisation of those is a separate piece of work.
+
+### The next piece in the same shop
+
+A verdict is followed by a card offering **check another of the same kind**, **compare
+with the last one** where that is possible, and **a different kind of item**.
+
+The first of those carries the intake forward. Somebody triaging four stools in one shop
+answered five questions per stool, and four of the answers — language, buying or owning,
+intended use, how thorough — were the same every time; the fifth, the price, was the only
+one about the piece in front of them. So the next assessment asks the price and nothing
+else, and shows the answers it is reusing above a way back into the whole intake. That is
+[issue #6](https://github.com/gkilleen33/quality-verification-app/issues/6): the friction
+was landing hardest on rapid mode, which exists precisely for the person with four stools.
+
+The price is deliberately **not** carried. It is the one answer that belongs to this piece
+rather than to the afternoon, and a figure silently inherited from the last stool would put
+a wrong number in front of the assistant.
+
+The answers travel two ways, both handled by
+[`IntakeCode`](app/src/main/java/com/qualityverifier/text/IntakeCode.kt): in the navigation
+route for the assessment being started now, and in the session row so that a report
+reopened tomorrow can still start the next piece without asking everything again. Anything
+the codec does not recognise decodes to nothing rather than to a partial context — an old
+back-stack entry falls back to asking properly instead of answering questions nobody
+answered. An intake that was handed over to the assistant carries nothing forward for the
+same reason.
+
+**A different kind of item** goes back to the grid instead. A chair to go with a table
+needs the chair's own protocol and its own intake; there is nothing useful to inherit.
+
+Each piece gets its own conversation and its own report, and the chain is not popped off
+the back stack, so the back button walks back through the pieces you have checked.
+
+### Comparing two pieces
+
+Two finished assessments of the **same kind** of piece can be set side by side. The app
+sends the earlier one's recorded findings — verdict, each defect as it was observed, and
+what could not be checked — as a turn in the later conversation, built by
+[`ComparisonMessage`](app/src/main/java/com/qualityverifier/text/ComparisonMessage.kt).
+
+Three deliberate limits:
+
+- **Same kind only.** A chair against a table is two assessments, not a comparison, and
+  asking for one would produce a paragraph of invented differences.
+- **Findings travel, photographs do not.** The later assessment's own images are already in
+  the conversation; re-sending eight more would double the cost of the turn for evidence
+  the assistant has already read once.
+- **The two are not evenly evidenced, and the prompt says so.** This piece can be looked at
+  again; the earlier one can only be recalled. So a defect recorded on one and not the
+  other is *not* evidence the other is free of it — it may only mean nobody looked. The
+  comparison rules in `master.txt` make that explicit, ask for objective differences with
+  the piece each one favours, forbid declaring an overall winner, and repeat the money ban
+  where the temptation to break it is strongest.
+
+A comparison emits **no verdict block and no plan block**. It is not a verdict on either
+piece — both already have one — and a second verdict block would overwrite one of them in
+the reports list. It comes back as ordinary prose, and a test asserts the prompt still
+says so.
 
 ## Blocks the app parses out of a reply
 

@@ -60,10 +60,176 @@ import com.qualityverifier.text.ReportLabels
  * the assistant is better at an awkward question than a fixed list is. Taking the way out
  * ends the local questioning for good and hands over whatever was already chosen.
  */
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun IntakeScreen(
     itemType: ItemType,
+    /**
+     * Answers carried from the assessment before this one. When they are whole, the only
+     * thing left to ask is the price: it is the one answer that belongs to this piece
+     * rather than to the afternoon.
+     */
+    prefill: AssessmentContext? = null,
+    /**
+     * True when the item type was inherited from an assessment that has already settled
+     * it, so the upholstery question has nothing left to decide. The button that starts
+     * this assessment names the protocol it is starting — "check another padded chair" —
+     * and asking again immediately afterwards reads as not having listened.
+     */
+    protocolSettled: Boolean = false,
+    onComplete: (AssessmentContext, ItemType) -> Unit,
+    onBack: () -> Unit,
+) {
+    var startOver by remember { mutableStateOf(false) }
+    val carried = prefill?.takeIf { it.isComplete }
+    if (carried != null && !startOver) {
+        CarriedIntake(
+            itemType = itemType,
+            carried = carried,
+            onComplete = onComplete,
+            onBack = onBack,
+            onStartOver = { startOver = true },
+        )
+        return
+    }
+    FullIntake(
+        itemType = itemType,
+        protocolSettled = protocolSettled,
+        onComplete = onComplete,
+        onBack = onBack,
+    )
+}
+
+/**
+ * One question instead of five, for a second piece in the same shop.
+ *
+ * The carried answers are shown rather than assumed silently, and there is a way back to
+ * the whole intake, because the second stool may genuinely be for something else. Saving
+ * four taps is not worth putting a wrong answer in front of the assistant without saying
+ * so.
+ *
+ * When they already own the piece there is no price to ask about, so this asks nothing at
+ * all and goes straight on.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun CarriedIntake(
+    itemType: ItemType,
+    carried: AssessmentContext,
+    onComplete: (AssessmentContext, ItemType) -> Unit,
+    onBack: () -> Unit,
+    onStartOver: () -> Unit,
+) {
+    val labels = ReportLabels.forLanguage(carried.language?.code)
+    var price by remember { mutableStateOf("") }
+    var answered by remember { mutableStateOf(carried.ownership != Ownership.BUYING) }
+
+    BackHandler(onBack = onBack)
+
+    if (!answered) {
+        Scaffold(
+            topBar = {
+                TopAppBar(
+                    title = { Text(labels.itemName(itemType)) },
+                    navigationIcon = {
+                        IconButton(onClick = onBack) {
+                            Icon(
+                                Icons.AutoMirrored.Filled.ArrowBack,
+                                contentDescription = "Back",
+                            )
+                        }
+                    },
+                )
+            },
+        ) { padding ->
+            Column(
+                Modifier
+                    .fillMaxSize()
+                    .padding(padding)
+                    .verticalScroll(rememberScrollState())
+                    .imePadding()
+                    .padding(20.dp),
+            ) {
+                Question(labels.intakePriceQuestion) {
+                    OutlinedTextField(
+                        value = price,
+                        onValueChange = { price = it },
+                        label = { Text(labels.intakePriceHint) },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    Spacer(Modifier.height(4.dp))
+                    Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                        Button(
+                            onClick = { answered = true },
+                            enabled = price.isNotBlank(),
+                            modifier = Modifier
+                                .weight(1f)
+                                .height(56.dp),
+                        ) { Text(labels.intakeNext) }
+                        OutlinedButton(
+                            onClick = {
+                                price = ""
+                                answered = true
+                            },
+                            modifier = Modifier
+                                .weight(1f)
+                                .height(56.dp),
+                        ) { Text(labels.intakePriceSkip) }
+                    }
+                }
+
+                Spacer(Modifier.height(28.dp))
+                Text(
+                    labels.intakeCarriedHeading,
+                    style = MaterialTheme.typography.labelLarge,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    carriedRecap(carried, labels),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                TextButton(onClick = onStartOver, modifier = Modifier.fillMaxWidth()) {
+                    Text(labels.intakeStartOver)
+                }
+            }
+        }
+    }
+
+    // As in the full intake: fired from an effect, because calling it inline would fire
+    // again on every recomposition and each firing sends a request.
+    LaunchedEffect(answered) {
+        if (answered) onComplete(carried.copy(quotedPrice = price), itemType)
+    }
+}
+
+/** The carried answers in the customer's own words, so they can see what is being reused. */
+private fun carriedRecap(context: AssessmentContext, labels: ReportLabels): String =
+    listOfNotNull(
+        when (context.ownership) {
+            Ownership.BUYING -> labels.intakeBuying
+            Ownership.ALREADY_OWN -> labels.intakeAlreadyOwn
+            null -> null
+        },
+        when (context.usage) {
+            Usage.DAILY -> labels.intakeUsageDaily
+            Usage.OCCASIONAL -> labels.intakeUsageOccasional
+            Usage.BUSINESS -> labels.intakeUsageBusiness
+            null -> null
+        },
+        when (context.depth) {
+            AssessmentDepth.FULL -> labels.intakeDepthFull
+            AssessmentDepth.RAPID -> labels.intakeDepthRapid
+            null -> null
+        },
+    ).joinToString(" · ")
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun FullIntake(
+    itemType: ItemType,
+    protocolSettled: Boolean,
     onComplete: (AssessmentContext, ItemType) -> Unit,
     onBack: () -> Unit,
 ) {
@@ -78,7 +244,7 @@ fun IntakeScreen(
 
     val labels = language?.let { ReportLabels.forLanguage(it.code) } ?: ReportLabels.ENGLISH
     // One grid entry covers both chair protocols, so which one applies is asked here.
-    val needsUpholstery = itemType.needsUpholsteryQuestion
+    val needsUpholstery = itemType.needsUpholsteryQuestion && !protocolSettled
     val resolvedItem = upholstered?.let { itemType.withUpholstery(it) } ?: itemType
     val needsPrice = ownership == Ownership.BUYING
     val totalSteps = 4 + (if (needsPrice) 1 else 0) + (if (needsUpholstery) 1 else 0)
