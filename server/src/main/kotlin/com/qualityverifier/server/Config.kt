@@ -16,6 +16,11 @@ data class Config(
     val database: DatabaseConfig?,
     /** Absent means auth is not mounted. See Application.main. */
     val jwtSigningKey: String?,
+    /** Absent means the chat routes are not mounted. */
+    val anthropicApiKey: String?,
+    /** Photos and the prompt cache live here. The only writable path in the unit. */
+    val dataDirectory: String,
+    val promptBaseUrl: String,
 ) {
     companion object {
         fun fromEnvironment(env: (String) -> String? = System::getenv): Config {
@@ -38,6 +43,12 @@ data class Config(
                     )
                 },
                 jwtSigningKey = env("KAGUA_JWT_SIGNING_KEY")?.takeIf { it.isNotBlank() },
+                anthropicApiKey = env("KAGUA_ANTHROPIC_API_KEY")?.takeIf { it.isNotBlank() },
+                dataDirectory = env("KAGUA_DATA_DIR") ?: "/var/lib/kagua",
+                // Same source the phone reads, so a prompt change still lands by pushing
+                // to main rather than by shipping anything.
+                promptBaseUrl = env("KAGUA_PROMPT_BASE_URL")
+                    ?: "https://raw.githubusercontent.com/gkilleen33/quality-verification-app/main/prompts/",
             )
         }
     }

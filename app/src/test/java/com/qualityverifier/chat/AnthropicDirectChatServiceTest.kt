@@ -1,6 +1,7 @@
 package com.qualityverifier.chat
 
 import com.qualityverifier.data.chat.AnthropicDirectChatService
+import com.qualityverifier.data.chat.AnthropicRequest
 import com.qualityverifier.data.chat.ChatErrorKind
 import com.qualityverifier.data.chat.ChatResult
 import com.qualityverifier.data.chat.ImageBytesSource
@@ -302,7 +303,7 @@ class AnthropicDirectChatServiceTest {
         val messages = requestMessages()
         assertEquals(1, messages.size)
         assertEquals("user", role(messages.single()))
-        assertEquals(AnthropicDirectChatService.OPENING_TURN, firstText(messages.single()))
+        assertEquals(AnthropicRequest.OPENING_TURN, firstText(messages.single()))
     }
 
     @Test
@@ -318,7 +319,7 @@ class AnthropicDirectChatServiceTest {
 
         val messages = requestMessages()
         assertEquals(listOf("user", "assistant"), messages.map { role(it) })
-        assertEquals(AnthropicDirectChatService.OPENING_TURN, firstText(messages[0]))
+        assertEquals(AnthropicRequest.OPENING_TURN, firstText(messages[0]))
     }
 
     @Test

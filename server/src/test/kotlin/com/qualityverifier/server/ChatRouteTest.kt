@@ -1,0 +1,364 @@
+package com.qualityverifier.server
+
+import com.qualityverifier.data.prompts.PromptRepository
+import com.qualityverifier.domain.Attachment
+import com.qualityverifier.domain.ChatMessage
+import com.qualityverifier.domain.ItemType
+import com.qualityverifier.domain.Role
+import com.qualityverifier.server.auth.AccessTokens
+import com.qualityverifier.server.blobs.BlobStore
+import com.qualityverifier.server.chat.ClaudeClient
+import com.qualityverifier.server.chat.ClaudeResult
+import com.qualityverifier.server.chat.TokenUsage
+import com.qualityverifier.server.chat.UpstreamError
+import com.qualityverifier.server.db.ChatStore
+import com.qualityverifier.server.db.SessionAccess
+import com.qualityverifier.server.db.StoredReply
+import com.qualityverifier.server.routes.ChatRequest
+import io.ktor.client.plugins.contentnegotiation.ContentNegotiation as ClientContentNegotiation
+import io.ktor.client.request.header
+import io.ktor.client.request.post
+import io.ktor.client.request.setBody
+import io.ktor.client.statement.bodyAsText
+import io.ktor.http.ContentType
+import io.ktor.http.HttpHeaders
+import io.ktor.http.HttpStatusCode
+import io.ktor.http.contentType
+import io.ktor.serialization.kotlinx.json.json
+import io.ktor.server.testing.ApplicationTestBuilder
+import io.ktor.server.testing.testApplication
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
+import org.junit.Rule
+import org.junit.Test
+import org.junit.rules.TemporaryFolder
+import java.util.UUID
+
+/**
+ * The chat route's decisions, none of which need Postgres to state.
+ *
+ * Every one of these is a case where getting it wrong costs money or leaks data rather
+ * than throwing: paying twice for a retried turn, assessing eight photos as if they were
+ * nine, or letting one customer post into another's assessment.
+ */
+class ChatRouteTest {
+
+    @get:Rule
+    val folder = TemporaryFolder()
+
+    @Test
+    fun `a turn is stored, sent upstream, and the reply returned`() = testApplication {
+        val store = FakeChatStore()
+        val claude = FakeClaude(ClaudeResult.Success("Here is the plan", TokenUsage(10, 5, 0, 900), "m"))
+        val app = withChat(store, claude)
+
+        val response = app.post("/v1/chat") {
+            auth(); contentType(ContentType.Application.Json)
+            setBody(request())
+        }
+
+        assertEquals(HttpStatusCode.OK, response.status)
+        assertTrue(response.bodyAsText(), response.bodyAsText().contains("Here is the plan"))
+        assertEquals(1, claude.calls)
+        assertEquals(1, store.assistantTurns)
+        // Written on success too, not only on failure: this is what per-user quotas and
+        // the bill are reconciled from.
+        assertEquals(1, store.usageRows)
+    }
+
+    @Test
+    fun `a retried turn returns the stored reply without paying again`() = testApplication {
+        // The phone retries when a response is lost. Calling upstream again would charge
+        // for a full vision request to produce an answer we already have.
+        val store = FakeChatStore(turnAlreadyStored = true, storedReply = StoredReply("m1", "already answered"))
+        val claude = FakeClaude(ClaudeResult.Success("should not be called", TokenUsage(), null))
+        val app = withChat(store, claude)
+
+        val response = app.post("/v1/chat") {
+            auth(); contentType(ContentType.Application.Json); setBody(request())
+        }
+
+        assertEquals(HttpStatusCode.OK, response.status)
+        assertTrue(response.bodyAsText().contains("already answered"))
+        assertEquals("upstream must not be called again", 0, claude.calls)
+    }
+
+    @Test
+    fun `a retried turn with no stored reply is attempted again`() = testApplication {
+        // The other half: the turn is stored but the earlier attempt failed upstream, so
+        // the customer is owed an answer rather than an echo.
+        val store = FakeChatStore(turnAlreadyStored = true, storedReply = null)
+        val claude = FakeClaude(ClaudeResult.Success("second attempt", TokenUsage(), null))
+        val app = withChat(store, claude)
+
+        val response = app.post("/v1/chat") {
+            auth(); contentType(ContentType.Application.Json); setBody(request())
+        }
+
+        assertEquals(HttpStatusCode.OK, response.status)
+        assertEquals(1, claude.calls)
+    }
+
+    @Test
+    fun `posting into another user's session answers 404, not 403`() = testApplication {
+        // 403 would confirm the id exists, which is enough to enumerate sessions.
+        val store = FakeChatStore(access = SessionAccess.NotYours)
+        val claude = FakeClaude(ClaudeResult.Success("x", TokenUsage(), null))
+        val app = withChat(store, claude)
+
+        val response = app.post("/v1/chat") {
+            auth(); contentType(ContentType.Application.Json); setBody(request())
+        }
+
+        assertEquals(HttpStatusCode.NotFound, response.status)
+        assertEquals(0, claude.calls)
+    }
+
+    @Test
+    fun `a missing photo is refused before anything is spent upstream`() = testApplication {
+        // Dropping it silently would produce an assessment of eight photos that reads as
+        // if it were of nine, and the customer would never learn which was ignored.
+        val store = FakeChatStore()
+        val claude = FakeClaude(ClaudeResult.Success("x", TokenUsage(), null))
+        val app = withChat(store, claude)
+
+        val absent = "a".repeat(64)
+        val response = app.post("/v1/chat") {
+            auth(); contentType(ContentType.Application.Json)
+            setBody(request().copy(blobs = listOf(absent)))
+        }
+
+        assertEquals(HttpStatusCode.Conflict, response.status)
+        val body = response.bodyAsText()
+        assertTrue(body, body.contains("missing_blobs"))
+        assertTrue("the phone needs to know which", body.contains(absent))
+        assertEquals(0, claude.calls)
+    }
+
+    @Test
+    fun `upstream failures map to a status the phone can act on, and are still billed`() {
+        val cases = mapOf(
+            UpstreamError.RATE_LIMIT to HttpStatusCode.TooManyRequests,
+            UpstreamError.OVERLOADED to HttpStatusCode.ServiceUnavailable,
+            UpstreamError.AUTH to HttpStatusCode.ServiceUnavailable,
+            UpstreamError.NETWORK to HttpStatusCode.GatewayTimeout,
+            UpstreamError.SERVER to HttpStatusCode.BadGateway,
+            UpstreamError.REQUEST to HttpStatusCode.InternalServerError,
+        )
+        // One application per case: a testApplication block installs its module once.
+        for ((error, expected) in cases) {
+            testApplication {
+                val store = FakeChatStore()
+                val app = withChat(
+                    store,
+                    FakeClaude(ClaudeResult.Failure(error, "upstream said something private")),
+                )
+                val response = app.post("/v1/chat") {
+                    auth(); contentType(ContentType.Application.Json); setBody(request())
+                }
+                assertEquals("for $error", expected, response.status)
+                // A failed call can still have burned tokens.
+                assertEquals("for $error", 1, store.usageRows)
+                // The upstream message can name a model, a quota or an account.
+                assertTrue(
+                    "leaked the upstream message for $error",
+                    !response.bodyAsText().contains("something private"),
+                )
+            }
+        }
+    }
+
+    @Test
+    fun `a verdict in the reply is recorded so the reports list can badge it`() = testApplication {
+        val store = FakeChatStore()
+        val reply = """
+            The frame is sound.
+
+            ```qv-verdict
+            {"verdict":"fair","language":"sw","headline":"Imara kwa ujumla","defects":[]}
+            ```
+        """.trimIndent()
+        val app = withChat(store, FakeClaude(ClaudeResult.Success(reply, TokenUsage(), null)))
+
+        app.post("/v1/chat") { auth(); contentType(ContentType.Application.Json); setBody(request()) }
+
+        assertEquals("fair", store.lastVerdictLevel)
+        assertEquals("sw", store.lastVerdictLanguage)
+        // The headline is a better preview than the opening words of the prose.
+        assertEquals("Imara kwa ujumla", store.lastPreview)
+    }
+
+    @Test
+    fun `an unknown item type is refused rather than guessed`() = testApplication {
+        val app = withChat(FakeChatStore(), FakeClaude(ClaudeResult.Success("x", TokenUsage(), null)))
+
+        val response = app.post("/v1/chat") {
+            auth(); contentType(ContentType.Application.Json)
+            setBody(request().copy(itemTypeId = "wooden-spaceship"))
+        }
+
+        assertEquals(HttpStatusCode.BadRequest, response.status)
+    }
+
+    @Test
+    fun `a turn with neither text nor a photo is refused`() = testApplication {
+        val app = withChat(FakeChatStore(), FakeClaude(ClaudeResult.Success("x", TokenUsage(), null)))
+
+        val response = app.post("/v1/chat") {
+            auth(); contentType(ContentType.Application.Json)
+            setBody(request().copy(text = "", blobs = emptyList()))
+        }
+
+        assertEquals(HttpStatusCode.BadRequest, response.status)
+    }
+
+    @Test
+    fun `chat requires a token`() = testApplication {
+        val app = withChat(FakeChatStore(), FakeClaude(ClaudeResult.Success("x", TokenUsage(), null)))
+
+        val response = app.post("/v1/chat") {
+            contentType(ContentType.Application.Json); setBody(request())
+        }
+
+        assertEquals(HttpStatusCode.Unauthorized, response.status)
+    }
+
+    @Test
+    fun `the client cannot supply its own system prompt`() = testApplication {
+        // There is no field for it, and this asserts the prompt the route used came from
+        // the repository — a client able to substitute one would spend our budget on it.
+        val prompts = RecordingPrompts()
+        val claude = FakeClaude(ClaudeResult.Success("x", TokenUsage(), null))
+        val app = withChat(FakeChatStore(), claude, prompts)
+
+        app.post("/v1/chat") { auth(); contentType(ContentType.Application.Json); setBody(request()) }
+
+        assertEquals("PROMPT FOR wooden-table", claude.lastSystemPrompt)
+        assertEquals(ItemType.WOODEN_TABLE, prompts.asked)
+    }
+
+    // ---------------------------------------------------------------- harness
+
+    private fun io.ktor.client.request.HttpRequestBuilder.auth() {
+        header(HttpHeaders.Authorization, "Bearer ${AccessTokens(KEY).issue(USER).token}")
+    }
+
+    private fun request() = ChatRequest(
+        sessionId = UUID.randomUUID().toString(),
+        itemTypeId = "wooden-table",
+        messageId = UUID.randomUUID().toString(),
+        text = "I am buying this.",
+    )
+
+    private fun ApplicationTestBuilder.withChat(
+        store: ChatStore,
+        claude: FakeClaude,
+        prompts: PromptRepository = RecordingPrompts(),
+    ) = run {
+        application {
+            module(
+                version = "test",
+                database = null,
+                auth = Auth(NoAuthStore, AccessTokens(KEY)),
+                chat = Chat(store, BlobStore(folder.newFolder()), claude, prompts),
+            )
+        }
+        createClient { install(ClientContentNegotiation) { json() } }
+    }
+
+    private class RecordingPrompts : PromptRepository {
+        var asked: ItemType? = null
+        override suspend fun systemPromptFor(itemType: ItemType): String {
+            asked = itemType
+            return "PROMPT FOR ${itemType.id}"
+        }
+        override suspend fun clearCache() = Unit
+    }
+
+    private class FakeClaude(private val result: ClaudeResult) : ClaudeClient {
+        var calls = 0
+            private set
+        var lastSystemPrompt: String? = null
+            private set
+
+        override suspend fun send(
+            systemPrompt: String,
+            history: List<ChatMessage>,
+            imageBytes: (Attachment) -> ByteArray?,
+        ): ClaudeResult {
+            calls++
+            lastSystemPrompt = systemPrompt
+            return result
+        }
+    }
+
+    private class FakeChatStore(
+        private val access: SessionAccess = SessionAccess.Ok(created = true),
+        private val turnAlreadyStored: Boolean = false,
+        private val storedReply: StoredReply? = null,
+    ) : ChatStore {
+        var assistantTurns = 0
+            private set
+        var usageRows = 0
+            private set
+        var lastVerdictLevel: String? = null
+            private set
+        var lastVerdictLanguage: String? = null
+            private set
+        var lastPreview: String? = null
+            private set
+
+        override suspend fun ensureSession(
+            sessionId: String, userId: String, itemTypeId: String,
+            previousSessionId: String?, intakeAnswers: String?, promptSha: String?,
+        ) = access
+
+        override suspend fun appendUserTurn(
+            sessionId: String, messageId: String, text: String, blobHashes: List<String>,
+        ) = !turnAlreadyStored
+
+        override suspend fun replyAfter(sessionId: String, userMessageId: String) = storedReply
+
+        override suspend fun history(sessionId: String, blobPath: (String) -> String) =
+            listOf(ChatMessage("m", Role.USER, "I am buying this."))
+
+        override suspend fun appendAssistantTurn(
+            sessionId: String, text: String, preview: String,
+            verdictLevelId: String?, verdictLanguage: String?,
+        ): String {
+            assistantTurns++
+            lastPreview = preview
+            lastVerdictLevel = verdictLevelId
+            lastVerdictLanguage = verdictLanguage
+            return "assistant-1"
+        }
+
+        override suspend fun recordUsage(
+            userId: String, sessionId: String?, model: String?, usage: TokenUsage?,
+            httpStatus: Int?, latencyMillis: Long, errorKind: String?,
+        ) {
+            usageRows++
+        }
+    }
+
+    private companion object {
+        const val KEY = "a-signing-key-long-enough-to-be-real"
+        val USER: String = UUID.randomUUID().toString()
+    }
+}
+
+/** Auth is installed so the chat routes can authenticate; none of these tests use it. */
+private object NoAuthStore : com.qualityverifier.server.db.AuthStore {
+    override suspend fun register(registration: com.qualityverifier.server.db.Registration) =
+        com.qualityverifier.server.db.RegisterOutcome.InviteUnusable
+    override suspend fun findUser(userId: String) = null
+    override suspend fun issueRefresh(
+        userId: String, token: String, expiresAt: java.time.Instant,
+        userAgent: String?, replaces: String?,
+    ) = "unused"
+    override suspend fun findRefresh(token: String) = null
+    override suspend fun revokeChain(userId: String) = 0
+    override suspend fun credentialsForPhone(phone: String) = null
+    override suspend fun recordFailedSignIn(userId: String, lockFor: java.time.Duration, threshold: Int) = 0
+    override suspend fun clearFailedSignIns(userId: String) = Unit
+}
