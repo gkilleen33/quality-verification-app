@@ -6,10 +6,10 @@ import com.qualityverifier.domain.ItemType
 /**
  * Sends a conversation and returns Claude's reply.
  *
- * This is the main Phase 2 seam. The Phase 1 implementation talks to
- * `api.anthropic.com` with the on-device key; Phase 2 posts to
- * `POST /sessions/:id/messages` on the server with a JWT. Callers see no difference —
- * they never supply a key, a URL, or a system prompt.
+ * This was the main Phase 2 seam, and it held: the implementation swapped from talking
+ * to `api.anthropic.com` with an on-device key to posting one turn to our own server with
+ * a JWT, and no caller changed. Nobody here ever supplied a key, a URL or a system prompt,
+ * which is why the swap was one file in AppContainer.
  */
 interface ChatService {
     suspend fun send(

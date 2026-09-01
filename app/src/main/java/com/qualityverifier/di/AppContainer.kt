@@ -1,35 +1,35 @@
 package com.qualityverifier.di
 
 import android.content.Context
+import android.os.Build
 import androidx.room.Room
 import com.qualityverifier.BuildConfig
-import com.qualityverifier.data.chat.AnthropicDirectChatService
+import com.qualityverifier.data.auth.AuthClient
+import com.qualityverifier.data.auth.EncryptedPrefsTokenStore
+import com.qualityverifier.data.auth.TokenProvider
+import com.qualityverifier.data.auth.TokenStore
 import com.qualityverifier.data.chat.ChatService
+import com.qualityverifier.data.chat.ServerChatService
 import com.qualityverifier.data.db.AppDatabase
 import com.qualityverifier.data.db.ImageFileStore
-import com.qualityverifier.data.keys.ApiKeyStore
-import com.qualityverifier.data.keys.EncryptedPrefsApiKeyStore
-import com.qualityverifier.data.prompts.GitHubPromptRepository
-import com.qualityverifier.data.prompts.PromptCache
-import com.qualityverifier.data.prompts.PromptRepository
 import com.qualityverifier.data.session.RoomSessionRepository
 import com.qualityverifier.data.session.SessionRepository
 import kotlinx.serialization.json.Json
 import okhttp3.OkHttpClient
-import java.io.File
 import java.util.concurrent.TimeUnit
 
 /**
  * Hand-rolled dependency container. Deliberately not Hilt: the whole point of the
- * Phase 1 / Phase 2 split is that migrating the app means editing this one file.
+ * Phase 1 / Phase 2 split was that migrating the app meant editing this one file.
  *
- * **Phase 2 migration checklist — all of it lives here:**
- *  - swap [AnthropicDirectChatService] for a server-proxy [ChatService]
- *  - swap [GitHubPromptRepository] for a server-backed [PromptRepository]
- *  - wrap [RoomSessionRepository] with server sync, or replace it
- *  - delete [apiKeyStore] and add a JWT store (also encrypted prefs)
+ * **Phase 2, done.** What changed here and nowhere else:
+ *  - [ChatService] is now [ServerChatService], posting one turn to our own server
+ *    instead of the whole conversation to `api.anthropic.com`
+ *  - the API key store is gone entirely, replaced by [TokenStore]
+ *  - the prompt repository is gone: the server assembles the system prompt, so the phone
+ *    no longer fetches protocols and cannot substitute one
  *
- * No UI or ViewModel code needs to change.
+ * No ViewModel or screen changed for any of that, which was the claim being tested.
  */
 class AppContainer(context: Context) {
 
@@ -43,9 +43,11 @@ class AppContainer(context: Context) {
 
     private val httpClient: OkHttpClient = OkHttpClient.Builder()
         .connectTimeout(30, TimeUnit.SECONDS)
-        // Vision requests on a slow connection routinely take longer than the default.
-        .readTimeout(120, TimeUnit.SECONDS)
-        .writeTimeout(120, TimeUnit.SECONDS)
+        // Our server waits on Claude, so a turn can still take minutes. The nginx read
+        // timeout in front of it is 180s; this has to outlast that or the phone gives up
+        // on an answer that is on its way.
+        .readTimeout(200, TimeUnit.SECONDS)
+        .writeTimeout(200, TimeUnit.SECONDS)
         .retryOnConnectionFailure(true)
         .build()
 
@@ -57,12 +59,21 @@ class AppContainer(context: Context) {
 
     val images: ImageFileStore = ImageFileStore(appContext)
 
-    val apiKeyStore: ApiKeyStore = EncryptedPrefsApiKeyStore(appContext)
+    val tokenStore: TokenStore = EncryptedPrefsTokenStore(appContext)
 
-    val promptRepository: PromptRepository = GitHubPromptRepository(
+    val authClient: AuthClient = AuthClient(
         client = httpClient,
-        cache = PromptCache(File(appContext.cacheDir, "prompts")),
-        baseUrl = BuildConfig.PROMPT_BASE_URL,
+        store = tokenStore,
+        baseUrl = BuildConfig.SERVER_BASE_URL,
+        json = json,
+        // For the refresh_tokens row, so a lost handset can be identified when its
+        // token is revoked. Model only; nothing that identifies a person.
+        deviceName = "${Build.MANUFACTURER} ${Build.MODEL} (Android ${Build.VERSION.RELEASE})",
+    )
+
+    private val tokenProvider = TokenProvider(
+        store = tokenStore,
+        refresher = authClient::refresh,
     )
 
     val sessionRepository: SessionRepository = RoomSessionRepository(
@@ -70,11 +81,17 @@ class AppContainer(context: Context) {
         images = images,
     )
 
-    val chatService: ChatService = AnthropicDirectChatService(
+    val chatService: ChatService = ServerChatService(
         client = httpClient,
-        apiKeyStore = apiKeyStore,
-        promptRepository = promptRepository,
+        tokens = tokenProvider,
         images = images,
+        sessionStart = sessionRepository::startOf,
+        baseUrl = BuildConfig.SERVER_BASE_URL,
         json = json,
     )
+
+    /** Signs out locally. The refresh token stays revocable server-side regardless. */
+    fun signOut() = tokenProvider.signOut()
+
+    val isSignedIn: Boolean get() = tokenStore.isSignedIn()
 }

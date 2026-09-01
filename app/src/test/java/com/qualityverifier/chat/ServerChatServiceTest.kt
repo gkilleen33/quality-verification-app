@@ -116,6 +116,29 @@ class ServerChatServiceTest {
     }
 
     @Test
+    fun `every blob request carries the token, not just the turn`() = runTest {
+        // The gap that let a real bug through: the blob routes are behind the same
+        // authentication as everything else, and asserting the header only on the POST
+        // meant HEAD and PUT could go out bare. On a device that surfaced as "please sign
+        // in again" the moment a customer submitted photos.
+        server.enqueue(MockResponse().setResponseCode(404)) // HEAD
+        server.enqueue(MockResponse().setResponseCode(201)) // PUT
+        server.enqueue(json("""{"message_id":"m1","text":"ok"}"""))
+
+        service().send("s1", ItemType.WOODEN_STOOL, history(Attachment("a", "/tmp/one.jpg")))
+
+        val requests = (1..3).map { server.takeRequest() }
+        assertEquals(listOf("HEAD", "PUT", "POST"), requests.map { it.method })
+        requests.forEach { request ->
+            assertEquals(
+                "${request.method} went out without a token",
+                "Bearer stored-access",
+                request.getHeader("Authorization"),
+            )
+        }
+    }
+
+    @Test
     fun `a 401 refreshes once and retries the same turn`() = runTest {
         // The turn must survive: the customer has already taken the photos.
         server.enqueue(MockResponse().setResponseCode(401))

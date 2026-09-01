@@ -18,15 +18,16 @@ import com.qualityverifier.ui.main.MainScaffold
 import com.qualityverifier.ui.main.MainTab
 import com.qualityverifier.ui.profile.ProfileScreen
 import com.qualityverifier.ui.reports.ReportsScreen
-import com.qualityverifier.ui.setup.ApiKeySetupScreen
+import com.qualityverifier.ui.auth.RegisterScreen
+import com.qualityverifier.ui.auth.SignInScreen
 import java.util.UUID
 
 private object Routes {
-    const val SETUP = "setup"
+    const val SIGN_IN = "sign-in"
+    const val REGISTER = "register"
     const val HOME = "home"
     const val REPORTS = "reports"
     const val PROFILE = "profile"
-    const val REPLACE_KEY = "replace-key"
     const val CHAT =
         "chat/{sessionId}?itemTypeId={itemTypeId}&carry={carry}&from={from}"
 
@@ -61,19 +62,33 @@ private object Routes {
 fun AppNav() {
     val container = appContainer()
     val navController = rememberNavController()
-    // Evaluated once per process: the only way to gain a key is via the setup screen,
-    // which navigates onward itself.
-    val start = remember { if (container.apiKeyStore.hasKey()) Routes.HOME else Routes.SETUP }
+    // Evaluated once per process. Signing in navigates onward itself, and signing out
+    // pops back to the start, so this never needs re-reading.
+    val start = remember { if (container.isSignedIn) Routes.HOME else Routes.SIGN_IN }
 
     NavHost(navController = navController, startDestination = start) {
 
-        composable(Routes.SETUP) {
-            ApiKeySetupScreen(
-                onSaved = {
+        composable(Routes.SIGN_IN) {
+            SignInScreen(
+                onSignedIn = {
                     navController.navigate(Routes.HOME) {
-                        popUpTo(Routes.SETUP) { inclusive = true }
+                        // Cleared, not stacked: back from Home must not return to a
+                        // sign-in screen for an account already signed in.
+                        popUpTo(Routes.SIGN_IN) { inclusive = true }
                     }
                 },
+                onRegister = { navController.navigate(Routes.REGISTER) },
+            )
+        }
+
+        composable(Routes.REGISTER) {
+            RegisterScreen(
+                onRegistered = {
+                    navController.navigate(Routes.HOME) {
+                        popUpTo(Routes.SIGN_IN) { inclusive = true }
+                    }
+                },
+                onSignIn = { navController.popBackStack() },
             )
         }
 
@@ -103,7 +118,14 @@ fun AppNav() {
             MainScaffold(MainTab.PROFILE, navController.tabSelector()) { padding ->
                 ProfileScreen(
                     contentPadding = padding,
-                    onReplaceKey = { navController.navigate(Routes.REPLACE_KEY) },
+                    onSignOut = {
+                        container.signOut()
+                        navController.navigate(Routes.SIGN_IN) {
+                            // Everything goes: the next person to open the app must not
+                            // find another account's assessments behind the back button.
+                            popUpTo(0) { inclusive = true }
+                        }
+                    },
                 )
             }
         }
@@ -157,15 +179,6 @@ fun AppNav() {
             )
         }
 
-        composable(Routes.REPLACE_KEY) {
-            ApiKeySetupScreen(
-                onSaved = { navController.popBackStack() },
-                title = "Rotate API key",
-                saveLabel = "Save key",
-                body = "Enter the new Anthropic API key to use on this phone. " +
-                    "It replaces the key currently saved and is stored encrypted.",
-            )
-        }
     }
 }
 

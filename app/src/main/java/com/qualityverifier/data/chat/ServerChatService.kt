@@ -90,6 +90,13 @@ class ServerChatService(
                 "Nothing to send yet.",
             )
 
+        // Obtained before the uploads, not just before the POST. The blob routes are
+        // behind the same authentication as everything else — the first device test of
+        // this path failed on exactly that, because HEAD and PUT were built without the
+        // header and a 401 on a photo reads to the customer as "please sign in again".
+        val token = tokens.accessToken()
+            ?: return@withContext ChatResult.Failure(ChatErrorKind.AUTH, "Please sign in again.")
+
         val hashes = mutableListOf<String>()
         for (attachment in turn.attachments) {
             val bytes = images.bytesForUpload(java.io.File(attachment.path))
@@ -101,7 +108,7 @@ class ServerChatService(
             }
             val sha = sha256(bytes)
             hashes += sha
-            when (val upload = ensureUploaded(sha, bytes)) {
+            when (val upload = ensureUploaded(sha, bytes, token)) {
                 null -> Unit
                 else -> return@withContext upload
             }
@@ -199,7 +206,9 @@ class ServerChatService(
             val bytes = images.bytesForUpload(java.io.File(attachment.path)) ?: continue
             val sha = sha256(bytes)
             if (sha in wanted) {
-                ensureUploaded(sha, bytes, force = true)?.let { return it }
+                val token = tokens.accessToken()
+                    ?: return ChatResult.Failure(ChatErrorKind.AUTH, "Please sign in again.")
+                ensureUploaded(sha, bytes, token, force = true)?.let { return it }
             }
         }
         return null
@@ -212,9 +221,18 @@ class ServerChatService(
      * conversation stops carrying its photographs. Returns null on success, or the
      * failure to hand back.
      */
-    private fun ensureUploaded(sha: String, bytes: ByteArray, force: Boolean = false): ChatResult? {
+    private fun ensureUploaded(
+        sha: String,
+        bytes: ByteArray,
+        token: String,
+        force: Boolean = false,
+    ): ChatResult? {
         if (!force) {
-            val head = Request.Builder().url(blobUrl(sha)).head().build()
+            val head = Request.Builder()
+                .url(blobUrl(sha))
+                .addHeader("Authorization", "Bearer $token")
+                .head()
+                .build()
             val present = runCatching {
                 client.newCall(head).execute().use { it.isSuccessful }
             }.getOrElse { return networkFailure() }
@@ -223,6 +241,7 @@ class ServerChatService(
 
         val put = Request.Builder()
             .url(blobUrl(sha))
+            .addHeader("Authorization", "Bearer $token")
             .put(bytes.toRequestBody(JPEG))
             .build()
         return runCatching {
