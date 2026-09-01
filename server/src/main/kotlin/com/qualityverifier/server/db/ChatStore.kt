@@ -101,6 +101,21 @@ interface ChatStore {
      * point of having one.
      */
     suspend fun markClientDeleted(userId: String, sessionId: String): Boolean
+
+    /**
+     * Whether [userId] has a live assessment that refers to the photo [sha].
+     *
+     * Blob storage is content-addressed, so the hash is the only thing identifying a
+     * photo and nothing about it is scoped to an account. Without this check, being
+     * signed in as anybody would be enough to read anybody's photographs given their
+     * hash — and hashes travel: they are in server logs, in the admin portal, and in
+     * research exports.
+     *
+     * Deleted sessions do not count. A customer who deletes a report is told it is gone
+     * from their phone; continuing to serve its photographs to that same account would
+     * make the delete button a lie in the one direction that matters.
+     */
+    suspend fun blobBelongsTo(userId: String, sha: String): Boolean
 }
 
 class PostgresChatStore(private val dataSource: DataSource) : ChatStore {
@@ -465,6 +480,29 @@ class PostgresChatStore(private val dataSource: DataSource) : ChatStore {
                     statement.setString(1, sessionId)
                     statement.setString(2, userId)
                     statement.executeUpdate() > 0
+                }
+            }
+        }
+
+    override suspend fun blobBelongsTo(userId: String, sha: String): Boolean =
+        withContext(Dispatchers.IO) {
+            dataSource.connection.use { connection ->
+                connection.prepareStatement(
+                    """
+                    select exists (
+                        select 1
+                        from attachments a
+                        join messages m on m.id = a.message_id
+                        join sessions s on s.id = m.session_id
+                        where a.sha256 = ?
+                          and s.user_id = ?::uuid
+                          and s.client_deleted_at is null
+                    )
+                    """.trimIndent()
+                ).use { statement ->
+                    statement.setString(1, sha)
+                    statement.setString(2, userId)
+                    statement.executeQuery().use { rows -> rows.next() && rows.getBoolean(1) }
                 }
             }
         }

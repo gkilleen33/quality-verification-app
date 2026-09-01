@@ -343,6 +343,7 @@ class ChatRouteTest {
         override suspend fun sessionsFor(userId: String) = emptyList<com.qualityverifier.server.db.SessionRow>()
         override suspend fun sessionDetail(userId: String, sessionId: String) = null
         override suspend fun markClientDeleted(userId: String, sessionId: String) = false
+        override suspend fun blobBelongsTo(userId: String, sha: String) = false
     }
 
     private companion object {
