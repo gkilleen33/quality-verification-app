@@ -63,13 +63,16 @@ android {
         versionCode = 1
         versionName = "0.1.0"
 
-        // Phase 1: prompts are fetched from raw GitHub. Change this one value to
-        // repoint at a different repo or branch. Phase 2 replaces the whole
-        // GitHubPromptRepository with a server-backed one.
+        // The one value that points the app at its backend. Compiled in, so changing it
+        // means a release — which is why it is worth picking a hostname you will keep.
+        //
+        // Prompts are no longer fetched here: the server assembles the system prompt from
+        // the protocols on GitHub, so a client cannot substitute one. PROMPT_BASE_URL and
+        // the app's copy of GitHubPromptRepository went with that change.
         buildConfigField(
             "String",
-            "PROMPT_BASE_URL",
-            "\"https://raw.githubusercontent.com/gkilleen33/quality-verification-app/main/prompts/\"",
+            "SERVER_BASE_URL",
+            "\"https://kagua.gradykilleen.me/\"",
         )
     }
 

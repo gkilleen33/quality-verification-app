@@ -447,6 +447,8 @@ class AuthTest {
         val revoked = mutableListOf<String>()
         val cleared = mutableListOf<String>()
         val failures = mutableListOf<String>()
+        val passwordChanges = mutableListOf<String>()
+        val accountsDeleted = mutableListOf<String>()
 
         fun seedAccount(
             phone: String,
@@ -497,6 +499,17 @@ class AuthTest {
 
         override suspend fun clearFailedSignIns(userId: String) {
             cleared += userId
+        }
+
+        override suspend fun passwordHashFor(userId: String) =
+            credentials.values.firstOrNull { it.userId == userId }?.passwordHash
+
+        override suspend fun setPasswordHash(userId: String, passwordHash: String) {
+            passwordChanges += userId
+        }
+
+        override suspend fun markAccountDeleted(userId: String) {
+            accountsDeleted += userId
         }
 
         override suspend fun findUser(userId: String) = UserRow(

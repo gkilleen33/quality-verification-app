@@ -4,6 +4,12 @@
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.CAMERA" />
 
+    <!-- Optional, and only used once: a business account may save where its premises are
+         while the owner is standing in them. Nothing tracks location afterwards, which is
+         why there is no background location permission here and should not be. -->
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+
     <uses-feature android:name="android.hardware.camera.any" android:required="false" />
 
     <application

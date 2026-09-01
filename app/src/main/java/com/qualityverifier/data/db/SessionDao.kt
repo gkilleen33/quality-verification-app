@@ -3,6 +3,7 @@ package com.qualityverifier.data.db
 import androidx.room.Dao
 import androidx.room.Embedded
 import androidx.room.Insert
+import androidx.room.OnConflictStrategy
 import androidx.room.Query
 import androidx.room.Relation
 import androidx.room.Transaction
@@ -14,6 +15,9 @@ data class MessageWithAttachments(
     @Relation(parentColumn = "id", entityColumn = "messageId")
     val attachments: List<AttachmentEntity>,
 )
+
+/** Just enough to decide whether a synced assessment is newer than the local copy. */
+data class SessionStamp(val id: String, val updatedAt: Long)
 
 /** Projection backing the home screen list. */
 data class SessionSummaryRow(
@@ -88,4 +92,29 @@ interface SessionDao {
     @Transaction
     @Query("SELECT * FROM messages WHERE sessionId = :sessionId ORDER BY ordinal ASC")
     suspend fun getMessages(sessionId: String): List<MessageWithAttachments>
+
+    @Query("SELECT id, updatedAt FROM sessions")
+    suspend fun sessionStamps(): List<SessionStamp>
+
+    /** REPLACE, so an assessment synced twice produces one row rather than a conflict. */
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsertSession(session: SessionEntity)
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsertMessages(messages: List<MessageEntity>)
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsertAttachments(attachments: List<AttachmentEntity>)
+
+    @Query("DELETE FROM messages WHERE sessionId = :sessionId")
+    suspend fun deleteMessagesOf(sessionId: String)
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun addPendingDelete(pending: PendingRemoteDeleteEntity)
+
+    @Query("SELECT sessionId FROM pending_remote_deletes ORDER BY requestedAt")
+    suspend fun pendingDeletes(): List<String>
+
+    @Query("DELETE FROM pending_remote_deletes WHERE sessionId = :sessionId")
+    suspend fun clearPendingDelete(sessionId: String)
 }

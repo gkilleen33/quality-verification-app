@@ -18,6 +18,29 @@ sealed interface SessionAccess {
 /** A turn already dealt with, so a retry returns the stored reply instead of paying twice. */
 data class StoredReply(val messageId: String, val text: String)
 
+/** A session as the phone needs it back — enough to rebuild the reports list. */
+data class SessionRow(
+    val id: String,
+    val itemTypeId: String,
+    val createdAt: Long,
+    val updatedAt: Long,
+    val preview: String,
+    val messageCount: Int,
+    val verdictLevelId: String?,
+    val verdictLanguage: String?,
+    val previousSessionId: String?,
+    val intakeAnswers: String?,
+)
+
+data class MessageRow(
+    val id: String,
+    val role: String,
+    val text: String,
+    val ordinal: Int,
+    val createdAt: Long,
+    val blobs: List<String>,
+)
+
 /**
  * What the chat route needs from storage.
  *
@@ -64,6 +87,20 @@ interface ChatStore {
         latencyMillis: Long,
         errorKind: String?,
     )
+
+    /** Everything this user has that they have not deleted. */
+    suspend fun sessionsFor(userId: String): List<SessionRow>
+
+    /** Null when the session does not exist or is not theirs — the caller answers 404 either way. */
+    suspend fun sessionDetail(userId: String, sessionId: String): Pair<SessionRow, List<MessageRow>>?
+
+    /**
+     * Marks a session deleted by the customer. Returns false when it was not theirs.
+     *
+     * A flag, not a delete: the row stays for the retention window, which is the whole
+     * point of having one.
+     */
+    suspend fun markClientDeleted(userId: String, sessionId: String): Boolean
 }
 
 class PostgresChatStore(private val dataSource: DataSource) : ChatStore {
@@ -319,6 +356,131 @@ class PostgresChatStore(private val dataSource: DataSource) : ChatStore {
             Unit
         }
     }
+
+
+    override suspend fun sessionsFor(userId: String): List<SessionRow> =
+        withContext(Dispatchers.IO) {
+            dataSource.connection.use { connection ->
+                connection.prepareStatement(
+                    """
+                    select s.id::text, s.item_type_id,
+                           (extract(epoch from s.created_at) * 1000)::bigint,
+                           (extract(epoch from s.updated_at) * 1000)::bigint,
+                           s.preview_text, count(m.id)::int,
+                           s.verdict_level_id, s.verdict_language,
+                           s.previous_session_id::text, s.intake_answers
+                    from sessions s left join messages m on m.session_id = s.id
+                    where s.user_id = ?::uuid and s.client_deleted_at is null
+                    group by s.id
+                    order by s.updated_at desc
+                    """.trimIndent()
+                ).use { statement ->
+                    statement.setString(1, userId)
+                    statement.executeQuery().use { rows ->
+                        val out = mutableListOf<SessionRow>()
+                        while (rows.next()) out += rows.toSessionRow()
+                        out
+                    }
+                }
+            }
+        }
+
+    override suspend fun sessionDetail(
+        userId: String,
+        sessionId: String,
+    ): Pair<SessionRow, List<MessageRow>>? = withContext(Dispatchers.IO) {
+        dataSource.connection.use { connection ->
+            val session = connection.prepareStatement(
+                """
+                select s.id::text, s.item_type_id,
+                       (extract(epoch from s.created_at) * 1000)::bigint,
+                       (extract(epoch from s.updated_at) * 1000)::bigint,
+                       s.preview_text, count(m.id)::int,
+                       s.verdict_level_id, s.verdict_language,
+                       s.previous_session_id::text, s.intake_answers
+                from sessions s left join messages m on m.session_id = s.id
+                where s.id = ?::uuid and s.user_id = ?::uuid and s.client_deleted_at is null
+                group by s.id
+                """.trimIndent()
+            ).use { statement ->
+                statement.setString(1, sessionId)
+                statement.setString(2, userId)
+                statement.executeQuery().use { rows ->
+                    if (rows.next()) rows.toSessionRow() else null
+                }
+            } ?: return@withContext null
+
+            val blobs = mutableMapOf<String, MutableList<String>>()
+            connection.prepareStatement(
+                """
+                select a.message_id::text, a.sha256 from attachments a
+                join messages m on m.id = a.message_id
+                where m.session_id = ?::uuid order by a.message_id, a.ordinal, a.id
+                """.trimIndent()
+            ).use { statement ->
+                statement.setString(1, sessionId)
+                statement.executeQuery().use { rows ->
+                    while (rows.next()) {
+                        blobs.getOrPut(rows.getString(1)) { mutableListOf() } += rows.getString(2)
+                    }
+                }
+            }
+
+            val messages = mutableListOf<MessageRow>()
+            connection.prepareStatement(
+                """
+                select id::text, role, text, ordinal,
+                       (extract(epoch from created_at) * 1000)::bigint
+                from messages where session_id = ?::uuid order by ordinal, id
+                """.trimIndent()
+            ).use { statement ->
+                statement.setString(1, sessionId)
+                statement.executeQuery().use { rows ->
+                    while (rows.next()) {
+                        val id = rows.getString(1)
+                        messages += MessageRow(
+                            id = id,
+                            role = rows.getString(2),
+                            text = rows.getString(3),
+                            ordinal = rows.getInt(4),
+                            createdAt = rows.getLong(5),
+                            blobs = blobs[id].orEmpty(),
+                        )
+                    }
+                }
+            }
+            session to messages
+        }
+    }
+
+    override suspend fun markClientDeleted(userId: String, sessionId: String): Boolean =
+        withContext(Dispatchers.IO) {
+            dataSource.connection.use { connection ->
+                connection.prepareStatement(
+                    """
+                    update sessions set client_deleted_at = now()
+                    where id = ?::uuid and user_id = ?::uuid and client_deleted_at is null
+                    """.trimIndent()
+                ).use { statement ->
+                    statement.setString(1, sessionId)
+                    statement.setString(2, userId)
+                    statement.executeUpdate() > 0
+                }
+            }
+        }
+
+    private fun java.sql.ResultSet.toSessionRow() = SessionRow(
+        id = getString(1),
+        itemTypeId = getString(2),
+        createdAt = getLong(3),
+        updatedAt = getLong(4),
+        preview = getString(5),
+        messageCount = getInt(6),
+        verdictLevelId = getString(7),
+        verdictLanguage = getString(8),
+        previousSessionId = getString(9),
+        intakeAnswers = getString(10),
+    )
 
     private fun touch(connection: Connection, sessionId: String, preview: String) {
         connection.prepareStatement(

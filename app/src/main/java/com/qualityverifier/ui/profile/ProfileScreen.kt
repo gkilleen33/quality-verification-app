@@ -9,6 +9,10 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.TextButton
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.compose.material3.Button
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
@@ -29,6 +33,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.qualityverifier.BuildConfig
 import com.qualityverifier.R
 import com.qualityverifier.ui.appContainer
+import com.qualityverifier.ui.rememberAuthLabels
 import com.qualityverifier.ui.reports.ReportsViewModel
 import androidx.compose.foundation.layout.Box
 import androidx.compose.ui.res.stringResource
@@ -37,21 +42,43 @@ import kotlinx.coroutines.launch
 /**
  * Everything about this phone's copy of the app.
  *
- * There is no account and nothing here leaves the device — Phase 1 has no server to
- * hold a profile on, and collecting a name or a location that nothing consumes would be
- * asking for personal data with no purpose. What lives here is the API key, the prompt
- * cache, and a count of what has been assessed.
+ * Since Phase 2 there is an account, so this is where it is shown and where somebody
+ * signs out. The API key section is gone with the key itself, and so is the protocol
+ * refresh: the server assembles the system prompt now, so a button here claiming to
+ * refresh protocols would refresh a cache the app no longer keeps.
  */
 @Composable
 fun ProfileScreen(
     contentPadding: PaddingValues,
-    onReplaceKey: () -> Unit,
+    onSignOut: () -> Unit,
+    onOpenSettings: () -> Unit,
 ) {
     val container = appContainer()
+    val labels = rememberAuthLabels()
     val scope = rememberCoroutineScope()
     val snackbar = remember { SnackbarHostState() }
     val reports: ReportsViewModel = viewModel(factory = ReportsViewModel.factory(container))
     val sessions by reports.sessions.collectAsState()
+    var signOutRequested by remember { mutableStateOf(false) }
+
+    if (signOutRequested) {
+        AlertDialog(
+            onDismissRequest = { signOutRequested = false },
+            title = { Text(labels.signOut + "?") },
+            // Confirmed rather than immediate: getting back in needs the password, and on
+            // a borrowed phone somebody may not have it to hand.
+            text = { Text(labels.signOutConfirmBody) },
+            confirmButton = {
+                TextButton(onClick = {
+                    signOutRequested = false
+                    onSignOut()
+                }) { Text(labels.signOut) }
+            },
+            dismissButton = {
+                TextButton(onClick = { signOutRequested = false }) { Text(labels.staySignedIn) }
+            },
+        )
+    }
 
     Box(Modifier.fillMaxSize()) {
         Column(
@@ -77,50 +104,28 @@ fun ProfileScreen(
             HorizontalDivider()
             Spacer(Modifier.height(24.dp))
 
-            Text("API key", style = MaterialTheme.typography.titleMedium)
+            Text("Account", style = MaterialTheme.typography.titleMedium)
             Spacer(Modifier.height(4.dp))
             Text(
-                if (container.apiKeyStore.hasKey()) {
-                    "A key is saved on this phone, encrypted. Rotate it if it may have " +
-                        "been seen by somebody else."
-                } else {
-                    "No key saved. You will not be able to send messages until you add one."
-                },
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            Spacer(Modifier.height(12.dp))
-            Button(
-                onClick = onReplaceKey,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(56.dp),
-            ) { Text(if (container.apiKeyStore.hasKey()) "Rotate API key" else "Add API key") }
-
-            Spacer(Modifier.height(24.dp))
-            HorizontalDivider()
-            Spacer(Modifier.height(24.dp))
-
-            Text("Inspection protocols", style = MaterialTheme.typography.titleMedium)
-            Spacer(Modifier.height(4.dp))
-            Text(
-                "The photo plans and tests refresh automatically every 24 hours. " +
-                    "Refresh now if they were just updated.",
+                labels.humanReviewNotice,
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
             Spacer(Modifier.height(12.dp))
             OutlinedButton(
-                onClick = {
-                    scope.launch {
-                        container.promptRepository.clearCache()
-                        snackbar.showSnackbar("Protocols will reload on your next message.")
-                    }
-                },
+                onClick = onOpenSettings,
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(56.dp),
-            ) { Text("Refresh protocols") }
+            ) { Text(labels.accountSettings) }
+
+            Spacer(Modifier.height(12.dp))
+            OutlinedButton(
+                onClick = { signOutRequested = true },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(56.dp),
+            ) { Text(labels.signOut) }
 
             Spacer(Modifier.height(32.dp))
             Text(

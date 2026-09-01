@@ -123,6 +123,64 @@ class RoomSessionRepository(
         images.pruneOrphans(dao.allSessionIds().toSet())
     }
 
+    override suspend fun knownSessions(): Map<String, Long> =
+        dao.sessionStamps().associate { it.id to it.updatedAt }
+
+    override suspend fun writeSynced(session: SyncedSession, messages: List<SyncedMessage>) {
+        dao.upsertSession(
+            SessionEntity(
+                id = session.id,
+                itemTypeId = session.itemType.id,
+                createdAt = session.createdAt,
+                updatedAt = session.updatedAt,
+                previewText = session.preview.take(PREVIEW_LIMIT),
+                verdictLevelId = session.verdictLevelId,
+                verdictLanguage = session.verdictLanguage,
+                previousSessionId = session.previousSessionId,
+                intakeAnswers = session.intakeAnswers,
+            )
+        )
+        // Cleared and rewritten rather than merged. The server is authoritative for a
+        // synced assessment, and merging two orderings of the same conversation is a
+        // problem nobody needs to have.
+        dao.deleteMessagesOf(session.id)
+        dao.upsertMessages(
+            messages.map { message ->
+                MessageEntity(
+                    id = message.id,
+                    sessionId = session.id,
+                    role = message.role.name,
+                    text = message.text,
+                    ordinal = message.ordinal,
+                    createdAt = message.createdAt,
+                )
+            }
+        )
+        messages.forEach { message ->
+            if (message.attachmentPaths.isEmpty()) return@forEach
+            dao.upsertAttachments(
+                message.attachmentPaths.map { path ->
+                    AttachmentEntity(
+                        id = UUID.randomUUID().toString(),
+                        messageId = message.id,
+                        relativePath = images.relativePathOf(java.io.File(path)),
+                        mimeType = "image/jpeg",
+                    )
+                }
+            )
+        }
+    }
+
+    override suspend fun pendingRemoteDeletes(): List<String> = dao.pendingDeletes()
+
+    override suspend fun recordPendingRemoteDelete(sessionId: String) =
+        dao.addPendingDelete(
+            com.qualityverifier.data.db.PendingRemoteDeleteEntity(sessionId, now())
+        )
+
+    override suspend fun clearPendingRemoteDelete(sessionId: String) =
+        dao.clearPendingDelete(sessionId)
+
     private suspend fun insert(
         sessionId: String,
         role: Role,

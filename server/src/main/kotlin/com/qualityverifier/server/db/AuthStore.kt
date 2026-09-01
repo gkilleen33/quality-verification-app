@@ -81,6 +81,18 @@ interface AuthStore {
     suspend fun credentialsForPhone(phone: String): Credentials?
     suspend fun recordFailedSignIn(userId: String, lockFor: java.time.Duration, threshold: Int): Int
     suspend fun clearFailedSignIns(userId: String)
+
+    /** The stored hash, for verifying a current password by user rather than by phone. */
+    suspend fun passwordHashFor(userId: String): String?
+
+    /** Replaces the hash. The caller has already verified the current password. */
+    suspend fun setPasswordHash(userId: String, passwordHash: String)
+
+    /**
+     * Marks the account deleted. Everything of theirs goes at the retention window; the
+     * flag is what starts the clock, and revoking their tokens is what makes it stick.
+     */
+    suspend fun markAccountDeleted(userId: String)
 }
 
 /**
@@ -325,6 +337,53 @@ class PostgresAuthStore(private val dataSource: DataSource) : AuthStore {
             }
             Unit
         }
+    }
+
+    override suspend fun passwordHashFor(userId: String): String? = withContext(Dispatchers.IO) {
+        dataSource.connection.use { connection ->
+            connection.prepareStatement(
+                "select password_hash from users where id = ?::uuid and deleted_at is null"
+            ).use { statement ->
+                statement.setString(1, userId)
+                statement.executeQuery().use { rows ->
+                    if (rows.next()) rows.getString(1) else null
+                }
+            }
+        }
+    }
+
+    override suspend fun setPasswordHash(userId: String, passwordHash: String) =
+        withContext(Dispatchers.IO) {
+            dataSource.connection.use { connection ->
+                connection.prepareStatement(
+                    """
+                    update users set password_hash = ?, password_set_at = now(),
+                                     failed_sign_ins = 0, locked_until = null
+                    where id = ?::uuid
+                    """.trimIndent()
+                ).use { statement ->
+                    statement.setString(1, passwordHash)
+                    statement.setString(2, userId)
+                    statement.executeUpdate()
+                }
+                Unit
+            }
+        }
+
+    override suspend fun markAccountDeleted(userId: String) = tx { connection ->
+        connection.prepareStatement(
+            "update users set deleted_at = now() where id = ?::uuid and deleted_at is null"
+        ).use { statement ->
+            statement.setString(1, userId)
+            statement.executeUpdate()
+        }
+        // In the same transaction: an account marked deleted whose tokens still work is
+        // an account that is not deleted.
+        connection.prepareStatement("select revoke_refresh_chain(?::uuid)").use { statement ->
+            statement.setString(1, userId)
+            statement.executeQuery().use { it.next() }
+        }
+        Unit
     }
 
     /** Everything live for this user. Called when a spent token comes back. */

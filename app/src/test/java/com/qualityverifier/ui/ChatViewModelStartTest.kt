@@ -408,6 +408,16 @@ class ChatViewModelStartTest {
 
         override suspend fun deleteSession(sessionId: String) = Unit
         override suspend fun pruneOrphanImages() = Unit
+        // Sync is not what these tests are about; the chat view model never calls these.
+        override suspend fun knownSessions() = emptyMap<String, Long>()
+        override suspend fun writeSynced(
+            session: com.qualityverifier.data.session.SyncedSession,
+            messages: List<com.qualityverifier.data.session.SyncedMessage>,
+        ) = Unit
+        override suspend fun pendingRemoteDeletes() = emptyList<String>()
+        override suspend fun recordPendingRemoteDelete(sessionId: String) = Unit
+        override suspend fun clearPendingRemoteDelete(sessionId: String) = Unit
+
     }
 
     private companion object {
