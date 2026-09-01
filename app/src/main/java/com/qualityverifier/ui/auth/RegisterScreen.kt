@@ -45,6 +45,7 @@ import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.qualityverifier.ui.appContainer
+import com.qualityverifier.ui.rememberAuthLabels
 
 /**
  * Creating an account, which needs an invite code.
@@ -59,6 +60,7 @@ import com.qualityverifier.ui.appContainer
 fun RegisterScreen(onRegistered: () -> Unit, onSignIn: () -> Unit) {
     val container = appContainer()
     val context = LocalContext.current
+    val labels = rememberAuthLabels()
     val viewModel: AuthViewModel = viewModel(factory = AuthViewModel.factory(container))
 
     val busy by viewModel.busy.collectAsState()
@@ -110,10 +112,9 @@ fun RegisterScreen(onRegistered: () -> Unit, onSignIn: () -> Unit) {
             .padding(24.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        Text("Create your account", style = MaterialTheme.typography.headlineMedium)
+        Text(labels.createAccount, style = MaterialTheme.typography.headlineMedium)
         Text(
-            "Your name is how we address you in reports you share. If you tell us your " +
-                "business, we can group your assessments together.",
+            labels.createAccountBlurb,
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
@@ -121,7 +122,7 @@ fun RegisterScreen(onRegistered: () -> Unit, onSignIn: () -> Unit) {
         OutlinedTextField(
             value = invite,
             onValueChange = { invite = it.trim() },
-            label = { Text("Invite code") },
+            label = { Text(labels.inviteLabel) },
             singleLine = true,
             keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next),
             modifier = Modifier.fillMaxWidth(),
@@ -129,7 +130,7 @@ fun RegisterScreen(onRegistered: () -> Unit, onSignIn: () -> Unit) {
         OutlinedTextField(
             value = name,
             onValueChange = { name = it },
-            label = { Text("Your name") },
+            label = { Text(labels.nameLabel) },
             singleLine = true,
             keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next),
             modifier = Modifier.fillMaxWidth(),
@@ -137,8 +138,8 @@ fun RegisterScreen(onRegistered: () -> Unit, onSignIn: () -> Unit) {
         OutlinedTextField(
             value = phone,
             onValueChange = { phone = it.filter { c -> c.isDigit() || c == '+' } },
-            label = { Text("Phone number") },
-            supportingText = { Text("With your country code, e.g. +256700123456") },
+            label = { Text(labels.phoneLabel) },
+            supportingText = { Text(labels.phoneHint) },
             keyboardOptions = KeyboardOptions(
                 keyboardType = KeyboardType.Phone,
                 imeAction = ImeAction.Next,
@@ -149,8 +150,8 @@ fun RegisterScreen(onRegistered: () -> Unit, onSignIn: () -> Unit) {
         OutlinedTextField(
             value = password,
             onValueChange = { password = it },
-            label = { Text("Choose a password") },
-            supportingText = { Text("At least 8 characters. Length matters more than symbols.") },
+            label = { Text(labels.choosePasswordLabel) },
+            supportingText = { Text(labels.passwordHint) },
             visualTransformation = PasswordVisualTransformation(),
             keyboardOptions = KeyboardOptions(
                 keyboardType = KeyboardType.Password,
@@ -161,8 +162,8 @@ fun RegisterScreen(onRegistered: () -> Unit, onSignIn: () -> Unit) {
         )
 
         Spacer(Modifier.height(8.dp))
-        Text("Are you buying for yourself or for a business?")
-        listOf(false to "For myself", true to "For a business").forEach { (business, label) ->
+        Text(labels.accountTypeQuestion)
+        listOf(false to labels.forMyself, true to labels.forBusiness).forEach { (business, label) ->
             Row(
                 Modifier
                     .fillMaxWidth()
@@ -179,16 +180,14 @@ fun RegisterScreen(onRegistered: () -> Unit, onSignIn: () -> Unit) {
             OutlinedTextField(
                 value = businessName,
                 onValueChange = { businessName = it },
-                label = { Text("Business name") },
+                label = { Text(labels.businessNameLabel) },
                 singleLine = true,
                 modifier = Modifier.fillMaxWidth(),
             )
 
             Spacer(Modifier.height(4.dp))
             Text(
-                "If you are at the business right now, you can save its location. This is " +
-                    "optional. We use it only to place your business on a map of workshops; " +
-                    "we do not track where you are afterwards.",
+                labels.locationBlurb,
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -203,8 +202,8 @@ fun RegisterScreen(onRegistered: () -> Unit, onSignIn: () -> Unit) {
                 modifier = Modifier.fillMaxWidth(),
             ) {
                 Text(
-                    location?.let { "Location saved (within ${it.accuracyMetres.toInt()}m)" }
-                        ?: "Save this location — only if you are here now",
+                    location?.let { labels.savedLocation(it.accuracyMetres.toInt()) }
+                        ?: labels.saveLocation,
                 )
             }
             locationNotice?.let {
@@ -244,11 +243,11 @@ fun RegisterScreen(onRegistered: () -> Unit, onSignIn: () -> Unit) {
                 .fillMaxWidth()
                 .height(56.dp),
         ) {
-            if (busy) CircularProgressIndicator(Modifier.height(20.dp)) else Text("Create account")
+            if (busy) CircularProgressIndicator(Modifier.height(20.dp)) else Text(labels.createAccount)
         }
 
         TextButton(onClick = onSignIn, modifier = Modifier.fillMaxWidth()) {
-            Text("I already have an account — sign in")
+            Text(labels.goToSignIn)
         }
     }
 }

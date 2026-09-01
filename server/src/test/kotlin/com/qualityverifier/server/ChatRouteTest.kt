@@ -339,6 +339,10 @@ class ChatRouteTest {
         ) {
             usageRows++
         }
+
+        override suspend fun sessionsFor(userId: String) = emptyList<com.qualityverifier.server.db.SessionRow>()
+        override suspend fun sessionDetail(userId: String, sessionId: String) = null
+        override suspend fun markClientDeleted(userId: String, sessionId: String) = false
     }
 
     private companion object {
@@ -361,4 +365,7 @@ private object NoAuthStore : com.qualityverifier.server.db.AuthStore {
     override suspend fun credentialsForPhone(phone: String) = null
     override suspend fun recordFailedSignIn(userId: String, lockFor: java.time.Duration, threshold: Int) = 0
     override suspend fun clearFailedSignIns(userId: String) = Unit
+    override suspend fun passwordHashFor(userId: String): String? = null
+    override suspend fun setPasswordHash(userId: String, passwordHash: String) = Unit
+    override suspend fun markAccountDeleted(userId: String) = Unit
 }

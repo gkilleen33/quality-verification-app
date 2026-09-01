@@ -6,8 +6,13 @@ import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
 
 @Database(
-    entities = [SessionEntity::class, MessageEntity::class, AttachmentEntity::class],
-    version = 4,
+    entities = [
+        SessionEntity::class,
+        MessageEntity::class,
+        AttachmentEntity::class,
+        PendingRemoteDeleteEntity::class,
+    ],
+    version = 5,
     exportSchema = true,
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -54,6 +59,23 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
-        val MIGRATIONS = arrayOf(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4)
+        /**
+         * Adds `pending_remote_deletes`.
+         *
+         * A deletion has to survive being made offline: the local row is gone
+         * immediately, so the only record that the server still needs telling is this
+         * table. Losing it would mean the server keeping a copy the customer believes was
+         * deleted seven days later.
+         */
+        val MIGRATION_4_5 = object : Migration(4, 5) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS pending_remote_deletes (" +
+                        "sessionId TEXT NOT NULL PRIMARY KEY, requestedAt INTEGER NOT NULL)"
+                )
+            }
+        }
+
+        val MIGRATIONS = arrayOf(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5)
     }
 }

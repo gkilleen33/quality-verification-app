@@ -58,4 +58,28 @@ interface SessionRepository {
 
     /** Housekeeping: drop image files belonging to sessions that were never saved. */
     suspend fun pruneOrphanImages()
+
+    /** Ids already stored, so a sync only fetches what is missing. */
+    suspend fun knownSessions(): Map<String, Long>
+
+    /**
+     * Writes an assessment fetched from the server, replacing any local copy.
+     *
+     * Ids come from the server, which got them from a phone, so this is idempotent: the
+     * same assessment synced twice produces one row.
+     */
+    suspend fun writeSynced(session: SyncedSession, messages: List<SyncedMessage>)
+
+    /**
+     * Deletions the server has not been told about yet.
+     *
+     * Kept because the local row is gone the moment somebody taps delete, and without a
+     * record the server would keep its copy indefinitely — making the seven days we
+     * promise a customer untrue whenever the delete happened offline.
+     */
+    suspend fun pendingRemoteDeletes(): List<String>
+
+    suspend fun recordPendingRemoteDelete(sessionId: String)
+
+    suspend fun clearPendingRemoteDelete(sessionId: String)
 }

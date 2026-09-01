@@ -40,6 +40,7 @@ import com.qualityverifier.domain.SessionSummary
 import com.qualityverifier.domain.VerdictLevel
 import com.qualityverifier.text.ReportLabels
 import com.qualityverifier.ui.appContainer
+import com.qualityverifier.ui.rememberAuthLabels
 import com.qualityverifier.ui.rememberReportLabels
 import com.qualityverifier.ui.theme.verdictColors
 
@@ -51,6 +52,7 @@ fun ReportsScreen(
     val container = appContainer()
     val viewModel: ReportsViewModel = viewModel(factory = ReportsViewModel.factory(container))
     val sessions by viewModel.sessions.collectAsState()
+    val labels = rememberAuthLabels()
     var pendingDelete by remember { mutableStateOf<SessionSummary?>(null) }
 
     Column(
@@ -98,16 +100,20 @@ fun ReportsScreen(
     pendingDelete?.let { session ->
         AlertDialog(
             onDismissRequest = { pendingDelete = null },
-            title = { Text("Delete this report?") },
-            text = { Text("The conversation and its photos will be removed from this phone.") },
+            title = { Text(labels.deleteReportTitle) },
+            // Says what we actually do, not just the half the customer can see. Before
+            // Phase 2 "removed from this phone" was the whole truth; now the server keeps
+            // a copy for a week, and a dialog that omitted that would be a false
+            // statement about somebody's photographs.
+            text = { Text(labels.deleteReportBody) },
             confirmButton = {
                 TextButton(onClick = {
                     viewModel.delete(session.id)
                     pendingDelete = null
-                }) { Text("Delete") }
+                }) { Text(labels.delete) }
             },
             dismissButton = {
-                TextButton(onClick = { pendingDelete = null }) { Text("Cancel") }
+                TextButton(onClick = { pendingDelete = null }) { Text(labels.cancel) }
             },
         )
     }

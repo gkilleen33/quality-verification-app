@@ -33,6 +33,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.qualityverifier.BuildConfig
 import com.qualityverifier.R
 import com.qualityverifier.ui.appContainer
+import com.qualityverifier.ui.rememberAuthLabels
 import com.qualityverifier.ui.reports.ReportsViewModel
 import androidx.compose.foundation.layout.Box
 import androidx.compose.ui.res.stringResource
@@ -50,8 +51,10 @@ import kotlinx.coroutines.launch
 fun ProfileScreen(
     contentPadding: PaddingValues,
     onSignOut: () -> Unit,
+    onOpenSettings: () -> Unit,
 ) {
     val container = appContainer()
+    val labels = rememberAuthLabels()
     val scope = rememberCoroutineScope()
     val snackbar = remember { SnackbarHostState() }
     val reports: ReportsViewModel = viewModel(factory = ReportsViewModel.factory(container))
@@ -61,23 +64,18 @@ fun ProfileScreen(
     if (signOutRequested) {
         AlertDialog(
             onDismissRequest = { signOutRequested = false },
-            title = { Text("Sign out?") },
+            title = { Text(labels.signOut + "?") },
             // Confirmed rather than immediate: getting back in needs the password, and on
             // a borrowed phone somebody may not have it to hand.
-            text = {
-                Text(
-                    "You will need your phone number and password to sign in again. " +
-                        "Assessments already on this phone stay on it.",
-                )
-            },
+            text = { Text(labels.signOutConfirmBody) },
             confirmButton = {
                 TextButton(onClick = {
                     signOutRequested = false
                     onSignOut()
-                }) { Text("Sign out") }
+                }) { Text(labels.signOut) }
             },
             dismissButton = {
-                TextButton(onClick = { signOutRequested = false }) { Text("Stay signed in") }
+                TextButton(onClick = { signOutRequested = false }) { Text(labels.staySignedIn) }
             },
         )
     }
@@ -109,19 +107,25 @@ fun ProfileScreen(
             Text("Account", style = MaterialTheme.typography.titleMedium)
             Spacer(Modifier.height(4.dp))
             Text(
-                "Signed in. Your assessments are kept on this phone and on our server, " +
-                    "where researchers working on Kagua can open one — including its " +
-                    "photos — to check how accurate our advice was.",
+                labels.humanReviewNotice,
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
+            Spacer(Modifier.height(12.dp))
+            OutlinedButton(
+                onClick = onOpenSettings,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(56.dp),
+            ) { Text(labels.accountSettings) }
+
             Spacer(Modifier.height(12.dp))
             OutlinedButton(
                 onClick = { signOutRequested = true },
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(56.dp),
-            ) { Text("Sign out") }
+            ) { Text(labels.signOut) }
 
             Spacer(Modifier.height(32.dp))
             Text(

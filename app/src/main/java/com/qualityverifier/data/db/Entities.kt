@@ -88,3 +88,18 @@ data class AttachmentEntity(
     val relativePath: String,
     val mimeType: String,
 )
+
+/**
+ * A deletion the server has not been told about yet.
+ *
+ * The session row goes the moment somebody taps delete — anything else would leave a
+ * report on screen that the customer believes is gone. So the intent to tell the server
+ * outlives the row it refers to, and a failed or offline delete is retried later. Without
+ * this the server keeps its copy indefinitely and the seven-day window we tell customers
+ * about would be untrue for exactly the deletions that happened out of signal.
+ */
+@Entity(tableName = "pending_remote_deletes")
+data class PendingRemoteDeleteEntity(
+    @PrimaryKey val sessionId: String,
+    val requestedAt: Long,
+)

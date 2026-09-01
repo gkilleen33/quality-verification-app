@@ -18,6 +18,7 @@ import com.qualityverifier.ui.main.MainScaffold
 import com.qualityverifier.ui.main.MainTab
 import com.qualityverifier.ui.profile.ProfileScreen
 import com.qualityverifier.ui.reports.ReportsScreen
+import com.qualityverifier.ui.settings.SettingsScreen
 import com.qualityverifier.ui.auth.RegisterScreen
 import com.qualityverifier.ui.auth.SignInScreen
 import java.util.UUID
@@ -25,6 +26,7 @@ import java.util.UUID
 private object Routes {
     const val SIGN_IN = "sign-in"
     const val REGISTER = "register"
+    const val SETTINGS = "settings"
     const val HOME = "home"
     const val REPORTS = "reports"
     const val PROFILE = "profile"
@@ -118,6 +120,7 @@ fun AppNav() {
             MainScaffold(MainTab.PROFILE, navController.tabSelector()) { padding ->
                 ProfileScreen(
                     contentPadding = padding,
+                    onOpenSettings = { navController.navigate(Routes.SETTINGS) },
                     onSignOut = {
                         container.signOut()
                         navController.navigate(Routes.SIGN_IN) {

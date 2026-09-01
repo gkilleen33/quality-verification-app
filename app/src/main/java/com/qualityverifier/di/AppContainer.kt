@@ -14,6 +14,9 @@ import com.qualityverifier.data.db.AppDatabase
 import com.qualityverifier.data.db.ImageFileStore
 import com.qualityverifier.data.session.RoomSessionRepository
 import com.qualityverifier.data.session.SessionRepository
+import com.qualityverifier.data.sync.AccountActions
+import com.qualityverifier.data.sync.AssessmentSync
+import com.qualityverifier.data.sync.SyncClient
 import kotlinx.serialization.json.Json
 import okhttp3.OkHttpClient
 import java.util.concurrent.TimeUnit
@@ -81,6 +84,13 @@ class AppContainer(context: Context) {
         images = images,
     )
 
+    private val syncClient = SyncClient(
+        client = httpClient,
+        tokens = tokenProvider,
+        baseUrl = BuildConfig.SERVER_BASE_URL,
+        json = json,
+    )
+
     val chatService: ChatService = ServerChatService(
         client = httpClient,
         tokens = tokenProvider,
@@ -89,6 +99,14 @@ class AppContainer(context: Context) {
         baseUrl = BuildConfig.SERVER_BASE_URL,
         json = json,
     )
+
+    val assessmentSync: AssessmentSync = AssessmentSync(
+        client = syncClient,
+        sessions = sessionRepository,
+        images = images,
+    )
+
+    val account: AccountActions = AccountActions(syncClient)
 
     /** Signs out locally. The refresh token stays revocable server-side regardless. */
     fun signOut() = tokenProvider.signOut()

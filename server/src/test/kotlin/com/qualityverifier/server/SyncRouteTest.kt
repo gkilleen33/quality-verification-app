@@ -1,0 +1,327 @@
+package com.qualityverifier.server
+
+import com.qualityverifier.server.auth.AccessTokens
+import com.qualityverifier.server.auth.Passwords
+import com.qualityverifier.server.blobs.BlobStore
+import com.qualityverifier.server.chat.TokenUsage
+import com.qualityverifier.server.db.AuthStore
+import com.qualityverifier.server.db.ChatStore
+import com.qualityverifier.server.db.Credentials
+import com.qualityverifier.server.db.MessageRow
+import com.qualityverifier.server.db.RegisterOutcome
+import com.qualityverifier.server.db.Registration
+import com.qualityverifier.server.db.SessionAccess
+import com.qualityverifier.server.db.SessionRow
+import com.qualityverifier.server.db.StoredReply
+import com.qualityverifier.server.db.StoredRefresh
+import com.qualityverifier.server.db.UserRow
+import com.qualityverifier.server.routes.ChangePasswordRequest
+import io.ktor.client.plugins.contentnegotiation.ContentNegotiation as ClientContentNegotiation
+import io.ktor.client.request.delete
+import io.ktor.client.request.get
+import io.ktor.client.request.header
+import io.ktor.client.request.post
+import io.ktor.client.request.setBody
+import io.ktor.client.statement.bodyAsText
+import io.ktor.http.ContentType
+import io.ktor.http.HttpHeaders
+import io.ktor.http.HttpStatusCode
+import io.ktor.http.contentType
+import io.ktor.serialization.kotlinx.json.json
+import io.ktor.server.testing.ApplicationTestBuilder
+import io.ktor.server.testing.testApplication
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
+import org.junit.Rule
+import org.junit.Test
+import org.junit.rules.TemporaryFolder
+import java.time.Duration
+import java.time.Instant
+
+/**
+ * Reading assessments back, and the two account actions.
+ *
+ * Everything here is an ownership or credential decision. Getting one wrong shows one
+ * customer another's photographs, or locks somebody out of their own account.
+ */
+class SyncRouteTest {
+
+    @get:Rule
+    val folder = TemporaryFolder()
+
+    @Test
+    fun `the list contains only this user's assessments`() = testApplication {
+        val chat = FakeChatStore(sessions = listOf(row("mine")))
+        val app = withSync(chat, FakeAuth())
+
+        val response = app.get("/v1/sessions") { auth(MINE) }
+
+        assertEquals(HttpStatusCode.OK, response.status)
+        assertEquals(MINE, chat.askedFor)
+        assertTrue(response.bodyAsText().contains("mine"))
+    }
+
+    @Test
+    fun `somebody else's assessment is a 404, not a 403`() = testApplication {
+        // 403 would confirm the id exists, which is all somebody needs to enumerate them.
+        val app = withSync(FakeChatStore(detail = null), FakeAuth())
+
+        val response = app.get("/v1/sessions/11111111-1111-1111-1111-111111111111") { auth(MINE) }
+
+        assertEquals(HttpStatusCode.NotFound, response.status)
+    }
+
+    @Test
+    fun `an assessment comes back with its messages and photo hashes in order`() = testApplication {
+        val chat = FakeChatStore(
+            detail = row("mine") to listOf(
+                MessageRow("m1", "USER", "here they are", 0, 1L, listOf("aa".repeat(32), "bb".repeat(32))),
+                MessageRow("m2", "ASSISTANT", "thanks", 1, 2L, emptyList()),
+            )
+        )
+        val app = withSync(chat, FakeAuth())
+
+        val body = app.get("/v1/sessions/mine") { auth(MINE) }.bodyAsText()
+
+        // Order matters: the protocols refer to photos by position.
+        assertTrue(body, body.indexOf("aa".repeat(32)) < body.indexOf("bb".repeat(32)))
+        assertTrue(body, body.contains("\"ordinal\":0"))
+    }
+
+    @Test
+    fun `deleting an assessment marks it rather than removing it`() = testApplication {
+        // The flag is what starts the retention clock. A hard delete here would make the
+        // 7-day window we tell customers about a fiction.
+        val chat = FakeChatStore(deleteSucceeds = true)
+        val app = withSync(chat, FakeAuth())
+
+        val response = app.delete("/v1/sessions/mine") { auth(MINE) }
+
+        assertEquals(HttpStatusCode.NoContent, response.status)
+        assertEquals("mine", chat.deleted)
+    }
+
+    @Test
+    fun `deleting an assessment that is not yours changes nothing`() = testApplication {
+        val chat = FakeChatStore(deleteSucceeds = false)
+        val app = withSync(chat, FakeAuth())
+
+        assertEquals(HttpStatusCode.NotFound, app.delete("/v1/sessions/theirs") { auth(MINE) }.status)
+    }
+
+    @Test
+    fun `changing a password requires the current one, even with a valid token`() = testApplication {
+        // A token can be lifted from an unlocked phone, and a password change is exactly
+        // what would lock the owner out of their own account.
+        val auth = FakeAuth(currentPassword = "the real one")
+        val app = withSync(FakeChatStore(), auth)
+
+        val response = app.post("/v1/auth/password") {
+            this.auth(MINE); contentType(ContentType.Application.Json)
+            setBody(ChangePasswordRequest("a guess", "a new long password"))
+        }
+
+        assertEquals(HttpStatusCode.Unauthorized, response.status)
+        assertTrue(auth.passwordChanges.isEmpty())
+    }
+
+    @Test
+    fun `changing a password signs every other device out`() = testApplication {
+        // A password change is usually a response to somebody else having had access.
+        val auth = FakeAuth(currentPassword = "the real one")
+        val app = withSync(FakeChatStore(), auth)
+
+        val response = app.post("/v1/auth/password") {
+            this.auth(MINE); contentType(ContentType.Application.Json)
+            setBody(ChangePasswordRequest("the real one", "a new long password"))
+        }
+
+        assertEquals(HttpStatusCode.NoContent, response.status)
+        assertEquals(listOf(MINE), auth.passwordChanges)
+        assertEquals(listOf(MINE), auth.revoked)
+    }
+
+    @Test
+    fun `a short new password is refused`() = testApplication {
+        val auth = FakeAuth(currentPassword = "the real one")
+        val app = withSync(FakeChatStore(), auth)
+
+        val response = app.post("/v1/auth/password") {
+            this.auth(MINE); contentType(ContentType.Application.Json)
+            setBody(ChangePasswordRequest("the real one", "short"))
+        }
+
+        assertEquals(HttpStatusCode.BadRequest, response.status)
+        assertTrue(auth.passwordChanges.isEmpty())
+    }
+
+    @Test
+    fun `deleting an account marks it and revokes its tokens together`() = testApplication {
+        // An account marked deleted whose tokens still work is not deleted.
+        val auth = FakeAuth()
+        val app = withSync(FakeChatStore(), auth)
+
+        assertEquals(HttpStatusCode.NoContent, app.delete("/v1/account") { this.auth(MINE) }.status)
+        assertEquals(listOf(MINE), auth.accountsDeleted)
+    }
+
+    @Test
+    fun `every sync route refuses an unauthenticated caller`() = testApplication {
+        val app = withSync(FakeChatStore(), FakeAuth())
+
+        assertEquals(HttpStatusCode.Unauthorized, app.get("/v1/sessions").status)
+        assertEquals(HttpStatusCode.Unauthorized, app.get("/v1/sessions/x").status)
+        assertEquals(HttpStatusCode.Unauthorized, app.delete("/v1/sessions/x").status)
+        assertEquals(HttpStatusCode.Unauthorized, app.delete("/v1/account").status)
+        assertEquals(HttpStatusCode.Unauthorized, app.get("/v1/blobs/${"a".repeat(64)}").status)
+    }
+
+    @Test
+    fun `a photo can be fetched back, and a malformed hash cannot`() = testApplication {
+        val blobs = BlobStore(folder.newFolder())
+        val bytes = "a photograph".toByteArray()
+        val sha = BlobStore.hash(bytes)
+        kotlinx.coroutines.runBlocking { blobs.put(sha, bytes) }
+        val app = withSync(FakeChatStore(), FakeAuth(), blobs)
+
+        assertEquals(HttpStatusCode.OK, app.get("/v1/blobs/$sha") { auth(MINE) }.status)
+        // Hash-shaped but not hex. A path-traversal attempt cannot be tested here — the
+        // HTTP client normalises "../" out before the request is sent — and is covered
+        // directly by BlobStoreTest against isValidHash.
+        assertEquals(
+            HttpStatusCode.BadRequest,
+            app.get("/v1/blobs/${"z".repeat(64)}") { auth(MINE) }.status,
+        )
+        assertEquals(
+            HttpStatusCode.NotFound,
+            app.get("/v1/blobs/${"c".repeat(64)}") { auth(MINE) }.status,
+        )
+    }
+
+    // ---------------------------------------------------------------- harness
+
+    private fun io.ktor.client.request.HttpRequestBuilder.auth(userId: String) {
+        header(HttpHeaders.Authorization, "Bearer ${AccessTokens(KEY).issue(userId).token}")
+    }
+
+    private fun row(id: String) = SessionRow(
+        id = id, itemTypeId = "wooden-stool", createdAt = 1L, updatedAt = 2L,
+        preview = "a preview", messageCount = 2, verdictLevelId = "fair",
+        verdictLanguage = "en", previousSessionId = null, intakeAnswers = "en-buying-daily-full",
+    )
+
+    private fun ApplicationTestBuilder.withSync(
+        chat: ChatStore,
+        auth: AuthStore,
+        blobs: BlobStore = BlobStore(folder.newFolder()),
+    ) = run {
+        application {
+            module(
+                version = "test",
+                database = null,
+                auth = Auth(auth, AccessTokens(KEY)),
+                // The sync routes mount alongside chat, so a Chat is supplied with a
+                // Claude client that would fail if called — none of these routes call it,
+                // and a stub that throws would catch it if one ever did.
+                chat = Chat(chat, blobs, UnusedClaude, UnusedPrompts),
+            )
+        }
+        createClient { install(ClientContentNegotiation) { json() } }
+    }
+
+    private object UnusedClaude : com.qualityverifier.server.chat.ClaudeClient {
+        override suspend fun send(
+            systemPrompt: String,
+            history: List<com.qualityverifier.domain.ChatMessage>,
+            imageBytes: (com.qualityverifier.domain.Attachment) -> ByteArray?,
+        ) = error("no sync route should reach the model")
+    }
+
+    private object UnusedPrompts : com.qualityverifier.data.prompts.PromptRepository {
+        override suspend fun systemPromptFor(itemType: com.qualityverifier.domain.ItemType) =
+            error("no sync route should need a prompt")
+        override suspend fun clearCache() = Unit
+    }
+
+    private class FakeChatStore(
+        private val sessions: List<SessionRow> = emptyList(),
+        private val detail: Pair<SessionRow, List<MessageRow>>? = null,
+        private val deleteSucceeds: Boolean = true,
+    ) : ChatStore {
+        var askedFor: String? = null
+            private set
+        var deleted: String? = null
+            private set
+
+        override suspend fun ensureSession(
+            sessionId: String, userId: String, itemTypeId: String,
+            previousSessionId: String?, intakeAnswers: String?, promptSha: String?,
+        ) = SessionAccess.Ok(created = true)
+
+        override suspend fun appendUserTurn(
+            sessionId: String, messageId: String, text: String, blobHashes: List<String>,
+        ) = true
+
+        override suspend fun replyAfter(sessionId: String, userMessageId: String): StoredReply? = null
+        override suspend fun history(sessionId: String, blobPath: (String) -> String) = emptyList<com.qualityverifier.domain.ChatMessage>()
+        override suspend fun appendAssistantTurn(
+            sessionId: String, text: String, preview: String,
+            verdictLevelId: String?, verdictLanguage: String?,
+        ) = "a1"
+
+        override suspend fun recordUsage(
+            userId: String, sessionId: String?, model: String?, usage: TokenUsage?,
+            httpStatus: Int?, latencyMillis: Long, errorKind: String?,
+        ) = Unit
+
+        override suspend fun sessionsFor(userId: String): List<SessionRow> {
+            askedFor = userId
+            return sessions
+        }
+
+        override suspend fun sessionDetail(userId: String, sessionId: String) = detail
+
+        override suspend fun markClientDeleted(userId: String, sessionId: String): Boolean {
+            if (deleteSucceeds) deleted = sessionId
+            return deleteSucceeds
+        }
+    }
+
+    private class FakeAuth(private val currentPassword: String? = null) : AuthStore {
+        val passwordChanges = mutableListOf<String>()
+        val accountsDeleted = mutableListOf<String>()
+        val revoked = mutableListOf<String>()
+
+        override suspend fun register(registration: Registration) = RegisterOutcome.InviteUnusable
+        override suspend fun findUser(userId: String) =
+            UserRow(userId, "Grady", "individual", null, disabled = false)
+
+        override suspend fun issueRefresh(
+            userId: String, token: String, expiresAt: Instant, userAgent: String?, replaces: String?,
+        ) = "r"
+
+        override suspend fun findRefresh(token: String): StoredRefresh? = null
+        override suspend fun revokeChain(userId: String): Int {
+            revoked += userId
+            return 1
+        }
+
+        override suspend fun credentialsForPhone(phone: String): Credentials? = null
+        override suspend fun recordFailedSignIn(userId: String, lockFor: Duration, threshold: Int) = 0
+        override suspend fun clearFailedSignIns(userId: String) = Unit
+        override suspend fun passwordHashFor(userId: String) = currentPassword?.let(Passwords::hash)
+        override suspend fun setPasswordHash(userId: String, passwordHash: String) {
+            passwordChanges += userId
+        }
+
+        override suspend fun markAccountDeleted(userId: String) {
+            accountsDeleted += userId
+            revoked += userId
+        }
+    }
+
+    private companion object {
+        const val KEY = "a-signing-key-long-enough-to-be-real"
+        const val MINE = "11111111-2222-3333-4444-555555555555"
+    }
+}

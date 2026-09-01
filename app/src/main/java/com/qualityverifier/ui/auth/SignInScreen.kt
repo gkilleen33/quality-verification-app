@@ -31,6 +31,7 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.qualityverifier.ui.appContainer
+import com.qualityverifier.ui.rememberAuthLabels
 
 /**
  * Signing in.
@@ -42,6 +43,7 @@ import com.qualityverifier.ui.appContainer
 @Composable
 fun SignInScreen(onSignedIn: () -> Unit, onRegister: () -> Unit) {
     val container = appContainer()
+    val labels = rememberAuthLabels()
     val viewModel: AuthViewModel = viewModel(factory = AuthViewModel.factory(container))
 
     val busy by viewModel.busy.collectAsState()
@@ -63,7 +65,7 @@ fun SignInScreen(onSignedIn: () -> Unit, onRegister: () -> Unit) {
     ) {
         Text("KAGUA", style = MaterialTheme.typography.headlineLarge)
         Text(
-            "Jua kabla ya kununua — know before you buy.",
+            labels.tagline,
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
@@ -72,10 +74,10 @@ fun SignInScreen(onSignedIn: () -> Unit, onRegister: () -> Unit) {
         OutlinedTextField(
             value = phone,
             onValueChange = { phone = it.filter { c -> c.isDigit() || c == '+' } },
-            label = { Text("Phone number") },
+            label = { Text(labels.phoneLabel) },
             // Prefilled with +256 and digits-only afterwards, because the server requires
             // international format and rejecting "0700..." after the fact teaches nothing.
-            supportingText = { Text("Starting with your country code, e.g. +256700123456") },
+            supportingText = { Text(labels.phoneHint) },
             keyboardOptions = KeyboardOptions(
                 keyboardType = KeyboardType.Phone,
                 imeAction = ImeAction.Next,
@@ -87,7 +89,7 @@ fun SignInScreen(onSignedIn: () -> Unit, onRegister: () -> Unit) {
         OutlinedTextField(
             value = password,
             onValueChange = { password = it },
-            label = { Text("Password") },
+            label = { Text(labels.passwordLabel) },
             visualTransformation = PasswordVisualTransformation(),
             keyboardOptions = KeyboardOptions(
                 keyboardType = KeyboardType.Password,
@@ -113,11 +115,11 @@ fun SignInScreen(onSignedIn: () -> Unit, onRegister: () -> Unit) {
                 .fillMaxWidth()
                 .height(56.dp),
         ) {
-            if (busy) CircularProgressIndicator(Modifier.height(20.dp)) else Text("Sign in")
+            if (busy) CircularProgressIndicator(Modifier.height(20.dp)) else Text(labels.signIn)
         }
 
         TextButton(onClick = onRegister, modifier = Modifier.fillMaxWidth()) {
-            Text("I have an invite code — create an account")
+            Text(labels.goToRegister)
         }
     }
 }

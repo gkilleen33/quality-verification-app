@@ -30,6 +30,7 @@ import com.qualityverifier.server.db.PostgresAuthStore
 import com.qualityverifier.server.routes.ErrorResponse
 import com.qualityverifier.server.routes.authRoutes
 import com.qualityverifier.server.routes.chatRoutes
+import com.qualityverifier.server.routes.syncRoutes
 import okhttp3.OkHttpClient
 import java.io.File
 import java.util.concurrent.TimeUnit
@@ -164,7 +165,12 @@ fun Application.module(
         auth?.let { authRoutes(it.store, it.accessTokens) }
         // Chat needs auth: every route inside it authenticates, and mounting them
         // without the plugin installed would fail at request time rather than here.
-        if (auth != null) chat?.let { chatRoutes(it.store, it.blobs, it.claude, it.prompts) }
+        if (auth != null) chat?.let {
+            chatRoutes(it.store, it.blobs, it.claude, it.prompts)
+            // Reading assessments back, plus the two account actions. Needs both halves:
+            // the chat store for sessions and the auth store for credentials.
+            syncRoutes(it.store, auth.store, it.blobs)
+        }
 
         // Cheap and dependency-free, so a database outage does not make the service
         // look dead to whatever is watching it.
