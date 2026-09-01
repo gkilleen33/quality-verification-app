@@ -1,0 +1,13 @@
+[Unit]
+Description=Purge Kagua data past its retention window
+Documentation=file:///opt/kagua/README
+
+[Service]
+Type=oneshot
+User=postgres
+# Peer authentication over the unix socket: no password, so this job needs no
+# access to Parameter Store and there is no secret to leak in a timer.
+# Both windows (7 days for a deleted assessment, 30 for a deleted account) live in
+# purge_expired() in the migrations, not here — a retention policy edited on the box
+# is a retention policy nobody can review.
+ExecStart=/usr/bin/psql -d kagua -Atc "select 'purged '||purge_expired()"

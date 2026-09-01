@@ -1,0 +1,12 @@
+[Unit]
+Description=Daily purge of chats deleted on the phone
+
+[Timer]
+OnCalendar=daily
+# Spread the run: a fixed midnight start on a burstable instance competes with
+# every other daily job on the box.
+RandomizedDelaySec=30m
+Persistent=true
+
+[Install]
+WantedBy=timers.target
