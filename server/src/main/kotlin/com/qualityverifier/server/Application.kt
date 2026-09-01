@@ -16,11 +16,23 @@ import io.ktor.server.request.path
 import io.ktor.server.response.respond
 import io.ktor.server.routing.get
 import io.ktor.server.routing.routing
+import com.qualityverifier.data.prompts.GitHubPromptRepository
+import com.qualityverifier.data.prompts.PromptCache
+import com.qualityverifier.data.prompts.PromptRepository
 import com.qualityverifier.server.auth.AccessTokens
+import com.qualityverifier.server.blobs.BlobStore
+import com.qualityverifier.server.chat.AnthropicClient
+import com.qualityverifier.server.chat.ClaudeClient
 import com.qualityverifier.server.db.AuthStore
+import com.qualityverifier.server.db.ChatStore
+import com.qualityverifier.server.db.PostgresChatStore
 import com.qualityverifier.server.db.PostgresAuthStore
 import com.qualityverifier.server.routes.ErrorResponse
 import com.qualityverifier.server.routes.authRoutes
+import com.qualityverifier.server.routes.chatRoutes
+import okhttp3.OkHttpClient
+import java.io.File
+import java.util.concurrent.TimeUnit
 import kotlinx.serialization.Serializable
 import org.slf4j.LoggerFactory
 import org.slf4j.event.Level
@@ -43,17 +55,60 @@ fun main() {
         log.warn("Auth is disabled: needs both a database and KAGUA_JWT_SIGNING_KEY.")
         null
     }
+    // Prompts come from GitHub, fetched by the server rather than the phone, so a
+    // client cannot substitute a system prompt and spend our budget on it. Same shared
+    // repository the app uses, so the resolution order — fresh cache, network, stale
+    // cache, compiled-in default — is the one already tested.
+    val prompts: PromptRepository = GitHubPromptRepository(
+        client = OkHttpClient.Builder()
+            .connectTimeout(15, TimeUnit.SECONDS)
+            .readTimeout(30, TimeUnit.SECONDS)
+            .build(),
+        cache = PromptCache(File(config.dataDirectory, "prompts")),
+        baseUrl = config.promptBaseUrl,
+        warn = { message, cause -> log.warn(message, cause) },
+    )
+
+    val chat = if (database != null && config.anthropicApiKey != null) {
+        Chat(
+            store = PostgresChatStore(database.source),
+            blobs = BlobStore(File(config.dataDirectory, "blobs")),
+            // Vision requests routinely run past a minute; the read timeout has to
+            // outlast them or the client gives up on a call we are still paying for.
+            claude = AnthropicClient(
+                client = OkHttpClient.Builder()
+                    .connectTimeout(30, TimeUnit.SECONDS)
+                    .readTimeout(180, TimeUnit.SECONDS)
+                    .writeTimeout(180, TimeUnit.SECONDS)
+                    .retryOnConnectionFailure(true)
+                    .build(),
+                apiKey = { config.anthropicApiKey },
+            ),
+            prompts = prompts,
+        )
+    } else {
+        log.warn("Chat is disabled: needs a database and KAGUA_ANTHROPIC_API_KEY.")
+        null
+    }
+
     log.info("Kagua server {} starting on {}:{}", config.version, config.host, config.port)
 
     Runtime.getRuntime().addShutdownHook(Thread { database?.close() })
 
     embeddedServer(Netty, port = config.port, host = config.host) {
-        module(config.version, database, auth)
+        module(config.version, database, auth, chat)
     }.start(wait = true)
 }
 
 /** Bundled so the module signature does not grow a parameter per collaborator. */
 class Auth(val store: AuthStore, val accessTokens: AccessTokens)
+
+class Chat(
+    val store: ChatStore,
+    val blobs: BlobStore,
+    val claude: ClaudeClient,
+    val prompts: PromptRepository,
+)
 
 @Serializable
 data class Health(val status: String, val version: String, val uptimeSeconds: Long)
@@ -72,6 +127,7 @@ fun Application.module(
     version: String,
     database: DatabaseHealth?,
     auth: Auth? = null,
+    chat: Chat? = null,
 ) {
     install(ContentNegotiation) { json() }
     if (auth != null) {
@@ -106,6 +162,9 @@ fun Application.module(
 
     routing {
         auth?.let { authRoutes(it.store, it.accessTokens) }
+        // Chat needs auth: every route inside it authenticates, and mounting them
+        // without the plugin installed would fail at request time rather than here.
+        if (auth != null) chat?.let { chatRoutes(it.store, it.blobs, it.claude, it.prompts) }
 
         // Cheap and dependency-free, so a database outage does not make the service
         // look dead to whatever is watching it.
