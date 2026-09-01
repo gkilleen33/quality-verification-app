@@ -19,5 +19,6 @@ dependencyResolutionManagement {
 }
 
 rootProject.name = "QualityVerifier"
+include(":shared")
 include(":app")
 include(":server")
