@@ -1,0 +1,34 @@
+#!/bin/bash
+# Installs a release asset built by CI and restarts the service.
+#
+# Pulls from GitHub rather than being pushed to: the box has no inbound SSH, and this
+# way a deploy is one SSM command that needs no credentials of its own. Public repo,
+# so no token is involved.
+set -euo pipefail
+
+TAG="${1:-nightly}"
+REPO=gkilleen33/quality-verification-app
+URL="https://github.com/$REPO/releases/download/$TAG/kagua-server.jar"
+
+echo "fetching $URL"
+# To a temporary file first: a half-downloaded jar written straight over the live one
+# would leave the service unable to start after a restart.
+tmp=$(mktemp /tmp/kagua-XXXXXX.jar)
+curl -fsSL --retry 3 -o "$tmp" "$URL"
+
+# Sanity check before it goes anywhere near the running service.
+if ! unzip -l "$tmp" >/dev/null 2>&1; then
+  echo "downloaded file is not a valid jar, refusing to install" >&2
+  rm -f "$tmp"; exit 1
+fi
+
+install -o kagua -g kagua -m 0640 "$tmp" /opt/kagua/kagua.jar
+rm -f "$tmp"
+echo "$TAG" > /opt/kagua/VERSION
+chown kagua:kagua /opt/kagua/VERSION
+
+systemctl restart kagua
+sleep 3
+systemctl is-active kagua
+curl -fsS --max-time 10 http://127.0.0.1:8080/healthz
+echo

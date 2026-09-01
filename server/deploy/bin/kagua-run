@@ -1,0 +1,24 @@
+#!/bin/bash
+# Launcher for the Kagua API server.
+#
+# Fetches secrets at start time rather than baking them into a file on disk, so
+# rotating a parameter needs only `systemctl restart kagua` — which is the promise
+# made to IT about the API key being rotatable without a redeploy.
+set -euo pipefail
+
+REGION=us-east-1
+JAR=/opt/kagua/kagua.jar
+
+param() {
+  aws ssm get-parameter --region "$REGION" --name "$1" --with-decryption \
+    --query Parameter.Value --output text
+}
+
+# Exported, not passed as arguments: an argument is visible in `ps` to every user on
+# the box, and an environment variable is not.
+export KAGUA_DB_PASSWORD="$(param /kagua/db/password)"
+export KAGUA_JWT_SIGNING_KEY="$(param /kagua/jwt/signing-key)"
+export KAGUA_ANTHROPIC_API_KEY="$(param /kagua/anthropic/api-key)"
+export KAGUA_VERSION="$(cat /opt/kagua/VERSION 2>/dev/null || echo unknown)"
+
+exec java ${JAVA_OPTS:-} -jar "$JAR"

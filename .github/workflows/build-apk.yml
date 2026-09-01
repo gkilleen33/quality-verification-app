@@ -41,7 +41,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/android-toolchain
-      - run: ./gradlew --no-daemon testDebugUnitTest lintDebug
+      - run: ./gradlew --no-daemon testDebugUnitTest lintDebug :server:test
 
   publish:
     # Anything that is not a pull request produces a downloadable build. The checks run
@@ -84,6 +84,14 @@ jobs:
           printf '%s' "$KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/upload.jks"
           # Outside the workspace, so it is never picked up by an upload step.
           echo "Keystore restored ($(stat -c%s "$RUNNER_TEMP/upload.jks") bytes)"
+
+      - name: Build the server jar
+        # Same invocation as the APK so a merge that breaks the server cannot publish a
+        # working APK beside a broken jar and look green.
+        run: |
+          ./gradlew --no-daemon :server:test :server:buildFatJar
+          mv server/build/libs/server-all.jar kagua-server.jar
+          ls -l kagua-server.jar
 
       - name: Test, lint and build the signed release APK
         env:
@@ -130,7 +138,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "${GITHUB_REF_NAME}" "${{ steps.name.outputs.apk }}" \
+          gh release create "${GITHUB_REF_NAME}" "${{ steps.name.outputs.apk }}" kagua-server.jar \
             --title "${GITHUB_REF_NAME}" \
             --notes "Signed release build of ${GITHUB_REF_NAME}. Install on a phone with \"install unknown apps\" allowed for your browser."
 
@@ -141,7 +149,7 @@ jobs:
         run: |
           # Recreate rather than update, so stale APKs never linger on the release.
           gh release delete nightly --yes --cleanup-tag 2>/dev/null || true
-          gh release create nightly "${{ steps.name.outputs.apk }}" \
+          gh release create nightly "${{ steps.name.outputs.apk }}" kagua-server.jar \
             --title "Latest test build (${{ steps.name.outputs.label }})" \
             --prerelease \
             --notes "Unstable build from \`main\`, refreshed on every merge. Signed with the upload key, so it installs over an earlier build without uninstalling."
