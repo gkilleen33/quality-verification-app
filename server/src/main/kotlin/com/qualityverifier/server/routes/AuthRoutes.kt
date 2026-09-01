@@ -1,6 +1,7 @@
 package com.qualityverifier.server.routes
 
 import com.qualityverifier.server.auth.AccessTokens
+import com.qualityverifier.server.auth.Passwords
 import com.qualityverifier.server.auth.Tokens
 import com.qualityverifier.server.db.AuthStore
 import com.qualityverifier.server.db.RegisterOutcome
@@ -21,8 +22,17 @@ import java.time.Instant
 
 private val log = LoggerFactory.getLogger("com.qualityverifier.server.auth")
 
-/** How long a phone can go without signing in again. */
+/** How long a phone can go without signing in again. Sliding: each refresh renews it. */
 private val REFRESH_LIFETIME: Duration = Duration.ofDays(60)
+
+/**
+ * Ten wrong passwords, then fifteen minutes. Generous enough that a customer who has
+ * genuinely forgotten which of two passwords they used is not locked out, tight enough
+ * that online guessing is hopeless — especially with Argon2 already making each attempt
+ * cost about 50ms.
+ */
+private const val LOCKOUT_THRESHOLD = 10
+private val LOCKOUT: Duration = Duration.ofMinutes(15)
 
 fun Route.authRoutes(store: AuthStore, accessTokens: AccessTokens) {
 
@@ -38,6 +48,8 @@ fun Route.authRoutes(store: AuthStore, accessTokens: AccessTokens) {
             val outcome = store.register(
                 Registration(
                     inviteCode = request.inviteCode.trim(),
+                    phone = request.phone.trim(),
+                    passwordHash = Passwords.hash(request.password),
                     displayName = request.name.trim(),
                     accountType = request.accountType,
                     businessName = request.businessName?.trim(),
@@ -56,6 +68,18 @@ fun Route.authRoutes(store: AuthStore, accessTokens: AccessTokens) {
                     ErrorResponse("invite_unusable", "That invite code cannot be used."),
                 )
 
+                // Told plainly, unlike the invite. It reveals nothing an attacker could
+                // not learn by attempting to sign in, and the alternative is a customer
+                // who cannot work out why registering fails when they already have an
+                // account.
+                RegisterOutcome.PhoneTaken -> call.respond(
+                    HttpStatusCode.Conflict,
+                    ErrorResponse(
+                        "phone_taken",
+                        "That number already has an account. Sign in instead.",
+                    ),
+                )
+
                 is RegisterOutcome.Created -> {
                     log.info("Registered user {}", outcome.userId)
                     call.respond(
@@ -64,6 +88,56 @@ fun Route.authRoutes(store: AuthStore, accessTokens: AccessTokens) {
                     )
                 }
             }
+        }
+
+        post("/sign-in") {
+            val request = call.receive<SignInRequest>()
+            request.validate()?.let { problem ->
+                call.respond(HttpStatusCode.BadRequest, ErrorResponse("invalid_request", problem))
+                return@post
+            }
+
+            val credentials = store.credentialsForPhone(request.phone.trim())
+
+            // No account for that number: burn the same work a real verification costs
+            // before answering. Otherwise "no such account" returns in microseconds and a
+            // real one takes ~50ms, which enumerates who has an account regardless of how
+            // generic the error message is.
+            if (credentials?.passwordHash == null) {
+                Passwords.burnEquivalentWork(request.password)
+                call.respond(HttpStatusCode.Unauthorized, ErrorResponse("invalid_credentials"))
+                return@post
+            }
+
+            // Checked before the password, so a locked account cannot be used as an
+            // oracle for guessing it.
+            val lockedUntil = credentials.lockedUntil
+            if (lockedUntil != null && lockedUntil.isAfter(Instant.now())) {
+                log.warn("Sign-in attempt on locked account {}", credentials.userId)
+                call.respond(
+                    HttpStatusCode.TooManyRequests,
+                    ErrorResponse("locked", "Too many attempts. Try again later."),
+                )
+                return@post
+            }
+
+            if (credentials.disabled || !Passwords.verify(request.password, credentials.passwordHash)) {
+                if (!credentials.disabled) {
+                    val failures = store.recordFailedSignIn(
+                        credentials.userId, LOCKOUT, LOCKOUT_THRESHOLD,
+                    )
+                    if (failures >= LOCKOUT_THRESHOLD) {
+                        log.warn("Locked account {} after {} failures", credentials.userId, failures)
+                    }
+                }
+                // One answer for a wrong password and a disabled account.
+                call.respond(HttpStatusCode.Unauthorized, ErrorResponse("invalid_credentials"))
+                return@post
+            }
+
+            store.clearFailedSignIns(credentials.userId)
+            log.info("Signed in user {}", credentials.userId)
+            call.respond(issueTokens(store, accessTokens, credentials.userId, request.userAgent))
         }
 
         post("/refresh") {

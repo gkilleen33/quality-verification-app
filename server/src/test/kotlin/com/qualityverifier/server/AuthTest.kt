@@ -2,13 +2,17 @@ package com.qualityverifier.server
 
 import com.qualityverifier.server.auth.AccessTokens
 import com.qualityverifier.server.auth.Tokens
+import com.qualityverifier.server.auth.Passwords
 import com.qualityverifier.server.db.AuthStore
+import com.qualityverifier.server.db.Credentials
 import com.qualityverifier.server.db.RegisterOutcome
 import com.qualityverifier.server.db.Registration
 import com.qualityverifier.server.db.StoredRefresh
 import com.qualityverifier.server.db.UserRow
 import com.qualityverifier.server.routes.RegisterRequest
+import com.qualityverifier.server.routes.SignInRequest
 import com.qualityverifier.server.routes.validate
+import com.qualityverifier.server.routes.validatePhone
 import io.ktor.client.request.get
 import io.ktor.client.request.header
 import io.ktor.client.request.post
@@ -37,16 +41,14 @@ class AuthTest {
 
     @Test
     fun `a business account must name the business`() {
-        val request = RegisterRequest(
-            inviteCode = "ABC", name = "Grady", accountType = "business",
-        )
+        val request = valid(accountType = "business").copy(businessName = null)
         assertEquals("business_name is required for a business account", request.validate())
     }
 
     @Test
     fun `an individual account needs no business name`() {
         assertNull(
-            RegisterRequest(inviteCode = "ABC", name = "Grady", accountType = "individual").validate()
+            valid().validate()
         )
     }
 
@@ -54,10 +56,7 @@ class AuthTest {
     fun `a location must arrive whole or not at all`() {
         // Two of the three would store a point whose accuracy we do not know, which is
         // the one thing the accuracy column exists to prevent.
-        val partial = RegisterRequest(
-            inviteCode = "ABC", name = "G", accountType = "individual",
-            latitude = 0.3341, longitude = 32.6206,
-        )
+        val partial = valid().copy(latitude = 0.3341, longitude = 32.6206)
         assertEquals(
             "latitude, longitude and accuracy_m must be sent together or not at all",
             partial.validate(),
@@ -67,7 +66,7 @@ class AuthTest {
 
     @Test
     fun `an implausible or useless fix is rejected`() {
-        val base = RegisterRequest(inviteCode = "A", name = "G", accountType = "individual")
+        val base = valid()
         assertEquals(
             "latitude out of range",
             base.copy(latitude = 95.0, longitude = 0.0, accuracyMetres = 5.0).validate(),
@@ -84,7 +83,7 @@ class AuthTest {
     fun `an unknown account type is not accepted`() {
         assertEquals(
             "account_type must be individual or business",
-            RegisterRequest(inviteCode = "A", name = "G", accountType = "charity").validate(),
+            valid(accountType = "charity").validate(),
         )
     }
 
@@ -142,9 +141,7 @@ class AuthTest {
         val registered = app.post("/v1/auth/register") {
             contentType(ContentType.Application.Json)
             setBody(
-                RegisterRequest(
-                    inviteCode = "GOOD", name = "Grady", accountType = "business",
-                    businessName = "Nakawa Furniture",
+                valid(accountType = "business").copy(
                     latitude = 0.3341, longitude = 32.6206, accuracyMetres = 8.0,
                 )
             )
@@ -178,7 +175,7 @@ class AuthTest {
 
         val response = app.post("/v1/auth/register") {
             contentType(ContentType.Application.Json)
-            setBody(RegisterRequest(inviteCode = "TAKEN", name = "G", accountType = "individual"))
+            setBody(valid().copy(inviteCode = "TAKEN"))
         }
 
         assertEquals(HttpStatusCode.Forbidden, response.status)
@@ -263,6 +260,169 @@ class AuthTest {
         assertEquals(HttpStatusCode.NotFound, client.get("/v1/me").status)
     }
 
+    // ---------------------------------------------------------------- passwords
+
+    @Test
+    fun `a password verifies against its own hash and nothing else`() {
+        val hash = Passwords.hash("correct horse battery")
+
+        assertTrue(Passwords.verify("correct horse battery", hash))
+        assertTrue(!Passwords.verify("Correct horse battery", hash))
+        assertTrue(!Passwords.verify("", hash))
+    }
+
+    @Test
+    fun `the same password hashes differently every time`() {
+        // Distinct salts, so two people with the same password do not share a hash and
+        // a leaked table cannot be attacked once for many accounts.
+        assertNotEquals(Passwords.hash("same"), Passwords.hash("same"))
+    }
+
+    @Test
+    fun `the hash records its own parameters so the cost can be raised later`() {
+        val hash = Passwords.hash("x")
+        assertTrue(hash, hash.startsWith("\$argon2id\$v=19\$m=19456,t=2,p=1\$"))
+    }
+
+    @Test
+    fun `a corrupt stored hash fails one sign-in rather than throwing`() {
+        // A bad row should cost one person one attempt, not take the endpoint down.
+        listOf("", "not-a-hash", "\$argon2id\$v=19\$m=bad,t=2,p=1\$c2FsdA\$aGFzaA", "\$bcrypt\$x")
+            .forEach { assertTrue(it, !Passwords.verify("x", it)) }
+    }
+
+    // ---------------------------------------------------------------- sign-in
+
+    @Test
+    fun `phone numbers must be international, so one person cannot become two`() {
+        assertNull(validatePhone("+256700123456"))
+        assertEquals(
+            "phone must be in international format, starting with +",
+            validatePhone("0700123456"),
+        )
+        assertEquals("phone is not a valid number", validatePhone("+0700123456"))
+        assertEquals("phone is required", validatePhone(" "))
+    }
+
+    @Test
+    fun `signing in with the right password issues tokens and clears the counter`() = testApplication {
+        val store = FakeAuthStore().apply { seedAccount("+256700123456", PASSWORD) }
+        val app = withAuth(store)
+
+        val response = app.post("/v1/auth/sign-in") {
+            contentType(ContentType.Application.Json)
+            setBody(SignInRequest(phone = "+256700123456", password = PASSWORD))
+        }
+
+        assertEquals(HttpStatusCode.OK, response.status)
+        assertTrue(response.bodyAsText().contains("access_token"))
+        assertEquals(listOf("user-1"), store.cleared)
+    }
+
+    @Test
+    fun `a wrong password counts a failure and says nothing useful`() = testApplication {
+        val store = FakeAuthStore().apply { seedAccount("+256700123456", PASSWORD) }
+        val app = withAuth(store)
+
+        val response = app.post("/v1/auth/sign-in") {
+            contentType(ContentType.Application.Json)
+            setBody(SignInRequest(phone = "+256700123456", password = "wrong"))
+        }
+
+        assertEquals(HttpStatusCode.Unauthorized, response.status)
+        assertTrue(response.bodyAsText().contains("invalid_credentials"))
+        assertEquals(listOf("user-1"), store.failures)
+    }
+
+    @Test
+    fun `an unknown number answers exactly as a wrong password does`() = testApplication {
+        val app = withAuth(FakeAuthStore())
+
+        val response = app.post("/v1/auth/sign-in") {
+            contentType(ContentType.Application.Json)
+            setBody(SignInRequest(phone = "+256700999999", password = PASSWORD))
+        }
+
+        assertEquals(HttpStatusCode.Unauthorized, response.status)
+        assertTrue(response.bodyAsText().contains("invalid_credentials"))
+    }
+
+    @Test
+    fun `a locked account is refused before the password is even checked`() = testApplication {
+        // Checked first so a locked account cannot be used as an oracle for guessing.
+        val store = FakeAuthStore().apply {
+            seedAccount("+256700123456", PASSWORD, lockedUntil = Instant.now().plusSeconds(600))
+        }
+        val app = withAuth(store)
+
+        val response = app.post("/v1/auth/sign-in") {
+            contentType(ContentType.Application.Json)
+            setBody(SignInRequest(phone = "+256700123456", password = PASSWORD))
+        }
+
+        assertEquals(HttpStatusCode.TooManyRequests, response.status)
+        assertTrue(store.failures.isEmpty())
+    }
+
+    @Test
+    fun `an expired lock lets a correct password through`() = testApplication {
+        val store = FakeAuthStore().apply {
+            seedAccount("+256700123456", PASSWORD, lockedUntil = Instant.now().minusSeconds(1))
+        }
+        val app = withAuth(store)
+
+        val response = app.post("/v1/auth/sign-in") {
+            contentType(ContentType.Application.Json)
+            setBody(SignInRequest(phone = "+256700123456", password = PASSWORD))
+        }
+
+        assertEquals(HttpStatusCode.OK, response.status)
+    }
+
+    @Test
+    fun `a disabled account cannot sign in even with the right password`() = testApplication {
+        val store = FakeAuthStore(userDisabled = true)
+            .apply { seedAccount("+256700123456", PASSWORD) }
+        val app = withAuth(store)
+
+        val response = app.post("/v1/auth/sign-in") {
+            contentType(ContentType.Application.Json)
+            setBody(SignInRequest(phone = "+256700123456", password = PASSWORD))
+        }
+
+        assertEquals(HttpStatusCode.Unauthorized, response.status)
+        // No failure counted against an account that could never have succeeded.
+        assertTrue(store.failures.isEmpty())
+    }
+
+    @Test
+    fun `an already-registered number is told to sign in instead`() = testApplication {
+        // Unlike the invite, this is said plainly: it reveals nothing an attacker could
+        // not learn by trying to sign in, and the alternative is a customer stuck on a
+        // registration form that will never work.
+        val app = withAuth(FakeAuthStore(phoneTaken = true))
+
+        val response = app.post("/v1/auth/register") {
+            contentType(ContentType.Application.Json)
+            setBody(valid())
+        }
+
+        assertEquals(HttpStatusCode.Conflict, response.status)
+        assertTrue(response.bodyAsText().contains("phone_taken"))
+    }
+
+    @Test
+    fun `registration requires a usable phone number and a long enough password`() {
+        assertEquals(
+            "phone must be in international format, starting with +",
+            valid().copy(phone = "0700123456").validate(),
+        )
+        assertEquals(
+            "password must be at least 8 characters",
+            valid().copy(password = "short").validate(),
+        )
+    }
+
     // ---------------------------------------------------------------- harness
 
     private fun ApplicationTestBuilder.withAuth(store: FakeAuthStore) = run {
@@ -279,10 +439,28 @@ class AuthTest {
     private class FakeAuthStore(
         private val inviteUsable: Boolean = true,
         private val userDisabled: Boolean = false,
+        private val phoneTaken: Boolean = false,
     ) : AuthStore {
         private val refreshes = mutableMapOf<String, StoredRefresh>()
+        private val credentials = mutableMapOf<String, Credentials>()
         val spent = mutableListOf<String>()
         val revoked = mutableListOf<String>()
+        val cleared = mutableListOf<String>()
+        val failures = mutableListOf<String>()
+
+        fun seedAccount(
+            phone: String,
+            password: String,
+            lockedUntil: Instant? = null,
+        ) {
+            credentials[phone] = Credentials(
+                userId = "user-1",
+                passwordHash = Passwords.hash(password),
+                lockedUntil = lockedUntil,
+                failedAttempts = 0,
+                disabled = userDisabled,
+            )
+        }
 
         fun seedRefresh(
             userId: String,
@@ -300,8 +478,26 @@ class AuthTest {
             return token
         }
 
-        override suspend fun register(registration: Registration): RegisterOutcome =
-            if (inviteUsable) RegisterOutcome.Created("user-1") else RegisterOutcome.InviteUnusable
+        override suspend fun register(registration: Registration): RegisterOutcome = when {
+            phoneTaken -> RegisterOutcome.PhoneTaken
+            !inviteUsable -> RegisterOutcome.InviteUnusable
+            else -> RegisterOutcome.Created("user-1")
+        }
+
+        override suspend fun credentialsForPhone(phone: String) = credentials[phone]
+
+        override suspend fun recordFailedSignIn(
+            userId: String,
+            lockFor: Duration,
+            threshold: Int,
+        ): Int {
+            failures += userId
+            return failures.count { it == userId }
+        }
+
+        override suspend fun clearFailedSignIns(userId: String) {
+            cleared += userId
+        }
 
         override suspend fun findUser(userId: String) = UserRow(
             id = userId,
@@ -340,5 +536,16 @@ class AuthTest {
 
     private companion object {
         const val SIGNING_KEY = "a-signing-key-long-enough-to-be-real"
+        const val PASSWORD = "correct horse battery"
+
+        /** Valid in every field, so a test changes only the one it is about. */
+        fun valid(accountType: String = "individual") = RegisterRequest(
+            inviteCode = "GOOD",
+            phone = "+256700123456",
+            password = PASSWORD,
+            name = "Grady",
+            accountType = accountType,
+            businessName = if (accountType == "business") "Nakawa Furniture" else null,
+        )
     }
 }

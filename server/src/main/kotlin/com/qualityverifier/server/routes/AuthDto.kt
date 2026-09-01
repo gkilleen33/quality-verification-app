@@ -6,6 +6,9 @@ import kotlinx.serialization.Serializable
 @Serializable
 data class RegisterRequest(
     @SerialName("invite_code") val inviteCode: String = "",
+    /** E.164, e.g. +256700123456. The sign-in identifier. */
+    val phone: String = "",
+    val password: String = "",
     val name: String = "",
     /** "individual" or "business". */
     @SerialName("account_type") val accountType: String = "",
@@ -14,6 +17,13 @@ data class RegisterRequest(
     val latitude: Double? = null,
     val longitude: Double? = null,
     @SerialName("accuracy_m") val accuracyMetres: Double? = null,
+    @SerialName("user_agent") val userAgent: String? = null,
+)
+
+@Serializable
+data class SignInRequest(
+    val phone: String = "",
+    val password: String = "",
     @SerialName("user_agent") val userAgent: String? = null,
 )
 
@@ -50,6 +60,11 @@ data class ErrorResponse(val error: String, val detail: String? = null)
  */
 fun RegisterRequest.validate(): String? = when {
     inviteCode.isBlank() -> "invite_code is required"
+    validatePhone(phone) != null -> validatePhone(phone)
+    // Length only, no composition rules. Forcing a symbol and a digit produces
+    // Password1! and a sticky note; length is what actually costs an attacker.
+    password.length < 8 -> "password must be at least 8 characters"
+    password.length > 200 -> "password is too long"
     name.isBlank() -> "name is required"
     name.length > 120 -> "name is too long"
     accountType !in setOf("individual", "business") ->
@@ -68,5 +83,24 @@ fun RegisterRequest.validate(): String? = when {
     // 5km is not a location, it is a district. Storing it would let a later "workshops
     // near me" put a shop on the wrong side of Kampala.
     accuracyMetres != null && accuracyMetres > 5000 -> "accuracy_m is too coarse to store"
+    else -> null
+}
+
+/**
+ * E.164 only. Deliberately strict rather than forgiving: accepting "0700123456" and
+ * guessing the country would silently create two accounts for one person the first
+ * time somebody typed it the other way, and a phone number is the sign-in identifier.
+ * libphonenumber should replace this before anything wider than a pilot.
+ */
+fun validatePhone(phone: String): String? = when {
+    phone.isBlank() -> "phone is required"
+    !phone.startsWith("+") -> "phone must be in international format, starting with +"
+    !Regex("""^\+[1-9]\d{7,14}$""").matches(phone) -> "phone is not a valid number"
+    else -> null
+}
+
+fun SignInRequest.validate(): String? = when {
+    phone.isBlank() -> "phone is required"
+    password.isBlank() -> "password is required"
     else -> null
 }

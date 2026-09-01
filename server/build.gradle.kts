@@ -40,6 +40,7 @@ dependencies {
     implementation(libs.logback.classic)
     implementation(libs.postgresql)
     implementation(libs.hikaricp)
+    implementation(libs.bouncycastle)
 
     testImplementation(libs.junit)
     testImplementation(libs.ktor.server.test.host)

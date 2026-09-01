@@ -20,6 +20,9 @@ data class UserRow(
 /** What registration was given. Validated before it reaches here. */
 data class Registration(
     val inviteCode: String,
+    val phone: String,
+    /** Already Argon2id-encoded. The plaintext never reaches this layer. */
+    val passwordHash: String,
     val displayName: String,
     val accountType: String,
     val businessName: String?,
@@ -32,7 +35,20 @@ sealed interface RegisterOutcome {
     data class Created(val userId: String) : RegisterOutcome
     /** Unknown, revoked, or already redeemed — one answer for all three, on purpose. */
     data object InviteUnusable : RegisterOutcome
+    /** That phone already has an account. Distinct from an unusable invite: the caller
+     *  needs to know to sign in instead, and it reveals nothing an attacker could not
+     *  learn by trying to sign in. */
+    data object PhoneTaken : RegisterOutcome
 }
+
+/** Enough to check a password and a lockout, and nothing else. */
+data class Credentials(
+    val userId: String,
+    val passwordHash: String?,
+    val lockedUntil: Instant?,
+    val failedAttempts: Int,
+    val disabled: Boolean,
+)
 
 data class StoredRefresh(
     val id: String,
@@ -62,6 +78,9 @@ interface AuthStore {
     ): String
     suspend fun findRefresh(token: String): StoredRefresh?
     suspend fun revokeChain(userId: String): Int
+    suspend fun credentialsForPhone(phone: String): Credentials?
+    suspend fun recordFailedSignIn(userId: String, lockFor: java.time.Duration, threshold: Int): Int
+    suspend fun clearFailedSignIns(userId: String)
 }
 
 /**
@@ -108,8 +127,9 @@ class PostgresAuthStore(private val dataSource: DataSource) : AuthStore {
         val sql = """
             insert into users (
                 invite_code, display_name, account_type, business_name,
-                business_location, business_location_accuracy_m, business_location_at
-            ) values (?, ?, ?, ?, ST_SetSRID(ST_MakePoint(?, ?), 4326)::geography, ?, ?)
+                business_location, business_location_accuracy_m, business_location_at,
+                phone, password_hash, password_set_at
+            ) values (?, ?, ?, ?, ST_SetSRID(ST_MakePoint(?, ?), 4326)::geography, ?, ?, ?, ?, now())
             returning id::text
         """.trimIndent()
 
@@ -134,15 +154,23 @@ class PostgresAuthStore(private val dataSource: DataSource) : AuthStore {
                 } else {
                     statement.setNull(8, java.sql.Types.TIMESTAMP)
                 }
+                statement.setString(9, registration.phone)
+                statement.setString(10, registration.passwordHash)
                 statement.executeQuery().use { rows ->
                     rows.next()
                     RegisterOutcome.Created(rows.getString(1))
                 }
             }
         } catch (e: SQLException) {
-            // 23505 = unique violation: the invite was redeemed between the check and
-            // here, or earlier. Same answer either way.
-            if (e.sqlState == "23505") RegisterOutcome.InviteUnusable else throw e
+            // 23505 = unique violation, and there are now two indexes it could be: the
+            // invite was already redeemed, or that phone already has an account. The
+            // constraint name is the only way to tell, and telling matters — one means
+            // "ask us for a code", the other means "sign in instead".
+            when {
+                e.sqlState != "23505" -> throw e
+                e.message?.contains("users_phone_key") == true -> RegisterOutcome.PhoneTaken
+                else -> RegisterOutcome.InviteUnusable
+            }
         }
     }
 
@@ -229,6 +257,73 @@ class PostgresAuthStore(private val dataSource: DataSource) : AuthStore {
                     )
                 }
             }
+        }
+    }
+
+    override suspend fun credentialsForPhone(phone: String): Credentials? =
+        withContext(Dispatchers.IO) {
+            dataSource.connection.use { connection ->
+                connection.prepareStatement(
+                    """
+                    select id::text, password_hash, locked_until, failed_sign_ins,
+                           (disabled_at is not null or deleted_at is not null)
+                    from users where phone = ?
+                    """.trimIndent()
+                ).use { statement ->
+                    statement.setString(1, phone)
+                    statement.executeQuery().use { rows ->
+                        if (!rows.next()) null else Credentials(
+                            userId = rows.getString(1),
+                            passwordHash = rows.getString(2),
+                            lockedUntil = rows.getTimestamp(3)?.toInstant(),
+                            failedAttempts = rows.getInt(4),
+                            disabled = rows.getBoolean(5),
+                        )
+                    }
+                }
+            }
+        }
+
+    /**
+     * Counts a failed attempt and locks the account once the threshold is reached.
+     *
+     * The increment and the lock decision are one statement so concurrent attempts
+     * cannot both read "9 failures" and both decide not to lock.
+     */
+    override suspend fun recordFailedSignIn(
+        userId: String,
+        lockFor: java.time.Duration,
+        threshold: Int,
+    ): Int = withContext(Dispatchers.IO) {
+        dataSource.connection.use { connection ->
+            connection.prepareStatement(
+                """
+                update users
+                set failed_sign_ins = failed_sign_ins + 1,
+                    locked_until = case when failed_sign_ins + 1 >= ?
+                                        then now() + (? || ' seconds')::interval
+                                        else locked_until end
+                where id = ?::uuid
+                returning failed_sign_ins
+                """.trimIndent()
+            ).use { statement ->
+                statement.setInt(1, threshold)
+                statement.setString(2, lockFor.seconds.toString())
+                statement.setString(3, userId)
+                statement.executeQuery().use { rows -> if (rows.next()) rows.getInt(1) else 0 }
+            }
+        }
+    }
+
+    override suspend fun clearFailedSignIns(userId: String) = withContext(Dispatchers.IO) {
+        dataSource.connection.use { connection ->
+            connection.prepareStatement(
+                "update users set failed_sign_ins = 0, locked_until = null where id = ?::uuid"
+            ).use { statement ->
+                statement.setString(1, userId)
+                statement.executeUpdate()
+            }
+            Unit
         }
     }
 

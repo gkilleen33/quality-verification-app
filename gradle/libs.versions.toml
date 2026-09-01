@@ -20,6 +20,7 @@ ktor = "3.5.2"
 logback = "1.6.3"
 postgresql = "42.7.9"
 hikari = "7.0.2"
+bouncycastle = "1.85.2"
 
 [libraries]
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
@@ -64,6 +65,7 @@ ktor-server-test-host = { group = "io.ktor", name = "ktor-server-test-host-jvm",
 logback-classic = { group = "ch.qos.logback", name = "logback-classic", version.ref = "logback" }
 postgresql = { group = "org.postgresql", name = "postgresql", version.ref = "postgresql" }
 hikaricp = { group = "com.zaxxer", name = "HikariCP", version.ref = "hikari" }
+bouncycastle = { group = "org.bouncycastle", name = "bcprov-jdk18on", version.ref = "bouncycastle" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }
