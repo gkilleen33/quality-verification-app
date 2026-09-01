@@ -18,7 +18,10 @@ RestartSec=5s
 
 # 640MB heap on a 3.7GB box that also runs Postgres with 512MB of shared buffers.
 # Netty's direct buffers live outside the heap, so this is not the whole footprint.
-Environment=JAVA_OPTS=-Xmx640m -XX:MaxDirectMemorySize=256m -XX:+ExitOnOutOfMemoryError
+# Quoted as one assignment. Unquoted, systemd splits on whitespace and treats every
+# token after the first as its own malformed assignment, logging "Invalid environment
+# assignment" and silently dropping all but -Xmx640m.
+Environment="JAVA_OPTS=-Xmx640m -XX:MaxDirectMemorySize=256m -XX:+ExitOnOutOfMemoryError"
 
 # Anything this process does not need
 NoNewPrivileges=true

@@ -28,7 +28,27 @@ echo "$TAG" > /opt/kagua/VERSION
 chown kagua:kagua /opt/kagua/VERSION
 
 systemctl restart kagua
-sleep 3
-systemctl is-active kagua
-curl -fsS --max-time 10 http://127.0.0.1:8080/healthz
-echo
+
+# Poll for readiness rather than sleeping. Startup is around six seconds — three
+# Parameter Store calls, then the connection pool, then Ktor — and a fixed sleep
+# either reports a false failure on a healthy service or pads every deploy with a
+# margin nobody measured. Deadline, not a guess.
+deadline=$((SECONDS + 60))
+until curl -fsS --max-time 5 http://127.0.0.1:8080/healthz >/dev/null 2>&1; do
+  if ! systemctl is-active --quiet kagua; then
+    echo "service died during startup:" >&2
+    journalctl -u kagua -n 30 --no-pager >&2
+    exit 1
+  fi
+  if [ "$SECONDS" -ge "$deadline" ]; then
+    echo "still not answering /healthz after 60s:" >&2
+    journalctl -u kagua -n 30 --no-pager >&2
+    exit 1
+  fi
+  sleep 1
+done
+
+echo "healthz:  $(curl -fsS --max-time 5 http://127.0.0.1:8080/healthz)"
+# Reported, not enforced: a database that is briefly unreachable should not make a
+# deploy look failed when the jar installed correctly.
+echo "deep:     $(curl -sS --max-time 15 http://127.0.0.1:8080/healthz/deep)"

@@ -22,14 +22,17 @@ package com.qualityverifier.text
  *    Doubled `__bold__` is still recognised.
  */
 
-internal enum class MdStyle { BOLD, ITALIC, CODE, LINK }
+// Public rather than internal: this file moved into :shared, and `internal` there means
+// "visible inside :shared" — which no longer includes the Compose renderer in :app that
+// consumes every one of these types. Narrowing them again breaks the app build.
+enum class MdStyle { BOLD, ITALIC, CODE, LINK }
 
 /** A style applied to the half-open range [start, end) of [MdInline.text]. */
-internal data class MdSpan(val start: Int, val end: Int, val style: MdStyle)
+data class MdSpan(val start: Int, val end: Int, val style: MdStyle)
 
-internal data class MdInline(val text: String, val spans: List<MdSpan> = emptyList())
+data class MdInline(val text: String, val spans: List<MdSpan> = emptyList())
 
-internal sealed interface MdBlock {
+sealed interface MdBlock {
     data class Paragraph(val content: MdInline) : MdBlock
     data class Heading(val content: MdInline, val level: Int) : MdBlock
     data class Bullet(val content: MdInline, val indent: Int) : MdBlock
@@ -42,7 +45,7 @@ private val BULLET = Regex("""^(\s*)[-*+]\s+(.*)$""")
 private val NUMBERED = Regex("""^(\s*)(\d{1,9})[.)]\s+(.*)$""")
 private val RULE = Regex("""^\s*(?:-{3,}|\*{3,}|_{3,})\s*$""")
 
-internal fun parseMarkdown(raw: String): List<MdBlock> {
+fun parseMarkdown(raw: String): List<MdBlock> {
     val blocks = mutableListOf<MdBlock>()
     // Accumulates consecutive plain lines into a single paragraph.
     val paragraph = mutableListOf<String>()
@@ -108,7 +111,7 @@ private fun MdBlock.appendingText(more: String): MdBlock = when (this) {
     else -> this
 }
 
-internal fun parseInline(raw: String): MdInline {
+fun parseInline(raw: String): MdInline {
     val text = StringBuilder()
     val spans = mutableListOf<MdSpan>()
     appendInline(raw, text, spans)
@@ -183,7 +186,7 @@ private fun link(raw: String, at: Int, out: StringBuilder, spans: MutableList<Md
  * Applied before the history preview is truncated, not after: truncating first can cut a
  * `**` pair in half, leaving a stray marker that no parser would then recognise.
  */
-internal fun markdownToPlainText(raw: String): String =
+fun markdownToPlainText(raw: String): String =
     parseMarkdown(raw).joinToString("\n") { block ->
         when (block) {
             is MdBlock.Paragraph -> block.content.text

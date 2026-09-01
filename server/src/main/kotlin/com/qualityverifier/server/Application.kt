@@ -8,11 +8,19 @@ import io.ktor.server.engine.embeddedServer
 import io.ktor.server.netty.Netty
 import io.ktor.server.plugins.calllogging.CallLogging
 import io.ktor.server.plugins.contentnegotiation.ContentNegotiation
+import io.ktor.server.auth.Authentication
+import io.ktor.server.auth.jwt.JWTPrincipal
+import io.ktor.server.auth.jwt.jwt
 import io.ktor.server.plugins.statuspages.StatusPages
 import io.ktor.server.request.path
 import io.ktor.server.response.respond
 import io.ktor.server.routing.get
 import io.ktor.server.routing.routing
+import com.qualityverifier.server.auth.AccessTokens
+import com.qualityverifier.server.db.AuthStore
+import com.qualityverifier.server.db.PostgresAuthStore
+import com.qualityverifier.server.routes.ErrorResponse
+import com.qualityverifier.server.routes.authRoutes
 import kotlinx.serialization.Serializable
 import org.slf4j.LoggerFactory
 import org.slf4j.event.Level
@@ -25,14 +33,27 @@ fun main() {
     if (database == null) {
         log.warn("No database password in the environment: starting without a database.")
     }
+    // Auth needs both a database to keep users in and a key to sign with. Missing
+    // either means the auth routes are not mounted at all, rather than mounted and
+    // failing per request — a 404 is a clearer signal of a misconfigured deployment
+    // than a 500 on every sign-in.
+    val auth = if (database != null && config.jwtSigningKey != null) {
+        Auth(PostgresAuthStore(database.source), AccessTokens(config.jwtSigningKey))
+    } else {
+        log.warn("Auth is disabled: needs both a database and KAGUA_JWT_SIGNING_KEY.")
+        null
+    }
     log.info("Kagua server {} starting on {}:{}", config.version, config.host, config.port)
 
     Runtime.getRuntime().addShutdownHook(Thread { database?.close() })
 
     embeddedServer(Netty, port = config.port, host = config.host) {
-        module(config.version, database)
+        module(config.version, database, auth)
     }.start(wait = true)
 }
+
+/** Bundled so the module signature does not grow a parameter per collaborator. */
+class Auth(val store: AuthStore, val accessTokens: AccessTokens)
 
 @Serializable
 data class Health(val status: String, val version: String, val uptimeSeconds: Long)
@@ -47,8 +68,27 @@ data class DeepHealth(
 
 private val startedAt = System.currentTimeMillis()
 
-fun Application.module(version: String, database: DatabaseHealth?) {
+fun Application.module(
+    version: String,
+    database: DatabaseHealth?,
+    auth: Auth? = null,
+) {
     install(ContentNegotiation) { json() }
+    if (auth != null) {
+        install(Authentication) {
+            jwt("jwt") {
+                realm = "kagua"
+                verifier(auth.accessTokens.verifier)
+                validate { credential ->
+                    // A signature that verifies but names nobody is not a credential.
+                    credential.subject?.let { JWTPrincipal(credential.payload) }
+                }
+                challenge { _, _ ->
+                    call.respond(HttpStatusCode.Unauthorized, ErrorResponse("invalid_token"))
+                }
+            }
+        }
+    }
     install(CallLogging) {
         level = Level.INFO
         // Never the body. Request bodies here are photographs of people's homes and
@@ -65,6 +105,8 @@ fun Application.module(version: String, database: DatabaseHealth?) {
     }
 
     routing {
+        auth?.let { authRoutes(it.store, it.accessTokens) }
+
         // Cheap and dependency-free, so a database outage does not make the service
         // look dead to whatever is watching it.
         get("/healthz") {

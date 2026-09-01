@@ -1,6 +1,5 @@
 package com.qualityverifier.data.prompts
 
-import android.util.Log
 import com.qualityverifier.domain.ItemType
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
@@ -25,6 +24,13 @@ class GitHubPromptRepository(
     private val baseUrl: String,
     private val ttlMillis: Long = TimeUnit.HOURS.toMillis(24),
     private val io: CoroutineDispatcher = Dispatchers.IO,
+    /**
+     * Where a failed fetch gets reported. Injected because this class is shared between
+     * the phone and the server, which log to entirely different places — `android.util.Log`
+     * on one and slf4j on the other — and neither belongs in a module both depend on. A
+     * dropped fetch is never fatal here, so the default swallows it.
+     */
+    private val warn: (String, Throwable?) -> Unit = { _, _ -> },
 ) : PromptRepository {
 
     override suspend fun systemPromptFor(itemType: ItemType): String = withContext(io) {
@@ -67,17 +73,16 @@ class GitHubPromptRepository(
         val request = Request.Builder().url(baseUrl + remotePath).build()
         client.newCall(request).execute().use { response ->
             if (response.isSuccessful) response.body?.string() else {
-                Log.w(TAG, "Prompt fetch $remotePath returned HTTP ${response.code}")
+                warn("Prompt fetch $remotePath returned HTTP ${response.code}", null)
                 null
             }
         }
     } catch (e: Exception) {
-        Log.w(TAG, "Prompt fetch $remotePath failed", e)
+        warn("Prompt fetch $remotePath failed", e)
         null
     }
 
     companion object {
         const val MASTER_PATH = "master.txt"
-        private const val TAG = "PromptRepository"
     }
 }

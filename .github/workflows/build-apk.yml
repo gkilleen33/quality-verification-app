@@ -41,7 +41,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/android-toolchain
-      - run: ./gradlew --no-daemon testDebugUnitTest lintDebug :server:test
+      - run: ./gradlew --no-daemon testDebugUnitTest lintDebug :shared:test :server:test
 
   publish:
     # Anything that is not a pull request produces a downloadable build. The checks run
@@ -89,7 +89,7 @@ jobs:
         # Same invocation as the APK so a merge that breaks the server cannot publish a
         # working APK beside a broken jar and look green.
         run: |
-          ./gradlew --no-daemon :server:test :server:buildFatJar
+          ./gradlew --no-daemon :shared:test :server:test :server:buildFatJar
           mv server/build/libs/server-all.jar kagua-server.jar
           ls -l kagua-server.jar
 

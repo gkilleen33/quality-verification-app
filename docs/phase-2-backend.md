@@ -210,6 +210,31 @@ queries are what `psql` over SSM is for, run by somebody who already has server 
 The in-app wording gains a line about human review — see
 `docs/retention-and-profile-wording.md` § 2b.
 
+## Auth: what the app must get right
+
+The server side is built. These are requirements on the phone, and the first one is
+load-bearing enough that getting it wrong looks like a security incident to the user.
+
+1. **Single-flight refresh, mandatory.** Refresh tokens rotate and a replayed token
+   revokes the whole chain. If two requests 401 at once and both refresh with the same
+   token, the second presents a spent one, the server reads theft, and the user is signed
+   out completely. A returning user — app reopened, several requests fired at once — is
+   exactly the case that triggers it. One refresh at a time behind a mutex, others queue
+   on its result.
+2. **Refresh proactively** when the access token is within ~2 minutes of expiry, so a 3 MB
+   photo upload does not begin on a token that dies mid-flight.
+3. **Refresh-and-retry interceptor.** Until this exists, a 15-minute access token means a
+   customer who puts the phone down and comes back sees an error. The token lifetime is
+   only invisible because something refreshes it.
+
+Two properties worth knowing rather than rediscovering:
+
+- The 60-day refresh window is **sliding** — every refresh issues a fresh 60 days, so it
+  bounds inactivity, not total account age.
+- After 60 days of inactivity a user is locked out with **no route back in**: registration
+  is one-time by invite code and there is no sign-in flow. Acceptable for a pilot where we
+  can issue another code; it needs a real answer before anything wider.
+
 ## Decisions still ours
 
 1. ~~**Do photos go to the server at all?**~~ Settled: yes. Rebuilding history server-side
