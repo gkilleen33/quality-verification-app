@@ -210,6 +210,29 @@ queries are what `psql` over SSM is for, run by somebody who already has server 
 The in-app wording gains a line about human review — see
 `docs/retention-and-profile-wording.md` § 2b.
 
+## Applying migrations
+
+**Use `server/db/apply.sh`.** It runs every migration as the `kagua` role, keeps
+`CREATE EXTENSION postgis` as the single superuser step, and then asserts that every
+application table is owned by `kagua` before reporting success.
+
+That assertion exists because of a real failure. V1 was applied as `kagua`, but V2-V5
+were applied as `postgres`, since PostGIS needs a superuser. Adding *columns* that way
+is harmless — ownership does not change. V4 created a **table**, so `refresh_tokens`
+ended up owned by `postgres`, and the first real sign-in returned
+`permission denied for table refresh_tokens`.
+
+Two things about how it escaped:
+
+- No unit test could catch it. The route logic is tested against a fake store, and the
+  fake has no notion of a grant.
+- The by-hand SQL check missed it because that check also ran **as `postgres`** — the one
+  user that did have permission. Verifying as the wrong user is a verification that
+  cannot fail.
+
+Ownership alone is also not proof, so the script finishes by having the app role read
+`refresh_tokens` for real.
+
 ## Auth: what the app must get right
 
 The server side is built. These are requirements on the phone, and the first one is
