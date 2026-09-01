@@ -47,22 +47,17 @@ server {
     proxy_send_timeout 180s;
     proxy_connect_timeout 15s;
 
-    # Uncommented once the Ktor service exists on 8080. Until then this vhost only
-    # answers the ACME challenge, which is all certbot needs from it.
-    #
-    # location / {
-    #     proxy_pass http://127.0.0.1:8080;
-    #     proxy_http_version 1.1;
-    #     proxy_set_header Host              $host;
-    #     proxy_set_header X-Real-IP         $remote_addr;
-    #     proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
-    #     proxy_set_header X-Forwarded-Proto $scheme;
-    #     # No buffering of request bodies to disk: they are photographs, and the
-    #     # point of this service is not to accumulate copies of them in /var.
-    #     proxy_request_buffering off;
-    # }
-
     location / {
-        return 404;
+        proxy_pass http://127.0.0.1:8080;
+        proxy_http_version 1.1;
+        proxy_set_header Host              $host;
+        proxy_set_header X-Real-IP         $remote_addr;
+        proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        # No buffering of request bodies to disk: they are photographs, and the point
+        # of this service is not to accumulate copies of them in /var. It also means a
+        # slow uploader on a Kampala mobile connection does not hold a temp file open
+        # for the duration.
+        proxy_request_buffering off;
     }
 }
