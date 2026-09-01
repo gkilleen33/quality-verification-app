@@ -14,6 +14,8 @@ data class Config(
     /** The commit this jar was built from. Reported by /healthz so we can tell. */
     val version: String,
     val database: DatabaseConfig?,
+    /** Absent means auth is not mounted. See Application.main. */
+    val jwtSigningKey: String?,
 ) {
     companion object {
         fun fromEnvironment(env: (String) -> String? = System::getenv): Config {
@@ -35,6 +37,7 @@ data class Config(
                         password = it,
                     )
                 },
+                jwtSigningKey = env("KAGUA_JWT_SIGNING_KEY")?.takeIf { it.isNotBlank() },
             )
         }
     }

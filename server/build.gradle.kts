@@ -34,6 +34,8 @@ dependencies {
     implementation(libs.ktor.server.content.negotiation)
     implementation(libs.ktor.serialization.json)
     implementation(libs.ktor.server.status.pages)
+    implementation(libs.ktor.server.auth)
+    implementation(libs.ktor.server.auth.jwt)
     implementation(libs.ktor.server.call.logging)
     implementation(libs.logback.classic)
     implementation(libs.postgresql)
@@ -41,6 +43,7 @@ dependencies {
 
     testImplementation(libs.junit)
     testImplementation(libs.ktor.server.test.host)
+    testImplementation(libs.ktor.client.content.negotiation)
     testImplementation(libs.kotlinx.coroutines.test)
 }
 
