@@ -1,0 +1,15 @@
+<configuration>
+    <!-- stdout only: systemd captures it into the journal, which is where an operator
+         will look. A log file on the box would be a second thing to rotate. -->
+    <appender name="STDOUT" class="ch.qos.logback.core.ConsoleAppender">
+        <encoder>
+            <pattern>%d{yyyy-MM-dd HH:mm:ss.SSS} %-5level %logger{20} - %msg%n</pattern>
+        </encoder>
+    </appender>
+    <root level="INFO">
+        <appender-ref ref="STDOUT"/>
+    </root>
+    <!-- Hikari logs every pool state change at DEBUG; INFO is enough to see it start. -->
+    <logger name="com.zaxxer.hikari" level="INFO"/>
+    <logger name="io.netty" level="WARN"/>
+</configuration>

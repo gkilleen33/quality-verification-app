@@ -1,0 +1,36 @@
+[Unit]
+Description=Kagua API server
+After=network-online.target postgresql.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=kagua
+Group=kagua
+WorkingDirectory=/opt/kagua
+# The launcher fetches secrets from Parameter Store with the AWS CLI already on the
+# box and execs the JVM. Not an EnvironmentFile written by ExecStartPre: systemd reads
+# EnvironmentFile before ExecStartPre runs, so that arrangement silently starts with
+# the previous boot's values, or none at all.
+ExecStart=/opt/kagua/bin/kagua-run
+Restart=on-failure
+RestartSec=5s
+
+# 640MB heap on a 3.7GB box that also runs Postgres with 512MB of shared buffers.
+# Netty's direct buffers live outside the heap, so this is not the whole footprint.
+Environment=JAVA_OPTS=-Xmx640m -XX:MaxDirectMemorySize=256m -XX:+ExitOnOutOfMemoryError
+
+# Anything this process does not need
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+# The photo store, once it exists. Nothing else on the filesystem is writable.
+ReadWritePaths=/var/lib/kagua
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+
+[Install]
+WantedBy=multi-user.target
