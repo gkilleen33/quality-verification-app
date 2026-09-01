@@ -2,14 +2,8 @@ package com.qualityverifier.data.chat
 
 import android.util.Base64
 import android.util.Log
-import com.qualityverifier.data.chat.dto.ApiMessage
-import com.qualityverifier.data.chat.dto.CacheControl
-import com.qualityverifier.data.chat.dto.ContentBlock
 import com.qualityverifier.data.chat.dto.ErrorEnvelope
-import com.qualityverifier.data.chat.dto.ImageSource
-import com.qualityverifier.data.chat.dto.MessagesRequest
 import com.qualityverifier.data.chat.dto.MessagesResponse
-import com.qualityverifier.data.chat.dto.SystemBlock
 import com.qualityverifier.data.keys.ApiKeyStore
 import com.qualityverifier.data.prompts.PromptRepository
 import com.qualityverifier.domain.ChatMessage
@@ -40,7 +34,7 @@ class AnthropicDirectChatService(
     private val promptRepository: PromptRepository,
     private val images: ImageBytesSource,
     private val json: Json,
-    private val baseUrl: String = ANTHROPIC_MESSAGES_URL,
+    private val baseUrl: String = AnthropicRequest.MESSAGES_URL,
     private val io: CoroutineDispatcher = Dispatchers.IO,
     /** Injected so request building can be tested off-device. */
     private val encodeBase64: (ByteArray) -> String = { Base64.encodeToString(it, Base64.NO_WRAP) },
@@ -57,20 +51,13 @@ class AnthropicDirectChatService(
                 "No API key saved. Add your Anthropic API key in Settings.",
             )
 
-        // Two cache breakpoints, well inside the limit of four. The system prompt is
-        // identical for every conversation about this item type, and the message prefix
-        // grows by one exchange per turn -- a walkthrough is a dozen turns carrying
-        // several photos, so re-processing it each time is the dominant cost.
-        val payload = MessagesRequest(
-            model = MODEL,
-            maxTokens = MAX_TOKENS,
-            system = listOf(
-                SystemBlock(
-                    text = promptRepository.systemPromptFor(itemType),
-                    cacheControl = CacheControl.ONE_HOUR,
-                )
-            ),
-            messages = history.toApiMessages().withOpeningTurn().withCacheBreakpointOnLastBlock(),
+        // Assembled by the shared builder, not here: prompt caching is a byte-exact
+        // prefix match, so the phone and the server have to agree down to field order.
+        val payload = AnthropicRequest.build(
+            systemPrompt = promptRepository.systemPromptFor(itemType),
+            history = history,
+            imageBytes = { attachment -> images.bytesForUpload(File(attachment.path)) },
+            encodeBase64 = encodeBase64,
         )
         val body = json.encodeToString(payload)
 
@@ -92,7 +79,7 @@ class AnthropicDirectChatService(
         val request = Request.Builder()
             .url(baseUrl)
             .addHeader("x-api-key", apiKey)
-            .addHeader("anthropic-version", ANTHROPIC_VERSION)
+            .addHeader("anthropic-version", AnthropicRequest.VERSION)
             .post(body.toRequestBody(JSON_MEDIA_TYPE))
             .build()
 
@@ -178,80 +165,8 @@ class AnthropicDirectChatService(
      * them, ahead of the text — the API reads image-then-text more reliably.
      * Turns that end up with no content at all are dropped, since the API rejects them.
      */
-    private fun List<ChatMessage>.toApiMessages(): List<ApiMessage> = mapNotNull { message ->
-        val blocks = buildList {
-            if (message.role == Role.USER) {
-                message.attachments.forEach { attachment ->
-                    val bytes = images.bytesForUpload(File(attachment.path)) ?: return@forEach
-                    add(
-                        ContentBlock.Image(
-                            ImageSource(
-                                mediaType = attachment.mimeType,
-                                data = encodeBase64(bytes),
-                            )
-                        )
-                    )
-                }
-            }
-            if (message.text.isNotBlank()) add(ContentBlock.Text(message.text))
-        }
-        if (blocks.isEmpty()) {
-            null
-        } else {
-            ApiMessage(
-                role = if (message.role == Role.USER) ROLE_USER else "assistant",
-                content = blocks,
-            )
-        }
-    }
-
-    /**
-     * Guarantees the conversation starts with a user turn.
-     *
-     * The item prompts open the conversation themselves — greeting the user and asking
-     * for the first photo — but the API requires `messages[0]` to be a user turn, so
-     * there is nothing to send until the user speaks first. That is why the walkthrough
-     * used to begin only after the user typed something. This supplies the opening turn
-     * so the assistant can lead.
-     *
-     * The text is a fixed constant, so the prefix stays byte-identical across turns and
-     * prompt caching still hits. It is never shown in the transcript.
-     */
-    private fun List<ApiMessage>.withOpeningTurn(): List<ApiMessage> =
-        if (firstOrNull()?.role == ROLE_USER) {
-            this
-        } else {
-            listOf(ApiMessage(ROLE_USER, listOf(ContentBlock.Text(OPENING_TURN)))) + this
-        }
-
-    /**
-     * Puts a cache breakpoint on the final content block, so the next turn reads this
-     * whole conversation back from cache instead of re-processing it.
-     *
-     * A breakpoint searches back at most 20 content blocks for a prior entry. One
-     * exchange here adds at most seven blocks (five photos, a text block, the reply), so
-     * a single rolling breakpoint stays comfortably inside that window.
-     */
-    private fun List<ApiMessage>.withCacheBreakpointOnLastBlock(): List<ApiMessage> {
-        val last = lastOrNull() ?: return this
-        if (last.content.isEmpty()) return this
-        val marked = last.content.toMutableList()
-        marked[marked.lastIndex] = when (val block = marked.last()) {
-            is ContentBlock.Text -> block.copy(cacheControl = CacheControl.ONE_HOUR)
-            is ContentBlock.Image -> block.copy(cacheControl = CacheControl.ONE_HOUR)
-        }
-        return dropLast(1) + last.copy(content = marked)
-    }
-
     companion object {
-        const val ANTHROPIC_MESSAGES_URL = "https://api.anthropic.com/v1/messages"
-        const val ANTHROPIC_VERSION = "2023-06-01"
-        const val MODEL = "claude-sonnet-5"
 
-        /** Opens the conversation so the assistant can lead the walkthrough. */
-        const val OPENING_TURN = "Let's get started."
-        private const val ROLE_USER = "user"
-        const val MAX_TOKENS = 4096
         private const val MAX_RETRIES = 1
         private const val RETRY_DELAY_MILLIS = 1500L
         private const val TAG = "ChatService"
