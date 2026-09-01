@@ -10,7 +10,13 @@ import com.qualityverifier.data.chat.ServerChatService
 import com.qualityverifier.domain.Attachment
 import com.qualityverifier.domain.ChatMessage
 import com.qualityverifier.domain.ItemType
+import com.qualityverifier.domain.AssessmentContext
+import com.qualityverifier.domain.AssessmentDepth
+import com.qualityverifier.domain.AssessmentLanguage
+import com.qualityverifier.domain.Ownership
 import com.qualityverifier.domain.Role
+import com.qualityverifier.domain.SessionStart
+import com.qualityverifier.domain.Usage
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.Json
 import okhttp3.OkHttpClient
@@ -45,6 +51,9 @@ class ServerChatServiceTest {
     @After
     fun tearDown() = server.shutdown()
 
+    /** What startOf() would return. Null by default; set by the tests that care. */
+    private var sessionStart: SessionStart? = null
+
     private fun service(store: TokenStore = FakeStore()): ServerChatService {
         val client = OkHttpClient.Builder()
             .connectTimeout(2, TimeUnit.SECONDS)
@@ -54,6 +63,7 @@ class ServerChatServiceTest {
             client = client,
             tokens = TokenProvider(store, { RefreshOutcome.Renewed("refreshed", 900, "r2", "u") }),
             images = FakeImages,
+            sessionStart = { sessionStart },
             baseUrl = server.url("/").toString(),
             json = Json { ignoreUnknownKeys = true },
         )
@@ -214,6 +224,45 @@ class ServerChatServiceTest {
 
         assertEquals(ChatErrorKind.REQUEST, (result as ChatResult.Failure).kind)
         assertEquals(0, server.requestCount)
+    }
+
+    @Test
+    fun `the session's own metadata travels with the turn`() = runTest {
+        // Without this the server's copy of a session has no link to the assessment it
+        // followed and no record of the intake, which is most of what makes the data
+        // useful for research later.
+        sessionStart = SessionStart(
+            itemType = ItemType.WOODEN_STOOL,
+            previousSessionId = "11111111-2222-3333-4444-555555555555",
+            intake = AssessmentContext(
+                language = AssessmentLanguage.SWAHILI,
+                ownership = Ownership.BUYING,
+                usage = Usage.DAILY,
+                depth = AssessmentDepth.FULL,
+            ),
+        )
+        server.enqueue(json("""{"message_id":"m1","text":"ok"}"""))
+
+        service().send("s1", ItemType.WOODEN_STOOL, history())
+
+        val body = server.takeRequest().body.readUtf8()
+        assertTrue(body, body.contains("11111111-2222-3333-4444-555555555555"))
+        assertTrue(body, body.contains("sw-buying-daily-full"))
+    }
+
+    @Test
+    fun `a session with no metadata still sends a valid turn`() = runTest {
+        // An assessment started from the grid has no previous session, and an intake
+        // handed over to the assistant has no answers to carry. Neither is an error.
+        sessionStart = SessionStart(ItemType.WOODEN_STOOL, null, null)
+        server.enqueue(json("""{"message_id":"m1","text":"ok"}"""))
+
+        val result = service().send("s1", ItemType.WOODEN_STOOL, history())
+
+        assertTrue(result is ChatResult.Success)
+        val body = server.takeRequest().body.readUtf8()
+        assertTrue(body, !body.contains("previous_session_id"))
+        assertTrue(body, !body.contains("intake_answers"))
     }
 
     @Test

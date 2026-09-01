@@ -6,6 +6,8 @@ import com.qualityverifier.domain.Attachment
 import com.qualityverifier.domain.ChatMessage
 import com.qualityverifier.domain.ItemType
 import com.qualityverifier.domain.Role
+import com.qualityverifier.domain.SessionStart
+import com.qualityverifier.text.encodeIntake
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -26,6 +28,12 @@ private data class ChatBody(
     @SerialName("message_id") val messageId: String,
     val text: String,
     val blobs: List<String>,
+    /**
+     * Only used by the server when it first creates the session row, so sending them on
+     * every turn is harmless and means no turn is the special one that has to carry them.
+     */
+    @SerialName("previous_session_id") val previousSessionId: String? = null,
+    @SerialName("intake_answers") val intakeAnswers: String? = null,
 )
 
 @Serializable
@@ -53,6 +61,16 @@ class ServerChatService(
     private val client: OkHttpClient,
     private val tokens: TokenProvider,
     private val images: ImageBytesSource,
+    /**
+     * Reads the session's own metadata — which assessment it followed, and the intake
+     * answers — so the server's copy is not missing them.
+     *
+     * A function rather than the whole SessionRepository: this needs two fields of one
+     * row, and depending on the entire repository would couple two seams together for no
+     * benefit. ChatService.send does not carry them, and changing that signature would
+     * push the problem out to every caller instead.
+     */
+    private val sessionStart: suspend (String) -> SessionStart?,
     private val baseUrl: String,
     private val json: Json,
     private val io: CoroutineDispatcher = Dispatchers.IO,
@@ -89,8 +107,19 @@ class ServerChatService(
             }
         }
 
+        // Looked up rather than passed in: by the time a turn is sent the row exists,
+        // and the caller would otherwise have to thread this through the seam.
+        val start = runCatching { sessionStart(sessionId) }.getOrNull()
         val body = json.encodeToString(
-            ChatBody(sessionId, itemType.id, turn.id, turn.text, hashes)
+            ChatBody(
+                sessionId = sessionId,
+                itemTypeId = itemType.id,
+                messageId = turn.id,
+                text = turn.text,
+                blobs = hashes,
+                previousSessionId = start?.previousSessionId,
+                intakeAnswers = start?.intake?.let(::encodeIntake),
+            )
         )
         // One retry, and only for the two conditions a retry can actually fix: a token
         // that has just been refreshed, or photos the server turned out not to have.
