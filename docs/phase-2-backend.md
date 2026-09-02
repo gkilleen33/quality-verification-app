@@ -264,12 +264,32 @@ Two properties worth knowing rather than rediscovering:
    requires it, and the portal needs them for accuracy review. Stored once, deduped by
    `sha256`.
 2. ~~**Photo retention**~~ — follows the session: 7 days after a customer deletes an
-   assessment, 30 days after they delete the account. **Not yet settled** for assessments
-   nobody deletes, which currently means indefinitely.
+   assessment, 30 days after they delete the account. Settled 1 Sep 2026 for assessments
+   nobody deletes: **retained permanently for now.** They are the research record, and the
+   pilot's whole purpose is judging assessment accuracy against the photographs. Worth
+   revisiting before any non-pilot use, since "permanent" is the one retention answer that
+   cannot be walked back for data already collected.
 3. ~~**Region.**~~ Settled: us-east-1.
 4. ~~**Auth identity.**~~ Settled: invite codes for the pilot. SMS later if needed.
-5. **Per-user quota.** Needed before launch: after Phase 2 every request is billed to us
-   rather than to the tester.
+5. ~~**Per-user quota.**~~ Built 1 Sep 2026. **20 assessments started per account per
+   day**, configurable at runtime via `KAGUA_DAILY_ASSESSMENT_LIMIT`; zero or less disables
+   it, and an unparseable value falls back to 20 rather than uncapping spend.
+
+   - Counted per **calendar day in `Africa/Kampala`** (Uganda and Kenya are both UTC+3), so
+     "resets at midnight" is true for the user rather than for UTC.
+   - Enforced when an assessment **starts**, never mid-assessment. Earlier turns are paid
+     for either way, and refusing somebody halfway is both the costliest moment to stop and
+     the least useful answer to give somebody standing in front of a carpenter.
+   - Refused **before** the request to Claude, which is the entire point — a 429 issued
+     after the vision call would cost the same as allowing it.
+   - Counted inside the same transaction that inserts the session, behind
+     `pg_advisory_xact_lock` on the user id. A limit two concurrent requests can exceed by
+     racing is not a limit.
+   - Deleted assessments still count: the money was spent.
+   - `V7__quota_index.sql` adds `(user_id, created_at DESC)` for the count.
+   - The phone distinguishes this from a transient 429 and says the allowance resets
+     tomorrow rather than "in a moment", taking the number from the server so the two
+     cannot drift.
 
 ## Note on egress
 

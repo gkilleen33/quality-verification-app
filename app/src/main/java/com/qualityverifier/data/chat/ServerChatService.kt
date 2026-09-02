@@ -185,7 +185,7 @@ class ServerChatService(
                         else postTurn(body, turn, hashes, allowRetry = false)
                     }
 
-                    else -> failureFor(response.code)
+                    else -> failureFor(response.code, text)
                 }
             }
         } catch (e: IOException) {
@@ -262,17 +262,27 @@ class ServerChatService(
      * The server's wording never reaches a customer: it is written for an operator and can
      * name a model or a quota. These are written for somebody standing in a shop.
      */
-    private fun failureFor(status: Int): ChatResult = when (status) {
+    private fun failureFor(status: Int, body: String = ""): ChatResult = when (status) {
         401, 403 -> ChatResult.Failure(ChatErrorKind.AUTH, "Please sign in again.")
         404 -> ChatResult.Failure(
             ChatErrorKind.REQUEST,
             "This assessment could not be found on our server.",
         )
         413 -> ChatResult.Failure(ChatErrorKind.REQUEST, "That photo is too large to send.")
-        429 -> ChatResult.Failure(
-            ChatErrorKind.RATE_LIMIT,
-            "Too many requests just now. Please try again in a moment.",
-        )
+        429 -> if (body.contains(DAILY_LIMIT)) {
+            // A different thing from a transient 429, and "try again in a moment" would be
+            // a false statement: the allowance resets at midnight, not in a minute. The
+            // number comes from the server so the two cannot drift apart.
+            ChatResult.Failure(
+                ChatErrorKind.RATE_LIMIT,
+                dailyLimitFrom(body),
+            )
+        } else {
+            ChatResult.Failure(
+                ChatErrorKind.RATE_LIMIT,
+                "Too many requests just now. Please try again in a moment.",
+            )
+        }
         502, 503, 504 -> ChatResult.Failure(
             ChatErrorKind.SERVER,
             "The assistant is busy. Please try again in a moment.",
@@ -284,8 +294,28 @@ class ServerChatService(
         else -> ChatResult.Failure(ChatErrorKind.UNKNOWN, "Something went wrong. Please try again.")
     }
 
+    /**
+     * "limit is 20 per day" — the server's operator wording, turned into something a
+     * customer standing in a workshop can act on. If the number cannot be found the
+     * sentence still works without it, because a message that says nothing is worse than
+     * one missing a digit.
+     */
+    private fun dailyLimitFrom(body: String): String {
+        val limit = Regex("limit is (\\d+) per day").find(body)?.groupValues?.get(1)
+        return if (limit != null) {
+            "You have assessed $limit pieces today, which is the daily limit. " +
+                "You can start again tomorrow."
+        } else {
+            "You have reached the number of assessments allowed today. " +
+                "You can start again tomorrow."
+        }
+    }
+
     private companion object {
         const val TAG = "ServerChatService"
+
+        /** The server's error code for the per-account daily allowance. */
+        const val DAILY_LIMIT = "daily_limit_reached"
         val JSON = "application/json; charset=utf-8".toMediaType()
         val JPEG = "image/jpeg".toMediaType()
 

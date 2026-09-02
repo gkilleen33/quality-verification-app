@@ -13,6 +13,16 @@ sealed interface SessionAccess {
     data class Ok(val created: Boolean) : SessionAccess
     /** The session exists and belongs to somebody else. Answered as a 404, never a 403. */
     data object NotYours : SessionAccess
+
+    /**
+     * This account has started its allowance of assessments for the day.
+     *
+     * Only ever returned for a *new* assessment. An assessment already under way carries
+     * on to the end: the earlier turns have been paid for either way, and cutting somebody
+     * off halfway is both the most expensive moment to stop and the most useless answer to
+     * give somebody standing in a workshop.
+     */
+    data class DailyLimitReached(val limit: Int) : SessionAccess
 }
 
 /** A turn already dealt with, so a retry returns the stored reply instead of paying twice. */
@@ -57,6 +67,8 @@ interface ChatStore {
         previousSessionId: String?,
         intakeAnswers: String?,
         promptSha: String?,
+        /** Assessments allowed per day. Zero or less disables the check. */
+        dailyLimit: Int,
     ): SessionAccess
 
     suspend fun appendUserTurn(
@@ -149,6 +161,7 @@ class PostgresChatStore(private val dataSource: DataSource) : ChatStore {
         previousSessionId: String?,
         intakeAnswers: String?,
         promptSha: String?,
+        dailyLimit: Int,
     ): SessionAccess = tx { connection ->
         val owner = connection.prepareStatement(
             "select user_id::text from sessions where id = ?::uuid"
@@ -157,7 +170,33 @@ class PostgresChatStore(private val dataSource: DataSource) : ChatStore {
             statement.executeQuery().use { rows -> if (rows.next()) rows.getString(1) else null }
         }
         if (owner != null) {
+            // An assessment already under way is never refused, whatever the count says.
             return@tx if (owner == userId) SessionAccess.Ok(created = false) else SessionAccess.NotYours
+        }
+
+        if (dailyLimit > 0) {
+            // Serialise new assessments per user for the rest of this transaction. Without
+            // it, two requests arriving together both read the same count and both insert,
+            // and a limit that can be exceeded by racing is not a limit.
+            connection.prepareStatement("select pg_advisory_xact_lock(hashtext(?))").use {
+                it.setString(1, userId)
+                it.execute()
+            }
+            val startedToday = connection.prepareStatement(
+                """
+                select count(*)::int from sessions
+                where user_id = ?::uuid
+                  and (created_at at time zone 'Africa/Kampala')::date
+                      = (now() at time zone 'Africa/Kampala')::date
+                """.trimIndent()
+            ).use { statement ->
+                statement.setString(1, userId)
+                statement.executeQuery().use { rows -> if (rows.next()) rows.getInt(1) else 0 }
+            }
+            // The customer's own day, not UTC's. Uganda and Kenya are both UTC+3, so one
+            // zone covers everybody; on UTC the allowance would reset at 3am local, which
+            // is defensible but makes "resets at midnight" untrue.
+            if (startedToday >= dailyLimit) return@tx SessionAccess.DailyLimitReached(dailyLimit)
         }
 
         connection.prepareStatement(

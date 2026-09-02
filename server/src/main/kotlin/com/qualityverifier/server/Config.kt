@@ -21,8 +21,22 @@ data class Config(
     /** Photos and the prompt cache live here. The only writable path in the unit. */
     val dataDirectory: String,
     val promptBaseUrl: String,
+    /**
+     * Assessments one account may start per day, in East African time.
+     *
+     * Phase 2 moved the bill from the tester's own API key to ours, so an account in a
+     * loop is now our invoice rather than their problem. Zero or less means no limit,
+     * which is a deliberate escape hatch for a demo rather than a default.
+     */
+    val dailyAssessmentLimit: Int,
 ) {
     companion object {
+        /**
+         * Twenty. Comfortable for a full day of fieldwork in a workshop, while bounding
+         * what a runaway client can spend before somebody notices.
+         */
+        const val DEFAULT_DAILY_ASSESSMENT_LIMIT = 20
+
         fun fromEnvironment(env: (String) -> String? = System::getenv): Config {
             val password = env("KAGUA_DB_PASSWORD")
             return Config(
@@ -49,6 +63,11 @@ data class Config(
                 // to main rather than by shipping anything.
                 promptBaseUrl = env("KAGUA_PROMPT_BASE_URL")
                     ?: "https://raw.githubusercontent.com/gkilleen33/quality-verification-app/main/prompts/",
+                // Counted per calendar day rather than as a rolling window, so the answer
+                // to "when can I carry on" is "tomorrow" rather than a timestamp a user
+                // has to work out.
+                dailyAssessmentLimit = env("KAGUA_DAILY_ASSESSMENT_LIMIT")?.toIntOrNull()
+                    ?: DEFAULT_DAILY_ASSESSMENT_LIMIT,
             )
         }
     }

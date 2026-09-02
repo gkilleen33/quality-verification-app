@@ -86,6 +86,7 @@ fun main() {
                 apiKey = { config.anthropicApiKey },
             ),
             prompts = prompts,
+            dailyAssessmentLimit = config.dailyAssessmentLimit,
         )
     } else {
         log.warn("Chat is disabled: needs a database and KAGUA_ANTHROPIC_API_KEY.")
@@ -93,6 +94,11 @@ fun main() {
     }
 
     log.info("Kagua server {} starting on {}:{}", config.version, config.host, config.port)
+    if (config.dailyAssessmentLimit > 0) {
+        log.info("Daily assessment limit: {} per account", config.dailyAssessmentLimit)
+    } else {
+        log.warn("Daily assessment limit is DISABLED; every request is billed to us")
+    }
 
     Runtime.getRuntime().addShutdownHook(Thread { database?.close() })
 
@@ -109,6 +115,8 @@ class Chat(
     val blobs: BlobStore,
     val claude: ClaudeClient,
     val prompts: PromptRepository,
+    /** Assessments one account may start per day. Zero or less means no limit. */
+    val dailyAssessmentLimit: Int = Config.DEFAULT_DAILY_ASSESSMENT_LIMIT,
 )
 
 @Serializable
@@ -166,7 +174,7 @@ fun Application.module(
         // Chat needs auth: every route inside it authenticates, and mounting them
         // without the plugin installed would fail at request time rather than here.
         if (auth != null) chat?.let {
-            chatRoutes(it.store, it.blobs, it.claude, it.prompts)
+            chatRoutes(it.store, it.blobs, it.claude, it.prompts, it.dailyAssessmentLimit)
             // Reading assessments back, plus the two account actions. Needs both halves:
             // the chat store for sessions and the auth store for credentials.
             syncRoutes(it.store, auth.store, it.blobs)

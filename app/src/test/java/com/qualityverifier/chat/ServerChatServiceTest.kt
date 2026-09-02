@@ -215,6 +215,52 @@ class ServerChatServiceTest {
     }
 
     @Test
+    fun `the daily limit says tomorrow, not in a moment`() = runTest {
+        // Both are 429. Telling somebody who is out of assessments for the day to "try
+        // again in a moment" sends them back into a workshop to tap retry until they give
+        // up, so the two cases must not share a message.
+        server.enqueue(
+            MockResponse().setResponseCode(429)
+                .setBody("""{"error":"daily_limit_reached","detail":"limit is 20 per day"}"""),
+        )
+
+        val result = service().send("s1", ItemType.WOODEN_STOOL, history())
+
+        val message = (result as ChatResult.Failure).message
+        assertEquals(ChatErrorKind.RATE_LIMIT, result.kind)
+        assertTrue(message, message.contains("20"))
+        assertTrue(message, message.contains("tomorrow"))
+        assertTrue("must not suggest retrying now", !message.contains("in a moment"))
+    }
+
+    @Test
+    fun `a transient 429 still says try again shortly`() = runTest {
+        server.enqueue(MockResponse().setResponseCode(429).setBody("""{"error":"rate_limited"}"""))
+
+        val result = service().send("s1", ItemType.WOODEN_STOOL, history())
+
+        val message = (result as ChatResult.Failure).message
+        assertTrue(message, message.contains("moment"))
+        assertTrue("must not claim a daily limit", !message.contains("tomorrow"))
+    }
+
+    @Test
+    fun `a daily limit with no number still reads as a sentence`() = runTest {
+        // The wording is parsed out of an operator-facing detail string, so it can change
+        // on the server without this app being rebuilt. Losing the digit must not lose
+        // the message.
+        server.enqueue(
+            MockResponse().setResponseCode(429).setBody("""{"error":"daily_limit_reached"}"""),
+        )
+
+        val message = (service().send("s1", ItemType.WOODEN_STOOL, history())
+            as ChatResult.Failure).message
+
+        assertTrue(message, message.contains("tomorrow"))
+        assertTrue(message, message.isNotBlank())
+    }
+
+    @Test
     fun `statuses map to something a person can act on`() = runTest {
         val cases = mapOf(
             429 to ChatErrorKind.RATE_LIMIT,

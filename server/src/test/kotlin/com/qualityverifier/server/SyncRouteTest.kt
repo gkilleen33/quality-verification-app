@@ -301,6 +301,7 @@ class SyncRouteTest {
         override suspend fun ensureSession(
             sessionId: String, userId: String, itemTypeId: String,
             previousSessionId: String?, intakeAnswers: String?, promptSha: String?,
+            dailyLimit: Int,
         ) = SessionAccess.Ok(created = true)
 
         override suspend fun appendUserTurn(
