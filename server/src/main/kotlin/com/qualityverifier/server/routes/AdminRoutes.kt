@@ -19,6 +19,7 @@ import com.qualityverifier.server.blobs.BlobStore
 import io.ktor.http.ContentType
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.Parameters
+import io.ktor.server.application.createRouteScopedPlugin
 import io.ktor.server.html.respondHtml
 import io.ktor.server.request.receiveParameters
 import io.ktor.server.response.respond
@@ -47,6 +48,41 @@ import java.util.Base64
 
 private val log = LoggerFactory.getLogger("com.qualityverifier.server.admin")
 
+
+/**
+ * Headers on every admin response.
+ *
+ * A route-scoped plugin rather than a line in each handler: there are twenty routes under
+ * /admin and the one that forgot would be the one serving photographs.
+ *
+ * `no-store` because these pages hold customer photographs and a CSRF token. The default is
+ * a browser that keeps them on disk and re-shows them from the back button after sign-out,
+ * which is the one moment somebody expects them gone.
+ *
+ * The CSP is worth having precisely because this portal renders text a customer typed. There
+ * is no JavaScript on any of these pages, so `script-src` resolving to 'none' via
+ * `default-src` costs nothing and means an escaping mistake stays a rendering bug instead of
+ * becoming account takeover. `style-src 'unsafe-inline'` is needed for the one inline
+ * stylesheet, and inline CSS cannot exfiltrate a session cookie.
+ */
+private val AdminSecurityHeaders = createRouteScopedPlugin("AdminSecurityHeaders") {
+    onCall { call ->
+        val headers = call.response.headers
+        headers.append("Cache-Control", "no-store, no-cache, must-revalidate")
+        headers.append("Pragma", "no-cache")
+        headers.append("X-Content-Type-Options", "nosniff")
+        headers.append("X-Frame-Options", "DENY")
+        // No referrer at all: a URL here can name a session id, and there is nowhere these
+        // pages need to send one.
+        headers.append("Referrer-Policy", "no-referrer")
+        headers.append(
+            "Content-Security-Policy",
+            "default-src 'none'; img-src 'self'; style-src 'unsafe-inline'; " +
+                "form-action 'self'; base-uri 'none'; frame-ancestors 'none'",
+        )
+    }
+}
+
 /** Five attempts, then fifteen minutes. Tighter than the customer path: there are three of them. */
 private const val MAX_FAILURES = 5
 private val LOCKOUT = Duration.ofMinutes(15)
@@ -69,6 +105,8 @@ private const val PAGE_SIZE = 50
 fun Route.adminRoutes(store: AdminStore, blobs: BlobStore) {
 
     route("/admin") {
+
+        install(AdminSecurityHeaders)
 
         // ------------------------------------------------------------- sign in
 

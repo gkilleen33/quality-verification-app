@@ -209,6 +209,27 @@ class AdminRouteTest {
         assertTrue("it should be visible as text", body.contains("&lt;script&gt;"))
     }
 
+    @Test
+    fun `admin responses are not cached and run no scripts`() = testApplication {
+        // The back button after sign-out is the one moment somebody expects customer
+        // photographs to be gone, and it is a browser cache decision rather than ours.
+        val app = withAdmin(FakeAdminStore())
+        app.signIn()
+
+        for (path in listOf("/admin", "/admin/assessments/$SESSION_ID", "/admin/login")) {
+            val headers = app.get(path).headers
+            assertTrue("$path must not be stored", headers["Cache-Control"]!!.contains("no-store"))
+            assertEquals("$path", "no-referrer", headers["Referrer-Policy"])
+            assertEquals("$path", "nosniff", headers["X-Content-Type-Options"])
+            val csp = headers["Content-Security-Policy"]!!
+            // No JavaScript anywhere on these pages, so an escaping mistake should stay a
+            // rendering bug rather than becoming account takeover.
+            assertTrue("$path: $csp", csp.contains("default-src 'none'"))
+            assertTrue("$path: $csp", csp.contains("form-action 'self'"))
+            assertTrue("$path: $csp", csp.contains("frame-ancestors 'none'"))
+        }
+    }
+
     // ------------------------------------------------------------------ CSRF
 
     @Test
