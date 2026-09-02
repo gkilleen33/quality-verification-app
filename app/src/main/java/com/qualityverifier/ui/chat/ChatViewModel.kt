@@ -106,12 +106,15 @@ class ChatViewModel(
     private val sessions: SessionRepository,
     private val chat: ChatService,
     /**
-     * True when this account is one of our evaluators.
+     * Whether this account is one of our evaluators, read at the moment it is needed.
      *
-     * Passed in rather than read from a store here, so the questionnaire can be driven in
-     * a test without a signed-in account.
+     * A function rather than a value because the answer can change while this object is
+     * alive: an account promoted in the portal, or — the case that actually bit — one that
+     * registered seconds ago, before the phone had asked. Capturing it at construction
+     * meant a brand-new evaluator finished their first assessment and was never asked for
+     * the review it existed to produce.
      */
-    private val isTester: Boolean = false,
+    private val isTester: () -> Boolean = { false },
     private val images: SessionImageStore,
     /**
      * Where file work happens. Injected so that tests can drive it with the same
@@ -275,10 +278,15 @@ class ChatViewModel(
             if (_carryForward.value == null) _carryForward.value = start?.intake
             previousSessionId = previousSessionId ?: start?.previousSessionId
             _needsIntake.value = sessions.messagesOnce(sessionId).isEmpty()
-            // Only for an evaluator, and only if they have not already answered. The
-            // screen decides *when* to offer it, from whether a verdict exists.
-            _reviewDue.value = isTester && !sessions.hasPendingTesterFeedback(sessionId)
             loadPreviousVerdict()
+        }
+        // Recomputed on every change rather than once at startup, so a flag that arrived
+        // late still opens the questionnaire. The screen decides *when* to offer it, from
+        // whether a verdict exists; this decides only whether there is one to offer.
+        viewModelScope.launch {
+            messages.collect {
+                _reviewDue.value = isTester() && !sessions.hasPendingTesterFeedback(sessionId)
+            }
         }
         // A plan in the newest assistant turn opens a run. Watching the message list
         // rather than the send path means a conversation reopened from history picks up
@@ -721,7 +729,7 @@ class ChatViewModel(
                     sessions = container.sessionRepository,
                     chat = container.chatService,
                     images = container.images,
-                    isTester = container.isTester,
+                    isTester = { container.isTester },
                 )
             }
         }

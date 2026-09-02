@@ -19,6 +19,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.resetMain
@@ -146,6 +147,36 @@ class TesterReviewTest {
         assertFalse(model.reviewing.value)
     }
 
+    @Test
+    fun `a flag that arrives after the assessment started still opens the questionnaire`() =
+        runTest {
+            // The bug that shipped. The flag was captured at construction, and it is
+            // fetched on sign-in — so somebody who registered with an evaluator code and
+            // went straight into an assessment finished it with the phone still believing
+            // they were a customer, and was never asked for the review.
+            var tester = false
+            val sessions = FakeSessions(finished())
+            val model = ChatViewModel(
+                sessionId = "s1",
+                declaredItemType = ItemType.WOODEN_TABLE,
+                sessions = sessions,
+                chat = NoChat,
+                images = FakeImages(),
+                isTester = { tester },
+                io = dispatcher,
+            )
+            backgroundScope.launch { model.reviewDue.collect { } }
+            advanceUntilIdle()
+            assertFalse("not an evaluator yet", model.reviewDue.value)
+
+            tester = true
+            // Any change to the conversation re-asks. A verdict landing is one.
+            sessions.appendAssistantMessage("s1", "A verdict, in prose.")
+            advanceUntilIdle()
+
+            assertTrue("the questionnaire must open once the flag is known", model.reviewDue.value)
+        }
+
     // ---------------------------------------------------------------- harness
 
     private fun finished() = listOf(
@@ -159,7 +190,7 @@ class TesterReviewTest {
         sessions = sessions,
         chat = NoChat,
         images = FakeImages(),
-        isTester = isTester,
+        isTester = { isTester },
         io = dispatcher,
     )
 
