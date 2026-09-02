@@ -372,6 +372,30 @@ that secret has been accepted, so an abandoned enrolment leaves no usable accoun
 - An assessment **already under way** returned 200 with a real reply while the account was
   at its limit.
 
+## Read-only data API (built 2 Sep 2026)
+
+Routes under `/api/v1`, key-authenticated, mounted alongside the portal because it manages
+the keys — a credential with no page to revoke it from is one nobody can take back. Full
+reference in `docs/data-api.md`.
+
+It returns **everything**: identifiers, locations and photographs. That was the choice, so
+the security follows from it rather than from habit. A key reads the whole corpus with one
+string and no second factor, which makes it a higher-value credential than an admin
+password, so: hashed at rest, shown once, revoked per request rather than per session,
+audited on every call with the key's id and the path, `no-store` on every response, and rate
+limited on the key rather than the address.
+
+**Read-only structurally, not by check** — only `get` is mounted, so a leaked key cannot
+alter anything even if a future route forgets to think about it.
+
+Its DTOs and its queries are its own rather than the portal's. A published dataset should
+not change shape because somebody rearranged an admin page, and it needs fields the portal
+does not show, like the location point.
+
+`GET /api/v1/photos/{sha}` checks `attachments` before touching the disk. Content-addressed
+storage means the path parameter becomes a filename, so "any 64 hex characters" would
+otherwise be a request for any file on the volume.
+
 ## Applying migrations
 
 **Use `server/db/apply.sh`.** It runs every migration as the `kagua` role, keeps
@@ -431,6 +455,58 @@ Two properties worth knowing rather than rediscovering:
    pilot's whole purpose is judging assessment accuracy against the photographs. Worth
    revisiting before any non-pilot use, since "permanent" is the one retention answer that
    cannot be walked back for data already collected.
+2b. **Photo files on disk** — swept, added 2 Sep 2026. `purge_expired()` is SQL and cannot
+   touch the filesystem, so until this the retention windows deleted the record of a
+   photograph and kept the photograph: the delete dialog's "then it is deleted for good"
+   was true of the conversation and false of the pictures, and the bytes stayed reachable
+   by anything with disk access or an EBS snapshot.
+
+   `BlobSweeper` runs in the server process — it needs the database *and* write access to
+   the blob volume, and `kagua-purge.service` deliberately has neither, running as
+   `postgres` over peer authentication so a daily timer holds no secret. It deletes files
+   no live `attachments` row points at, **globally rather than per session**: blobs are
+   deduplicated by hash, so two customers who photograph the same thing share one file and
+   a per-session check would take a photo somebody still has.
+
+   A **seven-day grace period** on file mtime protects photos uploaded before the turn that
+   references them — legitimately unreferenced until the customer submits, and until the
+   next day if that submission failed and they retry.
+
+   Sweeping rather than tracking is deliberate. A `deleted_blobs` table would reproduce the
+   original bug in a new form: one missed write and the file is invisible for ever. An
+   orphan left by a crash is found on the next run.
+
+   **Known tail:** the sweep is daily, so deletion completes within about 24 hours of the
+   window expiring rather than on the hour. The wording says 7 days, which is when the
+   window ends; worth tightening the interval if that ever needs to be exact.
+
+2c. **Account deletion anonymises rather than erases** — changed 2 Sep 2026, and switched
+   on. No IRB submission had been made, so the choice was between promising full deletion
+   now and retracting it once the pilot data turned out to matter, or saying from the start
+   that data may be kept and that deleting an account removes the identifiers. The second is
+   the honest order; withdrawing a deletion right after people have relied on it is the
+   version that is hard to explain afterwards.
+
+   `anonymise_user(uuid)` nulls phone, password, name, business name, the location point and
+   the invite label, sets `anonymised_at`, and drops every refresh token — in one
+   transaction, immediately, with **no mapping table anywhere**. The `users` row survives so
+   `sessions.user_id` resolves, and its random uuid is the anonymous identifier the research
+   uses. `purge_deleted_accounts` is left defined but no longer called, which makes the
+   revert a one-line change.
+
+   **It does not make the record anonymous, and nothing user-facing claims it does.**
+   Photographs show workshop signage and premises; free text may name a person. The wording
+   at registration and at deletion says we remove what we hold about them, and asks them not
+   to put personal details in the conversation. Keeping that distinction is the whole legal
+   question — pseudonymised data is still personal data.
+
+   Reverting: `docs/reverting-to-full-deletion.md`.
+
+   **Closed 2 Sep 2026:** deleting a report now asks which is meant — keep our copy
+   (recommended, and the phone records the id so a sync does not fetch it back) or delete it
+   from the server too, which is the original 7-day erasure. The window is stated only on
+   the option it applies to.
+
 3. ~~**Region.**~~ Settled: us-east-1.
 4. ~~**Auth identity.**~~ Settled: invite codes for the pilot. SMS later if needed.
 5. ~~**Per-user quota.**~~ Built 1 Sep 2026. **20 assessments started per account per

@@ -42,3 +42,20 @@ data class ChangePasswordRequest(
     @SerialName("current_password") val currentPassword: String = "",
     @SerialName("new_password") val newPassword: String = "",
 )
+
+/**
+ * An evaluator's critique of one assessment.
+ *
+ * Defaults on everything so a malformed body is a validation failure with a message rather
+ * than a deserialisation exception with none — the same reasoning as the other DTOs here.
+ */
+@Serializable
+data class TesterFeedbackRequest(
+    @SerialName("session_id") val sessionId: String = "",
+    /** "yes" | "no" | "unsure" */
+    val mistakes: String = "",
+    @SerialName("mistakes_detail") val mistakesDetail: String? = null,
+    @SerialName("advice_stars") val adviceStars: Int = 0,
+    @SerialName("item_quality") val itemQuality: Int = 0,
+    @SerialName("extra_feedback") val extraFeedback: String? = null,
+)

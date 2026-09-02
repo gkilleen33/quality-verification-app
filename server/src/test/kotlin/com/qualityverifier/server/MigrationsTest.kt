@@ -18,8 +18,14 @@ class MigrationsTest {
 
     private val files: List<File> =
         File("db/migrations").listFiles { f -> f.name.endsWith(".sql") }
-            ?.sortedBy { it.name }
+            // By version number, not by name. Sorting lexicographically puts V10 before V2,
+            // which is what this test did until there were ten migrations. apply.sh uses
+            // `sort -V` and has always been right; the test was the thing that was wrong.
+            ?.sortedBy { versionOf(it) }
             ?: error("no migrations found; expected server/db/migrations relative to the module")
+
+    private fun versionOf(file: File): Int =
+        file.name.substringAfter("V").substringBefore("__").toInt()
 
     @Test
     fun `there are migrations to check`() {
@@ -60,7 +66,6 @@ class MigrationsTest {
     fun `versions are sequential with no gaps or repeats`() {
         // A gap usually means a file was renamed and the old version is still recorded in
         // schema_migrations on a deployed box, which makes the two disagree silently.
-        val numbers = files.map { it.name.substringAfter("V").substringBefore("__").toInt() }
-        assertEquals((1..files.size).toList(), numbers)
+        assertEquals((1..files.size).toList(), files.map(::versionOf))
     }
 }

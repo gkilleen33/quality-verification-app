@@ -26,6 +26,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RadioButton
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -213,6 +214,23 @@ fun RegisterScreen(onRegistered: () -> Unit, onSignIn: () -> Unit) {
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
+        }
+
+        Spacer(Modifier.height(20.dp))
+        // Above the button that creates the account, not tucked into a settings screen
+        // afterwards. Somebody who learns at the moment they try to leave that the data
+        // stays has not been given a choice — they have been told a fact.
+        Surface(
+            color = MaterialTheme.colorScheme.surfaceVariant,
+            shape = MaterialTheme.shapes.medium,
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Text(
+                labels.dataRetentionNotice,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(12.dp),
+            )
         }
 
         error?.let { message ->

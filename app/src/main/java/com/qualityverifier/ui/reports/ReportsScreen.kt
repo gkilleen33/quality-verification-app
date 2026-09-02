@@ -22,6 +22,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -101,17 +102,39 @@ fun ReportsScreen(
         AlertDialog(
             onDismissRequest = { pendingDelete = null },
             title = { Text(labels.deleteReportTitle) },
-            // Says what we actually do, not just the half the customer can see. Before
-            // Phase 2 "removed from this phone" was the whole truth; now the server keeps
-            // a copy for a week, and a dialog that omitted that would be a false
-            // statement about somebody's photographs.
-            text = { Text(labels.deleteReportBody) },
-            confirmButton = {
-                TextButton(onClick = {
-                    viewModel.delete(session.id)
-                    pendingDelete = null
-                }) { Text(labels.delete) }
+            // Two choices rather than one, because the two do different things to somebody
+            // else's photographs. Says what we actually do in each case: before Phase 2
+            // "removed from this phone" was the whole truth, and a dialog that still
+            // implied it would be a false statement.
+            text = {
+                Column {
+                    Text(labels.deleteReportBody)
+                    Spacer(Modifier.height(16.dp))
+                    // Both options are full-width buttons in the body, not a confirm/dismiss
+                    // pair. One is recommended; that should not make the other harder to
+                    // find, and a dialog whose real choice hides in the button row is how
+                    // people end up picking the one we wanted rather than the one they did.
+                    DeleteChoice(
+                        label = labels.deleteReportKeepLabel,
+                        detail = labels.deleteReportKeepDetail,
+                        onClick = {
+                            viewModel.delete(session.id, alsoFromServer = false)
+                            pendingDelete = null
+                        },
+                    )
+                    Spacer(Modifier.height(12.dp))
+                    DeleteChoice(
+                        label = labels.deleteReportPurgeLabel,
+                        detail = labels.deleteReportPurgeDetail,
+                        onClick = {
+                            viewModel.delete(session.id, alsoFromServer = true)
+                            pendingDelete = null
+                        },
+                    )
+                }
             },
+            // No confirm button: there is nothing left to confirm once a choice is a tap.
+            confirmButton = {},
             dismissButton = {
                 TextButton(onClick = { pendingDelete = null }) { Text(labels.cancel) }
             },
@@ -182,5 +205,30 @@ fun VerdictBadge(level: VerdictLevel, labels: ReportLabels) {
             fontWeight = FontWeight.Bold,
             modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
         )
+    }
+}
+
+/**
+ * One of the two ways to delete a report.
+ *
+ * Outlined rather than filled, and identical for both, so neither is visually louder than
+ * the other. The recommendation is in the words, where somebody can read the reason for it.
+ */
+@Composable
+private fun DeleteChoice(label: String, detail: String, onClick: () -> Unit) {
+    OutlinedButton(
+        onClick = onClick,
+        modifier = Modifier.fillMaxWidth(),
+        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
+    ) {
+        Column(Modifier.fillMaxWidth()) {
+            Text(label, style = MaterialTheme.typography.labelLarge)
+            Spacer(Modifier.height(2.dp))
+            Text(
+                detail,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
     }
 }

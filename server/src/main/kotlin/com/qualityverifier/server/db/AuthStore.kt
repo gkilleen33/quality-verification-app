@@ -15,6 +15,8 @@ data class UserRow(
     val accountType: String?,
     val businessName: String?,
     val disabled: Boolean,
+    /** One of our own evaluators, not a buyer. Drives the exit questionnaire and the cap. */
+    val isTester: Boolean = false,
 )
 
 /** What registration was given. Validated before it reaches here. */
@@ -89,8 +91,17 @@ interface AuthStore {
     suspend fun setPasswordHash(userId: String, passwordHash: String)
 
     /**
-     * Marks the account deleted. Everything of theirs goes at the retention window; the
-     * flag is what starts the clock, and revoking their tokens is what makes it stick.
+     * Closes an account by stripping everything identifying from it, irreversibly.
+     *
+     * Not an erasure. The assessments stay, keyed on a random uuid that was never derived
+     * from anything about the person, because the pilot's whole purpose is judging those
+     * assessments and deleting them destroys the record. What goes is the profile: phone,
+     * password, name, business name, the location point, and the invite label that often
+     * names them. Every device is signed out in the same transaction.
+     *
+     * It does **not** make the record anonymous, and the app's wording does not claim it
+     * does. Photographs show identifiable premises and free text may name a person, and
+     * nothing here can reach inside either.
      */
     suspend fun markAccountDeleted(userId: String)
 }
@@ -125,13 +136,15 @@ class PostgresAuthStore(private val dataSource: DataSource) : AuthStore {
      * same moment would both pass that check. The constraint cannot be raced.
      */
     override suspend fun register(registration: Registration): RegisterOutcome = tx { connection ->
-        val usable = connection.prepareStatement(
-            "select 1 from invite_codes where code = ? and revoked_at is null"
+        // The grant comes with the code, read in the same transaction that redeems it. A
+        // customer cannot ask to be an evaluator, and an evaluator should not have to
+        // remember to tick anything at registration.
+        val grantsTester = connection.prepareStatement(
+            "select grants_tester from invite_codes where code = ? and revoked_at is null"
         ).use { statement ->
             statement.setString(1, registration.inviteCode)
-            statement.executeQuery().use { it.next() }
-        }
-        if (!usable) return@tx RegisterOutcome.InviteUnusable
+            statement.executeQuery().use { if (it.next()) it.getBoolean(1) else null }
+        } ?: return@tx RegisterOutcome.InviteUnusable
 
         // No CASE around the point: ST_MakePoint(NULL, NULL) is already NULL, and
         // `? is null` gives Postgres no type to infer, which fails at prepare time
@@ -140,8 +153,8 @@ class PostgresAuthStore(private val dataSource: DataSource) : AuthStore {
             insert into users (
                 invite_code, display_name, account_type, business_name,
                 business_location, business_location_accuracy_m, business_location_at,
-                phone, password_hash, password_set_at
-            ) values (?, ?, ?, ?, ST_SetSRID(ST_MakePoint(?, ?), 4326)::geography, ?, ?, ?, ?, now())
+                phone, password_hash, password_set_at, is_tester
+            ) values (?, ?, ?, ?, ST_SetSRID(ST_MakePoint(?, ?), 4326)::geography, ?, ?, ?, ?, now(), ?)
             returning id::text
         """.trimIndent()
 
@@ -168,6 +181,7 @@ class PostgresAuthStore(private val dataSource: DataSource) : AuthStore {
                 }
                 statement.setString(9, registration.phone)
                 statement.setString(10, registration.passwordHash)
+                statement.setBoolean(11, grantsTester)
                 statement.executeQuery().use { rows ->
                     rows.next()
                     RegisterOutcome.Created(rows.getString(1))
@@ -200,7 +214,8 @@ class PostgresAuthStore(private val dataSource: DataSource) : AuthStore {
             connection.prepareStatement(
                 """
                 select id::text, display_name, account_type, business_name,
-                       (disabled_at is not null or deleted_at is not null) as gone
+                       (disabled_at is not null or deleted_at is not null) as gone,
+                       is_tester
                 from users where id = ?::uuid
                 """.trimIndent()
             ).use { statement ->
@@ -212,6 +227,7 @@ class PostgresAuthStore(private val dataSource: DataSource) : AuthStore {
                         accountType = rows.getString(3),
                         businessName = rows.getString(4),
                         disabled = rows.getBoolean(5),
+                        isTester = rows.getBoolean(6),
                     )
                 }
             }
@@ -371,15 +387,15 @@ class PostgresAuthStore(private val dataSource: DataSource) : AuthStore {
         }
 
     override suspend fun markAccountDeleted(userId: String) = tx { connection ->
-        connection.prepareStatement(
-            "update users set deleted_at = now() where id = ?::uuid and deleted_at is null"
-        ).use { statement ->
-            statement.setString(1, userId)
-            statement.executeUpdate()
-        }
-        // In the same transaction: an account marked deleted whose tokens still work is
-        // an account that is not deleted.
-        connection.prepareStatement("select revoke_refresh_chain(?::uuid)").use { statement ->
+        // anonymise_user does the work, and does it in SQL rather than here on purpose:
+        // which columns count as identifying is a policy statement, and one edited in a
+        // migration can be reviewed in a diff. It also marks deleted_at and drops every
+        // refresh token, so there is nothing to do afterwards.
+        //
+        // Irreversible and immediate. There is no grace period to undo it in, which is
+        // the price of the promise being unambiguous — see docs/reverting-to-full-deletion.md
+        // for the reasoning and for how to go back to erasure.
+        connection.prepareStatement("select anonymise_user(?::uuid)").use { statement ->
             statement.setString(1, userId)
             statement.executeQuery().use { it.next() }
         }

@@ -62,9 +62,26 @@ class ReportsViewModel(
      * server is told through a pending record that survives being offline, so the
      * retention window we promise starts even when the delete happened on a bus.
      */
-    fun delete(sessionId: String) {
+    /**
+     * Removes a report from this phone, and optionally from the server.
+     *
+     * The choice is the customer's and is made in the dialog. Both paths delete locally
+     * first and unconditionally: somebody who tapped delete must see it gone whether or not
+     * they have signal.
+     *
+     * [alsoFromServer] false records only that this phone dropped it, so the next sync does
+     * not fetch it back. True records a pending remote delete, which outlives the local row
+     * and is retried until the server confirms — so a deletion made on a bus still reaches
+     * us, and the seven days we promise start from when they asked rather than from when
+     * they next had signal.
+     */
+    fun delete(sessionId: String, alsoFromServer: Boolean) {
         viewModelScope.launch {
-            repository.recordPendingRemoteDelete(sessionId)
+            if (alsoFromServer) {
+                repository.recordPendingRemoteDelete(sessionId)
+            } else {
+                repository.dismissLocally(sessionId)
+            }
             repository.deleteSession(sessionId)
             sync.run()
         }

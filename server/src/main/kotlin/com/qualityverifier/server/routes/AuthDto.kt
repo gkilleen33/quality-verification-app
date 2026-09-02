@@ -47,6 +47,14 @@ data class MeResponse(
     val name: String?,
     @SerialName("account_type") val accountType: String?,
     @SerialName("business_name") val businessName: String?,
+    /**
+     * True for one of our own evaluators.
+     *
+     * On /v1/me rather than in the token response: the phone asks once after signing in
+     * and caches it, and putting it in a JWT would mean a tester promoted from the portal
+     * kept the old answer until their token expired.
+     */
+    @SerialName("is_tester") val isTester: Boolean = false,
 )
 
 @Serializable

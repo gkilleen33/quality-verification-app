@@ -67,8 +67,10 @@ interface ChatStore {
         previousSessionId: String?,
         intakeAnswers: String?,
         promptSha: String?,
-        /** Assessments allowed per day. Zero or less disables the check. */
+        /** Assessments allowed per day for a customer. Zero or less disables the check. */
         dailyLimit: Int,
+        /** The higher allowance for one of our own evaluators. */
+        testerDailyLimit: Int,
     ): SessionAccess
 
     suspend fun appendUserTurn(
@@ -162,6 +164,7 @@ class PostgresChatStore(private val dataSource: DataSource) : ChatStore {
         intakeAnswers: String?,
         promptSha: String?,
         dailyLimit: Int,
+        testerDailyLimit: Int,
     ): SessionAccess = tx { connection ->
         val owner = connection.prepareStatement(
             "select user_id::text from sessions where id = ?::uuid"
@@ -174,7 +177,18 @@ class PostgresChatStore(private val dataSource: DataSource) : ChatStore {
             return@tx if (owner == userId) SessionAccess.Ok(created = false) else SessionAccess.NotYours
         }
 
-        if (dailyLimit > 0) {
+        // Read inside the transaction rather than passed in by the route: the route holds a
+        // token, not a profile, and fetching it separately would be a second round trip on
+        // the path every assessment takes.
+        val isTester = connection.prepareStatement(
+            "select is_tester from users where id = ?::uuid"
+        ).use { statement ->
+            statement.setString(1, userId)
+            statement.executeQuery().use { if (it.next()) it.getBoolean(1) else false }
+        }
+        val limit = if (isTester) testerDailyLimit else dailyLimit
+
+        if (limit > 0) {
             // Serialise new assessments per user for the rest of this transaction. Without
             // it, two requests arriving together both read the same count and both insert,
             // and a limit that can be exceeded by racing is not a limit.
@@ -196,7 +210,7 @@ class PostgresChatStore(private val dataSource: DataSource) : ChatStore {
             // The customer's own day, not UTC's. Uganda and Kenya are both UTC+3, so one
             // zone covers everybody; on UTC the allowance would reset at 3am local, which
             // is defensible but makes "resets at midnight" untrue.
-            if (startedToday >= dailyLimit) return@tx SessionAccess.DailyLimitReached(dailyLimit)
+            if (startedToday >= limit) return@tx SessionAccess.DailyLimitReached(limit)
         }
 
         connection.prepareStatement(

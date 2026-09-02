@@ -2,6 +2,7 @@ package com.qualityverifier.data.sync
 
 import android.util.Log
 import com.qualityverifier.data.db.SessionImageStore
+import com.qualityverifier.data.auth.TokenStore
 import com.qualityverifier.data.session.SessionRepository
 import com.qualityverifier.data.session.SyncedMessage
 import com.qualityverifier.data.session.SyncedSession
@@ -27,16 +28,26 @@ class AssessmentSync(
     private val client: SyncClient,
     private val sessions: SessionRepository,
     private val images: SessionImageStore,
+    /** Holds the cached evaluator flag, refreshed on every run. */
+    private val tokens: TokenStore,
     private val io: CoroutineDispatcher = Dispatchers.IO,
 ) {
 
-    data class Result(val fetched: Int, val deletesFlushed: Int, val reachedServer: Boolean)
+    data class Result(
+        val fetched: Int,
+        val deletesFlushed: Int,
+        val reachedServer: Boolean,
+        /** Evaluator reviews that reached the server, or were refused as unusable. */
+        val reviews: Int = 0,
+    )
 
     /**
-     * Flushes deletions first, then fetches anything this phone does not have.
+     * Pushes what the phone owes, then fetches anything it does not have.
      *
      * Deletions go first on purpose: otherwise a sync could re-download the very
      * assessment the customer just deleted, because the server has not been told yet.
+     * Evaluator reviews go up in the same pass and for the same reason — they are unsent
+     * local work, and a failing pull should not strand them for another cycle.
      */
     suspend fun run(): Result = withContext(io) {
         var deletes = 0
@@ -47,12 +58,31 @@ class AssessmentSync(
             }
         }
 
+        // Reviews go up before anything comes down, same as deletes: they are the phone's
+        // own unsent work, and a pull failing should not strand them for another cycle.
+        var reviews = 0
+        for (feedback in sessions.pendingTesterFeedback()) {
+            if (client.submitTesterFeedback(feedback)) {
+                sessions.clearTesterFeedback(feedback.sessionId)
+                reviews++
+            }
+        }
+
+        // Refreshed here so a promotion in the portal reaches the phone without a
+        // re-install. Null means the server was unreachable, in which case the cached
+        // answer is better than assuming either way.
+        client.isTester()?.let(tokens::setTester)
+
         val remote = client.sessions()
-            ?: return@withContext Result(0, deletes, reachedServer = false)
+            ?: return@withContext Result(0, deletes, reachedServer = false, reviews = reviews)
 
         val known = sessions.knownSessions()
+        // Reports the customer dropped from this phone while choosing to leave our copy
+        // alone. Fetching them back would make the delete look like it failed.
+        val dismissed = sessions.dismissedSessions()
         var fetched = 0
         for (summary in remote) {
+            if (summary.id in dismissed) continue
             val localStamp = known[summary.id]
             // Skip anything the phone already has at the same age or newer. The common
             // case is a phone that created the assessment itself, so most of a list will
@@ -96,7 +126,7 @@ class AssessmentSync(
             )
             fetched++
         }
-        Result(fetched, deletes, reachedServer = true)
+        Result(fetched, deletes, reachedServer = true, reviews = reviews)
     }
 
     /**

@@ -37,6 +37,8 @@ data class InviteRow(
     val createdAt: Instant,
     val revokedAt: Instant?,
     val timesUsed: Int,
+    /** Whoever redeems this becomes one of our evaluators rather than a customer. */
+    val grantsTester: Boolean,
 )
 
 data class UserRow(
@@ -48,6 +50,7 @@ data class UserRow(
     val createdAt: Instant,
     val assessments: Int,
     val deleted: Boolean,
+    val isTester: Boolean,
 )
 
 data class AuditRow(
@@ -71,6 +74,10 @@ data class AdminSessionRow(
     val verdictLevelId: String?,
     val photoCount: Int,
     val clientDeleted: Boolean,
+    /** The account is one of our evaluators, so this is a staff run and not a pilot record. */
+    val byTester: Boolean = false,
+    /** A critique of this assessment exists. */
+    val hasTesterFeedback: Boolean = false,
 )
 
 data class AdminMessageRow(
@@ -157,10 +164,26 @@ interface AdminStore {
     /** How many admins can still sign in. Used to refuse disabling the last one. */
     suspend fun activeAdminCount(): Int
     suspend fun invites(): List<InviteRow>
-    suspend fun createInvite(code: String, label: String?): Boolean
+    suspend fun createInvite(code: String, label: String?, grantsTester: Boolean): Boolean
+
+    /**
+     * Marks an account as one of our evaluators, or stops it being one.
+     *
+     * Editable after the fact because somebody hired later should not need a new account,
+     * and because a code handed out with the wrong box ticked would otherwise be
+     * unfixable. Returns false when there is no such live account.
+     */
+    suspend fun setTester(userId: String, isTester: Boolean): Boolean
     suspend fun revokeInvite(code: String): Boolean
     suspend fun users(limit: Int, offset: Int, search: String?): Page<UserRow>
-    suspend fun sessions(limit: Int, offset: Int, userId: String?, itemTypeId: String?): Page<AdminSessionRow>
+    suspend fun sessions(
+        limit: Int,
+        offset: Int,
+        userId: String?,
+        itemTypeId: String?,
+        /** True to show only evaluators' assessments, which is how staff runs are excluded. */
+        testersOnly: Boolean = false,
+    ): Page<AdminSessionRow>
     suspend fun sessionHeader(sessionId: String): AdminSessionRow?
     suspend fun conversation(sessionId: String): List<AdminMessageRow>
     suspend fun blobExists(sha: String): Boolean
@@ -491,7 +514,8 @@ class PostgresAdminStore(private val dataSource: DataSource) : AdminStore {
         connection.prepareStatement(
             """
             select i.code, i.label, i.created_at, i.revoked_at,
-                   (select count(*)::int from users u where u.invite_code = i.code)
+                   (select count(*)::int from users u where u.invite_code = i.code),
+                   i.grants_tester
             from invite_codes i
             order by i.created_at desc
             """.trimIndent()
@@ -504,18 +528,37 @@ class PostgresAdminStore(private val dataSource: DataSource) : AdminStore {
                     createdAt = rows.getTimestamp(3).toInstant(),
                     revokedAt = rows.getTimestamp(4)?.toInstant(),
                     timesUsed = rows.getInt(5),
+                    grantsTester = rows.getBoolean(6),
                 )
                 out
             }
         }
     }
 
-    override suspend fun createInvite(code: String, label: String?): Boolean = query { connection ->
+    override suspend fun createInvite(
+        code: String,
+        label: String?,
+        grantsTester: Boolean,
+    ): Boolean = query { connection ->
         connection.prepareStatement(
-            "insert into invite_codes (code, label) values (?, ?) on conflict do nothing"
+            """
+            insert into invite_codes (code, label, grants_tester)
+            values (?, ?, ?) on conflict do nothing
+            """.trimIndent()
         ).use { statement ->
             statement.setString(1, code)
             statement.setString(2, label)
+            statement.setBoolean(3, grantsTester)
+            statement.executeUpdate() > 0
+        }
+    }
+
+    override suspend fun setTester(userId: String, isTester: Boolean): Boolean = query { connection ->
+        connection.prepareStatement(
+            "update users set is_tester = ? where id = ?::uuid and deleted_at is null"
+        ).use { statement ->
+            statement.setBoolean(1, isTester)
+            statement.setString(2, userId)
             statement.executeUpdate() > 0
         }
     }
@@ -538,7 +581,8 @@ class PostgresAdminStore(private val dataSource: DataSource) : AdminStore {
             """
             select u.id::text, u.phone, u.display_name, u.account_type, u.business_name, u.created_at,
                    (select count(*)::int from sessions s where s.user_id = u.id),
-                   (u.deleted_at is not null)
+                   (u.deleted_at is not null),
+                   u.is_tester
             from users u
             where (?::text is null
                    or u.phone ilike '%' || ? || '%'
@@ -566,6 +610,7 @@ class PostgresAdminStore(private val dataSource: DataSource) : AdminStore {
                     createdAt = rows.getTimestamp(6).toInstant(),
                     assessments = rows.getInt(7),
                     deleted = rows.getBoolean(8),
+                    isTester = rows.getBoolean(9),
                 )
                 Page(out.take(limit), hasMore = out.size > limit)
             }
@@ -587,6 +632,7 @@ class PostgresAdminStore(private val dataSource: DataSource) : AdminStore {
         offset: Int,
         userId: String?,
         itemTypeId: String?,
+        testersOnly: Boolean,
     ): Page<AdminSessionRow> = query { connection ->
         connection.prepareStatement(
             """
@@ -597,10 +643,15 @@ class PostgresAdminStore(private val dataSource: DataSource) : AdminStore {
                    (select count(*)::int from attachments a
                       join messages m2 on m2.id = a.message_id
                      where m2.session_id = s.id),
-                   (s.client_deleted_at is not null)
+                   (s.client_deleted_at is not null),
+                   coalesce(u.is_tester, false),
+                   -- Whether a critique exists, so the list can say so without a second
+                   -- query per row.
+                   exists (select 1 from tester_feedback f where f.session_id = s.id)
             from sessions s left join users u on u.id = s.user_id
             where (?::uuid is null or s.user_id = ?::uuid)
               and (?::text is null or s.item_type_id = ?)
+              and (not ? or coalesce(u.is_tester, false))
             order by s.created_at desc
             limit ? offset ?
             """.trimIndent()
@@ -609,8 +660,9 @@ class PostgresAdminStore(private val dataSource: DataSource) : AdminStore {
             statement.setString(2, userId)
             statement.setString(3, itemTypeId)
             statement.setString(4, itemTypeId)
-            statement.setInt(5, limit + 1)
-            statement.setInt(6, offset)
+            statement.setBoolean(5, testersOnly)
+            statement.setInt(6, limit + 1)
+            statement.setInt(7, offset)
             statement.executeQuery().use { rows ->
                 val out = mutableListOf<AdminSessionRow>()
                 while (rows.next()) out += AdminSessionRow(
@@ -624,6 +676,8 @@ class PostgresAdminStore(private val dataSource: DataSource) : AdminStore {
                     verdictLevelId = rows.getString(8),
                     photoCount = rows.getInt(9),
                     clientDeleted = rows.getBoolean(10),
+                    byTester = rows.getBoolean(11),
+                    hasTesterFeedback = rows.getBoolean(12),
                 )
                 Page(out.take(limit), hasMore = out.size > limit)
             }

@@ -99,6 +99,28 @@ class ChatRouteTest {
     }
 
     @Test
+    fun `both limits reach the store, so it can pick by account`() = testApplication {
+        // The choice is made inside the transaction that counts, because that is where the
+        // account is already being read — the route holds a token, not a profile. So the
+        // route's job is only to hand both numbers down, and this checks it does.
+        val store = FakeChatStore()
+        val app = withChat(
+            store,
+            FakeClaude(ClaudeResult.Success("ok", TokenUsage(0, 0, 0, 0), "m")),
+            dailyLimit = 20,
+            testerLimit = 50,
+        )
+
+        app.post("/v1/chat") {
+            auth(); contentType(ContentType.Application.Json)
+            setBody(request())
+        }
+
+        assertEquals(20, store.sawDailyLimit)
+        assertEquals(50, store.sawTesterDailyLimit)
+    }
+
+    @Test
     fun `the configured limit is what reaches the store`() = testApplication {
         // Guards the plumbing rather than the policy: a limit that stops at the route and
         // never arrives is a quota that silently does nothing.
@@ -356,13 +378,18 @@ class ChatRouteTest {
         claude: FakeClaude,
         prompts: PromptRepository = RecordingPrompts(),
         dailyLimit: Int = Config.DEFAULT_DAILY_ASSESSMENT_LIMIT,
+        testerLimit: Int = Config.DEFAULT_TESTER_DAILY_ASSESSMENT_LIMIT,
     ) = run {
         application {
             module(
                 version = "test",
                 database = null,
                 auth = Auth(NoAuthStore, AccessTokens(KEY)),
-                chat = Chat(store, BlobStore(folder.newFolder()), claude, prompts, dailyLimit),
+                chat = Chat(
+                    store, BlobStore(folder.newFolder()), claude, prompts, NoFeedback,
+                    dailyAssessmentLimit = dailyLimit,
+                    testerDailyAssessmentLimit = testerLimit,
+                ),
             )
         }
         createClient { install(ClientContentNegotiation) { json() } }
@@ -413,11 +440,16 @@ class ChatRouteTest {
         override suspend fun ensureSession(
             sessionId: String, userId: String, itemTypeId: String,
             previousSessionId: String?, intakeAnswers: String?, promptSha: String?,
-            dailyLimit: Int,
-        ) = access.also { sawDailyLimit = dailyLimit }
+            dailyLimit: Int, testerDailyLimit: Int,
+        ) = access.also {
+            sawDailyLimit = dailyLimit
+            sawTesterDailyLimit = testerDailyLimit
+        }
 
         /** What the route passed down, so a test can prove the config reaches the store. */
         var sawDailyLimit: Int? = null
+            private set
+        var sawTesterDailyLimit: Int? = null
             private set
 
         override suspend fun appendUserTurn(

@@ -103,3 +103,43 @@ data class PendingRemoteDeleteEntity(
     @PrimaryKey val sessionId: String,
     val requestedAt: Long,
 )
+
+/**
+ * An evaluator's review, waiting to reach the server.
+ *
+ * Written locally first and pushed on the next sync, for the same reason as
+ * [PendingRemoteDeleteEntity]: an evaluator finishes an assessment in a workshop, which is
+ * exactly where there is no signal. Losing the review would mean the walkthrough happened
+ * and the measurement did not, and it cannot be reconstructed afterwards — nobody
+ * remembers, three days later, whether the assistant confused a dowel with a tenon.
+ *
+ * Keyed on the session, so answering twice corrects the first answer rather than queuing a
+ * second one.
+ */
+@Entity(tableName = "pending_tester_feedback")
+data class PendingTesterFeedbackEntity(
+    @PrimaryKey val sessionId: String,
+    /** "yes" | "no" | "unsure" */
+    val mistakes: String,
+    val mistakesDetail: String?,
+    val adviceStars: Int,
+    val itemQuality: Int,
+    val extraFeedback: String?,
+    val recordedAt: Long,
+)
+
+/**
+ * A report the customer removed from this phone but chose to leave on the server.
+ *
+ * Without this the next pull sync would fetch it straight back, because sync decides what
+ * to download from what the phone does not have — and a report that reappears after being
+ * deleted reads as the delete having failed.
+ *
+ * Only the id is kept. It is not a copy of anything: it is a note that this phone is not
+ * interested in that assessment, which is why the row survives the local deletion.
+ */
+@Entity(tableName = "dismissed_sessions")
+data class DismissedSessionEntity(
+    @PrimaryKey val sessionId: String,
+    val dismissedAt: Long,
+)

@@ -3,7 +3,9 @@ package com.qualityverifier.data.session
 import com.qualityverifier.data.db.AttachmentEntity
 import com.qualityverifier.data.db.ImageFileStore
 import com.qualityverifier.data.db.MessageEntity
+import com.qualityverifier.data.db.DismissedSessionEntity
 import com.qualityverifier.data.db.MessageWithAttachments
+import com.qualityverifier.data.db.PendingTesterFeedbackEntity
 import com.qualityverifier.data.db.SessionDao
 import com.qualityverifier.data.db.SessionEntity
 import com.qualityverifier.domain.AssessmentContext
@@ -177,6 +179,44 @@ class RoomSessionRepository(
         dao.addPendingDelete(
             com.qualityverifier.data.db.PendingRemoteDeleteEntity(sessionId, now())
         )
+
+    override suspend fun recordTesterFeedback(feedback: LocalTesterFeedback) =
+        dao.upsertTesterFeedback(
+            PendingTesterFeedbackEntity(
+                sessionId = feedback.sessionId,
+                mistakes = feedback.mistakes,
+                mistakesDetail = feedback.mistakesDetail,
+                adviceStars = feedback.adviceStars,
+                itemQuality = feedback.itemQuality,
+                extraFeedback = feedback.extraFeedback,
+                recordedAt = System.currentTimeMillis(),
+            ),
+        )
+
+    override suspend fun pendingTesterFeedback(): List<LocalTesterFeedback> =
+        dao.pendingTesterFeedback().map { row ->
+            LocalTesterFeedback(
+                sessionId = row.sessionId,
+                mistakes = row.mistakes,
+                mistakesDetail = row.mistakesDetail,
+                adviceStars = row.adviceStars,
+                itemQuality = row.itemQuality,
+                extraFeedback = row.extraFeedback,
+            )
+        }
+
+    override suspend fun hasPendingTesterFeedback(sessionId: String): Boolean =
+        dao.countTesterFeedback(sessionId) > 0
+
+    override suspend fun dismissLocally(sessionId: String) =
+        dao.addDismissed(
+            DismissedSessionEntity(sessionId, System.currentTimeMillis()),
+        )
+
+    override suspend fun dismissedSessions(): Set<String> = dao.dismissedSessions().toSet()
+
+    override suspend fun clearTesterFeedback(sessionId: String) =
+        dao.clearTesterFeedback(sessionId)
 
     override suspend fun clearPendingRemoteDelete(sessionId: String) =
         dao.clearPendingDelete(sessionId)

@@ -4,6 +4,23 @@ import io.ktor.http.HttpStatusCode
 import io.ktor.serialization.kotlinx.json.json
 import io.ktor.server.application.Application
 import io.ktor.server.application.install
+import com.qualityverifier.server.blobs.BlobSweeper
+import com.qualityverifier.server.blobs.PostgresReferencedHashes
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import kotlin.time.Duration.Companion.hours
+import kotlin.time.Duration.Companion.minutes
+import com.qualityverifier.server.db.FeedbackStore
+import com.qualityverifier.server.db.PostgresFeedbackStore
+import com.qualityverifier.server.api.ApiKeyStore
+import com.qualityverifier.server.api.ApiStore
+import com.qualityverifier.server.api.PostgresApiKeyStore
+import com.qualityverifier.server.api.PostgresApiStore
+import com.qualityverifier.server.api.apiRoutes
 import io.ktor.server.engine.embeddedServer
 import io.ktor.server.netty.Netty
 import io.ktor.server.plugins.calllogging.CallLogging
@@ -93,7 +110,9 @@ fun main() {
                 apiKey = { config.anthropicApiKey },
             ),
             prompts = prompts,
+            feedback = PostgresFeedbackStore(database.source),
             dailyAssessmentLimit = config.dailyAssessmentLimit,
+            testerDailyAssessmentLimit = config.testerDailyAssessmentLimit,
         )
     } else {
         log.warn("Chat is disabled: needs a database and KAGUA_ANTHROPIC_API_KEY.")
@@ -104,6 +123,9 @@ fun main() {
         Admin(
             store = PostgresAdminStore(database.source),
             blobs = BlobStore(File(config.dataDirectory, "blobs")),
+            feedback = PostgresFeedbackStore(database.source),
+            apiKeys = PostgresApiKeyStore(database.source),
+            apiStore = PostgresApiStore(database.source),
             sessionKey = config.adminSessionKey,
         )
     } else {
@@ -111,19 +133,70 @@ fun main() {
         null
     }
 
+    /*
+     * The photo sweep, in this process rather than as a second systemd unit.
+     *
+     * It needs the database *and* write access to the blob volume. kagua-purge.service has
+     * neither: it runs as postgres over peer authentication, deliberately so that a daily
+     * timer needs no Parameter Store access and holds no secret. Giving it both would mean
+     * a second credential path and a second thing to keep in step with the schema. This
+     * process already has exactly what the sweep needs.
+     *
+     * Ordering against the SQL purge does not matter. If the sweep runs first, the rows it
+     * would have orphaned are collected on the next run — which is the property that makes
+     * sweeping rather than tracking the right shape here.
+     */
+    if (database != null) {
+        val sweeper = BlobSweeper(
+            PostgresReferencedHashes(database.source),
+            BlobStore(File(config.dataDirectory, "blobs")),
+        )
+        sweepScope.launch {
+            // Not immediately on boot: a deploy restarts this process, and a directory walk
+            // competing with startup on a burstable instance is a poor first impression.
+            delay(SWEEP_START_DELAY)
+            while (true) {
+                runCatching { sweeper.sweep() }
+                    .onFailure { log.error("Blob sweep failed; will try again tomorrow", it) }
+                delay(SWEEP_INTERVAL)
+            }
+        }
+    }
+
     log.info("Kagua server {} starting on {}:{}", config.version, config.host, config.port)
     if (config.dailyAssessmentLimit > 0) {
-        log.info("Daily assessment limit: {} per account", config.dailyAssessmentLimit)
+        log.info(
+            "Daily assessment limit: {} per account, {} for evaluators",
+            config.dailyAssessmentLimit,
+            config.testerDailyAssessmentLimit,
+        )
     } else {
         log.warn("Daily assessment limit is DISABLED; every request is billed to us")
     }
 
-    Runtime.getRuntime().addShutdownHook(Thread { database?.close() })
+    Runtime.getRuntime().addShutdownHook(
+        Thread {
+            sweepScope.cancel()
+            database?.close()
+        },
+    )
 
     embeddedServer(Netty, port = config.port, host = config.host) {
         module(config.version, database, auth, chat, admin)
     }.start(wait = true)
 }
+
+/**
+ * Where the photo sweep runs. Its own scope so cancelling it on shutdown cannot take
+ * anything else with it, and a supervisor job so a failed sweep does not kill the scope.
+ */
+private val sweepScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
+/** Five minutes after boot, so a deploy is not competing with a directory walk. */
+private val SWEEP_START_DELAY = 5.minutes
+
+/** Daily, matching the SQL purge it complements. */
+private val SWEEP_INTERVAL = 24.hours
 
 /** Bundled so the module signature does not grow a parameter per collaborator. */
 class Auth(val store: AuthStore, val accessTokens: AccessTokens)
@@ -132,6 +205,9 @@ class Auth(val store: AuthStore, val accessTokens: AccessTokens)
 class Admin(
     val store: AdminStore,
     val blobs: BlobStore,
+    val feedback: FeedbackStore,
+    val apiKeys: ApiKeyStore,
+    val apiStore: ApiStore,
     val sessionKey: String,
     /**
      * Whether the session cookie is marked Secure. True everywhere real.
@@ -149,8 +225,11 @@ class Chat(
     val blobs: BlobStore,
     val claude: ClaudeClient,
     val prompts: PromptRepository,
+    val feedback: FeedbackStore,
     /** Assessments one account may start per day. Zero or less means no limit. */
     val dailyAssessmentLimit: Int = Config.DEFAULT_DAILY_ASSESSMENT_LIMIT,
+    /** The higher allowance for one of our own evaluators. */
+    val testerDailyAssessmentLimit: Int = Config.DEFAULT_TESTER_DAILY_ASSESSMENT_LIMIT,
 )
 
 @Serializable
@@ -225,13 +304,22 @@ fun Application.module(
         // Chat needs auth: every route inside it authenticates, and mounting them
         // without the plugin installed would fail at request time rather than here.
         if (auth != null) chat?.let {
-            chatRoutes(it.store, it.blobs, it.claude, it.prompts, it.dailyAssessmentLimit)
+            chatRoutes(
+                it.store, it.blobs, it.claude, it.prompts,
+                it.dailyAssessmentLimit, it.testerDailyAssessmentLimit,
+            )
             // Reading assessments back, plus the two account actions. Needs both halves:
             // the chat store for sessions and the auth store for credentials.
-            syncRoutes(it.store, auth.store, it.blobs)
+            syncRoutes(it.store, auth.store, it.blobs, it.feedback)
         }
 
-        admin?.let { adminRoutes(it.store, it.blobs, it.secureCookie) }
+        admin?.let {
+            adminRoutes(it.store, it.blobs, it.feedback, it.apiKeys, it.secureCookie)
+            // The read-only data API. Mounted alongside the portal because it shares the
+            // key store the portal manages — a key with no page to revoke it from is a
+            // credential nobody can take back.
+            apiRoutes(it.apiKeys, it.apiStore, it.store, it.blobs)
+        }
 
         // Cheap and dependency-free, so a database outage does not make the service
         // look dead to whatever is watching it.

@@ -3,6 +3,8 @@ package com.qualityverifier.server.routes
 import com.qualityverifier.server.auth.Passwords
 import com.qualityverifier.server.blobs.BlobStore
 import com.qualityverifier.server.db.AuthStore
+import com.qualityverifier.server.db.FeedbackStore
+import com.qualityverifier.server.db.TesterFeedback
 import com.qualityverifier.server.db.ChatStore
 import com.qualityverifier.server.db.MessageRow
 import com.qualityverifier.server.db.SessionRow
@@ -29,7 +31,12 @@ private val log = LoggerFactory.getLogger("com.qualityverifier.server.sync")
  * could not see any of them, so a reinstall lost a customer's whole history while a
  * perfectly good copy sat on disk.
  */
-fun Route.syncRoutes(chat: ChatStore, auth: AuthStore, blobs: BlobStore) {
+fun Route.syncRoutes(
+    chat: ChatStore,
+    auth: AuthStore,
+    blobs: BlobStore,
+    feedbackStore: FeedbackStore,
+) {
     authenticate("jwt") {
 
         get("/v1/sessions") {
@@ -40,6 +47,13 @@ fun Route.syncRoutes(chat: ChatStore, auth: AuthStore, blobs: BlobStore) {
         get("/v1/sessions/{id}") {
             val userId = call.userId() ?: return@get call.unauthorized()
             val id = call.parameters["id"].orEmpty()
+            // A non-UUID reaches Postgres as `?::uuid` and throws, which StatusPages turns
+            // into a 500. It is the same "no such thing" as any other unknown id, so it
+            // gets the same answer.
+            if (!isUuid(id)) {
+                call.respond(HttpStatusCode.NotFound, ErrorResponse("no_such_session"))
+                return@get
+            }
             val detail = chat.sessionDetail(userId, id)
             if (detail == null) {
                 // Same answer for "does not exist" and "belongs to somebody else".
@@ -52,6 +66,10 @@ fun Route.syncRoutes(chat: ChatStore, auth: AuthStore, blobs: BlobStore) {
         delete("/v1/sessions/{id}") {
             val userId = call.userId() ?: return@delete call.unauthorized()
             val id = call.parameters["id"].orEmpty()
+            if (!isUuid(id)) {
+                call.respond(HttpStatusCode.NotFound, ErrorResponse("no_such_session"))
+                return@delete
+            }
             if (!chat.markClientDeleted(userId, id)) {
                 // Idempotent from the client's point of view: already deleted, never
                 // existed, or not theirs all mean "stop asking".
@@ -93,6 +111,55 @@ fun Route.syncRoutes(chat: ChatStore, auth: AuthStore, blobs: BlobStore) {
                 return@get
             }
             call.respondBytes(bytes, ContentType.Image.JPEG)
+        }
+
+        /**
+         * An evaluator's critique of an assessment they just did.
+         *
+         * Restricted to evaluator accounts. Not because a customer's opinion is unwelcome,
+         * but because these rows are a research instrument: a mix of staff critiques and
+         * unsolicited customer ratings in one table is a dataset nobody can use, and the
+         * app only ever shows these questions to a tester anyway. A non-tester reaching
+         * here is a client bug or somebody poking, and both deserve the same answer.
+         */
+        post("/v1/tester-feedback") {
+            val userId = call.userId() ?: return@post call.unauthorized()
+            val user = auth.findUser(userId)
+            if (user == null || user.disabled) {
+                call.respond(HttpStatusCode.Unauthorized, ErrorResponse("invalid_token"))
+                return@post
+            }
+            if (!user.isTester) {
+                log.warn("Non-tester {} tried to submit evaluator feedback", userId)
+                call.respond(HttpStatusCode.Forbidden, ErrorResponse("not_a_tester"))
+                return@post
+            }
+
+            val request = call.receive<TesterFeedbackRequest>()
+            val feedback = TesterFeedback(
+                sessionId = request.sessionId,
+                mistakes = request.mistakes,
+                mistakesDetail = request.mistakesDetail?.takeIf { it.isNotBlank() },
+                adviceStars = request.adviceStars,
+                itemQuality = request.itemQuality,
+                extraFeedback = request.extraFeedback?.takeIf { it.isNotBlank() },
+            )
+            TesterFeedback.problemWith(feedback)?.let { problem ->
+                call.respond(HttpStatusCode.BadRequest, ErrorResponse("invalid_request", problem))
+                return@post
+            }
+            if (!isUuid(feedback.sessionId)) {
+                call.respond(HttpStatusCode.BadRequest, ErrorResponse("invalid_request", "session_id"))
+                return@post
+            }
+
+            if (!feedbackStore.save(userId, feedback)) {
+                // Not theirs, or gone. 404 rather than 403, as everywhere else here.
+                call.respond(HttpStatusCode.NotFound, ErrorResponse("no_such_session"))
+                return@post
+            }
+            log.info("Evaluator feedback recorded for session {}", feedback.sessionId)
+            call.respond(HttpStatusCode.NoContent)
         }
 
         post("/v1/auth/password") {
@@ -159,3 +226,4 @@ private fun MessageRow.toDto() = MessageDto(
     createdAt = createdAt,
     blobs = blobs,
 )
+
