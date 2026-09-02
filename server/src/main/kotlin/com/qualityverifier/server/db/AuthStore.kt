@@ -91,8 +91,17 @@ interface AuthStore {
     suspend fun setPasswordHash(userId: String, passwordHash: String)
 
     /**
-     * Marks the account deleted. Everything of theirs goes at the retention window; the
-     * flag is what starts the clock, and revoking their tokens is what makes it stick.
+     * Closes an account by stripping everything identifying from it, irreversibly.
+     *
+     * Not an erasure. The assessments stay, keyed on a random uuid that was never derived
+     * from anything about the person, because the pilot's whole purpose is judging those
+     * assessments and deleting them destroys the record. What goes is the profile: phone,
+     * password, name, business name, the location point, and the invite label that often
+     * names them. Every device is signed out in the same transaction.
+     *
+     * It does **not** make the record anonymous, and the app's wording does not claim it
+     * does. Photographs show identifiable premises and free text may name a person, and
+     * nothing here can reach inside either.
      */
     suspend fun markAccountDeleted(userId: String)
 }
@@ -378,15 +387,15 @@ class PostgresAuthStore(private val dataSource: DataSource) : AuthStore {
         }
 
     override suspend fun markAccountDeleted(userId: String) = tx { connection ->
-        connection.prepareStatement(
-            "update users set deleted_at = now() where id = ?::uuid and deleted_at is null"
-        ).use { statement ->
-            statement.setString(1, userId)
-            statement.executeUpdate()
-        }
-        // In the same transaction: an account marked deleted whose tokens still work is
-        // an account that is not deleted.
-        connection.prepareStatement("select revoke_refresh_chain(?::uuid)").use { statement ->
+        // anonymise_user does the work, and does it in SQL rather than here on purpose:
+        // which columns count as identifying is a policy statement, and one edited in a
+        // migration can be reviewed in a diff. It also marks deleted_at and drops every
+        // refresh token, so there is nothing to do afterwards.
+        //
+        // Irreversible and immediate. There is no grace period to undo it in, which is
+        // the price of the promise being unambiguous — see docs/reverting-to-full-deletion.md
+        // for the reasoning and for how to go back to erasure.
+        connection.prepareStatement("select anonymise_user(?::uuid)").use { statement ->
             statement.setString(1, userId)
             statement.executeQuery().use { it.next() }
         }

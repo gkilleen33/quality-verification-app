@@ -456,6 +456,33 @@ Two properties worth knowing rather than rediscovering:
    window expiring rather than on the hour. The wording says 7 days, which is when the
    window ends; worth tightening the interval if that ever needs to be exact.
 
+2c. **Account deletion anonymises rather than erases** — changed 2 Sep 2026, and switched
+   on. No IRB submission had been made, so the choice was between promising full deletion
+   now and retracting it once the pilot data turned out to matter, or saying from the start
+   that data may be kept and that deleting an account removes the identifiers. The second is
+   the honest order; withdrawing a deletion right after people have relied on it is the
+   version that is hard to explain afterwards.
+
+   `anonymise_user(uuid)` nulls phone, password, name, business name, the location point and
+   the invite label, sets `anonymised_at`, and drops every refresh token — in one
+   transaction, immediately, with **no mapping table anywhere**. The `users` row survives so
+   `sessions.user_id` resolves, and its random uuid is the anonymous identifier the research
+   uses. `purge_deleted_accounts` is left defined but no longer called, which makes the
+   revert a one-line change.
+
+   **It does not make the record anonymous, and nothing user-facing claims it does.**
+   Photographs show workshop signage and premises; free text may name a person. The wording
+   at registration and at deletion says we remove what we hold about them, and asks them not
+   to put personal details in the conversation. Keeping that distinction is the whole legal
+   question — pseudonymised data is still personal data.
+
+   Reverting: `docs/reverting-to-full-deletion.md`.
+
+   **Open, and not decided by this:** deleting a single report still erases it for good
+   after 7 days. So somebody who deletes every report individually gets a real erasure,
+   while closing their account keeps the assessments anonymised. Defensible, but a gap
+   somebody could walk through.
+
 3. ~~**Region.**~~ Settled: us-east-1.
 4. ~~**Auth identity.**~~ Settled: invite codes for the pilot. SMS later if needed.
 5. ~~**Per-user quota.**~~ Built 1 Sep 2026. **20 assessments started per account per

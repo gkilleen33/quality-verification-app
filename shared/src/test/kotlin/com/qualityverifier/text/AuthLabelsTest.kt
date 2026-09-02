@@ -74,6 +74,7 @@ class AuthLabelsTest {
             en.signOut to sw.signOut,
             en.signOutConfirmBody to sw.signOutConfirmBody,
             en.staySignedIn to sw.staySignedIn,
+            en.dataRetentionNotice to sw.dataRetentionNotice,
             en.humanReviewNotice to sw.humanReviewNotice,
             en.savedLocation(5) to sw.savedLocation(5),
         ).forEach { (english, swahili) ->
@@ -83,17 +84,44 @@ class AuthLabelsTest {
     }
 
     @Test
-    fun `the retention windows are stated, in both languages`() {
-        // These are the strings that make the retention we built true rather than a claim
-        // in a document nobody reads. If somebody softens them, this fails.
+    fun `the report retention window is stated, in both languages`() {
+        // This is the string that makes the seven days we built true rather than a claim in
+        // a document nobody reads. If somebody softens it, this fails.
         assertTrue(AuthLabels.ENGLISH.deleteReportBody.contains("7 days"))
         assertTrue(AuthLabels.SWAHILI.deleteReportBody.contains("siku 7"))
-        assertTrue(AuthLabels.ENGLISH.deleteAccountBlurb.contains("30 days"))
-        assertTrue(AuthLabels.SWAHILI.deleteAccountBlurb.contains("siku 30"))
-        // And the confirmation repeats it: somebody reaching for an irreversible button
-        // is not reading the paragraph above it.
-        assertTrue(AuthLabels.ENGLISH.deleteAccountConfirmBody.contains("30 days"))
-        assertTrue(AuthLabels.SWAHILI.deleteAccountConfirmBody.contains("siku 30"))
+    }
+
+    @Test
+    fun `deleting an account does not promise the assessments are erased`() {
+        // The behaviour changed: an account is anonymised and its assessments are kept,
+        // because the pilot studies them. The wording has to say so at the moment somebody
+        // reaches for the button, and it must not resurrect a deletion window we no longer
+        // honour — a promise of erasure we do not keep is worse than the honest version.
+        listOf(AuthLabels.ENGLISH, AuthLabels.SWAHILI).forEach { labels ->
+            listOf(labels.deleteAccountBlurb, labels.deleteAccountConfirmBody).forEach { body ->
+                assertTrue("${labels.code}: must not claim a 30-day deletion", !body.contains("30"))
+            }
+        }
+        // What it must say instead: the identifiers go, the assessments stay.
+        assertTrue(AuthLabels.ENGLISH.deleteAccountBlurb.contains("random number"))
+        assertTrue(AuthLabels.ENGLISH.deleteAccountConfirmBody.contains("random number"))
+        assertTrue(AuthLabels.SWAHILI.deleteAccountBlurb.contains("namba isiyo na uhusiano"))
+        assertTrue(AuthLabels.SWAHILI.deleteAccountConfirmBody.contains("namba isiyo na uhusiano"))
+        // And that it cannot be undone, since there is no grace period to undo it in.
+        assertTrue(AuthLabels.ENGLISH.deleteAccountConfirmBody.contains("cannot be undone"))
+        assertTrue(AuthLabels.SWAHILI.deleteAccountConfirmBody.contains("haiwezi kurudishwa"))
+    }
+
+    @Test
+    fun `the retention notice admits what anonymising cannot reach`() {
+        // The honest part, and the reason the notice exists at registration rather than
+        // only at deletion. Photographs show identifiable premises and free text may name
+        // somebody; clearing profile columns cannot reach either, so the wording asks them
+        // not to put personal details there rather than claiming the record is anonymous.
+        assertTrue(AuthLabels.ENGLISH.dataRetentionNotice.contains("indefinitely"))
+        assertTrue(AuthLabels.ENGLISH.dataRetentionNotice.contains("photos or messages"))
+        assertTrue(AuthLabels.SWAHILI.dataRetentionNotice.contains("muda usiojulikana"))
+        assertTrue(AuthLabels.SWAHILI.dataRetentionNotice.contains("picha au ujumbe"))
     }
 
     @Test

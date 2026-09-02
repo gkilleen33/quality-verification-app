@@ -67,6 +67,15 @@ data class AuthLabels(
     val signOut: String,
     val signOutConfirmBody: String,
     val staySignedIn: String,
+    /**
+     * REVIEW CRITICAL: what we keep, for how long, and what deleting an account does.
+     *
+     * Shown at registration rather than only in the delete dialog. Somebody who finds out
+     * at the moment they try to leave that the data stays has not been given a choice —
+     * they have been told a fact about a decision already made.
+     */
+    val dataRetentionNotice: String,
+
     /** REVIEW CRITICAL: says a person may read an assessment, including its photos. */
     val humanReviewNotice: String,
     private val savedLocationFormat: String,
@@ -109,13 +118,16 @@ data class AuthLabels(
             newPasswordAgain = "New password again",
             passwordChanged = "Password changed.",
             deleteAccount = "Delete my account",
-            deleteAccountBlurb = "Your account and your assessments are deleted from our " +
-                "server after 30 days. Reports already on this phone are removed straight " +
-                "away. This cannot be undone.",
+            deleteAccountBlurb = "We remove your name, phone number, business and location " +
+                "from our records straight away, and you will not be able to sign in again. " +
+                "Reports on this phone are deleted too.\n\nWe keep the assessments " +
+                "themselves, under a random number that is not linked to you, because they " +
+                "are what this research studies. We cannot take personal details out of " +
+                "photos or messages, so please do not put them there. This cannot be undone.",
             deleteAccountConfirmTitle = "Delete your account?",
-            deleteAccountConfirmBody = "You will be signed out and cannot sign in again. " +
-                "Your assessments are deleted from our server after 30 days. This cannot " +
-                "be undone.",
+            deleteAccountConfirmBody = "Your name, phone number, business and location are " +
+                "removed now. The assessments stay, under a random number. You cannot sign " +
+                "in again and this cannot be undone.",
             keepAccount = "Keep my account",
             deleteReportTitle = "Delete this report?",
             deleteReportBody = "It will be removed from your phone straight away. We keep " +
@@ -127,6 +139,11 @@ data class AuthLabels(
             signOutConfirmBody = "You will need your phone number and password to sign in " +
                 "again. Assessments already on this phone stay on it.",
             staySignedIn = "Stay signed in",
+            dataRetentionNotice = "We may keep your assessments and their photos " +
+                "indefinitely — they are what this research studies. If you delete your " +
+                "account we remove your name, phone number, business and location, and keep " +
+                "the assessments under a random number instead. We cannot remove personal " +
+                "details from inside photos or messages, so please do not put them there.",
             humanReviewNotice = "Researchers working on Kagua can open an assessment, " +
                 "including its photos, to check how accurate our advice was.",
             savedLocationFormat = "Location saved (within {m}m)",
@@ -165,12 +182,16 @@ data class AuthLabels(
             newPasswordAgain = "Rudia neno jipya la siri",
             passwordChanged = "Neno la siri limebadilishwa.",
             deleteAccount = "Futa akaunti yangu",
-            deleteAccountBlurb = "Akaunti yako na ukaguzi wako vinafutwa kwenye seva " +
-                "yetu baada ya siku 30. Ripoti zilizo kwenye simu hii zinafutwa mara moja. " +
-                "Hii haiwezi kurudishwa.",
+            deleteAccountBlurb = "Tunafuta jina lako, namba yako ya simu, biashara yako na " +
+                "mahali pako kutoka kwenye kumbukumbu zetu mara moja, na hutaweza kuingia " +
+                "tena. Ripoti zilizo kwenye simu hii zinafutwa pia.\n\nTunabaki na ukaguzi " +
+                "wenyewe, chini ya namba isiyo na uhusiano nawe, kwa sababu ndio utafiti huu " +
+                "unachunguza. Hatuwezi kuondoa maelezo yako binafsi kwenye picha au ujumbe, " +
+                "kwa hivyo tafadhali usiyaweke huko. Hii haiwezi kurudishwa.",
             deleteAccountConfirmTitle = "Futa akaunti yako?",
-            deleteAccountConfirmBody = "Utatolewa nje na hutaweza kuingia tena. Ukaguzi " +
-                "wako unafutwa kwenye seva yetu baada ya siku 30. Hii haiwezi kurudishwa.",
+            deleteAccountConfirmBody = "Jina lako, namba yako ya simu, biashara yako na " +
+                "mahali pako yanafutwa sasa. Ukaguzi unabaki, chini ya namba isiyo na " +
+                "uhusiano nawe. Hutaweza kuingia tena na hii haiwezi kurudishwa.",
             keepAccount = "Baki na akaunti yangu",
             deleteReportTitle = "Futa ripoti hii?",
             deleteReportBody = "Itatolewa kwenye simu yako mara moja. Tunabaki na nakala " +
@@ -182,6 +203,12 @@ data class AuthLabels(
             signOutConfirmBody = "Utahitaji namba yako ya simu na neno la siri kuingia " +
                 "tena. Ukaguzi ulio kwenye simu hii unabaki.",
             staySignedIn = "Baki umeingia",
+            dataRetentionNotice = "Tunaweza kubaki na ukaguzi wako na picha zake kwa muda " +
+                "usiojulikana — ndio utafiti huu unachunguza. Ukifuta akaunti yako " +
+                "tunaondoa jina lako, namba yako ya simu, biashara yako na mahali pako, na " +
+                "tunabaki na ukaguzi chini ya namba isiyo na uhusiano nawe. Hatuwezi " +
+                "kuondoa maelezo binafsi yaliyo ndani ya picha au ujumbe, kwa hivyo " +
+                "tafadhali usiyaweke huko.",
             humanReviewNotice = "Watafiti wanaofanya kazi na Kagua wanaweza kufungua " +
                 "ukaguzi, pamoja na picha zake, kuangalia usahihi wa ushauri wetu.",
             savedLocationFormat = "Mahali yamehifadhiwa (ndani ya mita {m})",
