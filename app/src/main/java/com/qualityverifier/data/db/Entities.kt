@@ -103,3 +103,27 @@ data class PendingRemoteDeleteEntity(
     @PrimaryKey val sessionId: String,
     val requestedAt: Long,
 )
+
+/**
+ * An evaluator's review, waiting to reach the server.
+ *
+ * Written locally first and pushed on the next sync, for the same reason as
+ * [PendingRemoteDeleteEntity]: an evaluator finishes an assessment in a workshop, which is
+ * exactly where there is no signal. Losing the review would mean the walkthrough happened
+ * and the measurement did not, and it cannot be reconstructed afterwards — nobody
+ * remembers, three days later, whether the assistant confused a dowel with a tenon.
+ *
+ * Keyed on the session, so answering twice corrects the first answer rather than queuing a
+ * second one.
+ */
+@Entity(tableName = "pending_tester_feedback")
+data class PendingTesterFeedbackEntity(
+    @PrimaryKey val sessionId: String,
+    /** "yes" | "no" | "unsure" */
+    val mistakes: String,
+    val mistakesDetail: String?,
+    val adviceStars: Int,
+    val itemQuality: Int,
+    val extraFeedback: String?,
+    val recordedAt: Long,
+)

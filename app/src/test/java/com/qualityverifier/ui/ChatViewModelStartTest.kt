@@ -418,6 +418,17 @@ class ChatViewModelStartTest {
         override suspend fun recordPendingRemoteDelete(sessionId: String) = Unit
         override suspend fun clearPendingRemoteDelete(sessionId: String) = Unit
 
+        val testerFeedback = mutableListOf<com.qualityverifier.data.session.LocalTesterFeedback>()
+        override suspend fun recordTesterFeedback(
+            feedback: com.qualityverifier.data.session.LocalTesterFeedback,
+        ) { testerFeedback += feedback }
+        override suspend fun pendingTesterFeedback() = testerFeedback.toList()
+        override suspend fun hasPendingTesterFeedback(sessionId: String) =
+            testerFeedback.any { it.sessionId == sessionId }
+        override suspend fun clearTesterFeedback(sessionId: String) {
+            testerFeedback.removeAll { it.sessionId == sessionId }
+        }
+
     }
 
     private companion object {

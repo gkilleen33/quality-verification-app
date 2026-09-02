@@ -19,6 +19,17 @@ interface TokenStore {
     fun save(accessToken: String, expiresInSeconds: Long, refreshToken: String, userId: String)
 
     /** Everything, on sign-out or when the server refuses the refresh token. */
+    /**
+     * Whether this account is one of our evaluators.
+     *
+     * Cached rather than asked for on demand: it decides whether a questionnaire appears
+     * at the end of an assessment, and that moment is often out of signal. Refreshed on
+     * every sync, so a promotion from the portal reaches the phone without a re-install.
+     */
+    fun isTester(): Boolean
+
+    fun setTester(value: Boolean)
+
     fun clear()
 
     fun isSignedIn(): Boolean = refreshToken() != null

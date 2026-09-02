@@ -91,6 +91,13 @@ class EncryptedPrefsTokenStore(private val context: Context) : TokenStore {
             ?.commit()
     }
 
+    override fun isTester(): Boolean = prefs()?.getBoolean(KEY_TESTER, false) ?: false
+
+    @SuppressLint("ApplySharedPref")
+    override fun setTester(value: Boolean) {
+        prefs()?.edit()?.putBoolean(KEY_TESTER, value)?.commit()
+    }
+
     @SuppressLint("ApplySharedPref")
     override fun clear() {
         prefs()?.edit()
@@ -98,6 +105,7 @@ class EncryptedPrefsTokenStore(private val context: Context) : TokenStore {
             ?.remove(KEY_REFRESH)
             ?.remove(KEY_USER)
             ?.remove(KEY_EXPIRES_AT)
+            ?.remove(KEY_TESTER)
             ?.commit()
     }
 
@@ -118,5 +126,6 @@ class EncryptedPrefsTokenStore(private val context: Context) : TokenStore {
         const val KEY_REFRESH = "refresh_token"
         const val KEY_USER = "user_id"
         const val KEY_EXPIRES_AT = "access_expires_at"
+        const val KEY_TESTER = "is_tester"
     }
 }

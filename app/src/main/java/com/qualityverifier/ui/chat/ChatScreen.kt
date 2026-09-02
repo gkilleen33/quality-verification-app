@@ -69,6 +69,8 @@ import com.qualityverifier.ui.capture.CaptureScreen
 import com.qualityverifier.ui.capture.captureInstruction
 import com.qualityverifier.ui.plan.InspectingScreen
 import com.qualityverifier.ui.plan.PhysicalTestsScreen
+import com.qualityverifier.ui.tester.TesterReviewPrompt
+import com.qualityverifier.ui.tester.TesterReviewScreen
 import com.qualityverifier.ui.intake.IntakeScreen
 import com.qualityverifier.ui.plan.PlanActionBar
 import com.qualityverifier.ui.plan.PlanCard
@@ -76,6 +78,7 @@ import com.qualityverifier.text.ReportLabels
 import com.qualityverifier.text.parseAssistantContent
 import com.qualityverifier.ui.appContainer
 import com.qualityverifier.ui.rememberReportLabels
+import com.qualityverifier.ui.rememberTesterLabels
 import java.io.File
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
@@ -112,6 +115,8 @@ fun ChatScreen(
     val sending by viewModel.sending.collectAsState()
     val error by viewModel.error.collectAsState()
     val unansweredTurn by viewModel.unansweredTurn.collectAsState()
+    val reviewDue by viewModel.reviewDue.collectAsState()
+    val reviewing by viewModel.reviewing.collectAsState()
     val notice by viewModel.notice.collectAsState()
     val resolvedItemType by viewModel.itemType.collectAsState()
     val review by viewModel.review.collectAsState()
@@ -149,6 +154,7 @@ fun ChatScreen(
     // Resolved here rather than in the click handler, so it reads the device language
     // in composable scope.
     val shareLabels = rememberReportLabels(shareable?.second?.language)
+    val testerLabels = rememberTesterLabels(shareable?.second?.language)
     val runLabels = rememberReportLabels(run?.plan?.language)
     // Drawn as the last item in the list rather than under the verdict, so follow-up
     // questions do not push it out of reach.
@@ -188,6 +194,21 @@ fun ChatScreen(
         if (messages.isNotEmpty()) {
             listState.animateScrollToItem(messages.lastIndex + if (showNextSteps) 1 else 0)
         }
+    }
+
+    // The evaluator questionnaire, at the other end of the same conversation. Full screen
+    // like the intake: it is five questions and a slider, and squeezing it into the message
+    // list would make a research instrument feel like an afterthought.
+    if (reviewing) {
+        TesterReviewScreen(
+            labels = testerLabels,
+            onSubmit = { mistakes, detail, stars, quality, extra ->
+                viewModel.submitReview(mistakes, detail, stars, quality, extra)
+                viewModel.showNotice(testerLabels.saved)
+            },
+            onLater = viewModel::dismissReview,
+        )
+        return
     }
 
     // Inspecting comes first: once submitted there is nothing else worth showing, and
@@ -385,6 +406,19 @@ fun ChatScreen(
                         // Pinned to the end of the conversation rather than under the
                         // verdict itself, so that follow-up questions do not push it
                         // out of reach.
+                        // Above the next-steps card on purpose: an evaluator who taps
+                        // "assess another" first would leave without answering, and the
+                        // review is the reason they did this walkthrough.
+                        if (showNextSteps && reviewDue) {
+                            item(key = "tester-review") {
+                                Spacer(Modifier.height(6.dp))
+                                TesterReviewPrompt(
+                                    labels = testerLabels,
+                                    onOpen = viewModel::startReview,
+                                )
+                            }
+                        }
+
                         if (showNextSteps) {
                             item(key = "next-steps") {
                                 Spacer(Modifier.height(6.dp))

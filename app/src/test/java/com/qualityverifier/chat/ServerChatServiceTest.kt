@@ -374,6 +374,10 @@ class ServerChatServiceTest {
             access = accessToken
             refresh = refreshToken
         }
+        private var tester = false
+        override fun isTester() = tester
+        override fun setTester(value: Boolean) { tester = value }
+
         override fun clear() {
             access = null
             refresh = null

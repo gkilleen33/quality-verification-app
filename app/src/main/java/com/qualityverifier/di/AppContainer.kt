@@ -104,7 +104,11 @@ class AppContainer(context: Context) {
         client = syncClient,
         sessions = sessionRepository,
         images = images,
+        tokens = tokenStore,
     )
+
+    /** True when this account is one of our evaluators. Read from the cached profile. */
+    val isTester: Boolean get() = tokenStore.isTester()
 
     val account: AccountActions = AccountActions(syncClient)
 

@@ -2,6 +2,7 @@ package com.qualityverifier.data.sync
 
 import android.util.Log
 import com.qualityverifier.data.auth.TokenProvider
+import com.qualityverifier.data.session.LocalTesterFeedback
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -121,6 +122,53 @@ class SyncClient(
         } ?: false
     }
 
+    /**
+     * Sends an evaluator's review.
+     *
+     * Returns true when the server has it, and **also** when the server refuses it as
+     * unusable — a 400 or a 404 means this review will never be accepted, so retrying it on
+     * every sync forever would be a queue that never drains. Only a transport failure or a
+     * 5xx is worth keeping.
+     */
+    suspend fun submitTesterFeedback(feedback: LocalTesterFeedback): Boolean = withContext(io) {
+        val body = json.encodeToString(
+            TesterFeedbackBody(
+                sessionId = feedback.sessionId,
+                mistakes = feedback.mistakes,
+                mistakesDetail = feedback.mistakesDetail,
+                adviceStars = feedback.adviceStars,
+                itemQuality = feedback.itemQuality,
+                extraFeedback = feedback.extraFeedback,
+            ),
+        ).toRequestBody(JSON)
+        authenticated { token ->
+            Request.Builder().url(baseUrl + "v1/tester-feedback")
+                .addHeader("Authorization", "Bearer $token").post(body).build()
+        }?.use { response ->
+            when {
+                response.isSuccessful -> true
+                // Permanently unacceptable. Dropped rather than retried for ever.
+                response.code in 400..499 -> {
+                    Log.w(TAG, "Server refused evaluator feedback (${response.code}); dropping it")
+                    true
+                }
+                else -> false
+            }
+        } ?: false
+    }
+
+    /** Whether this account is one of our evaluators. Null when the server was unreachable. */
+    suspend fun isTester(): Boolean? = withContext(io) {
+        authenticated { token ->
+            Request.Builder().url(baseUrl + "v1/me")
+                .addHeader("Authorization", "Bearer $token").get().build()
+        }?.use { response ->
+            if (!response.isSuccessful) return@use null
+            val text = response.body?.string() ?: return@use null
+            runCatching { json.decodeFromString<MeBody>(text).isTester }.getOrNull()
+        }
+    }
+
     suspend fun changePassword(current: String, new: String): PasswordOutcome = withContext(io) {
         val body = json.encodeToString(PasswordBody(current, new))
         val response = authenticated { token ->
@@ -184,3 +232,18 @@ sealed interface PasswordOutcome {
     data object TooShort : PasswordOutcome
     data object Unavailable : PasswordOutcome
 }
+
+@Serializable
+private data class TesterFeedbackBody(
+    @SerialName("session_id") val sessionId: String,
+    val mistakes: String,
+    @SerialName("mistakes_detail") val mistakesDetail: String?,
+    @SerialName("advice_stars") val adviceStars: Int,
+    @SerialName("item_quality") val itemQuality: Int,
+    @SerialName("extra_feedback") val extraFeedback: String?,
+)
+
+@Serializable
+private data class MeBody(
+    @SerialName("is_tester") val isTester: Boolean = false,
+)

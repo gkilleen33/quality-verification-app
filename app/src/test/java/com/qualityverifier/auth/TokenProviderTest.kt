@@ -193,6 +193,10 @@ class TokenProviderTest {
             expiresAt = 1_000_000L + expiresInSeconds * 1000
         }
 
+        private var tester = false
+        override fun isTester() = tester
+        override fun setTester(value: Boolean) { tester = value }
+
         override fun clear() {
             access = null
             refresh = null

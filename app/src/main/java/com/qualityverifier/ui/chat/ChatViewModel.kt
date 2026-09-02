@@ -10,6 +10,7 @@ import com.qualityverifier.data.chat.ChatErrorKind
 import com.qualityverifier.data.chat.ChatResult
 import com.qualityverifier.data.chat.ChatService
 import com.qualityverifier.data.db.SessionImageStore
+import com.qualityverifier.data.session.LocalTesterFeedback
 import com.qualityverifier.data.session.SessionRepository
 import com.qualityverifier.di.AppContainer
 import com.qualityverifier.domain.AssessmentContext
@@ -104,6 +105,13 @@ class ChatViewModel(
     declaredPreviousSessionId: String? = null,
     private val sessions: SessionRepository,
     private val chat: ChatService,
+    /**
+     * True when this account is one of our evaluators.
+     *
+     * Passed in rather than read from a store here, so the questionnaire can be driven in
+     * a test without a signed-in account.
+     */
+    private val isTester: Boolean = false,
     private val images: SessionImageStore,
     /**
      * Where file work happens. Injected so that tests can drive it with the same
@@ -179,6 +187,20 @@ class ChatViewModel(
             !sending && !submitting && list.lastOrNull()?.role == Role.USER
         }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), false)
 
+    /**
+     * Whether this evaluator has a review left to give on this assessment.
+     *
+     * Only true for an evaluator account, only once the assessment has reached a verdict,
+     * and only while no review is already stored for it. Answering twice corrects the
+     * first answer rather than being refused, but the prompt stops appearing.
+     */
+    private val _reviewDue = MutableStateFlow(false)
+    val reviewDue: StateFlow<Boolean> = _reviewDue.asStateFlow()
+
+    /** True while the questionnaire is on screen. */
+    private val _reviewing = MutableStateFlow(false)
+    val reviewing: StateFlow<Boolean> = _reviewing.asStateFlow()
+
     /** Plans already collected against, so a run is never offered twice. */
     private val fulfilled = mutableSetOf<String>()
 
@@ -253,6 +275,9 @@ class ChatViewModel(
             if (_carryForward.value == null) _carryForward.value = start?.intake
             previousSessionId = previousSessionId ?: start?.previousSessionId
             _needsIntake.value = sessions.messagesOnce(sessionId).isEmpty()
+            // Only for an evaluator, and only if they have not already answered. The
+            // screen decides *when* to offer it, from whether a verdict exists.
+            _reviewDue.value = isTester && !sessions.hasPendingTesterFeedback(sessionId)
             loadPreviousVerdict()
         }
         // A plan in the newest assistant turn opens a run. Watching the message list
@@ -579,6 +604,46 @@ class ChatViewModel(
         _error.value = null
     }
 
+    fun startReview() {
+        if (_reviewDue.value) _reviewing.value = true
+    }
+
+    /** Closes the questionnaire without answering. The prompt stays for next time. */
+    fun dismissReview() {
+        _reviewing.value = false
+    }
+
+    /**
+     * Stores an evaluator's review and closes the questionnaire.
+     *
+     * Written locally and sent by the sync rather than posted here: an evaluator finishes
+     * an assessment in a workshop, which is exactly where there is no signal, and a review
+     * lost to a failed request cannot be reconstructed — nobody remembers three days later
+     * whether the assistant confused a dowel with a tenon.
+     */
+    fun submitReview(
+        mistakes: String,
+        mistakesDetail: String?,
+        adviceStars: Int,
+        itemQuality: Int,
+        extraFeedback: String?,
+    ) {
+        viewModelScope.launch {
+            sessions.recordTesterFeedback(
+                LocalTesterFeedback(
+                    sessionId = sessionId,
+                    mistakes = mistakes,
+                    mistakesDetail = mistakesDetail?.takeIf { it.isNotBlank() },
+                    adviceStars = adviceStars,
+                    itemQuality = itemQuality,
+                    extraFeedback = extraFeedback?.takeIf { it.isNotBlank() },
+                ),
+            )
+            _reviewing.value = false
+            _reviewDue.value = false
+        }
+    }
+
     fun showNotice(message: String) {
         _notice.value = message
     }
@@ -656,6 +721,7 @@ class ChatViewModel(
                     sessions = container.sessionRepository,
                     chat = container.chatService,
                     images = container.images,
+                    isTester = container.isTester,
                 )
             }
         }

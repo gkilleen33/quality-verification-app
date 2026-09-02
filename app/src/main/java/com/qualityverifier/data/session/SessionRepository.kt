@@ -82,4 +82,32 @@ interface SessionRepository {
     suspend fun recordPendingRemoteDelete(sessionId: String)
 
     suspend fun clearPendingRemoteDelete(sessionId: String)
+
+    /**
+     * Stores an evaluator's review of one assessment, to be sent on the next sync.
+     *
+     * Local first, because an evaluator finishes an assessment in a workshop and that is
+     * exactly where there is no signal. A review that failed to send and was lost would
+     * mean the walkthrough happened and the measurement did not, and it cannot be
+     * reconstructed later.
+     */
+    suspend fun recordTesterFeedback(feedback: LocalTesterFeedback)
+
+    suspend fun pendingTesterFeedback(): List<LocalTesterFeedback>
+
+    /** Whether this assessment already has a review waiting to be sent. */
+    suspend fun hasPendingTesterFeedback(sessionId: String): Boolean
+
+    suspend fun clearTesterFeedback(sessionId: String)
 }
+
+/** An evaluator's review as the phone holds it, before it reaches the server. */
+data class LocalTesterFeedback(
+    val sessionId: String,
+    /** "yes" | "no" | "unsure" */
+    val mistakes: String,
+    val mistakesDetail: String?,
+    val adviceStars: Int,
+    val itemQuality: Int,
+    val extraFeedback: String?,
+)
