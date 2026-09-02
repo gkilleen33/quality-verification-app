@@ -216,6 +216,114 @@ class AdminRouteTest {
     }
 
     @Test
+    fun `a verdict is drawn as cards rather than as the JSON it arrived in`() = testApplication {
+        // What this page is for is judging an assessment, and it used to print the fenced
+        // block verbatim — so the verdict, the one part a reviewer is grading, arrived as
+        // raw JSON while the phone showed cards.
+        val app = withAdmin(FakeAdminStore(conversation = listOf(assistantTurn(VERDICT_TURN))))
+        app.signIn()
+
+        val body = app.get("/admin/assessments/$SESSION_ID").bodyAsText()
+        val shown = body.substringBefore("<details")
+
+        assertTrue("the headline is the line somebody reads", shown.contains("Wobbles badly"))
+        assertTrue(shown.contains("The back left joint has opened up."))
+        // Headings come from the shared label set, the same one the handset uses.
+        assertTrue("no verdict heading", shown.contains("VERDICT"))
+        assertTrue("no defect field headings", shown.contains("WHAT I SEE"))
+        assertTrue(shown.contains("WHAT IT MEANS FOR YOU"))
+        assertTrue("the level should colour the card", shown.contains("lv-serious"))
+        assertTrue("the severity chip is missing", shown.contains("STRUCTURAL · SERIOUS"))
+        assertTrue("could-not-verify is part of the verdict", shown.contains("COULDN'T VERIFY"))
+        assertTrue(shown.contains("Underside of the seat"))
+        assertTrue("the suggested questions belong on the card", shown.contains("Is it repairable?"))
+
+        // The block itself is still on the page, but collapsed rather than printed as the
+        // turn: "what did the model actually send" is a fair question about a turn you are
+        // grading, and the answer should not be the first thing on screen.
+        assertFalse("the raw JSON must not be the turn", shown.contains("what_i_see"))
+        assertFalse(shown.contains("qv-verdict"))
+        assertTrue("the raw text should still be reachable", body.contains("What the model sent"))
+        assertTrue(body.contains("what_i_see"))
+    }
+
+    @Test
+    fun `verdict headings follow the language of the assessment`() = testApplication {
+        // A Swahili finding under an English heading reads as a half-finished app on a
+        // laptop for the same reason it does on a handset.
+        val swahili = VERDICT_TURN.replace("\"language\": \"en\"", "\"language\": \"sw\"")
+        val app = withAdmin(FakeAdminStore(conversation = listOf(assistantTurn(swahili))))
+        app.signIn()
+
+        val shown = app.get("/admin/assessments/$SESSION_ID").bodyAsText().substringBefore("<details")
+
+        assertTrue("Swahili headings expected", shown.contains("UAMUZI"))
+        assertTrue(shown.contains("NINACHOKIONA"))
+        assertFalse("English headings should not appear too", shown.contains("WHAT I SEE"))
+    }
+
+    @Test
+    fun `model output is escaped even when it is rendered as a card`() = testApplication {
+        // The verdict is a model reading a customer's photographs, so it is untrusted for
+        // the same reason the customer's own typing is — and it now passes through tags
+        // rather than a single text node, which is where this could quietly regress.
+        val hostile = VERDICT_TURN.replace("Wobbles badly", "<script>alert('x')</script>")
+        val app = withAdmin(FakeAdminStore(conversation = listOf(assistantTurn(hostile))))
+        app.signIn()
+
+        val body = app.get("/admin/assessments/$SESSION_ID").bodyAsText()
+
+        assertFalse("a script tag must not survive a rendered verdict", body.contains("<script>alert"))
+        assertTrue("it should be visible as text", body.contains("&lt;script&gt;"))
+    }
+
+    @Test
+    fun `a reply's markdown is rendered rather than shown as punctuation`() = testApplication {
+        val turn = assistantTurn(
+            """
+            ## What I found
+
+            The joint is **loose**, and the finish is *thin*.
+
+            - Back left leg
+            - Seat rail
+            """.trimIndent(),
+        )
+        val app = withAdmin(FakeAdminStore(conversation = listOf(turn)))
+        app.signIn()
+
+        val body = app.get("/admin/assessments/$SESSION_ID").bodyAsText()
+
+        assertTrue("bold should be a tag", body.contains("<strong>loose</strong>"))
+        assertTrue("italic should be a tag", body.contains("<em>thin</em>"))
+        // h3 rather than h1 or h2: the page owns those, and a model heading outranking
+        // the page title would break the outline for a screen reader.
+        assertTrue("a heading should be a heading", body.contains("<h3>"))
+        assertTrue(body.contains("What I found"))
+        assertTrue("the bullets should be one list", body.contains("<ul>"))
+        assertFalse("the markers should not be visible", body.contains("**loose**"))
+        // A plain prose turn hides nothing, so it should not offer to reveal anything.
+        assertFalse(body.contains("What the model sent"))
+    }
+
+    @Test
+    fun `a plan is drawn as the shots and tests it asks for`() = testApplication {
+        // Half of judging an assessment is judging what it asked to be shown, and the
+        // photographs further down the page are the answer to this list.
+        val app = withAdmin(FakeAdminStore(conversation = listOf(assistantTurn(PLAN_TURN))))
+        app.signIn()
+
+        val shown = app.get("/admin/assessments/$SESSION_ID").bodyAsText().substringBefore("<details")
+
+        assertTrue(shown.contains("Six photos and two quick tests."))
+        assertTrue(shown.contains("Whole table, standing back"))
+        assertTrue(shown.contains("Back left joint, close"))
+        assertTrue(shown.contains("Rock it corner to corner"))
+        assertTrue("the answer buttons are part of the test", shown.contains("It moves"))
+        assertFalse("the raw JSON must not be the turn", shown.contains("qv-plan"))
+    }
+
+    @Test
     fun `admin responses are not cached and run no scripts`() = testApplication {
         // The back button after sign-out is the one moment somebody expects customer
         // photographs to be gone, and it is a browser cache decision rather than ours.
@@ -1089,5 +1197,60 @@ class AdminRouteTest {
         /** A customer account, for the evaluator toggle. */
         const val CUSTOMER_ID = "33333333-4444-5555-6666-777777777777"
         const val DEVICE_COOKIE_NAME = "kagua_admin_device"
+
+        fun assistantTurn(text: String) =
+            AdminMessageRow("ASSISTANT", text, Instant.now(), emptyList())
+
+        /**
+         * A verdict turn in the shape the assistant actually sends: prose first, then the
+         * fenced block for the app. The prose duplicate is deliberate — the prompt writes
+         * both so that a block which will not parse still leaves a readable answer.
+         */
+        val VERDICT_TURN = """
+            This table has a serious problem with its back left joint.
+
+            ```qv-verdict
+            {
+              "verdict": "serious_concerns",
+              "language": "en",
+              "headline": "Wobbles badly",
+              "summary": "The back left joint has opened up.",
+              "defects": [
+                {
+                  "title": "Open mortise and tenon",
+                  "area": "structural",
+                  "severity": "serious",
+                  "what_i_see": "A gap of about 3mm at the back left joint.",
+                  "what_it_means": "It will loosen further under daily use.",
+                  "what_to_do": "Re-glue and cramp the joint."
+                }
+              ],
+              "unverified": ["Underside of the seat"],
+              "questions": ["Is it repairable?"]
+            }
+            ```
+        """.trimIndent()
+
+        val PLAN_TURN = """
+            I can work with that.
+
+            ```qv-plan
+            {
+              "summary": "Six photos and two quick tests.",
+              "language": "en",
+              "photos": [
+                {"title": "Whole table, standing back", "note": "All four legs in frame"},
+                {"title": "Back left joint, close", "note": "Fill the frame with the joint"}
+              ],
+              "tests": [
+                {
+                  "title": "Rock it corner to corner",
+                  "instruction": "Push opposite corners in opposite directions.",
+                  "options": [{"label": "It moves"}, {"label": "It stays put"}]
+                }
+              ]
+            }
+            ```
+        """.trimIndent()
     }
 }
