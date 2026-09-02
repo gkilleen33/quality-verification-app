@@ -14,6 +14,8 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlin.time.Duration.Companion.hours
 import kotlin.time.Duration.Companion.minutes
+import com.qualityverifier.server.db.FeedbackStore
+import com.qualityverifier.server.db.PostgresFeedbackStore
 import io.ktor.server.engine.embeddedServer
 import io.ktor.server.netty.Netty
 import io.ktor.server.plugins.calllogging.CallLogging
@@ -103,7 +105,9 @@ fun main() {
                 apiKey = { config.anthropicApiKey },
             ),
             prompts = prompts,
+            feedback = PostgresFeedbackStore(database.source),
             dailyAssessmentLimit = config.dailyAssessmentLimit,
+            testerDailyAssessmentLimit = config.testerDailyAssessmentLimit,
         )
     } else {
         log.warn("Chat is disabled: needs a database and KAGUA_ANTHROPIC_API_KEY.")
@@ -153,7 +157,11 @@ fun main() {
 
     log.info("Kagua server {} starting on {}:{}", config.version, config.host, config.port)
     if (config.dailyAssessmentLimit > 0) {
-        log.info("Daily assessment limit: {} per account", config.dailyAssessmentLimit)
+        log.info(
+            "Daily assessment limit: {} per account, {} for evaluators",
+            config.dailyAssessmentLimit,
+            config.testerDailyAssessmentLimit,
+        )
     } else {
         log.warn("Daily assessment limit is DISABLED; every request is billed to us")
     }
@@ -206,8 +214,11 @@ class Chat(
     val blobs: BlobStore,
     val claude: ClaudeClient,
     val prompts: PromptRepository,
+    val feedback: FeedbackStore,
     /** Assessments one account may start per day. Zero or less means no limit. */
     val dailyAssessmentLimit: Int = Config.DEFAULT_DAILY_ASSESSMENT_LIMIT,
+    /** The higher allowance for one of our own evaluators. */
+    val testerDailyAssessmentLimit: Int = Config.DEFAULT_TESTER_DAILY_ASSESSMENT_LIMIT,
 )
 
 @Serializable
@@ -282,10 +293,13 @@ fun Application.module(
         // Chat needs auth: every route inside it authenticates, and mounting them
         // without the plugin installed would fail at request time rather than here.
         if (auth != null) chat?.let {
-            chatRoutes(it.store, it.blobs, it.claude, it.prompts, it.dailyAssessmentLimit)
+            chatRoutes(
+                it.store, it.blobs, it.claude, it.prompts,
+                it.dailyAssessmentLimit, it.testerDailyAssessmentLimit,
+            )
             // Reading assessments back, plus the two account actions. Needs both halves:
             // the chat store for sessions and the auth store for credentials.
-            syncRoutes(it.store, auth.store, it.blobs)
+            syncRoutes(it.store, auth.store, it.blobs, it.feedback)
         }
 
         admin?.let { adminRoutes(it.store, it.blobs, it.secureCookie) }

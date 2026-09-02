@@ -195,6 +195,7 @@ fun Route.authRoutes(store: AuthStore, accessTokens: AccessTokens) {
                     name = user.displayName,
                     accountType = user.accountType,
                     businessName = user.businessName,
+                    isTester = user.isTester,
                 )
             )
         }

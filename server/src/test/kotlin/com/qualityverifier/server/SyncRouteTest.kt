@@ -5,6 +5,7 @@ import com.qualityverifier.server.auth.Passwords
 import com.qualityverifier.server.blobs.BlobStore
 import com.qualityverifier.server.chat.TokenUsage
 import com.qualityverifier.server.db.AuthStore
+import com.qualityverifier.server.db.FeedbackStore
 import com.qualityverifier.server.db.ChatStore
 import com.qualityverifier.server.db.Credentials
 import com.qualityverifier.server.db.MessageRow
@@ -18,6 +19,7 @@ import com.qualityverifier.server.db.UserRow
 import com.qualityverifier.server.routes.ChangePasswordRequest
 import io.ktor.client.plugins.contentnegotiation.ContentNegotiation as ClientContentNegotiation
 import io.ktor.client.request.delete
+import com.qualityverifier.server.db.TesterFeedback
 import io.ktor.client.request.get
 import io.ktor.client.request.header
 import io.ktor.client.request.post
@@ -51,14 +53,14 @@ class SyncRouteTest {
 
     @Test
     fun `the list contains only this user's assessments`() = testApplication {
-        val chat = FakeChatStore(sessions = listOf(row("mine")))
+        val chat = FakeChatStore(sessions = listOf(row(SESSION)))
         val app = withSync(chat, FakeAuth())
 
         val response = app.get("/v1/sessions") { auth(MINE) }
 
         assertEquals(HttpStatusCode.OK, response.status)
         assertEquals(MINE, chat.askedFor)
-        assertTrue(response.bodyAsText().contains("mine"))
+        assertTrue(response.bodyAsText().contains(SESSION))
     }
 
     @Test
@@ -74,18 +76,35 @@ class SyncRouteTest {
     @Test
     fun `an assessment comes back with its messages and photo hashes in order`() = testApplication {
         val chat = FakeChatStore(
-            detail = row("mine") to listOf(
+            detail = row(SESSION) to listOf(
                 MessageRow("m1", "USER", "here they are", 0, 1L, listOf("aa".repeat(32), "bb".repeat(32))),
                 MessageRow("m2", "ASSISTANT", "thanks", 1, 2L, emptyList()),
             )
         )
         val app = withSync(chat, FakeAuth())
 
-        val body = app.get("/v1/sessions/mine") { auth(MINE) }.bodyAsText()
+        val body = app.get("/v1/sessions/$SESSION") { auth(MINE) }.bodyAsText()
 
         // Order matters: the protocols refer to photos by position.
         assertTrue(body, body.indexOf("aa".repeat(32)) < body.indexOf("bb".repeat(32)))
         assertTrue(body, body.contains("\"ordinal\":0"))
+    }
+
+    @Test
+    fun `an id that is not a uuid is a 404, not a 500`() = testApplication {
+        // These ids are cast with `?::uuid`, so anything malformed throws inside Postgres
+        // and StatusPages turns it into a 500. It is the same "no such thing" as any other
+        // unknown id and deserves the same answer.
+        val app = withSync(FakeChatStore(), FakeAuth())
+
+        assertEquals(
+            HttpStatusCode.NotFound,
+            app.get("/v1/sessions/not-a-uuid") { auth(MINE) }.status,
+        )
+        assertEquals(
+            HttpStatusCode.NotFound,
+            app.delete("/v1/sessions/not-a-uuid") { auth(MINE) }.status,
+        )
     }
 
     @Test
@@ -95,10 +114,10 @@ class SyncRouteTest {
         val chat = FakeChatStore(deleteSucceeds = true)
         val app = withSync(chat, FakeAuth())
 
-        val response = app.delete("/v1/sessions/mine") { auth(MINE) }
+        val response = app.delete("/v1/sessions/$SESSION") { auth(MINE) }
 
         assertEquals(HttpStatusCode.NoContent, response.status)
-        assertEquals("mine", chat.deleted)
+        assertEquals(SESSION, chat.deleted)
     }
 
     @Test
@@ -238,6 +257,118 @@ class SyncRouteTest {
         )
     }
 
+    // ------------------------------------------------- evaluator feedback
+
+    @Test
+    fun `an evaluator's critique is recorded against the assessment`() = testApplication {
+        val feedback = RecordingFeedback()
+        val app = withSync(FakeChatStore(), FakeAuth(isTester = true), feedback = feedback)
+
+        val response = app.post("/v1/tester-feedback") {
+            auth(MINE)
+            contentType(ContentType.Application.Json)
+            setBody(
+                """
+                {"session_id":"$SESSION","mistakes":"yes","mistakes_detail":"Called a dowel a tenon",
+                 "advice_stars":4,"item_quality":7,"extra_feedback":"Useful on the joints"}
+                """.trimIndent()
+            )
+        }
+
+        assertEquals(HttpStatusCode.NoContent, response.status)
+        val saved = feedback.saved.single()
+        assertEquals(SESSION, saved.second.sessionId)
+        assertEquals(MINE, saved.first)
+        assertEquals("yes", saved.second.mistakes)
+        assertEquals(4, saved.second.adviceStars)
+        assertEquals(7, saved.second.itemQuality)
+    }
+
+    @Test
+    fun `a customer cannot submit evaluator feedback`() = testApplication {
+        // These rows are a research instrument. A mix of staff critiques and unsolicited
+        // customer ratings in one table is a dataset nobody can use.
+        val feedback = RecordingFeedback()
+        val app = withSync(FakeChatStore(), FakeAuth(isTester = false), feedback = feedback)
+
+        val response = app.post("/v1/tester-feedback") {
+            auth(MINE)
+            contentType(ContentType.Application.Json)
+            setBody("""{"session_id":"$SESSION","mistakes":"no","advice_stars":5,"item_quality":8}""")
+        }
+
+        assertEquals(HttpStatusCode.Forbidden, response.status)
+        assertTrue("nothing may be written", feedback.saved.isEmpty())
+    }
+
+    @Test
+    fun `out-of-range answers are refused with a reason`() = testApplication {
+        // The table has the same constraints, but a violation there is a 500 that tells the
+        // evaluator nothing — and a research instrument that silently drops a submission is
+        // worse than one that refuses it.
+        val feedback = RecordingFeedback()
+        val app = withSync(FakeChatStore(), FakeAuth(isTester = true), feedback = feedback)
+
+        val cases = listOf(
+            """{"session_id":"$SESSION","mistakes":"maybe","advice_stars":3,"item_quality":5}""",
+            """{"session_id":"$SESSION","mistakes":"no","advice_stars":6,"item_quality":5}""",
+            """{"session_id":"$SESSION","mistakes":"no","advice_stars":0,"item_quality":5}""",
+            """{"session_id":"$SESSION","mistakes":"no","advice_stars":3,"item_quality":11}""",
+            """{"session_id":"$SESSION","mistakes":"no","advice_stars":3,"item_quality":0}""",
+        )
+        cases.forEach { body ->
+            val response = app.post("/v1/tester-feedback") {
+                auth(MINE)
+                contentType(ContentType.Application.Json)
+                setBody(body)
+            }
+            assertEquals(body, HttpStatusCode.BadRequest, response.status)
+        }
+        assertTrue("nothing may be written", feedback.saved.isEmpty())
+    }
+
+    @Test
+    fun `feedback on somebody else's assessment is a 404`() = testApplication {
+        // The store reports the ownership failure; the route must not turn it into a 403.
+        val app = withSync(
+            FakeChatStore(), FakeAuth(isTester = true),
+            feedback = RecordingFeedback(accepts = false),
+        )
+
+        val response = app.post("/v1/tester-feedback") {
+            auth(MINE)
+            contentType(ContentType.Application.Json)
+            setBody("""{"session_id":"$SESSION","mistakes":"no","advice_stars":3,"item_quality":5}""")
+        }
+
+        assertEquals(HttpStatusCode.NotFound, response.status)
+    }
+
+    @Test
+    fun `feedback needs a token`() = testApplication {
+        val app = withSync(FakeChatStore(), FakeAuth(isTester = true))
+
+        val response = app.post("/v1/tester-feedback") {
+            contentType(ContentType.Application.Json)
+            setBody("""{"session_id":"$SESSION","mistakes":"no","advice_stars":3,"item_quality":5}""")
+        }
+
+        assertEquals(HttpStatusCode.Unauthorized, response.status)
+    }
+
+    private class RecordingFeedback(private val accepts: Boolean = true) : FeedbackStore {
+        val saved = mutableListOf<Pair<String, TesterFeedback>>()
+
+        override suspend fun save(userId: String, feedback: TesterFeedback): Boolean {
+            if (!accepts) return false
+            saved += userId to feedback
+            return true
+        }
+
+        override suspend fun feedbackFor(sessionId: String) =
+            saved.lastOrNull { it.second.sessionId == sessionId }?.second
+    }
+
     // ---------------------------------------------------------------- harness
 
     private fun io.ktor.client.request.HttpRequestBuilder.auth(userId: String) {
@@ -254,6 +385,7 @@ class SyncRouteTest {
         chat: ChatStore,
         auth: AuthStore,
         blobs: BlobStore = BlobStore(folder.newFolder()),
+        feedback: FeedbackStore = NoFeedback,
     ) = run {
         application {
             module(
@@ -263,7 +395,7 @@ class SyncRouteTest {
                 // The sync routes mount alongside chat, so a Chat is supplied with a
                 // Claude client that would fail if called — none of these routes call it,
                 // and a stub that throws would catch it if one ever did.
-                chat = Chat(chat, blobs, UnusedClaude, UnusedPrompts),
+                chat = Chat(chat, blobs, UnusedClaude, UnusedPrompts, feedback),
             )
         }
         createClient { install(ClientContentNegotiation) { json() } }
@@ -301,7 +433,7 @@ class SyncRouteTest {
         override suspend fun ensureSession(
             sessionId: String, userId: String, itemTypeId: String,
             previousSessionId: String?, intakeAnswers: String?, promptSha: String?,
-            dailyLimit: Int,
+            dailyLimit: Int, testerDailyLimit: Int,
         ) = SessionAccess.Ok(created = true)
 
         override suspend fun appendUserTurn(
@@ -336,14 +468,17 @@ class SyncRouteTest {
         }
     }
 
-    private class FakeAuth(private val currentPassword: String? = null) : AuthStore {
+    private class FakeAuth(
+        private val currentPassword: String? = null,
+        private val isTester: Boolean = false,
+    ) : AuthStore {
         val passwordChanges = mutableListOf<String>()
         val accountsDeleted = mutableListOf<String>()
         val revoked = mutableListOf<String>()
 
         override suspend fun register(registration: Registration) = RegisterOutcome.InviteUnusable
         override suspend fun findUser(userId: String) =
-            UserRow(userId, "Grady", "individual", null, disabled = false)
+            UserRow(userId, "Grady", "individual", null, disabled = false, isTester = isTester)
 
         override suspend fun issueRefresh(
             userId: String, token: String, expiresAt: Instant, userAgent: String?, replaces: String?,
@@ -372,6 +507,15 @@ class SyncRouteTest {
     private companion object {
         const val KEY = "a-signing-key-long-enough-to-be-real"
         const val MINE = "11111111-2222-3333-4444-555555555555"
+
+        /**
+         * A real UUID, because the routes cast ids with `?::uuid`.
+         *
+         * These tests used "mine", which no client could ever send and which now gets the
+         * 404 that junk ids get. A readable placeholder was hiding the fact that a
+         * malformed id reached Postgres and came back as a 500.
+         */
+        const val SESSION = "2ff77920-3928-46e5-8a77-5e16c1e901c6"
 
         /** A second, entirely valid account. Signed in, just not the owner. */
         const val STRANGER = "99999999-8888-7777-6666-555555555555"

@@ -15,6 +15,8 @@ data class UserRow(
     val accountType: String?,
     val businessName: String?,
     val disabled: Boolean,
+    /** One of our own evaluators, not a buyer. Drives the exit questionnaire and the cap. */
+    val isTester: Boolean = false,
 )
 
 /** What registration was given. Validated before it reaches here. */
@@ -125,13 +127,15 @@ class PostgresAuthStore(private val dataSource: DataSource) : AuthStore {
      * same moment would both pass that check. The constraint cannot be raced.
      */
     override suspend fun register(registration: Registration): RegisterOutcome = tx { connection ->
-        val usable = connection.prepareStatement(
-            "select 1 from invite_codes where code = ? and revoked_at is null"
+        // The grant comes with the code, read in the same transaction that redeems it. A
+        // customer cannot ask to be an evaluator, and an evaluator should not have to
+        // remember to tick anything at registration.
+        val grantsTester = connection.prepareStatement(
+            "select grants_tester from invite_codes where code = ? and revoked_at is null"
         ).use { statement ->
             statement.setString(1, registration.inviteCode)
-            statement.executeQuery().use { it.next() }
-        }
-        if (!usable) return@tx RegisterOutcome.InviteUnusable
+            statement.executeQuery().use { if (it.next()) it.getBoolean(1) else null }
+        } ?: return@tx RegisterOutcome.InviteUnusable
 
         // No CASE around the point: ST_MakePoint(NULL, NULL) is already NULL, and
         // `? is null` gives Postgres no type to infer, which fails at prepare time
@@ -140,8 +144,8 @@ class PostgresAuthStore(private val dataSource: DataSource) : AuthStore {
             insert into users (
                 invite_code, display_name, account_type, business_name,
                 business_location, business_location_accuracy_m, business_location_at,
-                phone, password_hash, password_set_at
-            ) values (?, ?, ?, ?, ST_SetSRID(ST_MakePoint(?, ?), 4326)::geography, ?, ?, ?, ?, now())
+                phone, password_hash, password_set_at, is_tester
+            ) values (?, ?, ?, ?, ST_SetSRID(ST_MakePoint(?, ?), 4326)::geography, ?, ?, ?, ?, now(), ?)
             returning id::text
         """.trimIndent()
 
@@ -168,6 +172,7 @@ class PostgresAuthStore(private val dataSource: DataSource) : AuthStore {
                 }
                 statement.setString(9, registration.phone)
                 statement.setString(10, registration.passwordHash)
+                statement.setBoolean(11, grantsTester)
                 statement.executeQuery().use { rows ->
                     rows.next()
                     RegisterOutcome.Created(rows.getString(1))
@@ -200,7 +205,8 @@ class PostgresAuthStore(private val dataSource: DataSource) : AuthStore {
             connection.prepareStatement(
                 """
                 select id::text, display_name, account_type, business_name,
-                       (disabled_at is not null or deleted_at is not null) as gone
+                       (disabled_at is not null or deleted_at is not null) as gone,
+                       is_tester
                 from users where id = ?::uuid
                 """.trimIndent()
             ).use { statement ->
@@ -212,6 +218,7 @@ class PostgresAuthStore(private val dataSource: DataSource) : AuthStore {
                         accountType = rows.getString(3),
                         businessName = rows.getString(4),
                         disabled = rows.getBoolean(5),
+                        isTester = rows.getBoolean(6),
                     )
                 }
             }

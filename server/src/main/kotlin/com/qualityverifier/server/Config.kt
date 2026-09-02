@@ -30,6 +30,14 @@ data class Config(
      */
     val dailyAssessmentLimit: Int,
     /**
+     * The allowance for one of our own evaluators.
+     *
+     * Higher because assessing furniture is their job rather than something they do while
+     * buying a table. A cap all the same: an evaluator's runaway client costs exactly what
+     * a customer's does.
+     */
+    val testerDailyAssessmentLimit: Int,
+    /**
      * Signs the admin portal's session cookie. Absent means the portal is not mounted.
      *
      * A separate secret from the JWT key on purpose: one is handed to every phone in the
@@ -44,6 +52,9 @@ data class Config(
          * what a runaway client can spend before somebody notices.
          */
         const val DEFAULT_DAILY_ASSESSMENT_LIMIT = 20
+
+        /** Fifty. A working day of evaluations, still bounded. */
+        const val DEFAULT_TESTER_DAILY_ASSESSMENT_LIMIT = 50
 
         fun fromEnvironment(env: (String) -> String? = System::getenv): Config {
             val password = env("KAGUA_DB_PASSWORD")
@@ -76,6 +87,8 @@ data class Config(
                 // has to work out.
                 dailyAssessmentLimit = env("KAGUA_DAILY_ASSESSMENT_LIMIT")?.toIntOrNull()
                     ?: DEFAULT_DAILY_ASSESSMENT_LIMIT,
+                testerDailyAssessmentLimit = env("KAGUA_TESTER_DAILY_ASSESSMENT_LIMIT")?.toIntOrNull()
+                    ?: DEFAULT_TESTER_DAILY_ASSESSMENT_LIMIT,
                 adminSessionKey = env("KAGUA_ADMIN_SESSION_KEY")?.takeIf { it.isNotBlank() },
             )
         }

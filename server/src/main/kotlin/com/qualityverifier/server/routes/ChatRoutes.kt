@@ -34,6 +34,8 @@ fun Route.chatRoutes(
     prompts: PromptRepository,
     /** Assessments one account may start per day. Zero or less means no limit. */
     dailyAssessmentLimit: Int,
+    /** The higher allowance for one of our own evaluators. */
+    testerDailyAssessmentLimit: Int,
 ) {
     authenticate("jwt") {
 
@@ -127,6 +129,7 @@ fun Route.chatRoutes(
                 intakeAnswers = request.intakeAnswers,
                 promptSha = sha256Of(systemPrompt),
                 dailyLimit = dailyAssessmentLimit,
+                testerDailyLimit = testerDailyAssessmentLimit,
             )
             if (access is SessionAccess.NotYours) {
                 // 404, never 403: telling the difference would let anybody enumerate
