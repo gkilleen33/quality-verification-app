@@ -260,6 +260,46 @@ history, in `ps`, and — because this is run over SSM — in an AWS command log
 parameters. It prints the TOTP secret once. The account cannot sign in until a code from
 that secret has been accepted, so an abandoned enrolment leaves no usable account behind.
 
+**Bringing the portal up, in order**
+
+1. **Generate the session key on the box** and put it straight into Parameter Store from
+   there. It must not travel as an SSM command parameter — those are kept in the AWS command
+   log, which would leave the key guarding the portal sitting in an audit trail:
+
+   ```
+   openssl rand -base64 48 | tr -d '\n' > /tmp/k && \
+     aws ssm put-parameter --region us-east-1 --name /kagua/admin/session-key \
+       --type SecureString --value "file:///tmp/k" && shred -u /tmp/k
+   ```
+
+   The instance role is read-only on Parameter Store, so this is run from an admin machine
+   or the role is widened for the one call. Either way the value is generated where it will
+   be used and never printed.
+
+2. **Apply `V8`** with `server/db/apply.sh`, as the `kagua` role. Applying it as `postgres`
+   would leave the new tables owned by postgres and the app unable to read them — which is
+   exactly the fault that produced `V4`'s ownership fix, and the script now asserts against
+   it.
+
+3. **Restart** so the launcher picks up `KAGUA_ADMIN_SESSION_KEY`. Until it does, the log
+   says the portal is disabled and `/admin` 404s — which is the intended failure.
+
+4. **nginx**, two files and one of them by hand:
+   - copy `kagua-admin-ratelimit.conf` into `/etc/nginx/conf.d/`
+   - add the `location ~ ^/admin/(login|2fa)$` block to the live vhost **by editing the file
+     on the host**. Do not reinstall the template: certbot rewrote it in place, and copying
+     the pre-TLS form back would drop the `listen 443` block and return the site to plain
+     HTTP, which the app refuses to talk to.
+   - `nginx -t`, then reload. Note that a reload returns before new workers are serving, so
+     a check immediately afterwards can still hit the old config.
+
+5. **Create the first admin** with the command above, add the secret to an authenticator,
+   then sign in and confirm the code is accepted.
+
+6. **Check the quota's SQL**, which has no unit test: start assessments past the limit on a
+   throwaway account and confirm the 429 arrives with `daily_limit_reached` and that
+   `usage_events` shows nothing was sent to Claude for the refused turn.
+
 ## Applying migrations
 
 **Use `server/db/apply.sh`.** It runs every migration as the `kagua` role, keeps
