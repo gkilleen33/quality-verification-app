@@ -135,9 +135,17 @@ Deleting a **single report** has never been changed by any of this. `client_dele
 set, and `purge_deleted_sessions('7 days')` erases it for good seven days later, photographs
 included via the blob sweep. The app still promises exactly that and it is still true.
 
-Worth noticing, and deciding on deliberately rather than by accident: a customer who wants
-everything gone can delete each report individually and get a real erasure, while deleting
-their whole account keeps the assessments anonymised. That asymmetry is defensible —
-deleting one report is a targeted "not this", closing an account is "I am leaving" — but it
-is also a gap somebody could walk through, and it was not part of the decision that
-produced this document.
+Since 2 Sep 2026 deleting a report **asks** which of the two is meant:
+
+- *Keep it on our server (recommended)* — removed from the phone, our copy stays. The phone
+  records the id in `dismissed_sessions` so the next pull does not fetch it back.
+- *Delete it from our server too* — the original behaviour. `client_deleted_at` is set and
+  `purge_deleted_sessions('7 days')` erases it, photographs included via the blob sweep.
+
+Both delete locally first and unconditionally, because somebody who tapped delete has to see
+it gone whether or not they have signal.
+
+That closes the asymmetry this document previously flagged — a customer wanting everything
+erased can still get it, but by asking rather than by deleting reports one at a time and
+hoping. The seven-day window now appears only on the option it applies to; on the other one
+it would be a false statement, and `AuthLabelsTest` asserts it is absent there.

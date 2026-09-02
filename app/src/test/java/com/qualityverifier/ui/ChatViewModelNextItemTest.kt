@@ -338,6 +338,10 @@ class ChatViewModelNextItemTest {
         override suspend fun recordPendingRemoteDelete(sessionId: String) = Unit
         override suspend fun clearPendingRemoteDelete(sessionId: String) = Unit
 
+        val dismissed = mutableSetOf<String>()
+        override suspend fun dismissLocally(sessionId: String) { dismissed += sessionId }
+        override suspend fun dismissedSessions(): Set<String> = dismissed
+
         val testerFeedback = mutableListOf<com.qualityverifier.data.session.LocalTesterFeedback>()
         override suspend fun recordTesterFeedback(
             feedback: com.qualityverifier.data.session.LocalTesterFeedback,

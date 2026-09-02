@@ -12,8 +12,9 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         AttachmentEntity::class,
         PendingRemoteDeleteEntity::class,
         PendingTesterFeedbackEntity::class,
+        DismissedSessionEntity::class,
     ],
-    version = 6,
+    version = 7,
     exportSchema = true,
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -99,8 +100,26 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        /**
+         * Adds `dismissed_sessions`.
+         *
+         * Deleting a report now offers to keep the server's copy. The phone has to remember
+         * which ones it dropped, or the next sync downloads them again and the delete looks
+         * like it failed.
+         */
+        val MIGRATION_6_7 = object : Migration(6, 7) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS dismissed_sessions (" +
+                        "sessionId TEXT NOT NULL PRIMARY KEY, " +
+                        "dismissedAt INTEGER NOT NULL)"
+                )
+            }
+        }
+
         val MIGRATIONS = arrayOf(
             MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6,
+            MIGRATION_6_7,
         )
     }
 }

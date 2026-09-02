@@ -127,3 +127,19 @@ data class PendingTesterFeedbackEntity(
     val extraFeedback: String?,
     val recordedAt: Long,
 )
+
+/**
+ * A report the customer removed from this phone but chose to leave on the server.
+ *
+ * Without this the next pull sync would fetch it straight back, because sync decides what
+ * to download from what the phone does not have — and a report that reappears after being
+ * deleted reads as the delete having failed.
+ *
+ * Only the id is kept. It is not a copy of anything: it is a note that this phone is not
+ * interested in that assessment, which is why the row survives the local deletion.
+ */
+@Entity(tableName = "dismissed_sessions")
+data class DismissedSessionEntity(
+    @PrimaryKey val sessionId: String,
+    val dismissedAt: Long,
+)

@@ -60,8 +60,16 @@ data class AuthLabels(
     val keepAccount: String,
     // Deleting one assessment
     val deleteReportTitle: String,
-    /** REVIEW CRITICAL: states the 7-day assessment retention. */
+    /** REVIEW CRITICAL: introduces the two ways to delete a report. */
     val deleteReportBody: String,
+
+    /** REVIEW CRITICAL: the option that keeps our copy. Marked as recommended. */
+    val deleteReportKeepLabel: String,
+    val deleteReportKeepDetail: String,
+
+    /** REVIEW CRITICAL: the option that removes our copy, and states the 7 days. */
+    val deleteReportPurgeLabel: String,
+    val deleteReportPurgeDetail: String,
     val delete: String,
     val cancel: String,
     val signOut: String,
@@ -130,9 +138,14 @@ data class AuthLabels(
                 "in again and this cannot be undone.",
             keepAccount = "Keep my account",
             deleteReportTitle = "Delete this report?",
-            deleteReportBody = "It will be removed from your phone straight away. We keep " +
-                "a copy on our server for 7 days to check the quality of our assessments, " +
-                "then it is deleted for good.",
+            deleteReportBody = "It goes from your phone straight away either way. Choose " +
+                "what happens to our copy.",
+            deleteReportKeepLabel = "Keep it on our server (recommended)",
+            deleteReportKeepDetail = "It goes from your phone, and we keep our copy so we " +
+                "can check our assessments and improve them. Nobody else sees it in the app.",
+            deleteReportPurgeLabel = "Delete it from our server too",
+            deleteReportPurgeDetail = "We delete our copy, including the photos, after 7 " +
+                "days. It cannot be recovered.",
             delete = "Delete",
             cancel = "Cancel",
             signOut = "Sign out",
@@ -194,9 +207,15 @@ data class AuthLabels(
                 "uhusiano nawe. Hutaweza kuingia tena na hii haiwezi kurudishwa.",
             keepAccount = "Baki na akaunti yangu",
             deleteReportTitle = "Futa ripoti hii?",
-            deleteReportBody = "Itatolewa kwenye simu yako mara moja. Tunabaki na nakala " +
-                "kwenye seva yetu kwa siku 7 kuangalia ubora wa ukaguzi wetu, kisha " +
-                "inafutwa kabisa.",
+            deleteReportBody = "Inatoka kwenye simu yako mara moja vyovyote. Chagua nakala " +
+                "yetu ifanyeje.",
+            deleteReportKeepLabel = "Baki na nakala kwenye seva yetu (inapendekezwa)",
+            deleteReportKeepDetail = "Inatoka kwenye simu yako, na tunabaki na nakala yetu " +
+                "ili tuweze kukagua ukaguzi wetu na kuuboresha. Hakuna mtu mwingine " +
+                "anayeiona kwenye programu.",
+            deleteReportPurgeLabel = "Ifute pia kwenye seva yetu",
+            deleteReportPurgeDetail = "Tunafuta nakala yetu, pamoja na picha, baada ya siku " +
+                "7. Haiwezi kurudishwa.",
             delete = "Futa",
             cancel = "Acha",
             signOut = "Toka",

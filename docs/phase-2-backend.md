@@ -502,10 +502,10 @@ Two properties worth knowing rather than rediscovering:
 
    Reverting: `docs/reverting-to-full-deletion.md`.
 
-   **Open, and not decided by this:** deleting a single report still erases it for good
-   after 7 days. So somebody who deletes every report individually gets a real erasure,
-   while closing their account keeps the assessments anonymised. Defensible, but a gap
-   somebody could walk through.
+   **Closed 2 Sep 2026:** deleting a report now asks which is meant — keep our copy
+   (recommended, and the phone records the id so a sync does not fetch it back) or delete it
+   from the server too, which is the original 7-day erasure. The window is stated only on
+   the option it applies to.
 
 3. ~~**Region.**~~ Settled: us-east-1.
 4. ~~**Auth identity.**~~ Settled: invite codes for the pilot. SMS later if needed.

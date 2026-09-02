@@ -77,8 +77,12 @@ class AssessmentSync(
             ?: return@withContext Result(0, deletes, reachedServer = false, reviews = reviews)
 
         val known = sessions.knownSessions()
+        // Reports the customer dropped from this phone while choosing to leave our copy
+        // alone. Fetching them back would make the delete look like it failed.
+        val dismissed = sessions.dismissedSessions()
         var fetched = 0
         for (summary in remote) {
+            if (summary.id in dismissed) continue
             val localStamp = known[summary.id]
             // Skip anything the phone already has at the same age or newer. The common
             // case is a phone that created the assessment itself, so most of a list will

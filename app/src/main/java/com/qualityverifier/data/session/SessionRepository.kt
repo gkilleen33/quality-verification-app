@@ -99,6 +99,16 @@ interface SessionRepository {
     suspend fun hasPendingTesterFeedback(sessionId: String): Boolean
 
     suspend fun clearTesterFeedback(sessionId: String)
+
+    /**
+     * Records that this phone dropped a report but left the server's copy alone.
+     *
+     * Kept so the next pull does not fetch it back. A report that reappears after being
+     * deleted reads as the delete having failed, whatever we told them about our copy.
+     */
+    suspend fun dismissLocally(sessionId: String)
+
+    suspend fun dismissedSessions(): Set<String>
 }
 
 /** An evaluator's review as the phone holds it, before it reaches the server. */

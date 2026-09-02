@@ -3,6 +3,7 @@ package com.qualityverifier.data.session
 import com.qualityverifier.data.db.AttachmentEntity
 import com.qualityverifier.data.db.ImageFileStore
 import com.qualityverifier.data.db.MessageEntity
+import com.qualityverifier.data.db.DismissedSessionEntity
 import com.qualityverifier.data.db.MessageWithAttachments
 import com.qualityverifier.data.db.PendingTesterFeedbackEntity
 import com.qualityverifier.data.db.SessionDao
@@ -206,6 +207,13 @@ class RoomSessionRepository(
 
     override suspend fun hasPendingTesterFeedback(sessionId: String): Boolean =
         dao.countTesterFeedback(sessionId) > 0
+
+    override suspend fun dismissLocally(sessionId: String) =
+        dao.addDismissed(
+            DismissedSessionEntity(sessionId, System.currentTimeMillis()),
+        )
+
+    override suspend fun dismissedSessions(): Set<String> = dao.dismissedSessions().toSet()
 
     override suspend fun clearTesterFeedback(sessionId: String) =
         dao.clearTesterFeedback(sessionId)

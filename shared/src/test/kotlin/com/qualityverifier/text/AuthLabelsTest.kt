@@ -69,6 +69,10 @@ class AuthLabelsTest {
             en.keepAccount to sw.keepAccount,
             en.deleteReportTitle to sw.deleteReportTitle,
             en.deleteReportBody to sw.deleteReportBody,
+            en.deleteReportKeepLabel to sw.deleteReportKeepLabel,
+            en.deleteReportKeepDetail to sw.deleteReportKeepDetail,
+            en.deleteReportPurgeLabel to sw.deleteReportPurgeLabel,
+            en.deleteReportPurgeDetail to sw.deleteReportPurgeDetail,
             en.delete to sw.delete,
             en.cancel to sw.cancel,
             en.signOut to sw.signOut,
@@ -84,11 +88,39 @@ class AuthLabelsTest {
     }
 
     @Test
-    fun `the report retention window is stated, in both languages`() {
-        // This is the string that makes the seven days we built true rather than a claim in
-        // a document nobody reads. If somebody softens it, this fails.
-        assertTrue(AuthLabels.ENGLISH.deleteReportBody.contains("7 days"))
-        assertTrue(AuthLabels.SWAHILI.deleteReportBody.contains("siku 7"))
+    fun `the report retention window is stated on the option it applies to`() {
+        // Seven days is a property of deleting our copy, not of deleting a report, so it
+        // belongs on that option and nowhere else. On the other one it would be a lie.
+        assertTrue(AuthLabels.ENGLISH.deleteReportPurgeDetail.contains("7 days"))
+        assertTrue(AuthLabels.SWAHILI.deleteReportPurgeDetail.contains("siku 7"))
+        assertTrue("the keep option must not claim a deletion window",
+            !AuthLabels.ENGLISH.deleteReportKeepDetail.contains("7"))
+        assertTrue("the keep option must not claim a deletion window",
+            !AuthLabels.SWAHILI.deleteReportKeepDetail.contains("7"))
+    }
+
+    @Test
+    fun `both delete options say what happens to our copy`() {
+        // The two do different things to somebody's photographs, so each has to say which.
+        // A pair of options that read the same is a choice nobody can actually make.
+        listOf(AuthLabels.ENGLISH, AuthLabels.SWAHILI).forEach { labels ->
+            assertTrue("${labels.code}", labels.deleteReportKeepLabel.isNotBlank())
+            assertTrue("${labels.code}", labels.deleteReportPurgeLabel.isNotBlank())
+            assertTrue(
+                "${labels.code}: the two options must not read the same",
+                labels.deleteReportKeepLabel != labels.deleteReportPurgeLabel,
+            )
+            assertTrue(
+                "${labels.code}: the two details must not read the same",
+                labels.deleteReportKeepDetail != labels.deleteReportPurgeDetail,
+            )
+        }
+        // And the recommendation is stated rather than implied by button placement.
+        assertTrue(AuthLabels.ENGLISH.deleteReportKeepLabel.contains("recommended"))
+        assertTrue(AuthLabels.SWAHILI.deleteReportKeepLabel.contains("inapendekezwa"))
+        // The recommended one has to give its reason, or it is a nudge with nothing behind it.
+        assertTrue(AuthLabels.ENGLISH.deleteReportKeepDetail.contains("improve"))
+        assertTrue(AuthLabels.SWAHILI.deleteReportKeepDetail.contains("kuuboresha"))
     }
 
     @Test

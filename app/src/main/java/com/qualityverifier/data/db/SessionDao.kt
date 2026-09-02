@@ -129,4 +129,10 @@ interface SessionDao {
 
     @Query("DELETE FROM pending_tester_feedback WHERE sessionId = :sessionId")
     suspend fun clearTesterFeedback(sessionId: String)
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun addDismissed(dismissed: DismissedSessionEntity)
+
+    @Query("SELECT sessionId FROM dismissed_sessions")
+    suspend fun dismissedSessions(): List<String>
 }
