@@ -11,6 +11,11 @@ import kotlinx.html.button
 import kotlinx.html.code
 import kotlinx.html.div
 import kotlinx.html.form
+import com.qualityverifier.server.db.TesterFeedback
+import kotlinx.html.dl
+import kotlinx.html.dt
+import kotlinx.html.dd
+import kotlinx.html.id
 import kotlinx.html.h1
 import kotlinx.html.h2
 import kotlinx.html.head
@@ -60,7 +65,8 @@ private val TIMESTAMP: DateTimeFormatter =
 fun Instant.readable(): String = TIMESTAMP.format(this)
 
 private const val CSS = """
-  :root { --ink:#241a12; --paper:#faf6f1; --line:#e2d6c8; --accent:#7b4b2a; --muted:#6b5b4d; }
+  :root { --ink:#241a12; --paper:#faf6f1; --line:#e2d6c8; --accent:#7b4b2a; --muted:#6b5b4d;
+          --tag-bg:#e8dccb; --tag-fg:#5c4326; }
   * { box-sizing:border-box; }
   body { margin:0; font:16px/1.5 system-ui,-apple-system,Segoe UI,sans-serif;
          color:var(--ink); background:var(--paper); }
@@ -106,6 +112,10 @@ private const val CSS = """
   /* Padding is part of the code: the quiet zone is white and needs somewhere to sit. */
   .qr { margin:16px 0; padding:8px; background:#fff; display:inline-block; border-radius:4px; }
   .check { display:block; margin:12px 0; font-weight:400; }
+  .tag { background:var(--tag-bg); color:var(--tag-fg); border-radius:3px; padding:1px 6px;
+         font-size:11px; margin-left:6px; text-transform:uppercase; letter-spacing:.04em; }
+  .critique dt { font-weight:600; margin-top:10px; }
+  .critique dd { margin:2px 0 0 0; }
   .pager { margin-top:16px; display:flex; gap:12px; }
 """
 
@@ -322,9 +332,17 @@ private fun kotlinx.html.TBODY.countRow(label: String, value: Int) {
     tr { td { +label }; td { strongText(value.toString()) } }
 }
 
-fun HTML.usersPage(session: AdminSession, page: Page<UserRow>, offset: Int, limit: Int, search: String?) =
+fun HTML.usersPage(
+    session: AdminSession,
+    page: Page<UserRow>,
+    offset: Int,
+    limit: Int,
+    search: String?,
+    notice: String? = null,
+) =
     page("Users", session, "users") {
         subtitle("Everyone with an account, newest first.")
+        if (notice != null) warning(notice)
         form(action = "/admin/users", method = kotlinx.html.FormMethod.get) {
             textInput(name = "q") { value = search ?: ""; placeholder = "phone, name or business" }
             +" "
@@ -335,7 +353,7 @@ fun HTML.usersPage(session: AdminSession, page: Page<UserRow>, offset: Int, limi
             thead {
                 tr {
                     th { +"Phone" }; th { +"Name" }; th { +"Type" }; th { +"Business" }
-                    th { +"Assessments" }; th { +"Joined" }
+                    th { +"Assessments" }; th { +"Joined" }; th { +"Evaluator" }
                 }
             }
             tbody {
@@ -354,6 +372,23 @@ fun HTML.usersPage(session: AdminSession, page: Page<UserRow>, offset: Int, limi
                             } else +"0"
                         }
                         td { +user.createdAt.readable() }
+                        td {
+                            if (user.deleted) {
+                                span("muted") { +"—" }
+                            } else {
+                                // The current state is the label on the button's opposite:
+                                // one control, and no way to misread which way it will go.
+                                if (user.isTester) span("tag") { +"evaluator" }
+                                postForm("/admin/users/${user.id}/tester", session, inline = true) {
+                                    hiddenInput(name = "tester") {
+                                        value = if (user.isTester) "0" else "1"
+                                    }
+                                    button(type = ButtonType.submit, classes = "quiet") {
+                                        +if (user.isTester) "Make customer" else "Make evaluator"
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -366,13 +401,25 @@ fun HTML.assessmentsPage(
     page: Page<AdminSessionRow>,
     offset: Int,
     limit: Int,
+    testersOnly: Boolean = false,
 ) = page("Assessments", session, "assessments") {
     subtitle("Every assessment, newest first. Open one to read the conversation.")
+    p {
+        // A link rather than a form: it is one boolean in the URL, so it stays bookmarkable
+        // and survives paging.
+        if (testersOnly) {
+            +"Showing evaluators only. "
+            a(href = "/admin/assessments") { +"Show everything" }
+        } else {
+            +"Showing everything. "
+            a(href = "/admin/assessments?testers=1") { +"Show evaluators only" }
+        }
+    }
     table {
         thead {
             tr {
                 th { +"When" }; th { +"Item" }; th { +"Account" }; th { +"Turns" }
-                th { +"Photos" }; th { +"Verdict" }
+                th { +"Photos" }; th { +"Verdict" }; th { +"Review" }
             }
         }
         tbody {
@@ -383,12 +430,25 @@ fun HTML.assessmentsPage(
                     td {
                         +(row.userPhone ?: "—")
                         if (row.userName != null) span("muted") { +" ${row.userName}" }
+                        // Marked in the list as well as filterable: somebody scanning
+                        // everything needs to know which rows are staff runs, or a pilot
+                        // finding quietly includes our own walkthroughs.
+                        if (row.byTester) span("tag") { +"evaluator" }
                     }
                     td { +row.messageCount.toString() }
                     td { +row.photoCount.toString() }
                     td {
                         +(row.verdictLevelId ?: "—")
                         if (row.clientDeleted) span("muted") { +" · deleted by user" }
+                    }
+                    td {
+                        if (row.hasTesterFeedback) {
+                            a(href = "/admin/assessments/${row.id}#critique") { +"reviewed" }
+                        } else if (row.byTester) {
+                            span("muted") { +"not yet" }
+                        } else {
+                            span("muted") { +"—" }
+                        }
                     }
                 }
             }
@@ -401,6 +461,7 @@ fun HTML.conversationPage(
     session: AdminSession,
     header: AdminSessionRow,
     turns: List<AdminMessageRow>,
+    critique: TesterFeedback? = null,
 ) = page("Assessment", session, "assessments") {
     subtitle(
         "${header.itemTypeId} · ${header.userPhone ?: "unknown account"} · " +
@@ -412,6 +473,12 @@ fun HTML.conversationPage(
                 "point and then removed for good.",
         )
     }
+    if (header.byTester) {
+        // Said plainly at the top, because reading a staff walkthrough as a pilot finding
+        // is the mistake this whole flag exists to prevent.
+        warning("One of our evaluators, not a customer. Exclude from pilot findings.")
+    }
+    critique?.let { testerCritique(it) }
     turns.forEach { turn ->
         div(if (turn.role == "USER") "turn user" else "turn") {
             div("who") { +"${turn.role.lowercase()} · ${turn.createdAt.readable()}" }
@@ -451,19 +518,34 @@ fun HTML.invitesPage(session: AdminSession, invites: List<InviteRow>, notice: St
         div("card") {
             postForm("/admin/invites", session) {
                 labelledField("Who is it for", "label")
+                label("check") {
+                    input(type = InputType.checkBox, name = "tester")
+                    +" This is one of our evaluators"
+                }
+                p("muted") {
+                    +"Evaluators are asked what they made of the assistant after each "
+                    +"assessment, get a higher daily allowance, and can be filtered out of "
+                    +"pilot findings."
+                }
                 button(type = ButtonType.submit) { +"Create a code" }
             }
         }
         br()
         table {
             thead {
-                tr { th { +"Code" }; th { +"For" }; th { +"Used" }; th { +"Created" }; th { } }
+                tr {
+                    th { +"Code" }; th { +"For" }; th { +"Grants" }; th { +"Used" }
+                    th { +"Created" }; th { }
+                }
             }
             tbody {
                 invites.forEach { invite ->
                     tr {
                         td("mono") { +invite.code }
                         td { +(invite.label ?: "—") }
+                        td {
+                            if (invite.grantsTester) span("tag") { +"evaluator" } else +"customer"
+                        }
                         td { +invite.timesUsed.toString() }
                         td { +invite.createdAt.readable() }
                         td {
@@ -590,6 +672,51 @@ fun HTML.adminsPage(
             labelledField("Current password", "current", InputType.password)
             labelledField("New password", "next", InputType.password)
             button(type = ButtonType.submit) { +"Change it" }
+        }
+    }
+}
+
+/**
+ * What the evaluator thought, shown with the conversation rather than behind a request.
+ *
+ * It is one row keyed on the session, so a button that had to go and ask would sometimes
+ * come back with "there isn't one" — worse than a page that already knows. The list links
+ * straight to the #critique anchor for the same reason.
+ */
+private fun FlowContent.testerCritique(critique: TesterFeedback) {
+    div("card") {
+        id = "critique"
+        h2 { +"The evaluator's review" }
+        dl("critique") {
+            dt { +"Did the assistant make mistakes?" }
+            dd {
+                +when (critique.mistakes) {
+                    "yes" -> "Yes"
+                    "no" -> "No"
+                    else -> "Not sure"
+                }
+            }
+            critique.mistakesDetail?.let {
+                dt { +"What went wrong" }
+                // Customer- and evaluator-typed text. kotlinx.html escapes on output, which
+                // is why none of this page uses unsafe.
+                dd { +it }
+            }
+            dt { +"Quality of the advice" }
+            dd {
+                // Stars and the number: a glyph count is quick to read and hard to cite.
+                +"${"★".repeat(critique.adviceStars)}${"☆".repeat(5 - critique.adviceStars)}"
+                span("muted") { +" ${critique.adviceStars} of 5" }
+            }
+            dt { +"Quality of the furniture" }
+            dd {
+                +"${critique.itemQuality} of 10"
+                span("muted") { +" (10 = no defects)" }
+            }
+            critique.extraFeedback?.let {
+                dt { +"Anything else" }
+                dd { +it }
+            }
         }
     }
 }

@@ -118,6 +118,7 @@ fun main() {
         Admin(
             store = PostgresAdminStore(database.source),
             blobs = BlobStore(File(config.dataDirectory, "blobs")),
+            feedback = PostgresFeedbackStore(database.source),
             sessionKey = config.adminSessionKey,
         )
     } else {
@@ -197,6 +198,7 @@ class Auth(val store: AuthStore, val accessTokens: AccessTokens)
 class Admin(
     val store: AdminStore,
     val blobs: BlobStore,
+    val feedback: FeedbackStore,
     val sessionKey: String,
     /**
      * Whether the session cookie is marked Secure. True everywhere real.
@@ -302,7 +304,7 @@ fun Application.module(
             syncRoutes(it.store, auth.store, it.blobs, it.feedback)
         }
 
-        admin?.let { adminRoutes(it.store, it.blobs, it.secureCookie) }
+        admin?.let { adminRoutes(it.store, it.blobs, it.feedback, it.secureCookie) }
 
         // Cheap and dependency-free, so a database outage does not make the service
         // look dead to whatever is watching it.

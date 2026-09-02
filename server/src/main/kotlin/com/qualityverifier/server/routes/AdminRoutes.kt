@@ -1,6 +1,7 @@
 package com.qualityverifier.server.routes
 
 import com.qualityverifier.server.admin.AdminSession
+import com.qualityverifier.server.db.FeedbackStore
 import com.qualityverifier.server.admin.AdminStore
 import com.qualityverifier.server.admin.Enrolment
 import com.qualityverifier.server.admin.Overview
@@ -106,6 +107,7 @@ private const val PAGE_SIZE = 50
 fun Route.adminRoutes(
     store: AdminStore,
     blobs: BlobStore,
+    feedback: FeedbackStore,
     /**
      * Whether the remembered-browser cookie is marked Secure. True everywhere real.
      *
@@ -290,8 +292,9 @@ fun Route.adminRoutes(
             val offset = call.offset()
             val user = call.request.queryParameters["user"]
             val item = call.request.queryParameters["item"]
-            val page = store.sessions(PAGE_SIZE, offset, user, item)
-            call.respondHtml { assessmentsPage(session, page, offset, PAGE_SIZE) }
+            val testersOnly = call.request.queryParameters["testers"] == "1"
+            val page = store.sessions(PAGE_SIZE, offset, user, item, testersOnly)
+            call.respondHtml { assessmentsPage(session, page, offset, PAGE_SIZE, testersOnly) }
         }
 
         get("/assessments/{id}") {
@@ -303,7 +306,11 @@ fun Route.adminRoutes(
             // recording; one row per thumbnail would bury it in its own noise.
             store.audit(session.adminId, session.email, "read-assessment", target = id, ip = call.clientIp())
             val turns = store.conversation(id)
-            call.respondHtml { conversationPage(session, header, turns) }
+            // Fetched with the page rather than behind a second request: it is a single row
+            // keyed on the session, and a button that needed a round trip to say "there
+            // isn't one" would be worse than a page that already knows.
+            val critique = feedback.feedbackFor(id)
+            call.respondHtml { conversationPage(session, header, turns, critique) }
         }
 
         get("/photos/{sha}") {
@@ -338,10 +345,19 @@ fun Route.adminRoutes(
             val (session, form) = requireCsrf(store) ?: return@post
             val label = form["label"]?.trim()?.takeIf { it.isNotEmpty() }
             val code = newInviteCode()
-            store.createInvite(code, label)
-            store.audit(session.adminId, session.email, "create-invite", target = code, detail = label, ip = call.clientIp())
+            val grantsTester = form["tester"] != null
+            store.createInvite(code, label, grantsTester)
+            store.audit(
+                session.adminId, session.email, "create-invite", target = code,
+                // Recorded in the audit line rather than only in the row: who was made an
+                // evaluator, and by whom, is the part somebody would come back asking about.
+                detail = listOfNotNull(label, "evaluator".takeIf { grantsTester }).joinToString(" — ")
+                    .takeIf { it.isNotEmpty() },
+                ip = call.clientIp(),
+            )
             val invites = store.invites()
-            call.respondHtml { invitesPage(session, invites, "Created $code.") }
+            val notice = if (grantsTester) "Created $code for an evaluator." else "Created $code."
+            call.respondHtml { invitesPage(session, invites, notice) }
         }
 
         post("/invites/{code}/revoke") {
@@ -488,6 +504,37 @@ fun Route.adminRoutes(
             respondAdmins(session, store, "Forgot $forgotten remembered browser(s).", null)
         }
 
+        /**
+         * Marks an account as one of our evaluators, or stops it being one.
+         *
+         * Needed as well as the invite checkbox: somebody hired after they registered
+         * should not need a second account, and a code handed out with the wrong box
+         * ticked would otherwise be unfixable.
+         *
+         * Audited both ways. The flag decides whose assessments count as pilot findings,
+         * so a silent change to it would quietly alter a research result.
+         */
+        post("/users/{id}/tester") {
+            val (session, form) = requireCsrf(store) ?: return@post
+            val id = call.parameters["id"].orEmpty()
+            val makeTester = form["tester"] == "1"
+            if (!isUuid(id) || !store.setTester(id, makeTester)) {
+                return@post respondUsers(
+                    session, store, "That account could not be updated.",
+                    status = HttpStatusCode.NotFound,
+                )
+            }
+            store.audit(
+                session.adminId, session.email,
+                if (makeTester) "mark-tester" else "unmark-tester",
+                target = id, ip = call.clientIp(),
+            )
+            respondUsers(
+                session, store,
+                if (makeTester) "Marked as an evaluator." else "No longer an evaluator.",
+            )
+        }
+
         post("/password") {
             val (session, form) = requireCsrf(store) ?: return@post
             val current = form["current"].orEmpty()
@@ -599,6 +646,20 @@ private suspend fun RoutingContext.respondAdmins(
  * rolls the session forward, which is what makes the idle timeout an idle timeout rather
  * than a fixed one.
  */
+/**
+ * Re-renders the user list with a notice. Mirrors respondAdmins, for the same reason: the
+ * page needs a fresh read after a change, and a redirect would lose the message.
+ */
+private suspend fun RoutingContext.respondUsers(
+    session: AdminSession,
+    store: AdminStore,
+    notice: String?,
+    status: HttpStatusCode = HttpStatusCode.OK,
+) {
+    val page = store.users(PAGE_SIZE, 0, null)
+    call.respondHtml(status) { usersPage(session, page, 0, PAGE_SIZE, null, notice) }
+}
+
 private suspend fun RoutingContext.requireAdmin(): AdminSession? {
     val session = call.sessions.get<AdminSession>()
     if (session == null || !session.fullyAuthenticated(now())) {

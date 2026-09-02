@@ -227,11 +227,3 @@ private fun MessageRow.toDto() = MessageDto(
     blobs = blobs,
 )
 
-/**
- * Whether this could be a session id at all.
- *
- * Postgres casts these with `?::uuid`, which throws on anything malformed — so without a
- * check, a junk id in a path is a 500 instead of a 404.
- */
-private fun isUuid(value: String): Boolean =
-    runCatching { java.util.UUID.fromString(value) }.isSuccess

@@ -4,6 +4,8 @@ import com.qualityverifier.server.admin.AdminCredentials
 import com.qualityverifier.server.admin.AdminMessageRow
 import com.qualityverifier.server.admin.AdminRow
 import com.qualityverifier.server.admin.AdminSessionRow
+import com.qualityverifier.server.db.FeedbackStore
+import com.qualityverifier.server.db.TesterFeedback
 import com.qualityverifier.server.admin.AdminStore
 import com.qualityverifier.server.admin.AuditRow
 import com.qualityverifier.server.admin.Base32
@@ -341,7 +343,7 @@ class AdminRouteTest {
                 version = "test",
                 database = null,
                 // No secureCookie override — production's default is what is under test.
-                admin = Admin(store, BlobStore(folder.newFolder()), "a-signing-key-long-enough-to-be-real"),
+                admin = Admin(store, BlobStore(folder.newFolder()), FakeFeedback(), "a-signing-key-long-enough-to-be-real"),
             )
         }
         val app = createClient { followRedirects = false }
@@ -465,6 +467,158 @@ class AdminRouteTest {
         assertTrue("no QR on the page", body.contains("<svg"))
         assertTrue("no fallback secret", body.contains(secret))
         assertTrue("should offer to remember the browser", body.contains("""name="remember""""))
+    }
+
+    // ---------------------------------------------------------- evaluators
+
+    @Test
+    fun `an invite can be created for an evaluator, and the audit says so`() = testApplication {
+        val store = FakeAdminStore()
+        val app = withAdmin(store)
+        app.signIn()
+        val csrf = app.csrfToken()
+
+        app.submitForm(
+            "/admin/invites",
+            parameters { append("csrf", csrf); append("label", "Amina"); append("tester", "on") },
+        )
+
+        assertEquals(listOf(true), store.invitesGrantingTester)
+        val entry = store.audits.single { it.action == "create-invite" }
+        assertTrue("who was made an evaluator is the part worth recording", entry.detail!!.contains("evaluator"))
+    }
+
+    @Test
+    fun `an invite without the box ticked grants nothing`() = testApplication {
+        val store = FakeAdminStore()
+        val app = withAdmin(store)
+        app.signIn()
+        val csrf = app.csrfToken()
+
+        app.submitForm("/admin/invites", parameters { append("csrf", csrf); append("label", "A buyer") })
+
+        assertEquals(listOf(false), store.invitesGrantingTester)
+    }
+
+    @Test
+    fun `an existing account can be promoted and demoted`() = testApplication {
+        // Somebody hired after they registered should not need a second account.
+        val store = FakeAdminStore()
+        val app = withAdmin(store)
+        app.signIn()
+
+        val csrf = app.csrfToken()
+        app.submitForm(
+            "/admin/users/$CUSTOMER_ID/tester",
+            parameters { append("csrf", csrf); append("tester", "1") },
+        )
+        app.submitForm(
+            "/admin/users/$CUSTOMER_ID/tester",
+            parameters { append("csrf", csrf); append("tester", "0") },
+        )
+
+        assertEquals(listOf(CUSTOMER_ID to true, CUSTOMER_ID to false), store.testerChanges)
+        // Audited both ways: the flag decides whose assessments count as pilot findings, so
+        // a silent change to it would quietly alter a research result.
+        assertTrue(store.audits.any { it.action == "mark-tester" && it.target == CUSTOMER_ID })
+        assertTrue(store.audits.any { it.action == "unmark-tester" && it.target == CUSTOMER_ID })
+    }
+
+    @Test
+    fun `promoting without a CSRF token does nothing`() = testApplication {
+        val store = FakeAdminStore()
+        val app = withAdmin(store)
+        app.signIn()
+
+        app.submitForm("/admin/users/$CUSTOMER_ID/tester", parameters { append("tester", "1") })
+
+        assertTrue(store.testerChanges.isEmpty())
+    }
+
+    @Test
+    fun `an unknown account cannot be promoted`() = testApplication {
+        val store = FakeAdminStore()
+        val app = withAdmin(store)
+        app.signIn()
+        val csrf = app.csrfToken()
+
+        val response = app.submitForm(
+            "/admin/users/99999999-9999-9999-9999-999999999999/tester",
+            parameters { append("csrf", csrf); append("tester", "1") },
+        )
+
+        assertEquals(HttpStatusCode.NotFound, response.status)
+        assertTrue(store.testerChanges.isEmpty())
+    }
+
+    @Test
+    fun `the assessment list can be filtered to evaluators`() = testApplication {
+        val store = FakeAdminStore()
+        val app = withAdmin(store)
+        app.signIn()
+
+        app.get("/admin/assessments")
+        assertEquals(false, store.sawTestersOnly)
+
+        app.get("/admin/assessments?testers=1")
+        assertEquals(true, store.sawTestersOnly)
+    }
+
+    @Test
+    fun `an evaluator's critique is shown with the conversation`() = testApplication {
+        val critique = TesterFeedback(
+            sessionId = SESSION_ID,
+            mistakes = "yes",
+            mistakesDetail = "Called a dowel a tenon",
+            adviceStars = 4,
+            itemQuality = 7,
+            extraFeedback = "Good on the joints",
+        )
+        val store = FakeAdminStore(byTester = true, critique = critique)
+        val app = withAdmin(store, feedback = FakeFeedback(critique))
+        app.signIn()
+
+        val body = app.get("/admin/assessments/$SESSION_ID").bodyAsText()
+
+        assertTrue("no critique panel", body.contains("The evaluator's review"))
+        assertTrue(body.contains("Called a dowel a tenon"))
+        assertTrue("the stars should be rendered", body.contains("4 of 5"))
+        assertTrue(body.contains("7 of 10"))
+        assertTrue(body.contains("Good on the joints"))
+        // And the page says plainly that this is a staff run.
+        assertTrue(body.contains("Exclude from pilot findings"))
+    }
+
+    @Test
+    fun `a conversation with no critique shows no panel`() = testApplication {
+        val store = FakeAdminStore()
+        val app = withAdmin(store)
+        app.signIn()
+
+        val body = app.get("/admin/assessments/$SESSION_ID").bodyAsText()
+
+        assertFalse(body.contains("The evaluator's review"))
+    }
+
+    @Test
+    fun `an evaluator's typed text is escaped, not rendered`() = testApplication {
+        // Same rule as the conversation itself: this text comes from a person.
+        val critique = TesterFeedback(
+            sessionId = SESSION_ID,
+            mistakes = "yes",
+            mistakesDetail = "<script>alert('x')</script>",
+            adviceStars = 1,
+            itemQuality = 1,
+            extraFeedback = null,
+        )
+        val store = FakeAdminStore(byTester = true, critique = critique)
+        val app = withAdmin(store, feedback = FakeFeedback(critique))
+        app.signIn()
+
+        val body = app.get("/admin/assessments/$SESSION_ID").bodyAsText()
+
+        assertFalse("a script tag reached the page", body.contains("<script>alert"))
+        assertTrue("the text should still be readable", body.contains("&lt;script&gt;"))
     }
 
     // ------------------------------------------------------------------ CSRF
@@ -615,12 +769,13 @@ class AdminRouteTest {
     private fun ApplicationTestBuilder.withAdmin(
         store: AdminStore,
         blobs: BlobStore = BlobStore(folder.newFolder()),
+        feedback: FeedbackStore = FakeFeedback(),
     ): HttpClient {
         application {
             module(
                 version = "test",
                 database = null,
-                admin = Admin(store, blobs, "a-signing-key-long-enough-to-be-real", secureCookie = false),
+                admin = Admin(store, blobs, feedback, "a-signing-key-long-enough-to-be-real", secureCookie = false),
             )
         }
         return createClient {
@@ -658,6 +813,13 @@ class AdminRouteTest {
             ?: error("no CSRF token on the page")
     }
 
+    private class FakeFeedback(private val critique: TesterFeedback? = null) : FeedbackStore {
+        override suspend fun save(userId: String, feedback: TesterFeedback) =
+            error("the portal never writes evaluator feedback")
+
+        override suspend fun feedbackFor(sessionId: String) = critique
+    }
+
     private inner class FakeAdminStore(
         private val disabled: Boolean = false,
         private val lockedUntil: Instant? = null,
@@ -668,6 +830,8 @@ class AdminRouteTest {
         ),
         private val knownBlobs: Set<String> = setOf(PHOTO_SHA),
         private val totpConfirmed: Boolean = true,
+        private val byTester: Boolean = false,
+        val critique: TesterFeedback? = null,
     ) : AdminStore {
         val audits = mutableListOf<AuditRow>()
         var failures = 0
@@ -676,6 +840,8 @@ class AdminRouteTest {
             private set
         var invitesCreated = 0
             private set
+        val invitesGrantingTester = mutableListOf<Boolean>()
+        val testerChanges = mutableListOf<Pair<String, Boolean>>()
         var adminsCreated = 0
             private set
         var disabledCalls = 0
@@ -720,6 +886,12 @@ class AdminRouteTest {
 
         override suspend fun setPasswordHash(adminId: String, hash: String) = Unit
 
+        override suspend fun setTester(userId: String, isTester: Boolean): Boolean {
+            if (userId != CUSTOMER_ID) return false
+            testerChanges += userId to isTester
+            return true
+        }
+
         override suspend fun resetTotp(adminId: String): String? {
             totpResets++
             return if (adminId == OTHER_ADMIN_ID) Totp.newSecret() else null
@@ -762,10 +934,12 @@ class AdminRouteTest {
 
         override suspend fun activeAdminCount() = activeAdmins
         override suspend fun invites() = listOf(
-            InviteRow("ABCD-2345", "a tester", Instant.now(), null, 0),
+            InviteRow("ABCD-2345", "a buyer", Instant.now(), null, 0, grantsTester = false),
+            InviteRow("EFGH-6789", "an evaluator", Instant.now(), null, 0, grantsTester = true),
         )
 
-        override suspend fun createInvite(code: String, label: String?): Boolean {
+        override suspend fun createInvite(code: String, label: String?, grantsTester: Boolean): Boolean {
+            invitesGrantingTester += grantsTester
             invitesCreated++
             return true
         }
@@ -773,13 +947,27 @@ class AdminRouteTest {
         override suspend fun revokeInvite(code: String) = true
         override suspend fun users(limit: Int, offset: Int, search: String?) = Page(
             listOf(
-                UserRow("u1", "+256700000000", "A Buyer", "individual", null, Instant.now(), 1, false),
+                UserRow(
+                    CUSTOMER_ID, "+256700000000", "A Buyer", "individual", null,
+                    Instant.now(), 1, deleted = false, isTester = false,
+                ),
             ),
             hasMore = false,
         )
 
-        override suspend fun sessions(limit: Int, offset: Int, userId: String?, itemTypeId: String?) =
-            Page(listOf(header()), hasMore = false)
+        override suspend fun sessions(
+            limit: Int,
+            offset: Int,
+            userId: String?,
+            itemTypeId: String?,
+            testersOnly: Boolean,
+        ): Page<AdminSessionRow> {
+            sawTestersOnly = testersOnly
+            return Page(listOf(header()), hasMore = false)
+        }
+
+        var sawTestersOnly: Boolean? = null
+            private set
 
         override suspend fun sessionHeader(sessionId: String) =
             if (sessionId == SESSION_ID) header() else null
@@ -788,6 +976,7 @@ class AdminRouteTest {
             id = SESSION_ID, itemTypeId = "wooden-table", userPhone = "+256700000000",
             userName = "A Buyer", createdAt = Instant.now(), updatedAt = Instant.now(),
             messageCount = 2, verdictLevelId = "fair", photoCount = 1, clientDeleted = false,
+            byTester = byTester, hasTesterFeedback = critique != null,
         )
 
         override suspend fun conversation(sessionId: String) = conversation
@@ -811,6 +1000,9 @@ class AdminRouteTest {
         const val OTHER_ADMIN_ID = "99999999-8888-7777-6666-555555555555"
         const val SESSION_ID = "2ff77920-3928-46e5-8a77-5e16c1e901c6"
         val PHOTO_SHA = "b".repeat(64)
+
+        /** A customer account, for the evaluator toggle. */
+        const val CUSTOMER_ID = "33333333-4444-5555-6666-777777777777"
         const val DEVICE_COOKIE_NAME = "kagua_admin_device"
     }
 }
