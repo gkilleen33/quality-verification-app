@@ -372,6 +372,30 @@ that secret has been accepted, so an abandoned enrolment leaves no usable accoun
 - An assessment **already under way** returned 200 with a real reply while the account was
   at its limit.
 
+## Read-only data API (built 2 Sep 2026)
+
+Routes under `/api/v1`, key-authenticated, mounted alongside the portal because it manages
+the keys — a credential with no page to revoke it from is one nobody can take back. Full
+reference in `docs/data-api.md`.
+
+It returns **everything**: identifiers, locations and photographs. That was the choice, so
+the security follows from it rather than from habit. A key reads the whole corpus with one
+string and no second factor, which makes it a higher-value credential than an admin
+password, so: hashed at rest, shown once, revoked per request rather than per session,
+audited on every call with the key's id and the path, `no-store` on every response, and rate
+limited on the key rather than the address.
+
+**Read-only structurally, not by check** — only `get` is mounted, so a leaked key cannot
+alter anything even if a future route forgets to think about it.
+
+Its DTOs and its queries are its own rather than the portal's. A published dataset should
+not change shape because somebody rearranged an admin page, and it needs fields the portal
+does not show, like the location point.
+
+`GET /api/v1/photos/{sha}` checks `attachments` before touching the disk. Content-addressed
+storage means the path parameter becomes a filename, so "any 64 hex characters" would
+otherwise be a request for any file on the volume.
+
 ## Applying migrations
 
 **Use `server/db/apply.sh`.** It runs every migration as the `kagua` role, keeps

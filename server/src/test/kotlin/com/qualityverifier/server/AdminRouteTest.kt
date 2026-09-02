@@ -32,6 +32,7 @@ import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
@@ -343,7 +344,7 @@ class AdminRouteTest {
                 version = "test",
                 database = null,
                 // No secureCookie override — production's default is what is under test.
-                admin = Admin(store, BlobStore(folder.newFolder()), FakeFeedback(), "a-signing-key-long-enough-to-be-real"),
+                admin = Admin(store, BlobStore(folder.newFolder()), FakeFeedback(), FakeApiKeyStore(), FakeApiStore(), "a-signing-key-long-enough-to-be-real"),
             )
         }
         val app = createClient { followRedirects = false }
@@ -621,6 +622,89 @@ class AdminRouteTest {
         assertTrue("the text should still be readable", body.contains("&lt;script&gt;"))
     }
 
+    // ---------------------------------------------------------- API keys
+
+    @Test
+    fun `a new key is shown once and never again`() = testApplication {
+        // Only its hash is stored. A key that could be re-read from the portal would mean a
+        // stolen admin session hands over the whole corpus without leaving a "key created"
+        // line in the audit log.
+        val keys = FakeApiKeyStore(labels = emptyList())
+        val store = FakeAdminStore()
+        val app = withAdmin(store, apiKeys = keys)
+        app.signIn()
+        val csrf = app.csrfToken()
+
+        val body = app.submitForm(
+            "/admin/api-keys",
+            parameters { append("csrf", csrf); append("label", "research pull") },
+        ).bodyAsText()
+
+        val secret = keys.issued.keys.single()
+        assertTrue("the key itself must appear once", body.contains(secret))
+        // And not on the next page load.
+        assertFalse(app.get("/admin/api-keys").bodyAsText().contains(secret))
+        assertTrue(store.audits.any { it.action == "create-api-key" })
+    }
+
+    @Test
+    fun `the page warns what a key can read`() = testApplication {
+        // Somebody creating one should not have to infer the blast radius.
+        val app = withAdmin(FakeAdminStore())
+        app.signIn()
+
+        val body = app.get("/admin/api-keys").bodyAsText()
+
+        assertTrue(body.contains("These read everything"))
+        assertTrue(body.contains("photograph"))
+    }
+
+    @Test
+    fun `a key can be revoked`() = testApplication {
+        val keys = FakeApiKeyStore()
+        val store = FakeAdminStore()
+        val app = withAdmin(store, apiKeys = keys)
+        app.signIn()
+        val csrf = app.csrfToken()
+        val id = keys.issued.values.first()
+
+        app.submitForm("/admin/api-keys/$id/revoke", parameters { append("csrf", csrf) })
+
+        assertNull("a revoked key must not authenticate", keys.idFor(keys.anyKey()))
+        assertTrue(store.audits.any { it.action == "revoke-api-key" })
+    }
+
+    @Test
+    fun `creating a key without a CSRF token does nothing`() = testApplication {
+        val keys = FakeApiKeyStore(labels = emptyList())
+        val app = withAdmin(FakeAdminStore(), apiKeys = keys)
+        app.signIn()
+
+        app.submitForm("/admin/api-keys", parameters { append("label", "sneaky") })
+
+        assertTrue(keys.issued.isEmpty())
+    }
+
+    @Test
+    fun `a key needs a label, so it can be identified later`() = testApplication {
+        val keys = FakeApiKeyStore(labels = emptyList())
+        val app = withAdmin(FakeAdminStore(), apiKeys = keys)
+        app.signIn()
+        val csrf = app.csrfToken()
+
+        val response = app.submitForm("/admin/api-keys", parameters { append("csrf", csrf) })
+
+        assertEquals(HttpStatusCode.BadRequest, response.status)
+        assertTrue(keys.issued.isEmpty())
+    }
+
+    @Test
+    fun `the key list needs a session`() = testApplication {
+        val app = withAdmin(FakeAdminStore())
+
+        assertEquals(HttpStatusCode.Found, app.get("/admin/api-keys").status)
+    }
+
     // ------------------------------------------------------------------ CSRF
 
     @Test
@@ -770,12 +854,13 @@ class AdminRouteTest {
         store: AdminStore,
         blobs: BlobStore = BlobStore(folder.newFolder()),
         feedback: FeedbackStore = FakeFeedback(),
+        apiKeys: FakeApiKeyStore = FakeApiKeyStore(),
     ): HttpClient {
         application {
             module(
                 version = "test",
                 database = null,
-                admin = Admin(store, blobs, feedback, "a-signing-key-long-enough-to-be-real", secureCookie = false),
+                admin = Admin(store, blobs, feedback, apiKeys, FakeApiStore(), "a-signing-key-long-enough-to-be-real", secureCookie = false),
             )
         }
         return createClient {

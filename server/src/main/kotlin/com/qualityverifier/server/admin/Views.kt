@@ -11,6 +11,7 @@ import kotlinx.html.button
 import kotlinx.html.code
 import kotlinx.html.div
 import kotlinx.html.form
+import com.qualityverifier.server.api.ApiKeyRow
 import com.qualityverifier.server.db.TesterFeedback
 import kotlinx.html.dl
 import kotlinx.html.dt
@@ -141,6 +142,7 @@ fun HTML.page(heading: String, session: AdminSession?, current: String = "", blo
                         navLink("/admin/users", "Users", current == "users")
                         navLink("/admin/invites", "Invites", current == "invites")
                         navLink("/admin/admins", "Admins", current == "admins")
+                        navLink("/admin/api-keys", "API keys", current == "api-keys")
                         navLink("/admin/audit", "Audit", current == "audit")
                     }
                     div {
@@ -716,6 +718,78 @@ private fun FlowContent.testerCritique(critique: TesterFeedback) {
             critique.extraFeedback?.let {
                 dt { +"Anything else" }
                 dd { +it }
+            }
+        }
+    }
+}
+
+fun HTML.apiKeysPage(
+    session: AdminSession,
+    keys: List<ApiKeyRow>,
+    notice: String?,
+    /** A key just created. Shown once, because only its hash is stored. */
+    created: String?,
+) = page("API keys", session, "api-keys") {
+    subtitle("Keys for the read-only data API.")
+    if (notice != null) warning(notice)
+    if (created != null) {
+        div("warn") {
+            p {
+                strongText("Copy this now. ")
+                +"It is shown once and cannot be recovered — only its hash is stored. If it "
+                +"is lost, revoke it and make another."
+            }
+            p("mono") { code { +created } }
+            p("muted") {
+                +"Send it as an Authorization: Bearer header, or as X-API-Key."
+            }
+        }
+    }
+    div("warn") {
+        p {
+            strongText("These read everything. ")
+            +"Phone numbers, names, business locations, every conversation and every "
+            +"photograph. Treat a key like the database password, not like a URL: anyone "
+            +"holding it has the whole corpus without a second factor. Every request it "
+            +"makes is recorded in the audit log."
+        }
+    }
+    div("card") {
+        postForm("/admin/api-keys", session) {
+            labelledField("What is it for", "label")
+            button(type = ButtonType.submit) { +"Create a key" }
+        }
+    }
+    br()
+    table {
+        thead {
+            tr {
+                th { +"Key" }; th { +"For" }; th { +"Created by" }; th { +"Created" }
+                th { +"Last used" }; th { }
+            }
+        }
+        tbody {
+            keys.forEach { key ->
+                tr {
+                    td("mono") { +"${key.prefix}…" }
+                    td { +key.label }
+                    td { +(key.createdByEmail ?: "—") }
+                    td { +key.createdAt.readable() }
+                    td {
+                        // "Never" is worth seeing: a key created months ago and never used
+                        // is one to revoke rather than wonder about.
+                        +(key.lastUsedAt?.readable() ?: "never")
+                    }
+                    td {
+                        if (key.revokedAt != null) {
+                            span("muted") { +"revoked ${key.revokedAt.readable()}" }
+                        } else {
+                            postForm("/admin/api-keys/${key.id}/revoke", session, inline = true) {
+                                button(type = ButtonType.submit, classes = "quiet") { +"Revoke" }
+                            }
+                        }
+                    }
+                }
             }
         }
     }

@@ -16,6 +16,11 @@ import kotlin.time.Duration.Companion.hours
 import kotlin.time.Duration.Companion.minutes
 import com.qualityverifier.server.db.FeedbackStore
 import com.qualityverifier.server.db.PostgresFeedbackStore
+import com.qualityverifier.server.api.ApiKeyStore
+import com.qualityverifier.server.api.ApiStore
+import com.qualityverifier.server.api.PostgresApiKeyStore
+import com.qualityverifier.server.api.PostgresApiStore
+import com.qualityverifier.server.api.apiRoutes
 import io.ktor.server.engine.embeddedServer
 import io.ktor.server.netty.Netty
 import io.ktor.server.plugins.calllogging.CallLogging
@@ -119,6 +124,8 @@ fun main() {
             store = PostgresAdminStore(database.source),
             blobs = BlobStore(File(config.dataDirectory, "blobs")),
             feedback = PostgresFeedbackStore(database.source),
+            apiKeys = PostgresApiKeyStore(database.source),
+            apiStore = PostgresApiStore(database.source),
             sessionKey = config.adminSessionKey,
         )
     } else {
@@ -199,6 +206,8 @@ class Admin(
     val store: AdminStore,
     val blobs: BlobStore,
     val feedback: FeedbackStore,
+    val apiKeys: ApiKeyStore,
+    val apiStore: ApiStore,
     val sessionKey: String,
     /**
      * Whether the session cookie is marked Secure. True everywhere real.
@@ -304,7 +313,13 @@ fun Application.module(
             syncRoutes(it.store, auth.store, it.blobs, it.feedback)
         }
 
-        admin?.let { adminRoutes(it.store, it.blobs, it.feedback, it.secureCookie) }
+        admin?.let {
+            adminRoutes(it.store, it.blobs, it.feedback, it.apiKeys, it.secureCookie)
+            // The read-only data API. Mounted alongside the portal because it shares the
+            // key store the portal manages — a key with no page to revoke it from is a
+            // credential nobody can take back.
+            apiRoutes(it.apiKeys, it.apiStore, it.store, it.blobs)
+        }
 
         // Cheap and dependency-free, so a database outage does not make the service
         // look dead to whatever is watching it.

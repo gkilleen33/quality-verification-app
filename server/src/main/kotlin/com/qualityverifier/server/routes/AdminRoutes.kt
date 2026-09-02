@@ -2,6 +2,8 @@ package com.qualityverifier.server.routes
 
 import com.qualityverifier.server.admin.AdminSession
 import com.qualityverifier.server.db.FeedbackStore
+import com.qualityverifier.server.api.ApiKeyStore
+import com.qualityverifier.server.admin.apiKeysPage
 import com.qualityverifier.server.admin.AdminStore
 import com.qualityverifier.server.admin.Enrolment
 import com.qualityverifier.server.admin.Overview
@@ -108,6 +110,7 @@ fun Route.adminRoutes(
     store: AdminStore,
     blobs: BlobStore,
     feedback: FeedbackStore,
+    apiKeys: ApiKeyStore,
     /**
      * Whether the remembered-browser cookie is marked Secure. True everywhere real.
      *
@@ -533,6 +536,56 @@ fun Route.adminRoutes(
                 session, store,
                 if (makeTester) "Marked as an evaluator." else "No longer an evaluator.",
             )
+        }
+
+        // ------------------------------------------------------- API keys
+
+        get("/api-keys") {
+            val session = requireAdmin() ?: return@get
+            // Fetched before respondHtml: the HTML builder is not a coroutine body, so a
+            // suspend call inside it does not compile.
+            val keys = apiKeys.keys()
+            call.respondHtml { apiKeysPage(session, keys, null, null) }
+        }
+
+        /**
+         * Mints a key and shows it once.
+         *
+         * Shown once because only its SHA-256 is stored. A key that could be re-read from
+         * the portal would mean a stolen admin session hands over the whole corpus without
+         * leaving a "key created" line in the audit log.
+         */
+        post("/api-keys") {
+            val (session, form) = requireCsrf(store) ?: return@post
+            val label = form["label"]?.trim()?.takeIf { it.isNotEmpty() }
+            if (label == null) {
+                val keys = apiKeys.keys()
+                return@post call.respondHtml(HttpStatusCode.BadRequest) {
+                    apiKeysPage(session, keys, "Give the key a label first.", null)
+                }
+            }
+            val created = apiKeys.create(label, session.adminId)
+            store.audit(
+                session.adminId, session.email, "create-api-key",
+                target = created.prefix, detail = label, ip = call.clientIp(),
+            )
+            log.warn("Admin {} created API key {} ({})", session.email, created.prefix, label)
+            val keys = apiKeys.keys()
+            call.respondHtml { apiKeysPage(session, keys, null, created.secret) }
+        }
+
+        post("/api-keys/{id}/revoke") {
+            val (session, _) = requireCsrf(store) ?: return@post
+            val id = call.parameters["id"].orEmpty()
+            if (!isUuid(id) || !apiKeys.revoke(id)) {
+                val keys = apiKeys.keys()
+                return@post call.respondHtml(HttpStatusCode.NotFound) {
+                    apiKeysPage(session, keys, "That key could not be revoked.", null)
+                }
+            }
+            store.audit(session.adminId, session.email, "revoke-api-key", target = id, ip = call.clientIp())
+            val keys = apiKeys.keys()
+            call.respondHtml { apiKeysPage(session, keys, "Revoked.", null) }
         }
 
         post("/password") {

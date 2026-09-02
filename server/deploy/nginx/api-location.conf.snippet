@@ -1,0 +1,24 @@
+# Paste this into the live vhost's `listen 443` server block, before `location /`.
+# Not installed by any script: certbot rewrote /etc/nginx/sites-available/kagua in
+# place, so copying a template over it would drop the TLS block. See
+# docs/phase-2-backend.md for the bring-up order.
+
+    # The read-only data API. Rate limited per key rather than per address — see
+    # conf.d/kagua-admin-ratelimit.conf for why.
+    #
+    # Added by hand rather than by reinstalling the template: certbot rewrote this file in
+    # place, and the pre-TLS template has no listen 443 block.
+    location /api/ {
+        limit_req zone=kagua_api burst=30 nodelay;
+        limit_req_status 429;
+        proxy_pass http://127.0.0.1:8080;
+        proxy_http_version 1.1;
+        proxy_set_header Host              $host;
+        proxy_set_header X-Real-IP         $remote_addr;
+        proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        # A photo is a few hundred KB and a page of assessments is small, but a slow
+        # connection pulling a dataset should not be cut off mid-page.
+        proxy_read_timeout 120s;
+    }
+
