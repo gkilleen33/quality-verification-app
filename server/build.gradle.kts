@@ -1,3 +1,5 @@
+import org.gradle.api.tasks.PathSensitivity
+
 plugins {
     alias(libs.plugins.kotlin.jvm)
     alias(libs.plugins.kotlin.serialization)
@@ -52,4 +54,11 @@ dependencies {
 
 tasks.withType<Test>().configureEach {
     useJUnit()
+    // MigrationsTest reads server/db/migrations, which is not a source directory. Without
+    // declaring it, Gradle sees no input change when a migration is edited and reports the
+    // task up to date — so the test that guards the migrations would pass by not running.
+    // Found exactly that way: deleting V8's version row locally left the suite green.
+    inputs.dir(layout.projectDirectory.dir("db/migrations"))
+        .withPropertyName("migrations")
+        .withPathSensitivity(PathSensitivity.RELATIVE)
 }
