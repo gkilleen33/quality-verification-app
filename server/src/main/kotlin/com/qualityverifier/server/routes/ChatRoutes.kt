@@ -32,6 +32,8 @@ fun Route.chatRoutes(
     blobs: BlobStore,
     claude: ClaudeClient,
     prompts: PromptRepository,
+    /** Assessments one account may start per day. Zero or less means no limit. */
+    dailyAssessmentLimit: Int,
 ) {
     authenticate("jwt") {
 
@@ -124,12 +126,22 @@ fun Route.chatRoutes(
                 previousSessionId = request.previousSessionId,
                 intakeAnswers = request.intakeAnswers,
                 promptSha = sha256Of(systemPrompt),
+                dailyLimit = dailyAssessmentLimit,
             )
             if (access is SessionAccess.NotYours) {
                 // 404, never 403: telling the difference would let anybody enumerate
                 // which session ids exist.
                 log.warn("User {} tried to post into another user's session", userId)
                 call.respond(HttpStatusCode.NotFound, ErrorResponse("no_such_session"))
+                return@post
+            }
+            if (access is SessionAccess.DailyLimitReached) {
+                // Refused before any request to Claude, which is the entire point.
+                log.info("User {} reached the daily limit of {}", userId, access.limit)
+                call.respond(
+                    HttpStatusCode.TooManyRequests,
+                    ErrorResponse("daily_limit_reached", "limit is ${access.limit} per day"),
+                )
                 return@post
             }
 

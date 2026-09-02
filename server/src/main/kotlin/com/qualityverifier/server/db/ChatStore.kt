@@ -13,6 +13,16 @@ sealed interface SessionAccess {
     data class Ok(val created: Boolean) : SessionAccess
     /** The session exists and belongs to somebody else. Answered as a 404, never a 403. */
     data object NotYours : SessionAccess
+
+    /**
+     * This account has started its allowance of assessments for the day.
+     *
+     * Only ever returned for a *new* assessment. An assessment already under way carries
+     * on to the end: the earlier turns have been paid for either way, and cutting somebody
+     * off halfway is both the most expensive moment to stop and the most useless answer to
+     * give somebody standing in a workshop.
+     */
+    data class DailyLimitReached(val limit: Int) : SessionAccess
 }
 
 /** A turn already dealt with, so a retry returns the stored reply instead of paying twice. */
@@ -57,6 +67,8 @@ interface ChatStore {
         previousSessionId: String?,
         intakeAnswers: String?,
         promptSha: String?,
+        /** Assessments allowed per day. Zero or less disables the check. */
+        dailyLimit: Int,
     ): SessionAccess
 
     suspend fun appendUserTurn(
@@ -101,6 +113,21 @@ interface ChatStore {
      * point of having one.
      */
     suspend fun markClientDeleted(userId: String, sessionId: String): Boolean
+
+    /**
+     * Whether [userId] has a live assessment that refers to the photo [sha].
+     *
+     * Blob storage is content-addressed, so the hash is the only thing identifying a
+     * photo and nothing about it is scoped to an account. Without this check, being
+     * signed in as anybody would be enough to read anybody's photographs given their
+     * hash — and hashes travel: they are in server logs, in the admin portal, and in
+     * research exports.
+     *
+     * Deleted sessions do not count. A customer who deletes a report is told it is gone
+     * from their phone; continuing to serve its photographs to that same account would
+     * make the delete button a lie in the one direction that matters.
+     */
+    suspend fun blobBelongsTo(userId: String, sha: String): Boolean
 }
 
 class PostgresChatStore(private val dataSource: DataSource) : ChatStore {
@@ -134,6 +161,7 @@ class PostgresChatStore(private val dataSource: DataSource) : ChatStore {
         previousSessionId: String?,
         intakeAnswers: String?,
         promptSha: String?,
+        dailyLimit: Int,
     ): SessionAccess = tx { connection ->
         val owner = connection.prepareStatement(
             "select user_id::text from sessions where id = ?::uuid"
@@ -142,7 +170,33 @@ class PostgresChatStore(private val dataSource: DataSource) : ChatStore {
             statement.executeQuery().use { rows -> if (rows.next()) rows.getString(1) else null }
         }
         if (owner != null) {
+            // An assessment already under way is never refused, whatever the count says.
             return@tx if (owner == userId) SessionAccess.Ok(created = false) else SessionAccess.NotYours
+        }
+
+        if (dailyLimit > 0) {
+            // Serialise new assessments per user for the rest of this transaction. Without
+            // it, two requests arriving together both read the same count and both insert,
+            // and a limit that can be exceeded by racing is not a limit.
+            connection.prepareStatement("select pg_advisory_xact_lock(hashtext(?))").use {
+                it.setString(1, userId)
+                it.execute()
+            }
+            val startedToday = connection.prepareStatement(
+                """
+                select count(*)::int from sessions
+                where user_id = ?::uuid
+                  and (created_at at time zone 'Africa/Kampala')::date
+                      = (now() at time zone 'Africa/Kampala')::date
+                """.trimIndent()
+            ).use { statement ->
+                statement.setString(1, userId)
+                statement.executeQuery().use { rows -> if (rows.next()) rows.getInt(1) else 0 }
+            }
+            // The customer's own day, not UTC's. Uganda and Kenya are both UTC+3, so one
+            // zone covers everybody; on UTC the allowance would reset at 3am local, which
+            // is defensible but makes "resets at midnight" untrue.
+            if (startedToday >= dailyLimit) return@tx SessionAccess.DailyLimitReached(dailyLimit)
         }
 
         connection.prepareStatement(
@@ -465,6 +519,29 @@ class PostgresChatStore(private val dataSource: DataSource) : ChatStore {
                     statement.setString(1, sessionId)
                     statement.setString(2, userId)
                     statement.executeUpdate() > 0
+                }
+            }
+        }
+
+    override suspend fun blobBelongsTo(userId: String, sha: String): Boolean =
+        withContext(Dispatchers.IO) {
+            dataSource.connection.use { connection ->
+                connection.prepareStatement(
+                    """
+                    select exists (
+                        select 1
+                        from attachments a
+                        join messages m on m.id = a.message_id
+                        join sessions s on s.id = m.session_id
+                        where a.sha256 = ?
+                          and s.user_id = ?::uuid
+                          and s.client_deleted_at is null
+                    )
+                    """.trimIndent()
+                ).use { statement ->
+                    statement.setString(1, sha)
+                    statement.setString(2, userId)
+                    statement.executeQuery().use { rows -> rows.next() && rows.getBoolean(1) }
                 }
             }
         }

@@ -47,6 +47,107 @@ class ChatRouteTest {
     val folder = TemporaryFolder()
 
     @Test
+    fun `an account at its daily limit is refused before Claude is called`() = testApplication {
+        // The point of the quota is the request that never happens. A 429 after paying for
+        // the assessment would be a worse outcome than no quota at all.
+        val store = FakeChatStore(access = SessionAccess.DailyLimitReached(20))
+        val claude = FakeClaude(ClaudeResult.Success("should never be reached", TokenUsage(0, 0, 0, 0), "m"))
+        val app = withChat(store, claude)
+
+        val response = app.post("/v1/chat") {
+            auth(); contentType(ContentType.Application.Json)
+            setBody(request())
+        }
+
+        assertEquals(HttpStatusCode.TooManyRequests, response.status)
+        assertTrue(response.bodyAsText().contains("daily_limit_reached"))
+        assertEquals("nothing may be spent on a refused assessment", 0, claude.calls)
+        assertEquals(0, store.assistantTurns)
+    }
+
+    @Test
+    fun `the refusal names the limit, so the app can say the number`() = testApplication {
+        val app = withChat(
+            FakeChatStore(access = SessionAccess.DailyLimitReached(7)),
+            FakeClaude(ClaudeResult.Success("x", TokenUsage(0, 0, 0, 0), "m")),
+        )
+
+        val body = app.post("/v1/chat") {
+            auth(); contentType(ContentType.Application.Json)
+            setBody(request())
+        }.bodyAsText()
+
+        assertTrue(body, body.contains("7"))
+    }
+
+    @Test
+    fun `an assessment already under way is never refused`() = testApplication {
+        // created = false means the session existed. Whatever today's count is, the earlier
+        // turns are already paid for and stopping here would waste them and strand somebody
+        // mid-assessment in a workshop.
+        val store = FakeChatStore(access = SessionAccess.Ok(created = false))
+        val claude = FakeClaude(ClaudeResult.Success("carrying on", TokenUsage(10, 5, 0, 0), "m"))
+        val app = withChat(store, claude, dailyLimit = 1)
+
+        val response = app.post("/v1/chat") {
+            auth(); contentType(ContentType.Application.Json)
+            setBody(request())
+        }
+
+        assertEquals(HttpStatusCode.OK, response.status)
+        assertEquals(1, claude.calls)
+    }
+
+    @Test
+    fun `the configured limit is what reaches the store`() = testApplication {
+        // Guards the plumbing rather than the policy: a limit that stops at the route and
+        // never arrives is a quota that silently does nothing.
+        val store = FakeChatStore()
+        val app = withChat(store, FakeClaude(ClaudeResult.Success("ok", TokenUsage(0, 0, 0, 0), "m")), dailyLimit = 3)
+
+        app.post("/v1/chat") {
+            auth(); contentType(ContentType.Application.Json)
+            setBody(request())
+        }
+
+        assertEquals(3, store.sawDailyLimit)
+    }
+
+    @Test
+    fun `the default limit is twenty`() {
+        // Written down in a test because it is a spend decision, not an implementation
+        // detail: changing it should require saying so here.
+        assertEquals(20, Config.DEFAULT_DAILY_ASSESSMENT_LIMIT)
+        assertEquals(
+            20,
+            Config.fromEnvironment { null }.dailyAssessmentLimit,
+        )
+    }
+
+    @Test
+    fun `the limit can be overridden, and disabled outright`() {
+        assertEquals(
+            5,
+            Config.fromEnvironment { if (it == "KAGUA_DAILY_ASSESSMENT_LIMIT") "5" else null }
+                .dailyAssessmentLimit,
+        )
+        // Zero is the documented escape hatch for a demo. It must not silently fall back
+        // to the default, which would make an intentional override look applied.
+        assertEquals(
+            0,
+            Config.fromEnvironment { if (it == "KAGUA_DAILY_ASSESSMENT_LIMIT") "0" else null }
+                .dailyAssessmentLimit,
+        )
+        // Nonsense falls back rather than disabling the quota: a typo in a unit file
+        // should not quietly uncap spending.
+        assertEquals(
+            20,
+            Config.fromEnvironment { if (it == "KAGUA_DAILY_ASSESSMENT_LIMIT") "twenty" else null }
+                .dailyAssessmentLimit,
+        )
+    }
+
+    @Test
     fun `a turn is stored, sent upstream, and the reply returned`() = testApplication {
         val store = FakeChatStore()
         val claude = FakeClaude(ClaudeResult.Success("Here is the plan", TokenUsage(10, 5, 0, 900), "m"))
@@ -254,13 +355,14 @@ class ChatRouteTest {
         store: ChatStore,
         claude: FakeClaude,
         prompts: PromptRepository = RecordingPrompts(),
+        dailyLimit: Int = Config.DEFAULT_DAILY_ASSESSMENT_LIMIT,
     ) = run {
         application {
             module(
                 version = "test",
                 database = null,
                 auth = Auth(NoAuthStore, AccessTokens(KEY)),
-                chat = Chat(store, BlobStore(folder.newFolder()), claude, prompts),
+                chat = Chat(store, BlobStore(folder.newFolder()), claude, prompts, dailyLimit),
             )
         }
         createClient { install(ClientContentNegotiation) { json() } }
@@ -311,7 +413,12 @@ class ChatRouteTest {
         override suspend fun ensureSession(
             sessionId: String, userId: String, itemTypeId: String,
             previousSessionId: String?, intakeAnswers: String?, promptSha: String?,
-        ) = access
+            dailyLimit: Int,
+        ) = access.also { sawDailyLimit = dailyLimit }
+
+        /** What the route passed down, so a test can prove the config reaches the store. */
+        var sawDailyLimit: Int? = null
+            private set
 
         override suspend fun appendUserTurn(
             sessionId: String, messageId: String, text: String, blobHashes: List<String>,
@@ -343,6 +450,7 @@ class ChatRouteTest {
         override suspend fun sessionsFor(userId: String) = emptyList<com.qualityverifier.server.db.SessionRow>()
         override suspend fun sessionDetail(userId: String, sessionId: String) = null
         override suspend fun markClientDeleted(userId: String, sessionId: String) = false
+        override suspend fun blobBelongsTo(userId: String, sha: String) = false
     }
 
     private companion object {

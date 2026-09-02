@@ -65,16 +65,26 @@ fun Route.syncRoutes(chat: ChatStore, auth: AuthStore, blobs: BlobStore) {
         /**
          * Serves a photo back so a reinstalled app can rebuild a conversation.
          *
-         * Any signed-in user may fetch any hash they know. That is a deliberate property of
-         * content addressing rather than an oversight: knowing a SHA-256 means having had
-         * the bytes, so the hash is the capability. What it does mean is that hashes must
-         * never be logged or exposed anywhere a stranger could enumerate them.
+         * Ownership is checked, not assumed. An earlier version of this route treated the
+         * hash itself as the capability, on the reasoning that knowing a SHA-256 means
+         * having had the bytes. That reasoning is wrong here: this very API hands hashes
+         * out in session detail, and they will also appear in the admin portal, in
+         * research exports and in logs. A hash is an identifier, not a secret, so the
+         * account asking has to be one the photo belongs to.
          */
         get("/v1/blobs/{sha256}") {
-            call.userId() ?: return@get call.unauthorized()
+            val userId = call.userId() ?: return@get call.unauthorized()
             val sha = call.parameters["sha256"].orEmpty()
             if (!BlobStore.isValidHash(sha)) {
                 call.respond(HttpStatusCode.BadRequest, ErrorResponse("invalid_hash"))
+                return@get
+            }
+            // Being signed in is not enough. The store is content-addressed, so a hash
+            // alone carries no owner; without this, any account could read any photo it
+            // knew the hash of. 404 rather than 403, for the same reason as a session:
+            // 403 would confirm the photo exists.
+            if (!chat.blobBelongsTo(userId, sha)) {
+                call.respond(HttpStatusCode.NotFound, ErrorResponse("no_such_blob"))
                 return@get
             }
             val bytes = blobs.read(sha)

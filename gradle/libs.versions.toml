@@ -62,6 +62,10 @@ ktor-server-auth = { group = "io.ktor", name = "ktor-server-auth-jvm", version.r
 ktor-server-auth-jwt = { group = "io.ktor", name = "ktor-server-auth-jwt-jvm", version.ref = "ktor" }
 ktor-client-content-negotiation = { group = "io.ktor", name = "ktor-client-content-negotiation-jvm", version.ref = "ktor" }
 ktor-server-test-host = { group = "io.ktor", name = "ktor-server-test-host-jvm", version.ref = "ktor" }
+# The admin portal. Server-rendered HTML and cookie sessions rather than a second JVM or a
+# frontend build — on a 3.7 GB box shared with Postgres that is the whole argument.
+ktor-server-html-builder = { group = "io.ktor", name = "ktor-server-html-builder-jvm", version.ref = "ktor" }
+ktor-server-sessions = { group = "io.ktor", name = "ktor-server-sessions-jvm", version.ref = "ktor" }
 logback-classic = { group = "ch.qos.logback", name = "logback-classic", version.ref = "logback" }
 postgresql = { group = "org.postgresql", name = "postgresql", version.ref = "postgresql" }
 hikaricp = { group = "com.zaxxer", name = "HikariCP", version.ref = "hikari" }

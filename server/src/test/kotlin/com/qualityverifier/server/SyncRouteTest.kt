@@ -177,12 +177,52 @@ class SyncRouteTest {
     }
 
     @Test
+    fun `a photo belonging to another account is a 404, not a download`() = testApplication {
+        // The bug this covers shipped: the route checked that you were signed in and then
+        // served any hash to anybody. Content addressing was mistaken for access control,
+        // but the hash is an identifier, not a secret — session detail returns hashes, and
+        // so will the admin portal and research exports.
+        val blobs = BlobStore(folder.newFolder())
+        val bytes = "somebody else's workshop".toByteArray()
+        val sha = BlobStore.hash(bytes)
+        kotlinx.coroutines.runBlocking { blobs.put(sha, bytes) }
+        // The bytes exist and STRANGER holds a valid token. Only ownership is missing.
+        val app = withSync(FakeChatStore(ownedBlobs = mapOf(MINE to setOf(sha))), FakeAuth(), blobs)
+
+        val response = app.get("/v1/blobs/$sha") { auth(STRANGER) }
+
+        assertEquals(HttpStatusCode.NotFound, response.status)
+        assertTrue(
+            "the body must not carry the photo",
+            response.bodyAsText().let { it.contains("no_such_blob") && !it.contains("workshop") },
+        )
+    }
+
+    @Test
+    fun `a photo from a deleted report stops being served to its own owner`() = testApplication {
+        // The delete dialog promises the report is gone from the phone. Still serving its
+        // photographs to that account would make the promise false in the one direction a
+        // customer would notice. The bytes stay on disk for the seven-day window; what
+        // stops is serving them over this API.
+        val blobs = BlobStore(folder.newFolder())
+        val bytes = "a photo from a deleted report".toByteArray()
+        val sha = BlobStore.hash(bytes)
+        kotlinx.coroutines.runBlocking { blobs.put(sha, bytes) }
+        // No live session refers to it — which is what the real query returns once
+        // client_deleted_at is set.
+        val app = withSync(FakeChatStore(ownedBlobs = emptyMap()), FakeAuth(), blobs)
+
+        assertEquals(HttpStatusCode.NotFound, app.get("/v1/blobs/$sha") { auth(MINE) }.status)
+        assertTrue("the bytes are still on disk for the retention window", blobs.read(sha) != null)
+    }
+
+    @Test
     fun `a photo can be fetched back, and a malformed hash cannot`() = testApplication {
         val blobs = BlobStore(folder.newFolder())
         val bytes = "a photograph".toByteArray()
         val sha = BlobStore.hash(bytes)
         kotlinx.coroutines.runBlocking { blobs.put(sha, bytes) }
-        val app = withSync(FakeChatStore(), FakeAuth(), blobs)
+        val app = withSync(FakeChatStore(ownedBlobs = mapOf(MINE to setOf(sha))), FakeAuth(), blobs)
 
         assertEquals(HttpStatusCode.OK, app.get("/v1/blobs/$sha") { auth(MINE) }.status)
         // Hash-shaped but not hex. A path-traversal attempt cannot be tested here — the
@@ -247,6 +287,11 @@ class SyncRouteTest {
         private val sessions: List<SessionRow> = emptyList(),
         private val detail: Pair<SessionRow, List<MessageRow>>? = null,
         private val deleteSucceeds: Boolean = true,
+        /**
+         * Photo hashes this user owns, keyed by user id. Empty by default so a test has
+         * to opt in — a route that forgot the ownership check cannot then pass silently.
+         */
+        private val ownedBlobs: Map<String, Set<String>> = emptyMap(),
     ) : ChatStore {
         var askedFor: String? = null
             private set
@@ -256,6 +301,7 @@ class SyncRouteTest {
         override suspend fun ensureSession(
             sessionId: String, userId: String, itemTypeId: String,
             previousSessionId: String?, intakeAnswers: String?, promptSha: String?,
+            dailyLimit: Int,
         ) = SessionAccess.Ok(created = true)
 
         override suspend fun appendUserTurn(
@@ -280,6 +326,9 @@ class SyncRouteTest {
         }
 
         override suspend fun sessionDetail(userId: String, sessionId: String) = detail
+
+        override suspend fun blobBelongsTo(userId: String, sha: String): Boolean =
+            ownedBlobs[userId]?.contains(sha) == true
 
         override suspend fun markClientDeleted(userId: String, sessionId: String): Boolean {
             if (deleteSucceeds) deleted = sessionId
@@ -323,5 +372,8 @@ class SyncRouteTest {
     private companion object {
         const val KEY = "a-signing-key-long-enough-to-be-real"
         const val MINE = "11111111-2222-3333-4444-555555555555"
+
+        /** A second, entirely valid account. Signed in, just not the owner. */
+        const val STRANGER = "99999999-8888-7777-6666-555555555555"
     }
 }

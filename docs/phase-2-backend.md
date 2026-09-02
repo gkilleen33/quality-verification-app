@@ -165,7 +165,7 @@ the swap stays contained — the same reason `AppContainer` exists on the app si
 5. Ktor skeleton with a health endpoint, then the prompt-file endpoint first — the smallest
    slice that proves the whole path.
 
-## Admin portal (scoped 1 Sep 2026, built after the proxy)
+## Admin portal (built 1 Sep 2026)
 
 Same Ktor process, routes under `/admin`, `kotlinx.html` for markup. No second JVM, no Node,
 no frontend build — on a 3.7 GB box that matters. Two new dependencies: an Argon2id hasher
@@ -209,6 +209,96 @@ queries are what `psql` over SSM is for, run by somebody who already has server 
 
 The in-app wording gains a line about human review — see
 `docs/retention-and-profile-wording.md` § 2b.
+
+**As built**
+
+- `AdminStore` is an interface with `PostgresAdminStore` behind it, for the same reason
+  `AuthStore` and `ChatStore` are: a portal whose refusals can only be exercised against a
+  live database is a portal whose refusals are not exercised. 18 route tests cover the
+  gates — no session, password-only, wrong code, missing CSRF token, disabled and locked
+  accounts, last-admin protection, and that customer chat text is escaped rather than
+  rendered.
+- **TOTP is written out rather than pulled in** (`admin/Totp.kt`, ~40 lines plus base32).
+  It is checked against RFC 4226 Appendix D, RFC 6238 Appendix B and RFC 4648 §10, which is
+  stronger evidence than a dependency's own suite and one fewer jar on the box. HMAC-SHA1
+  because that is what authenticator apps assume; SHA-256 would be defensible and would
+  silently produce codes no app can generate.
+- Only two new dependencies, both Ktor modules: `ktor-server-html-builder` and
+  `ktor-server-sessions`. Argon2id came free — Bouncy Castle was already in for customer
+  passwords.
+- Sessions are a signed cookie, not a table: `HttpOnly`, `Secure`, `SameSite=Strict`, path
+  `/admin`, with a **30-minute idle timeout** and a **12-hour absolute cap**. The cookie is
+  signed but not encrypted, so it carries nothing the holder does not already know.
+- The CSRF check returns the parsed form to the route. Ktor throws
+  `RequestAlreadyConsumedException` on a second `receiveParameters`, so a route that
+  checked the token and then re-read the body would 500 on every submission — which is what
+  the first version did, until a test caught it.
+- An unknown email still costs an Argon2id verification against a dummy hash. Answering it
+  measurably faster is how a login form leaks its user list.
+- Bad TOTP codes count against the same lockout as bad passwords: 5 attempts, then 15
+  minutes. Otherwise the second factor is six digits with unlimited guesses.
+- Photos on the conversation page are checked against `attachments` before being read from
+  disk. A path parameter that takes a hash plus content-addressed storage is exactly the
+  shape where "any 64 hex characters" becomes "any file in the blob directory".
+- `KAGUA_ADMIN_SESSION_KEY` is required; without it the portal is not mounted at all. A
+  portal with a predictable signing key is worse than no portal.
+- nginx rate limiting needs **two** files: `kagua-admin-ratelimit.conf` into
+  `/etc/nginx/conf.d/` for the `limit_req_zone` (not valid inside a server block) and the
+  `limit_req` in the vhost.
+
+**The first admin**
+
+No self-registration, so the first account comes from the box:
+
+```
+KAGUA_DB_PASSWORD=... java -cp /opt/kagua/kagua.jar \
+  com.qualityverifier.server.admin.CreateAdminKt "someone@example.com" "Their Name"
+```
+
+The password is read from **stdin**, never an argument: an argument would land in the shell
+history, in `ps`, and — because this is run over SSM — in an AWS command log that keeps its
+parameters. It prints the TOTP secret once. The account cannot sign in until a code from
+that secret has been accepted, so an abandoned enrolment leaves no usable account behind.
+
+**Bringing the portal up, in order**
+
+1. **Generate the session key on the box** and put it straight into Parameter Store from
+   there. It must not travel as an SSM command parameter — those are kept in the AWS command
+   log, which would leave the key guarding the portal sitting in an audit trail:
+
+   ```
+   openssl rand -base64 48 | tr -d '\n' > /tmp/k && \
+     aws ssm put-parameter --region us-east-1 --name /kagua/admin/session-key \
+       --type SecureString --value "file:///tmp/k" && shred -u /tmp/k
+   ```
+
+   The instance role is read-only on Parameter Store, so this is run from an admin machine
+   or the role is widened for the one call. Either way the value is generated where it will
+   be used and never printed.
+
+2. **Apply `V8`** with `server/db/apply.sh`, as the `kagua` role. Applying it as `postgres`
+   would leave the new tables owned by postgres and the app unable to read them — which is
+   exactly the fault that produced `V4`'s ownership fix, and the script now asserts against
+   it.
+
+3. **Restart** so the launcher picks up `KAGUA_ADMIN_SESSION_KEY`. Until it does, the log
+   says the portal is disabled and `/admin` 404s — which is the intended failure.
+
+4. **nginx**, two files and one of them by hand:
+   - copy `kagua-admin-ratelimit.conf` into `/etc/nginx/conf.d/`
+   - add the `location ~ ^/admin/(login|2fa)$` block to the live vhost **by editing the file
+     on the host**. Do not reinstall the template: certbot rewrote it in place, and copying
+     the pre-TLS form back would drop the `listen 443` block and return the site to plain
+     HTTP, which the app refuses to talk to.
+   - `nginx -t`, then reload. Note that a reload returns before new workers are serving, so
+     a check immediately afterwards can still hit the old config.
+
+5. **Create the first admin** with the command above, add the secret to an authenticator,
+   then sign in and confirm the code is accepted.
+
+6. **Check the quota's SQL**, which has no unit test: start assessments past the limit on a
+   throwaway account and confirm the 429 arrives with `daily_limit_reached` and that
+   `usage_events` shows nothing was sent to Claude for the refused turn.
 
 ## Applying migrations
 
@@ -264,12 +354,32 @@ Two properties worth knowing rather than rediscovering:
    requires it, and the portal needs them for accuracy review. Stored once, deduped by
    `sha256`.
 2. ~~**Photo retention**~~ — follows the session: 7 days after a customer deletes an
-   assessment, 30 days after they delete the account. **Not yet settled** for assessments
-   nobody deletes, which currently means indefinitely.
+   assessment, 30 days after they delete the account. Settled 1 Sep 2026 for assessments
+   nobody deletes: **retained permanently for now.** They are the research record, and the
+   pilot's whole purpose is judging assessment accuracy against the photographs. Worth
+   revisiting before any non-pilot use, since "permanent" is the one retention answer that
+   cannot be walked back for data already collected.
 3. ~~**Region.**~~ Settled: us-east-1.
 4. ~~**Auth identity.**~~ Settled: invite codes for the pilot. SMS later if needed.
-5. **Per-user quota.** Needed before launch: after Phase 2 every request is billed to us
-   rather than to the tester.
+5. ~~**Per-user quota.**~~ Built 1 Sep 2026. **20 assessments started per account per
+   day**, configurable at runtime via `KAGUA_DAILY_ASSESSMENT_LIMIT`; zero or less disables
+   it, and an unparseable value falls back to 20 rather than uncapping spend.
+
+   - Counted per **calendar day in `Africa/Kampala`** (Uganda and Kenya are both UTC+3), so
+     "resets at midnight" is true for the user rather than for UTC.
+   - Enforced when an assessment **starts**, never mid-assessment. Earlier turns are paid
+     for either way, and refusing somebody halfway is both the costliest moment to stop and
+     the least useful answer to give somebody standing in front of a carpenter.
+   - Refused **before** the request to Claude, which is the entire point — a 429 issued
+     after the vision call would cost the same as allowing it.
+   - Counted inside the same transaction that inserts the session, behind
+     `pg_advisory_xact_lock` on the user id. A limit two concurrent requests can exceed by
+     racing is not a limit.
+   - Deleted assessments still count: the money was spent.
+   - `V7__quota_index.sql` adds `(user_id, created_at DESC)` for the count.
+   - The phone distinguishes this from a transient 429 and says the allowance resets
+     tomorrow rather than "in a moment", taking the number from the server so the two
+     cannot drift.
 
 ## Note on egress
 
