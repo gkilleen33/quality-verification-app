@@ -118,6 +118,47 @@ private const val CSS = """
   .critique dt { font-weight:600; margin-top:10px; }
   .critique dd { margin:2px 0 0 0; }
   .pager { margin-top:16px; display:flex; gap:12px; }
+  /* An assistant turn, drawn as the handset draws it — see TurnView.kt. The three level
+     colours are copied from VerdictPalette rather than re-picked: a reviewer comparing
+     this page with a phone in their other hand has to see the same verdict. */
+  .lv-sound   { background:#d6e8ce; color:#1f3d14; }
+  .lv-fair    { background:#f7e3b8; color:#4a3305; }
+  .lv-serious { background:#f6d6d2; color:#5b1410; }
+  .lv-unknown { background:#e4dacd; color:#4e4237; }
+  .verdict { display:flex; flex-direction:column; gap:10px; }
+  .vcard { border:1px solid var(--line); border-radius:8px; padding:14px 16px; background:#fff; }
+  .vcard.plan, .vcard.vquiet { background:#f7f2ea; }
+  .vlabel { font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:.07em;
+            opacity:.75; }
+  .vlabel.sub { margin-top:12px; }
+  /* A step larger than the body text, as on the phone: the headline is the one line
+     somebody reads if they read nothing else. */
+  .vhead { font-size:20px; font-weight:600; margin-top:6px; }
+  .vhead.small { font-size:17px; }
+  .vsum { margin:8px 0 0; }
+  .sev { display:inline-block; border-radius:4px; padding:2px 7px; font-size:11px;
+         font-weight:700; text-transform:uppercase; letter-spacing:.04em; }
+  .field { margin:0; } .field dt { font-size:11px; font-weight:700; text-transform:uppercase;
+           letter-spacing:.06em; color:var(--muted); margin-top:10px; }
+  .field dd { margin:2px 0 0; }
+  .vcard ul, .vcard ol { margin:6px 0 0; padding-left:20px; }
+  .vcard li { margin:5px 0; }
+  .chips { display:flex; flex-wrap:wrap; gap:6px; align-items:center; margin-top:10px; }
+  .chip { border:1px solid var(--line); background:#fff; border-radius:14px;
+          padding:3px 10px; font-size:13px; }
+  .md > :first-child { margin-top:0; } .md > :last-child { margin-bottom:0; }
+  .md p { margin:0 0 10px; white-space:pre-wrap; }
+  .md h3 { font-size:16px; margin:14px 0 6px; } .md h4 { font-size:14px; margin:12px 0 6px; }
+  .md ul, .md ol { margin:0 0 10px; padding-left:22px; }
+  .md li.ind { margin-left:18px; }
+  .md code { background:#f2ece3; border-radius:3px; padding:1px 4px;
+             font-family:ui-monospace,Menlo,monospace; font-size:.9em; }
+  .mdlink { text-decoration:underline dotted; }
+  .raw { margin-top:12px; }
+  .raw summary { font-size:12px; color:var(--muted); cursor:pointer; }
+  .raw .text { margin-top:8px; padding:10px 12px; background:#f7f2ea;
+               border:1px solid var(--line); border-radius:6px;
+               font-family:ui-monospace,Menlo,monospace; font-size:12px; }
 """
 
 fun HTML.page(heading: String, session: AdminSession?, current: String = "", block: FlowContent.() -> Unit) {
@@ -484,7 +525,14 @@ fun HTML.conversationPage(
     turns.forEach { turn ->
         div(if (turn.role == "USER") "turn user" else "turn") {
             div("who") { +"${turn.role.lowercase()} · ${turn.createdAt.readable()}" }
-            div("text") { +turn.text }
+            // A customer's turn is what they typed, shown as typed. An assistant's turn
+            // is drawn the way the handset draws it — see assistantBody — because until
+            // it was, the verdict arrived on this page as the raw JSON of a fenced block.
+            if (turn.role == "USER") {
+                div("text") { +turn.text }
+            } else {
+                assistantBody(turn.text)
+            }
             if (turn.photoHashes.isNotEmpty()) {
                 div("shots") {
                     turn.photoHashes.forEach { sha ->

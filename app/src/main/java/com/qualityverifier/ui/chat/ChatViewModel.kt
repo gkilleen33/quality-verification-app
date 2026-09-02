@@ -115,6 +115,14 @@ class ChatViewModel(
      * the review it existed to produce.
      */
     private val isTester: () -> Boolean = { false },
+    /**
+     * Sends any review this phone is still holding.
+     *
+     * A function rather than the sync object itself so that this stays a chat screen: all
+     * it needs is "try to flush that now", and a test does not have to build a sync with a
+     * fake client to answer five questions.
+     */
+    private val pushReviews: suspend () -> Unit = {},
     private val images: SessionImageStore,
     /**
      * Where file work happens. Injected so that tests can drive it with the same
@@ -628,6 +636,11 @@ class ChatViewModel(
      * an assessment in a workshop, which is exactly where there is no signal, and a review
      * lost to a failed request cannot be reconstructed — nobody remembers three days later
      * whether the assistant confused a dowel with a tenon.
+     *
+     * Stored first, then flushed. The questionnaire closes on the write, not on the send,
+     * so the evaluator is never made to wait for a request — but the send is attempted
+     * here rather than left for whenever they next open Reports, which is what kept the
+     * first real review off the server entirely.
      */
     fun submitReview(
         mistakes: String,
@@ -649,6 +662,12 @@ class ChatViewModel(
             )
             _reviewing.value = false
             _reviewDue.value = false
+            // After the questionnaire has closed, so a slow or absent network is invisible
+            // to the evaluator. Best-effort by construction: the answers are already on
+            // disk, so a failure here — no signal, or they leave the screen straight away —
+            // costs nothing but a delay, and must not take the app down in front of the one
+            // person whose job is to judge it.
+            runCatching { pushReviews() }
         }
     }
 
@@ -730,6 +749,7 @@ class ChatViewModel(
                     chat = container.chatService,
                     images = container.images,
                     isTester = { container.isTester },
+                    pushReviews = { container.assessmentSync.pushReviews() },
                 )
             }
         }

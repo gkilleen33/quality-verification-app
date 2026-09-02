@@ -33,6 +33,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 import java.io.File
+import java.io.IOException
 import java.util.UUID
 
 /**
@@ -177,6 +178,39 @@ class TesterReviewTest {
             assertTrue("the questionnaire must open once the flag is known", model.reviewDue.value)
         }
 
+    @Test
+    fun `answering sends the review rather than waiting for the Reports screen`() = runTest {
+        // The bug that shipped. The only flush points were opening Reports and deleting a
+        // report, so the first real review ever given sat on the handset: the evaluator
+        // answered, closed the app, and the server's table stayed empty with nothing
+        // anywhere saying why.
+        val sessions = FakeSessions(finished())
+        var pushes = 0
+        val model = model(sessions, isTester = true, pushReviews = { pushes++ })
+        advanceUntilIdle()
+
+        model.submitReview("no", null, 5, 9, null)
+        advanceUntilIdle()
+
+        assertEquals("answering must attempt the send itself", 1, pushes)
+    }
+
+    @Test
+    fun `a review that cannot be sent is kept, not lost`() = runTest {
+        // Offline in a workshop is the normal case here, not the exception — and the send
+        // must not be able to take the app down with it either.
+        val sessions = FakeSessions(finished())
+        val model = model(sessions, isTester = true, pushReviews = { throw IOException("no signal") })
+        advanceUntilIdle()
+
+        model.submitReview("unsure", "Hard to tell from the photo", 3, 6, null)
+        advanceUntilIdle()
+
+        val kept = sessions.testerFeedback.single()
+        assertEquals("unsure", kept.mistakes)
+        assertFalse("the questionnaire still closes", model.reviewing.value)
+    }
+
     // ---------------------------------------------------------------- harness
 
     private fun finished() = listOf(
@@ -184,13 +218,18 @@ class TesterReviewTest {
         ChatMessage(UUID.randomUUID().toString(), Role.ASSISTANT, "A verdict, in prose."),
     )
 
-    private fun model(sessions: SessionRepository, isTester: Boolean) = ChatViewModel(
+    private fun model(
+        sessions: SessionRepository,
+        isTester: Boolean,
+        pushReviews: suspend () -> Unit = {},
+    ) = ChatViewModel(
         sessionId = "s1",
         declaredItemType = ItemType.WOODEN_TABLE,
         sessions = sessions,
         chat = NoChat,
         images = FakeImages(),
         isTester = { isTester },
+        pushReviews = pushReviews,
         io = dispatcher,
     )
 

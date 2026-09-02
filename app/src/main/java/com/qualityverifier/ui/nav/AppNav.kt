@@ -1,6 +1,7 @@
 package com.qualityverifier.ui.nav
 
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
 import androidx.navigation.NavHostController
 import androidx.navigation.NavType
@@ -67,6 +68,20 @@ fun AppNav() {
     // Evaluated once per process. Signing in navigates onward itself, and signing out
     // pops back to the start, so this never needs re-reading.
     val start = remember { if (container.isSignedIn) Routes.HOME else Routes.SIGN_IN }
+
+    // A review answered with no signal, flushed the next time the app is opened.
+    //
+    // The questionnaire pushes its own answers, so this only matters when that attempt
+    // failed — an evaluator in a workshop, which is where the walkthroughs happen. Without
+    // it the remaining flush points are the Reports screen and a deletion, neither of which
+    // an evaluator has any reason to visit, and the answers sit on the handset unnoticed.
+    //
+    // Deliberately not a WorkManager job: the cost of one is not the battery, it is a
+    // background path that constructs the whole container in a process started without an
+    // Activity. This covers the same case for anyone who opens the app again.
+    LaunchedEffect(Unit) {
+        if (container.isSignedIn) runCatching { container.assessmentSync.pushReviews() }
+    }
 
     NavHost(navController = navController, startDestination = start) {
 
