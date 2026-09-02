@@ -60,13 +60,7 @@ class AssessmentSync(
 
         // Reviews go up before anything comes down, same as deletes: they are the phone's
         // own unsent work, and a pull failing should not strand them for another cycle.
-        var reviews = 0
-        for (feedback in sessions.pendingTesterFeedback()) {
-            if (client.submitTesterFeedback(feedback)) {
-                sessions.clearTesterFeedback(feedback.sessionId)
-                reviews++
-            }
-        }
+        val reviews = pushReviews()
 
         // Refreshed here so a promotion in the portal reaches the phone without a
         // re-install. Null means the server was unreachable, in which case the cached
@@ -127,6 +121,29 @@ class AssessmentSync(
             fetched++
         }
         Result(fetched, deletes, reachedServer = true, reviews = reviews)
+    }
+
+    /**
+     * Sends the evaluator reviews this phone is still holding, returning how many went.
+     *
+     * Callable on its own so that finishing a questionnaire can push it immediately.
+     * Until it was, the only flush points were the Reports screen and a deletion, so a
+     * review sat on the handset until its author happened to open a list they had no
+     * reason to open — an evaluator finishes an assessment and closes the app.
+     *
+     * Cheap and self-contained on purpose: no pull, no photo downloads, nothing that would
+     * make answering five questions cost an evaluator a list refresh on a metered
+     * connection. A failure leaves the row where it is for [run] to retry.
+     */
+    suspend fun pushReviews(): Int = withContext(io) {
+        var sent = 0
+        for (feedback in sessions.pendingTesterFeedback()) {
+            if (client.submitTesterFeedback(feedback)) {
+                sessions.clearTesterFeedback(feedback.sessionId)
+                sent++
+            }
+        }
+        sent
     }
 
     /**
