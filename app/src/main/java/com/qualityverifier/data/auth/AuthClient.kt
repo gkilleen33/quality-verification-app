@@ -71,6 +71,26 @@ class AuthClient(
     private val io: CoroutineDispatcher = Dispatchers.IO,
 ) {
 
+    /**
+     * Whether this account is one of our evaluators. Null if the call failed.
+     *
+     * Deliberately does not fail the sign-in. Being unable to answer a secondary question
+     * is not a reason to refuse somebody entry, and the flag defaults to false with the
+     * next sync putting it right.
+     */
+    private fun fetchIsTester(accessToken: String): Boolean? = try {
+        val request = Request.Builder().url(baseUrl + "v1/me")
+            .addHeader("Authorization", "Bearer $accessToken").get().build()
+        client.newCall(request).execute().use { response ->
+            if (!response.isSuccessful) return@use null
+            val text = response.body?.string() ?: return@use null
+            json.decodeFromString<ProfileBody>(text).isTester
+        }
+    } catch (e: Exception) {
+        Log.w(TAG, "Could not read the profile after signing in", e)
+        null
+    }
+
     suspend fun register(
         inviteCode: String,
         phone: String,
@@ -168,6 +188,12 @@ class AuthClient(
                         refreshToken = decoded.refreshToken,
                         userId = decoded.userId,
                     )
+                    // Fetched here, not left to the next sync. An evaluator who registers
+                    // and goes straight into an assessment — which is exactly what somebody
+                    // handed a code does — would otherwise finish it before the phone knew
+                    // they were an evaluator, and never be asked for the review the
+                    // walkthrough existed to produce.
+                    fetchIsTester(decoded.accessToken)?.let(store::setTester)
                     AuthResult.Success
                 } else {
                     AuthResult.Failure(kindFor(response.code), messageFor(response.code, text))
@@ -226,3 +252,8 @@ class AuthClient(
         val JSON = "application/json; charset=utf-8".toMediaType()
     }
 }
+
+@Serializable
+private data class ProfileBody(
+    @SerialName("is_tester") val isTester: Boolean = false,
+)
