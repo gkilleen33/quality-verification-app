@@ -80,6 +80,47 @@ class BlobStore(private val root: File) {
         PutResult.Stored
     }
 
+    /**
+     * Every stored photo, as hash to file.
+     *
+     * Used by the sweep that enforces retention on disk. Returns the whole corpus in one
+     * go, which is right while that is thousands of files on one volume and would want
+     * rethinking somewhere north of a few hundred thousand.
+     */
+    fun all(): List<Pair<String, File>> =
+        root.listFiles { file: File -> file.isDirectory }.orEmpty().flatMap { bucket ->
+            bucket.listFiles { file: File -> file.isFile && file.name.endsWith(".jpg") }
+                .orEmpty()
+                .mapNotNull { file ->
+                    val hash = file.name.removeSuffix(".jpg")
+                    // A file whose name is not a hash was not written by put(); leave it
+                    // alone rather than guess at what it is.
+                    if (isValidHash(hash)) hash to file else null
+                }
+        }
+
+    /**
+     * Removes a photo. Returns the bytes freed, or 0 if it was not there.
+     *
+     * Deliberately on the store rather than in the sweep: the two-level fan-out is this
+     * class's business, and a caller that built the path itself would be a second place
+     * that has to agree about the layout.
+     */
+    fun delete(sha256: String): Long {
+        if (!isValidHash(sha256)) return 0
+        val file = pathFor(sha256)
+        if (!file.isFile) return 0
+        val size = file.length()
+        if (!file.delete()) {
+            log.warn("Could not delete blob {}", sha256)
+            return 0
+        }
+        // Tidy the fan-out directory once it empties, so the tree does not keep 256
+        // empty folders forever. Fails harmlessly if another put() just landed in it.
+        file.parentFile?.takeIf { it.list()?.isEmpty() == true }?.delete()
+        return size
+    }
+
     fun pathFor(sha256: String): File {
         val lower = sha256.lowercase()
         return File(File(root, lower.substring(0, 2)), "$lower.jpg")

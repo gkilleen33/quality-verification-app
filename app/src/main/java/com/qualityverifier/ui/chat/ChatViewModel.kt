@@ -31,6 +31,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
@@ -152,6 +153,31 @@ class ChatViewModel(
      */
     private val _submittedRun = MutableStateFlow<PlanRun?>(null)
     val submittedRun: StateFlow<PlanRun?> = _submittedRun.asStateFlow()
+
+    /**
+     * True when the customer's last turn never got a reply, and nothing is in flight.
+     *
+     * Derived from the stored conversation rather than from [error], which lives only in
+     * this object. A turn that failed while the customer was looking at the screen offers
+     * a retry; the same turn after they closed the app offered nothing, because the error
+     * had gone with the ViewModel. The database still knew — a session whose last message
+     * is the customer's is an unfinished turn by definition — and this reads that instead.
+     *
+     * It also covers the app being killed mid-request, which until now was
+     * indistinguishable from a finished conversation.
+     *
+     * Offered, never acted on: a turn carrying nine photos costs real money, and somebody
+     * reopening a report is usually there to read it rather than to spend. [retry] is safe
+     * to press even if the turn did land, because the server is idempotent on the message
+     * id and returns the stored reply.
+     */
+    val unansweredTurn: StateFlow<Boolean> =
+        combine(messages, _sending, _submitting) { list, sending, submitting ->
+            // Not while a request is in flight: during a normal send the customer's
+            // message is already stored and the reply has not arrived yet, which looks
+            // exactly like the failure this detects.
+            !sending && !submitting && list.lastOrNull()?.role == Role.USER
+        }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), false)
 
     /** Plans already collected against, so a run is never offered twice. */
     private val fulfilled = mutableSetOf<String>()

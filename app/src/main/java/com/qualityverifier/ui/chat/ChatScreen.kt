@@ -111,6 +111,7 @@ fun ChatScreen(
     val pending by viewModel.pending.collectAsState()
     val sending by viewModel.sending.collectAsState()
     val error by viewModel.error.collectAsState()
+    val unansweredTurn by viewModel.unansweredTurn.collectAsState()
     val notice by viewModel.notice.collectAsState()
     val resolvedItemType by viewModel.itemType.collectAsState()
     val review by viewModel.review.collectAsState()
@@ -426,6 +427,12 @@ fun ChatScreen(
 
             error?.let { chatError -> ErrorRow(chatError, viewModel, onOpenSettings) }
 
+            // Only when there is no live error: a turn that just failed already has a row
+            // with a Retry on it, and two prompts to do the same thing is worse than one.
+            if (error == null && unansweredTurn) {
+                UnansweredTurnRow(onSend = { viewModel.retry() })
+            }
+
             notice?.let { message -> NoticeRow(message, onDismiss = viewModel::dismissNotice) }
 
             active?.let { plan ->
@@ -586,6 +593,35 @@ private fun ErrorRow(
                 }
                 TextButton(onClick = { viewModel.dismissError() }) { Text("Dismiss") }
             }
+        }
+    }
+}
+
+/**
+ * Offered when the customer's last turn never got a reply.
+ *
+ * Deliberately not styled as an error. By the time somebody sees this the failure is old
+ * news, the photos and answers are safe on the phone, and the only thing missing is the
+ * reply — so this reads as unfinished work to pick up rather than something broken.
+ *
+ * No Dismiss. The state is the conversation itself, not a message about it, so dismissing
+ * would either lie until the next reopen or need somewhere to record that the customer
+ * gave up on a turn. Leaving the assessment is the way out, and it is one tap away.
+ */
+@Composable
+private fun UnansweredTurnRow(onSend: () -> Unit) {
+    Surface(
+        color = MaterialTheme.colorScheme.secondaryContainer,
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Column(Modifier.padding(horizontal = 16.dp, vertical = 12.dp)) {
+            Text(
+                "This didn't get an answer. Your photos and answers are still here — " +
+                    "send it again when you have signal.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSecondaryContainer,
+            )
+            TextButton(onClick = onSend) { Text("Send again") }
         }
     }
 }

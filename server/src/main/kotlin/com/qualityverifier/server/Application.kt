@@ -4,6 +4,16 @@ import io.ktor.http.HttpStatusCode
 import io.ktor.serialization.kotlinx.json.json
 import io.ktor.server.application.Application
 import io.ktor.server.application.install
+import com.qualityverifier.server.blobs.BlobSweeper
+import com.qualityverifier.server.blobs.PostgresReferencedHashes
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import kotlin.time.Duration.Companion.hours
+import kotlin.time.Duration.Companion.minutes
 import io.ktor.server.engine.embeddedServer
 import io.ktor.server.netty.Netty
 import io.ktor.server.plugins.calllogging.CallLogging
@@ -111,6 +121,36 @@ fun main() {
         null
     }
 
+    /*
+     * The photo sweep, in this process rather than as a second systemd unit.
+     *
+     * It needs the database *and* write access to the blob volume. kagua-purge.service has
+     * neither: it runs as postgres over peer authentication, deliberately so that a daily
+     * timer needs no Parameter Store access and holds no secret. Giving it both would mean
+     * a second credential path and a second thing to keep in step with the schema. This
+     * process already has exactly what the sweep needs.
+     *
+     * Ordering against the SQL purge does not matter. If the sweep runs first, the rows it
+     * would have orphaned are collected on the next run — which is the property that makes
+     * sweeping rather than tracking the right shape here.
+     */
+    if (database != null) {
+        val sweeper = BlobSweeper(
+            PostgresReferencedHashes(database.source),
+            BlobStore(File(config.dataDirectory, "blobs")),
+        )
+        sweepScope.launch {
+            // Not immediately on boot: a deploy restarts this process, and a directory walk
+            // competing with startup on a burstable instance is a poor first impression.
+            delay(SWEEP_START_DELAY)
+            while (true) {
+                runCatching { sweeper.sweep() }
+                    .onFailure { log.error("Blob sweep failed; will try again tomorrow", it) }
+                delay(SWEEP_INTERVAL)
+            }
+        }
+    }
+
     log.info("Kagua server {} starting on {}:{}", config.version, config.host, config.port)
     if (config.dailyAssessmentLimit > 0) {
         log.info("Daily assessment limit: {} per account", config.dailyAssessmentLimit)
@@ -118,12 +158,29 @@ fun main() {
         log.warn("Daily assessment limit is DISABLED; every request is billed to us")
     }
 
-    Runtime.getRuntime().addShutdownHook(Thread { database?.close() })
+    Runtime.getRuntime().addShutdownHook(
+        Thread {
+            sweepScope.cancel()
+            database?.close()
+        },
+    )
 
     embeddedServer(Netty, port = config.port, host = config.host) {
         module(config.version, database, auth, chat, admin)
     }.start(wait = true)
 }
+
+/**
+ * Where the photo sweep runs. Its own scope so cancelling it on shutdown cannot take
+ * anything else with it, and a supervisor job so a failed sweep does not kill the scope.
+ */
+private val sweepScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
+/** Five minutes after boot, so a deploy is not competing with a directory walk. */
+private val SWEEP_START_DELAY = 5.minutes
+
+/** Daily, matching the SQL purge it complements. */
+private val SWEEP_INTERVAL = 24.hours
 
 /** Bundled so the module signature does not grow a parameter per collaborator. */
 class Auth(val store: AuthStore, val accessTokens: AccessTokens)

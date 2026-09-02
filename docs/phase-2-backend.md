@@ -431,6 +431,31 @@ Two properties worth knowing rather than rediscovering:
    pilot's whole purpose is judging assessment accuracy against the photographs. Worth
    revisiting before any non-pilot use, since "permanent" is the one retention answer that
    cannot be walked back for data already collected.
+2b. **Photo files on disk** — swept, added 2 Sep 2026. `purge_expired()` is SQL and cannot
+   touch the filesystem, so until this the retention windows deleted the record of a
+   photograph and kept the photograph: the delete dialog's "then it is deleted for good"
+   was true of the conversation and false of the pictures, and the bytes stayed reachable
+   by anything with disk access or an EBS snapshot.
+
+   `BlobSweeper` runs in the server process — it needs the database *and* write access to
+   the blob volume, and `kagua-purge.service` deliberately has neither, running as
+   `postgres` over peer authentication so a daily timer holds no secret. It deletes files
+   no live `attachments` row points at, **globally rather than per session**: blobs are
+   deduplicated by hash, so two customers who photograph the same thing share one file and
+   a per-session check would take a photo somebody still has.
+
+   A **seven-day grace period** on file mtime protects photos uploaded before the turn that
+   references them — legitimately unreferenced until the customer submits, and until the
+   next day if that submission failed and they retry.
+
+   Sweeping rather than tracking is deliberate. A `deleted_blobs` table would reproduce the
+   original bug in a new form: one missed write and the file is invisible for ever. An
+   orphan left by a crash is found on the next run.
+
+   **Known tail:** the sweep is daily, so deletion completes within about 24 hours of the
+   window expiring rather than on the hour. The wording says 7 days, which is when the
+   window ends; worth tightening the interval if that ever needs to be exact.
+
 3. ~~**Region.**~~ Settled: us-east-1.
 4. ~~**Auth identity.**~~ Settled: invite codes for the pilot. SMS later if needed.
 5. ~~**Per-user quota.**~~ Built 1 Sep 2026. **20 assessments started per account per
