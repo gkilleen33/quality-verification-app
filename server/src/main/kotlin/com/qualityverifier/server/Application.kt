@@ -231,7 +231,7 @@ fun Application.module(
             syncRoutes(it.store, auth.store, it.blobs)
         }
 
-        admin?.let { adminRoutes(it.store, it.blobs) }
+        admin?.let { adminRoutes(it.store, it.blobs, it.secureCookie) }
 
         // Cheap and dependency-free, so a database outage does not make the service
         // look dead to whatever is watching it.

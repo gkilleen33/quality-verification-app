@@ -45,6 +45,7 @@ dependencies {
     implementation(libs.postgresql)
     implementation(libs.hikaricp)
     implementation(libs.bouncycastle)
+    implementation(libs.zxing)
 
     testImplementation(libs.junit)
     testImplementation(libs.ktor.server.test.host)

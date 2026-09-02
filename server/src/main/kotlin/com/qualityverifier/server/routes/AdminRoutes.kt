@@ -18,6 +18,7 @@ import com.qualityverifier.server.auth.Passwords
 import com.qualityverifier.server.blobs.BlobStore
 import io.ktor.http.ContentType
 import io.ktor.http.HttpStatusCode
+import io.ktor.server.plugins.origin
 import io.ktor.http.Parameters
 import io.ktor.server.application.createRouteScopedPlugin
 import io.ktor.server.html.respondHtml
@@ -102,7 +103,20 @@ private const val PAGE_SIZE = 50
  * route calls it as its first statement — a route that forgets is a route that serves
  * customer photographs to anybody.
  */
-fun Route.adminRoutes(store: AdminStore, blobs: BlobStore) {
+fun Route.adminRoutes(
+    store: AdminStore,
+    blobs: BlobStore,
+    /**
+     * Whether the remembered-browser cookie is marked Secure. True everywhere real.
+     *
+     * Passed in rather than derived from the request scheme. nginx terminates TLS and
+     * proxies to this process over plain http on loopback, and XForwardedHeaders is not
+     * installed — clientIp() reads the header by hand — so `origin.scheme` here is "http"
+     * in production. Deriving it would have shipped a cookie that grants a thirty-day
+     * second-factor bypass without the Secure flag.
+     */
+    secureCookie: Boolean = true,
+) {
 
     route("/admin") {
 
@@ -158,18 +172,31 @@ fun Route.adminRoutes(store: AdminStore, blobs: BlobStore) {
                 }
             }
 
-            // Password proved. Nothing is readable yet — the session is only half made.
+            // A browser this admin asked to be remembered skips the code. Never skips
+            // enrolment: an account that has not confirmed a secret has no second factor
+            // to remember, and letting a cookie stand in for one would mean an account
+            // that never enrols anything.
+            val remembered = credentials.totpConfirmed && trustedDeviceFor(store, call, credentials.id)
+
+            // Password proved. Nothing is readable yet unless a remembered browser
+            // already settled the second factor.
             call.sessions.set(
                 AdminSession(
                     adminId = credentials.id,
                     email = credentials.email,
-                    secondFactorDone = false,
+                    secondFactorDone = remembered,
                     enrolling = !credentials.totpConfirmed,
                     signedInAt = now(),
                     lastSeenAt = now(),
                     csrfToken = AdminSession.newCsrfToken(),
                 ),
             )
+            if (remembered) {
+                store.recordSignIn(credentials.id)
+                store.audit(credentials.id, credentials.email, "sign-in", detail = "remembered browser", ip = call.clientIp())
+                log.info("Admin {} signed in on a remembered browser", credentials.email)
+                return@post call.respondRedirect("/admin")
+            }
             call.respondRedirect("/admin/2fa")
         }
 
@@ -190,7 +217,8 @@ fun Route.adminRoutes(store: AdminStore, blobs: BlobStore) {
             if (session == null || session.expired(now())) {
                 return@post call.respondRedirect("/admin/login")
             }
-            val code = call.receiveParameters()["code"].orEmpty()
+            val form = call.receiveParameters()
+            val code = form["code"].orEmpty()
             val credentials = store.credentialsFor(session.email)
             val secret = credentials?.totpSecret
             if (credentials == null || secret == null || credentials.disabled) {
@@ -210,6 +238,9 @@ fun Route.adminRoutes(store: AdminStore, blobs: BlobStore) {
 
             if (session.enrolling) store.confirmTotp(credentials.id)
             store.recordSignIn(credentials.id)
+            if (form["remember"] != null) {
+                rememberDevice(store, call, credentials.id, credentials.email, secureCookie)
+            }
             call.sessions.set(
                 session.copy(
                     secondFactorDone = true,
@@ -389,6 +420,74 @@ fun Route.adminRoutes(store: AdminStore, blobs: BlobStore) {
             respondAdmins(session, store, "Enabled.", null)
         }
 
+        /**
+         * Resets another admin's second factor, for a lost authenticator.
+         *
+         * Three rules, each covering a different way this could be the attack rather than
+         * the remedy:
+         *
+         * - **Never your own.** Somebody holding a borrowed session would otherwise move
+         *   the second factor onto their own phone without ever knowing the password.
+         * - **The password again**, even though the caller is already signed in. This is
+         *   the one action in the portal that hands out a working credential.
+         * - **Forget their remembered browsers.** Otherwise the person who lost their
+         *   authenticator keeps signing in on a remembered machine and never enrols the new
+         *   secret, leaving an account whose second factor exists only in the database.
+         */
+        post("/admins/{id}/reset-2fa") {
+            val (session, form) = requireCsrf(store) ?: return@post
+            val id = call.parameters["id"].orEmpty()
+
+            if (id == session.adminId) {
+                log.warn("Admin {} tried to reset their own 2FA", session.email)
+                return@post respondAdmins(
+                    session, store,
+                    "You cannot reset your own 2FA. Ask another admin, or use the box.",
+                    null, status = HttpStatusCode.Forbidden,
+                )
+            }
+            val actor = store.credentialsFor(session.email)
+            if (actor == null || !Passwords.verify(form["password"].orEmpty(), actor.passwordHash)) {
+                log.warn("Failed password confirmation on a 2FA reset by {}", session.email)
+                return@post respondAdmins(
+                    session, store, "That password was not right.",
+                    null, status = HttpStatusCode.Unauthorized,
+                )
+            }
+
+            val target = store.admins().firstOrNull { it.id == id }
+            val secret = if (target != null) store.resetTotp(id) else null
+            if (target == null || secret == null) {
+                return@post respondAdmins(
+                    session, store, "That account cannot be reset.",
+                    null, status = HttpStatusCode.NotFound,
+                )
+            }
+            val forgotten = store.revokeTrustedDevices(id)
+            store.audit(
+                session.adminId, session.email, "reset-2fa", target = target.email,
+                detail = "forgot $forgotten remembered browser(s)", ip = call.clientIp(),
+            )
+            log.warn("Admin {} reset 2FA for {}", session.email, target.email)
+            respondAdmins(
+                session, store,
+                "New secret for ${target.email}. They keep their existing password.",
+                Enrolment(secret, Totp.provisioningUri(secret, target.email)),
+            )
+        }
+
+        /** Forgets every remembered browser for the signed-in admin. */
+        post("/devices/revoke") {
+            val (session, _) = requireCsrf(store) ?: return@post
+            val forgotten = store.revokeTrustedDevices(session.adminId)
+            call.clearDeviceCookie()
+            store.audit(
+                session.adminId, session.email, "revoke-devices",
+                detail = "$forgotten browser(s)", ip = call.clientIp(),
+            )
+            respondAdmins(session, store, "Forgot $forgotten remembered browser(s).", null)
+        }
+
         post("/password") {
             val (session, form) = requireCsrf(store) ?: return@post
             val current = form["current"].orEmpty()
@@ -401,8 +500,13 @@ fun Route.adminRoutes(store: AdminStore, blobs: BlobStore) {
                 return@post respondAdmins(session, store, "The new password needs at least 12 characters.", null, status = HttpStatusCode.BadRequest)
             }
             store.setPasswordHash(credentials.id, Passwords.hash(next))
-            store.audit(session.adminId, session.email, "change-own-password", ip = call.clientIp())
-            respondAdmins(session, store, "Password changed.", null)
+            // A password change is usually a response to somebody else having had access,
+            // and a remembered browser needs only the password. Leaving them would mean
+            // the change did nothing on the machine that mattered.
+            val forgotten = store.revokeTrustedDevices(credentials.id)
+            call.clearDeviceCookie()
+            store.audit(session.adminId, session.email, "change-own-password", detail = "forgot \$forgotten remembered browser(s)", ip = call.clientIp())
+            respondAdmins(session, store, "Password changed. Remembered browsers were forgotten.", null)
         }
 
         // ------------------------------------------------------------- export
@@ -483,7 +587,8 @@ private suspend fun RoutingContext.respondAdmins(
     status: HttpStatusCode = HttpStatusCode.OK,
 ) {
     val admins = store.admins()
-    call.respondHtml(status) { adminsPage(session, admins, notice, secret) }
+    val devices = store.trustedDevices(session.adminId)
+    call.respondHtml(status) { adminsPage(session, admins, notice, secret, devices) }
 }
 
 /**
@@ -545,6 +650,79 @@ private fun io.ktor.server.application.ApplicationCall.clientIp(): String? =
         ?: request.local.remoteHost
 
 private fun now() = System.currentTimeMillis()
+
+/**
+ * The remembered-browser cookie.
+ *
+ * Not a Ktor session: there is nothing to sign, because the value carries no claims. It is
+ * 32 bytes of CSPRNG output whose only meaning is a row in admin_trusted_devices, so a
+ * forged one is a lookup miss rather than something to validate. Only the SHA-256 is
+ * stored, so a database read does not yield a working cookie.
+ */
+private const val DEVICE_COOKIE = "kagua_admin_device"
+
+/** Thirty days, matching what the checkbox promises. */
+private val TRUST_DURATION: Duration = Duration.ofDays(30)
+
+private val deviceRandom = java.security.SecureRandom()
+
+private fun hashToken(token: String): String {
+    val digest = java.security.MessageDigest.getInstance("SHA-256")
+    return digest.digest(token.toByteArray()).joinToString("") { "%02x".format(it) }
+}
+
+/**
+ * True when this request carries a live remembered-browser cookie for [adminId].
+ *
+ * The row is looked up by hash and then checked to belong to this admin. Both matter: the
+ * hash proves the cookie is one we issued, and the ownership check stops one admin's cookie
+ * standing in for another's second factor.
+ */
+private suspend fun trustedDeviceFor(
+    store: AdminStore,
+    call: io.ktor.server.application.ApplicationCall,
+    adminId: String,
+): Boolean {
+    val token = call.request.cookies[DEVICE_COOKIE] ?: return false
+    val device = store.trustedDevice(hashToken(token)) ?: return false
+    if (device.adminId != adminId) return false
+    store.touchTrustedDevice(device.id)
+    return true
+}
+
+private suspend fun rememberDevice(
+    store: AdminStore,
+    call: io.ktor.server.application.ApplicationCall,
+    adminId: String,
+    email: String,
+    secureCookie: Boolean,
+) {
+    val token = ByteArray(32).also(deviceRandom::nextBytes)
+        .let { java.util.Base64.getUrlEncoder().withoutPadding().encodeToString(it) }
+    val expires = java.time.Instant.now().plus(TRUST_DURATION)
+    // The label is only ever displayed. Truncated because a user agent is attacker-supplied
+    // and unbounded, and this one goes in a page and a log line.
+    val label = call.request.headers["User-Agent"]?.take(120)
+    store.trustDevice(adminId, hashToken(token), label, expires)
+    call.response.cookies.append(
+        io.ktor.http.Cookie(
+            name = DEVICE_COOKIE,
+            value = token,
+            path = "/admin",
+            httpOnly = true,
+            secure = secureCookie,
+            maxAge = TRUST_DURATION.seconds.toInt(),
+            extensions = mapOf("SameSite" to "Strict"),
+        ),
+    )
+    store.audit(adminId, email, "device-remembered", detail = label, ip = call.clientIp())
+}
+
+private fun io.ktor.server.application.ApplicationCall.clearDeviceCookie() {
+    response.cookies.append(
+        io.ktor.http.Cookie(name = DEVICE_COOKIE, value = "", path = "/admin", maxAge = 0),
+    )
+}
 
 private suspend fun enrolmentFor(store: AdminStore, email: String): Enrolment? {
     val secret = store.credentialsFor(email)?.totpSecret ?: return null

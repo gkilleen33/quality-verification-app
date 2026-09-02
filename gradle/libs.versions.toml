@@ -21,6 +21,7 @@ logback = "1.6.3"
 postgresql = "42.7.9"
 hikari = "7.0.2"
 bouncycastle = "1.85.2"
+zxing = "3.5.3"
 
 [libraries]
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
@@ -70,6 +71,9 @@ logback-classic = { group = "ch.qos.logback", name = "logback-classic", version.
 postgresql = { group = "org.postgresql", name = "postgresql", version.ref = "postgresql" }
 hikaricp = { group = "com.zaxxer", name = "HikariCP", version.ref = "hikari" }
 bouncycastle = { group = "org.bouncycastle", name = "bcprov-jdk18on", version.ref = "bouncycastle" }
+# QR encoding only. Reed-Solomon plus mask selection is not something to hand-roll: a
+# subtle bug there produces a code that scans cleanly as the wrong secret.
+zxing = { group = "com.google.zxing", name = "core", version.ref = "zxing" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }

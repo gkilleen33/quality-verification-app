@@ -187,6 +187,40 @@ need no thumbnail pipeline.
 - Export for research analysis: CSV/JSON of a filtered set, streamed with a cursor.
   **Photos excluded by default, with an explicit option to include them.**
 
+**Enrolment, resets and remembered browsers (2 Sep 2026)**
+
+- The enrolment page renders a **scannable QR** (ZXing, drawn as inline SVG). Inline rather
+  than an `<img>`: the CSP allows `img-src 'self'` and would block a `data:` URI, and
+  serving it from a route would mean the TOTP secret existing as a URL, which is how a
+  secret ends up in an access log. The typed secret stays on the page as a fallback.
+- **A lost authenticator is reset by another admin**, who must re-enter their own password.
+  Three rules, each covering a way the reset could be the attack rather than the remedy: never
+  your own account (a borrowed session would otherwise move the second factor to the
+  attacker's phone), the password again even though already signed in (this is the one action
+  that hands out a working credential), and the target's remembered browsers are forgotten
+  (otherwise they keep signing in on a remembered machine and never enrol the new secret,
+  leaving an account whose second factor exists only in the database).
+- **`ResetAdminTotp` on the box** is the break-glass path for the case the portal cannot
+  cover: one admin, or every admin, having lost their authenticator, with nobody left who can
+  sign in to do the reset. It needs server access, which is a higher bar than a portal
+  password and could read the database anyway, so it grants nothing new. The password is
+  untouched — a reset alone is not a way in.
+- **"Remember this browser for 30 days"** skips the code, never the password and never
+  enrolment. The cookie is 32 random bytes stored only as SHA-256, looked up by hash and then
+  checked to belong to the account signing in — without that second check any issued cookie
+  would satisfy anybody's second factor. Forgotten on a password change, on a 2FA reset, and
+  from a button on the Admins page.
+
+  The honest trade-off: somebody holding an unlocked laptop with that cookie needs only the
+  password, for up to thirty days. That is a real reduction in what 2FA buys, taken because
+  the alternative — a code every sitting, since the idle timeout is thirty minutes — is the
+  friction that ends with the secret on a sticky note. It is bounded rather than removed.
+
+  `Secure` on that cookie comes from an **explicit flag, not the request scheme**. nginx
+  terminates TLS and proxies over plain http on loopback, and `XForwardedHeaders` is not
+  installed, so `origin.scheme` reads "http" in production. Deriving it — which is what I
+  wrote first — would have shipped a thirty-day second-factor bypass without the Secure flag.
+
 **Deliberately not built: an arbitrary SQL box.** It is remote code execution and a bulk
 exfiltration tool in one text field, and no amount of auth in front changes that. Ad-hoc
 queries are what `psql` over SSM is for, run by somebody who already has server access.

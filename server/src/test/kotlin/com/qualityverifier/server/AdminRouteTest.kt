@@ -11,12 +11,15 @@ import com.qualityverifier.server.admin.InviteRow
 import com.qualityverifier.server.admin.Overview
 import com.qualityverifier.server.admin.Page
 import com.qualityverifier.server.admin.Totp
+import com.qualityverifier.server.admin.TrustedDevice
 import com.qualityverifier.server.admin.UserRow
 import com.qualityverifier.server.auth.Passwords
 import com.qualityverifier.server.blobs.BlobStore
 import io.ktor.client.HttpClient
 import io.ktor.client.plugins.cookies.HttpCookies
 import io.ktor.client.request.forms.submitForm
+import io.ktor.client.request.header
+import io.ktor.http.HttpHeaders
 import io.ktor.client.request.get
 import io.ktor.client.statement.bodyAsText
 import io.ktor.http.HttpStatusCode
@@ -230,6 +233,240 @@ class AdminRouteTest {
         }
     }
 
+    // ------------------------------------------------- remembered browsers
+
+    @Test
+    fun `a remembered browser skips the code but still needs the password`() = testApplication {
+        val store = FakeAdminStore()
+        val app = withAdmin(store)
+        // First sign-in, asking to be remembered. The client keeps the cookie.
+        app.signInPassword()
+        app.submitForm(
+            "/admin/2fa",
+            parameters { append("code", currentCode()); append("remember", "on") },
+        )
+        assertEquals("the browser should have been remembered", 1, store.devicesTrusted)
+
+        // Sign in again: password only, no code submitted.
+        app.signOut()
+        app.signInPassword()
+
+        // Straight in, without visiting /admin/2fa.
+        assertEquals(HttpStatusCode.OK, app.get("/admin/invites").status)
+        assertTrue(
+            "the sign-in should be recorded as using a remembered browser",
+            store.audits.any { it.action == "sign-in" && it.detail == "remembered browser" },
+        )
+    }
+
+    @Test
+    fun `a bad password is still refused on a remembered browser`() = testApplication {
+        // The cookie replaces the second factor, not the first.
+        val store = FakeAdminStore()
+        val app = withAdmin(store)
+        app.signInPassword()
+        app.submitForm("/admin/2fa", parameters { append("code", currentCode()); append("remember", "on") })
+        app.signOut()
+
+        val response = app.submitForm(
+            "/admin/login",
+            parameters { append("email", "admin@example.com"); append("password", "wrong") },
+        )
+
+        assertEquals(HttpStatusCode.Unauthorized, response.status)
+        assertEquals(HttpStatusCode.Found, app.get("/admin/invites").status)
+    }
+
+    @Test
+    fun `one admin's remembered browser is not another admin's second factor`() = testApplication {
+        // The cookie is looked up by hash and then checked against the account signing in.
+        // Without that check, any issued cookie would satisfy anybody's second factor.
+        val store = FakeAdminStore()
+        val app = withAdmin(store)
+        app.signInPassword()
+        app.submitForm("/admin/2fa", parameters { append("code", currentCode()); append("remember", "on") })
+        app.signOut()
+        // Re-point the stored device at somebody else, leaving the browser's cookie intact.
+        val hash = store.trusted.keys.single()
+        store.trusted[hash] = OTHER_ADMIN_ID
+
+        app.signInPassword()
+
+        // Half a session only: the code is still required.
+        assertEquals(HttpStatusCode.Found, app.get("/admin/invites").status)
+    }
+
+    @Test
+    fun `changing a password forgets remembered browsers`() = testApplication {
+        // A password change is usually a response to somebody else having had access, and a
+        // remembered browser needs only the password.
+        val store = FakeAdminStore()
+        val app = withAdmin(store)
+        app.signIn()
+        val csrf = app.csrfToken()
+
+        app.submitForm(
+            "/admin/password",
+            parameters {
+                append("csrf", csrf)
+                append("current", PASSWORD)
+                append("next", "a-brand-new-long-password")
+            },
+        )
+
+        assertTrue(ADMIN_ID in store.devicesRevokedFor)
+    }
+
+    @Test
+    fun `an admin can forget their own remembered browsers`() = testApplication {
+        val store = FakeAdminStore()
+        val app = withAdmin(store)
+        app.signIn()
+
+        val csrf = app.csrfToken()
+        app.submitForm("/admin/devices/revoke", parameters { append("csrf", csrf) })
+
+        assertTrue(ADMIN_ID in store.devicesRevokedFor)
+        assertTrue(store.audits.any { it.action == "revoke-devices" })
+    }
+
+    @Test
+    fun `the remembered-browser cookie is HttpOnly, SameSite and Secure by default`() = testApplication {
+        // Secure comes from an explicit flag, not from the request scheme: nginx proxies to
+        // this process over plain http, so deriving it would ship a cookie granting a
+        // thirty-day second-factor bypass that a browser would send in clear.
+        val store = FakeAdminStore()
+        application {
+            module(
+                version = "test",
+                database = null,
+                // No secureCookie override — production's default is what is under test.
+                admin = Admin(store, BlobStore(folder.newFolder()), "a-signing-key-long-enough-to-be-real"),
+            )
+        }
+        val app = createClient { followRedirects = false }
+
+        // No cookie jar: a Secure cookie is not returned over http, so the session is
+        // carried by hand. Without this the flow never reaches the device cookie and the
+        // test passes by checking nothing — which is how it read on the first attempt.
+        val login = app.submitForm(
+            "/admin/login",
+            parameters { append("email", "admin@example.com"); append("password", PASSWORD) },
+        )
+        val sessionCookie = login.headers.getAll("Set-Cookie").orEmpty()
+            .first { it.startsWith("kagua_admin=") }
+            .substringBefore(';')
+
+        val response = app.submitForm(
+            "/admin/2fa",
+            parameters { append("code", currentCode()); append("remember", "on") },
+        ) {
+            header(HttpHeaders.Cookie, sessionCookie)
+        }
+
+        assertEquals("the browser should have been remembered", 1, store.devicesTrusted)
+        val setCookie = response.headers.getAll("Set-Cookie").orEmpty()
+            .first { it.startsWith(DEVICE_COOKIE_NAME) }
+        assertTrue("must be Secure: $setCookie", setCookie.contains("Secure", ignoreCase = true))
+        assertTrue("must be HttpOnly: $setCookie", setCookie.contains("HttpOnly", ignoreCase = true))
+        assertTrue("must be SameSite=Strict: $setCookie", setCookie.contains("SameSite=Strict"))
+        assertTrue("must be scoped to /admin: $setCookie", setCookie.contains("Path=/admin"))
+        // Thirty days, so a browser stops presenting it even if the row outlives the check.
+        assertTrue("must carry a max age: $setCookie", setCookie.contains("Max-Age=2592000"))
+    }
+
+    // ------------------------------------------------------------ 2FA reset
+
+    @Test
+    fun `resetting another admin's 2FA needs your own password`() = testApplication {
+        // The one action in the portal that hands out a working credential, so a borrowed
+        // session is not enough on its own.
+        val store = FakeAdminStore()
+        val app = withAdmin(store)
+        app.signIn()
+
+        val csrf = app.csrfToken()
+        val response = app.submitForm(
+            "/admin/admins/$OTHER_ADMIN_ID/reset-2fa",
+            parameters { append("csrf", csrf); append("password", "not-my-password") },
+        )
+
+        assertEquals(HttpStatusCode.Unauthorized, response.status)
+        assertEquals("nothing should have been reset", 0, store.totpResets)
+    }
+
+    @Test
+    fun `you cannot reset your own 2FA`() = testApplication {
+        // Otherwise somebody holding a borrowed session moves the second factor onto their
+        // own phone without ever knowing the password.
+        val store = FakeAdminStore()
+        val app = withAdmin(store)
+        app.signIn()
+
+        val csrf = app.csrfToken()
+        val response = app.submitForm(
+            "/admin/admins/$ADMIN_ID/reset-2fa",
+            parameters { append("csrf", csrf); append("password", PASSWORD) },
+        )
+
+        assertEquals(HttpStatusCode.Forbidden, response.status)
+        assertEquals(0, store.totpResets)
+    }
+
+    @Test
+    fun `a reset issues a new secret and forgets the target's remembered browsers`() = testApplication {
+        // The forgetting is the part that matters: a remembered browser would let the
+        // person who lost their authenticator keep signing in and never enrol the new
+        // secret, leaving an account whose second factor exists only in the database.
+        val store = FakeAdminStore()
+        store.trusted["some-hash"] = OTHER_ADMIN_ID
+        val app = withAdmin(store)
+        app.signIn()
+
+        val csrf = app.csrfToken()
+        val response = app.submitForm(
+            "/admin/admins/$OTHER_ADMIN_ID/reset-2fa",
+            parameters { append("csrf", csrf); append("password", PASSWORD) },
+        )
+
+        assertEquals(HttpStatusCode.OK, response.status)
+        assertEquals(1, store.totpResets)
+        assertTrue(OTHER_ADMIN_ID in store.devicesRevokedFor)
+        assertTrue(
+            "the reset must name who did it and to whom",
+            store.audits.any { it.action == "reset-2fa" && it.target == "other@example.com" },
+        )
+        // Shown once, to the admin who performed it — they hand it over in person.
+        assertTrue(response.bodyAsText().contains("other@example.com"))
+    }
+
+    @Test
+    fun `a reset without a CSRF token does nothing`() = testApplication {
+        val store = FakeAdminStore()
+        val app = withAdmin(store)
+        app.signIn()
+
+        app.submitForm(
+            "/admin/admins/$OTHER_ADMIN_ID/reset-2fa",
+            parameters { append("password", PASSWORD) },
+        )
+
+        assertEquals(0, store.totpResets)
+    }
+
+    @Test
+    fun `the enrolment page shows a scannable QR and the typed secret`() = testApplication {
+        val store = FakeAdminStore(totpConfirmed = false)
+        val app = withAdmin(store)
+        app.signInPassword()
+
+        val body = app.get("/admin/2fa").bodyAsText()
+
+        assertTrue("no QR on the page", body.contains("<svg"))
+        assertTrue("no fallback secret", body.contains(secret))
+        assertTrue("should offer to remember the browser", body.contains("""name="remember""""))
+    }
+
     // ------------------------------------------------------------------ CSRF
 
     @Test
@@ -402,9 +639,17 @@ class AdminRouteTest {
 
     private suspend fun HttpClient.signIn() {
         signInPassword()
-        val code = Totp.generate("12345678901234567890".toByteArray(), System.currentTimeMillis() / 1000 / 30)
-        submitForm("/admin/2fa", parameters { append("code", code) })
+        submitForm("/admin/2fa", parameters { append("code", currentCode()) })
     }
+
+    /** Signs out the way the page does. Keeps the device cookie — only the session goes. */
+    private suspend fun HttpClient.signOut() {
+        val csrf = csrfToken()
+        submitForm("/admin/logout", parameters { append("csrf", csrf) })
+    }
+
+    private fun currentCode(): String =
+        Totp.generate("12345678901234567890".toByteArray(), System.currentTimeMillis() / 1000 / 30)
 
     /** Scrapes the token out of a rendered page, the way a browser would submit it. */
     private suspend fun HttpClient.csrfToken(): String {
@@ -422,6 +667,7 @@ class AdminRouteTest {
             AdminMessageRow("ASSISTANT", "Here is the plan.", Instant.now(), emptyList()),
         ),
         private val knownBlobs: Set<String> = setOf(PHOTO_SHA),
+        private val totpConfirmed: Boolean = true,
     ) : AdminStore {
         val audits = mutableListOf<AuditRow>()
         var failures = 0
@@ -434,6 +680,14 @@ class AdminRouteTest {
             private set
         var disabledCalls = 0
             private set
+        var totpResets = 0
+            private set
+        var devicesRevokedFor = mutableListOf<String>()
+            private set
+        /** Hash -> the admin it belongs to. Set by a test to simulate a remembered browser. */
+        val trusted = mutableMapOf<String, String>()
+        var devicesTrusted = 0
+            private set
 
         override suspend fun overview() = Overview(1, 1, 1, 1, 1, emptyList())
 
@@ -445,7 +699,7 @@ class AdminRouteTest {
                 name = "An Admin",
                 passwordHash = PASSWORD_HASH,
                 totpSecret = secret,
-                totpConfirmed = true,
+                totpConfirmed = totpConfirmed,
                 lockedUntil = lockedUntil,
                 disabled = disabled,
             )
@@ -465,9 +719,45 @@ class AdminRouteTest {
         }
 
         override suspend fun setPasswordHash(adminId: String, hash: String) = Unit
+
+        override suspend fun resetTotp(adminId: String): String? {
+            totpResets++
+            return if (adminId == OTHER_ADMIN_ID) Totp.newSecret() else null
+        }
+
+        override suspend fun trustDevice(
+            adminId: String, tokenHash: String, label: String?, expiresAt: Instant,
+        ) {
+            devicesTrusted++
+            trusted[tokenHash] = adminId
+        }
+
+        override suspend fun trustedDevice(tokenHash: String): TrustedDevice? =
+            trusted[tokenHash]?.let {
+                TrustedDevice(
+                    id = "device-1", adminId = it, label = "a browser",
+                    createdAt = Instant.now(), lastUsedAt = null,
+                    expiresAt = Instant.now().plusSeconds(3600),
+                )
+            }
+
+        override suspend fun touchTrustedDevice(id: String) = Unit
+
+        override suspend fun trustedDevices(adminId: String) =
+            trusted.filterValues { it == adminId }.map {
+                TrustedDevice("device-1", adminId, "a browser", Instant.now(), null, Instant.now().plusSeconds(3600))
+            }
+
+        override suspend fun revokeTrustedDevices(adminId: String): Int {
+            devicesRevokedFor += adminId
+            val before = trusted.size
+            trusted.entries.removeAll { it.value == adminId }
+            return before - trusted.size
+        }
         override suspend fun setDisabled(adminId: String, disabled: Boolean) { disabledCalls++ }
         override suspend fun admins() = listOf(
             AdminRow(ADMIN_ID, "admin@example.com", "An Admin", Instant.now(), null, null, false, true),
+            AdminRow(OTHER_ADMIN_ID, "other@example.com", "Other Admin", Instant.now(), null, null, false, true),
         )
 
         override suspend fun activeAdminCount() = activeAdmins
@@ -517,7 +807,10 @@ class AdminRouteTest {
         const val PASSWORD = "a-long-enough-password"
         val PASSWORD_HASH: String = Passwords.hash(PASSWORD)
         const val ADMIN_ID = "11111111-2222-3333-4444-555555555555"
+        /** A second admin, the one a reset is performed against. */
+        const val OTHER_ADMIN_ID = "99999999-8888-7777-6666-555555555555"
         const val SESSION_ID = "2ff77920-3928-46e5-8a77-5e16c1e901c6"
         val PHOTO_SHA = "b".repeat(64)
+        const val DEVICE_COOKIE_NAME = "kagua_admin_device"
     }
 }
