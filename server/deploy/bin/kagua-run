@@ -19,6 +19,9 @@ param() {
 export KAGUA_DB_PASSWORD="$(param /kagua/db/password)"
 export KAGUA_JWT_SIGNING_KEY="$(param /kagua/jwt/signing-key)"
 export KAGUA_ANTHROPIC_API_KEY="$(param /kagua/anthropic/api-key)"
+# Signs the admin portal's session cookie. Without it the portal is not mounted at all,
+# which is the right failure: a portal with a predictable signing key is worse than none.
+export KAGUA_ADMIN_SESSION_KEY="$(param /kagua/admin/session-key)"
 export KAGUA_VERSION="$(cat /opt/kagua/VERSION 2>/dev/null || echo unknown)"
 
 exec java ${JAVA_OPTS:-} -jar "$JAR"

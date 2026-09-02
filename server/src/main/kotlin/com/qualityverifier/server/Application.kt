@@ -12,6 +12,13 @@ import io.ktor.server.auth.Authentication
 import io.ktor.server.auth.jwt.JWTPrincipal
 import io.ktor.server.auth.jwt.jwt
 import io.ktor.server.plugins.statuspages.StatusPages
+import io.ktor.server.sessions.SessionTransportTransformerMessageAuthentication
+import io.ktor.server.sessions.Sessions
+import io.ktor.server.sessions.cookie
+import com.qualityverifier.server.admin.AdminSession
+import com.qualityverifier.server.admin.AdminStore
+import com.qualityverifier.server.admin.PostgresAdminStore
+import com.qualityverifier.server.routes.adminRoutes
 import io.ktor.server.request.path
 import io.ktor.server.response.respond
 import io.ktor.server.routing.get
@@ -93,6 +100,17 @@ fun main() {
         null
     }
 
+    val admin = if (database != null && config.adminSessionKey != null) {
+        Admin(
+            store = PostgresAdminStore(database.source),
+            blobs = BlobStore(File(config.dataDirectory, "blobs")),
+            sessionKey = config.adminSessionKey,
+        )
+    } else {
+        log.warn("Admin portal is disabled: needs a database and KAGUA_ADMIN_SESSION_KEY.")
+        null
+    }
+
     log.info("Kagua server {} starting on {}:{}", config.version, config.host, config.port)
     if (config.dailyAssessmentLimit > 0) {
         log.info("Daily assessment limit: {} per account", config.dailyAssessmentLimit)
@@ -103,12 +121,28 @@ fun main() {
     Runtime.getRuntime().addShutdownHook(Thread { database?.close() })
 
     embeddedServer(Netty, port = config.port, host = config.host) {
-        module(config.version, database, auth, chat)
+        module(config.version, database, auth, chat, admin)
     }.start(wait = true)
 }
 
 /** Bundled so the module signature does not grow a parameter per collaborator. */
 class Auth(val store: AuthStore, val accessTokens: AccessTokens)
+
+/** The admin portal. Absent when no session key is configured, so it simply is not mounted. */
+class Admin(
+    val store: AdminStore,
+    val blobs: BlobStore,
+    val sessionKey: String,
+    /**
+     * Whether the session cookie is marked Secure. True everywhere real.
+     *
+     * It exists only because a test client will not return a Secure cookie over http, and
+     * the sign-in flow cannot be exercised without one coming back. Defaulting to true
+     * means production gets the right behaviour unless somebody explicitly asks otherwise,
+     * which is the only way round this worth having.
+     */
+    val secureCookie: Boolean = true,
+)
 
 class Chat(
     val store: ChatStore,
@@ -137,8 +171,25 @@ fun Application.module(
     database: DatabaseHealth?,
     auth: Auth? = null,
     chat: Chat? = null,
+    admin: Admin? = null,
 ) {
     install(ContentNegotiation) { json() }
+    if (admin != null) {
+        install(Sessions) {
+            cookie<AdminSession>("kagua_admin") {
+                cookie.path = "/admin"
+                cookie.httpOnly = true
+                // Set over TLS only. nginx terminates it, so a cookie without this could be
+                // sent in clear by a browser that reached http:// once.
+                cookie.secure = admin.secureCookie
+                cookie.extensions["SameSite"] = "Strict"
+                // No maxAge: a session cookie, gone when the browser closes. The timeouts
+                // inside AdminSession are what actually enforce expiry, since a cookie's
+                // own lifetime is a client-side suggestion.
+                transform(SessionTransportTransformerMessageAuthentication(admin.sessionKey.toByteArray()))
+            }
+        }
+    }
     if (auth != null) {
         install(Authentication) {
             jwt("jwt") {
@@ -179,6 +230,8 @@ fun Application.module(
             // the chat store for sessions and the auth store for credentials.
             syncRoutes(it.store, auth.store, it.blobs)
         }
+
+        admin?.let { adminRoutes(it.store, it.blobs) }
 
         // Cheap and dependency-free, so a database outage does not make the service
         // look dead to whatever is watching it.

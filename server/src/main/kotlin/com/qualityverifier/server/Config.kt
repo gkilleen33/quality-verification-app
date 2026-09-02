@@ -29,6 +29,14 @@ data class Config(
      * which is a deliberate escape hatch for a demo rather than a default.
      */
     val dailyAssessmentLimit: Int,
+    /**
+     * Signs the admin portal's session cookie. Absent means the portal is not mounted.
+     *
+     * A separate secret from the JWT key on purpose: one is handed to every phone in the
+     * pilot, the other guards a page that can read every conversation, and a single key
+     * would tie their rotation together for no reason.
+     */
+    val adminSessionKey: String?,
 ) {
     companion object {
         /**
@@ -68,6 +76,7 @@ data class Config(
                 // has to work out.
                 dailyAssessmentLimit = env("KAGUA_DAILY_ASSESSMENT_LIMIT")?.toIntOrNull()
                     ?: DEFAULT_DAILY_ASSESSMENT_LIMIT,
+                adminSessionKey = env("KAGUA_ADMIN_SESSION_KEY")?.takeIf { it.isNotBlank() },
             )
         }
     }

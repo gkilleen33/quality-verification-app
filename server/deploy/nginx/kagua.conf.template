@@ -20,6 +20,14 @@
 # ever restructures the file, because a 25m limit on a block that only issues 301s is
 # indistinguishable from no limit at all until a photo upload returns 413.
 
+# Rate limit for the admin login form, in the http context via a snippet included from
+# nginx.conf — a limit_req_zone cannot live inside a server block. See
+# server/deploy/nginx/kagua-admin-ratelimit.conf.
+#
+# The alternative first considered was an outer HTTP Basic gate. Rejected: with a password
+# and a TOTP code already in play, a third shared credential buys little and invites reuse,
+# whereas rate limiting keeps scanners out of application code at no cost to the admins.
+
 server {
     listen 80;
     listen [::]:80;
@@ -46,6 +54,21 @@ server {
     proxy_read_timeout 180s;
     proxy_send_timeout 180s;
     proxy_connect_timeout 15s;
+
+    # The admin login and 2FA forms, rate limited. Everything else under /admin is behind
+    # a session cookie, so the two unauthenticated forms are the only brute-forceable
+    # surface — and the account lockout behind them is per account, which does nothing
+    # about somebody spraying one password across many addresses.
+    location ~ ^/admin/(login|2fa)$ {
+        limit_req zone=kagua_admin_login burst=5 nodelay;
+        limit_req_status 429;
+        proxy_pass http://127.0.0.1:8080;
+        proxy_http_version 1.1;
+        proxy_set_header Host              $host;
+        proxy_set_header X-Real-IP         $remote_addr;
+        proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
 
     location / {
         proxy_pass http://127.0.0.1:8080;

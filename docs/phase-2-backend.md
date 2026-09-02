@@ -165,7 +165,7 @@ the swap stays contained — the same reason `AppContainer` exists on the app si
 5. Ktor skeleton with a health endpoint, then the prompt-file endpoint first — the smallest
    slice that proves the whole path.
 
-## Admin portal (scoped 1 Sep 2026, built after the proxy)
+## Admin portal (built 1 Sep 2026)
 
 Same Ktor process, routes under `/admin`, `kotlinx.html` for markup. No second JVM, no Node,
 no frontend build — on a 3.7 GB box that matters. Two new dependencies: an Argon2id hasher
@@ -209,6 +209,56 @@ queries are what `psql` over SSM is for, run by somebody who already has server 
 
 The in-app wording gains a line about human review — see
 `docs/retention-and-profile-wording.md` § 2b.
+
+**As built**
+
+- `AdminStore` is an interface with `PostgresAdminStore` behind it, for the same reason
+  `AuthStore` and `ChatStore` are: a portal whose refusals can only be exercised against a
+  live database is a portal whose refusals are not exercised. 18 route tests cover the
+  gates — no session, password-only, wrong code, missing CSRF token, disabled and locked
+  accounts, last-admin protection, and that customer chat text is escaped rather than
+  rendered.
+- **TOTP is written out rather than pulled in** (`admin/Totp.kt`, ~40 lines plus base32).
+  It is checked against RFC 4226 Appendix D, RFC 6238 Appendix B and RFC 4648 §10, which is
+  stronger evidence than a dependency's own suite and one fewer jar on the box. HMAC-SHA1
+  because that is what authenticator apps assume; SHA-256 would be defensible and would
+  silently produce codes no app can generate.
+- Only two new dependencies, both Ktor modules: `ktor-server-html-builder` and
+  `ktor-server-sessions`. Argon2id came free — Bouncy Castle was already in for customer
+  passwords.
+- Sessions are a signed cookie, not a table: `HttpOnly`, `Secure`, `SameSite=Strict`, path
+  `/admin`, with a **30-minute idle timeout** and a **12-hour absolute cap**. The cookie is
+  signed but not encrypted, so it carries nothing the holder does not already know.
+- The CSRF check returns the parsed form to the route. Ktor throws
+  `RequestAlreadyConsumedException` on a second `receiveParameters`, so a route that
+  checked the token and then re-read the body would 500 on every submission — which is what
+  the first version did, until a test caught it.
+- An unknown email still costs an Argon2id verification against a dummy hash. Answering it
+  measurably faster is how a login form leaks its user list.
+- Bad TOTP codes count against the same lockout as bad passwords: 5 attempts, then 15
+  minutes. Otherwise the second factor is six digits with unlimited guesses.
+- Photos on the conversation page are checked against `attachments` before being read from
+  disk. A path parameter that takes a hash plus content-addressed storage is exactly the
+  shape where "any 64 hex characters" becomes "any file in the blob directory".
+- `KAGUA_ADMIN_SESSION_KEY` is required; without it the portal is not mounted at all. A
+  portal with a predictable signing key is worse than no portal.
+- nginx rate limiting needs **two** files: `kagua-admin-ratelimit.conf` into
+  `/etc/nginx/conf.d/` for the `limit_req_zone` (not valid inside a server block) and the
+  `limit_req` in the vhost.
+
+**The first admin**
+
+No self-registration, so the first account comes from the box:
+
+```
+KAGUA_DB_PASSWORD=... java -cp /opt/kagua/kagua.jar \
+  com.qualityverifier.server.admin.CreateAdminKt "someone@example.com" "Their Name"
+```
+
+The password is read from **stdin**, never an argument: an argument would land in the shell
+history, in `ps`, and — because this is run over SSM — in an AWS command log that keeps its
+parameters. It prints the TOTP secret once. The account cannot sign in until a code from
+that secret has been accepted, so an abandoned enrolment leaves no usable account behind.
 
 ## Applying migrations
 
