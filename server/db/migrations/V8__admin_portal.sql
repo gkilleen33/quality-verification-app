@@ -1,8 +1,12 @@
+-- Kagua server schema, version 8.
+--
 -- The admin portal: accounts for 2-3 staff, and a record of what they looked at.
 --
 -- Deliberately separate from `users`. An admin is not a customer with a flag set: the
 -- credentials are different (password + TOTP, no invite code), the lockout policy is
 -- different, and a bug that let one become the other would be the worst bug in the system.
+
+BEGIN;
 
 CREATE TABLE admins (
     id                uuid PRIMARY KEY,
@@ -50,3 +54,8 @@ CREATE INDEX admin_audit_created_idx ON admin_audit (created_at DESC);
 CREATE INDEX admin_audit_admin_idx ON admin_audit (admin_id, created_at DESC);
 -- Answering "who has looked at this customer's assessment" without scanning the table.
 CREATE INDEX admin_audit_target_idx ON admin_audit (target, created_at DESC);
+
+INSERT INTO schema_migrations (version) VALUES ('V8__admin_portal')
+    ON CONFLICT (version) DO NOTHING;
+
+COMMIT;

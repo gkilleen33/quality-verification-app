@@ -187,6 +187,40 @@ need no thumbnail pipeline.
 - Export for research analysis: CSV/JSON of a filtered set, streamed with a cursor.
   **Photos excluded by default, with an explicit option to include them.**
 
+**Enrolment, resets and remembered browsers (2 Sep 2026)**
+
+- The enrolment page renders a **scannable QR** (ZXing, drawn as inline SVG). Inline rather
+  than an `<img>`: the CSP allows `img-src 'self'` and would block a `data:` URI, and
+  serving it from a route would mean the TOTP secret existing as a URL, which is how a
+  secret ends up in an access log. The typed secret stays on the page as a fallback.
+- **A lost authenticator is reset by another admin**, who must re-enter their own password.
+  Three rules, each covering a way the reset could be the attack rather than the remedy: never
+  your own account (a borrowed session would otherwise move the second factor to the
+  attacker's phone), the password again even though already signed in (this is the one action
+  that hands out a working credential), and the target's remembered browsers are forgotten
+  (otherwise they keep signing in on a remembered machine and never enrol the new secret,
+  leaving an account whose second factor exists only in the database).
+- **`ResetAdminTotp` on the box** is the break-glass path for the case the portal cannot
+  cover: one admin, or every admin, having lost their authenticator, with nobody left who can
+  sign in to do the reset. It needs server access, which is a higher bar than a portal
+  password and could read the database anyway, so it grants nothing new. The password is
+  untouched — a reset alone is not a way in.
+- **"Remember this browser for 30 days"** skips the code, never the password and never
+  enrolment. The cookie is 32 random bytes stored only as SHA-256, looked up by hash and then
+  checked to belong to the account signing in — without that second check any issued cookie
+  would satisfy anybody's second factor. Forgotten on a password change, on a 2FA reset, and
+  from a button on the Admins page.
+
+  The honest trade-off: somebody holding an unlocked laptop with that cookie needs only the
+  password, for up to thirty days. That is a real reduction in what 2FA buys, taken because
+  the alternative — a code every sitting, since the idle timeout is thirty minutes — is the
+  friction that ends with the secret on a sticky note. It is bounded rather than removed.
+
+  `Secure` on that cookie comes from an **explicit flag, not the request scheme**. nginx
+  terminates TLS and proxies over plain http on loopback, and `XForwardedHeaders` is not
+  installed, so `origin.scheme` reads "http" in production. Deriving it — which is what I
+  wrote first — would have shipped a thirty-day second-factor bypass without the Secure flag.
+
 **Deliberately not built: an arbitrary SQL box.** It is remote code execution and a bulk
 exfiltration tool in one text field, and no amount of auth in front changes that. Ad-hoc
 queries are what `psql` over SSM is for, run by somebody who already has server access.
@@ -299,6 +333,44 @@ that secret has been accepted, so an abandoned enrolment leaves no usable accoun
 6. **Check the quota's SQL**, which has no unit test: start assessments past the limit on a
    throwaway account and confirm the 429 arrives with `daily_limit_reached` and that
    `usage_events` shows nothing was sent to Claude for the refused turn.
+
+**Done 2 Sep 2026, and what it corrected**
+
+- The launcher is **`/opt/kagua/bin/kagua-run`**, not `/usr/local/bin/kagua-run` — that is
+  what the systemd unit's `ExecStart` names. Writing to the wrong path creates a file
+  nothing runs, and `grep -c ... || echo 0` on a missing file reports `0` matches rather
+  than "no such file", which is how the mistake survived a check. The diff against the
+  installed launcher was exactly the three added lines, which is the check worth doing.
+- **Migrations are not part of the deploy.** `/opt/kagua/db/migrations` is populated by
+  hand, so a new migration has to be put there before `apply.sh` will see it.
+- The session key was generated **locally and written with `--value file://…`**, then the
+  local file was overwritten before being unlinked. The property that matters is that the
+  value never appears in an SSM command document, since AWS keeps those; generating it on
+  the box is one way to get that, not the only one.
+- SSM's shell is **`sh`, not bash** — `<(...)` process substitution fails with
+  `Syntax error: "(" unexpected`.
+- An `nginx -t` before reloading is worth it: the `limit_req_zone` has to exist in
+  `conf.d/` before the vhost's `limit_req` will validate.
+- The vhost location was inserted **before `location /` inside the 443 block** with awk,
+  against a `.before-admin` backup, and `listen 443` was confirmed still present afterwards.
+
+**Verified live**
+
+- 8 migrations applied as `kagua`, ownership assertion passed, and a **second** `apply.sh`
+  run skipped all 8 and exited 0 — which is what V7 and V8 failing to record themselves
+  would have broken.
+- `/admin` redirects to `/admin/login`; the login page renders with `no-store`, the CSP,
+  `nosniff`, `DENY` and `no-referrer` all present.
+- Login rate limit: 12 rapid POSTs gave `401 401 401 401 401 401 429 429 429 429 429 429` —
+  burst of 5 plus one, then nginx.
+- **The quota, at the real limit of 20 and for no Claude spend.** Seeding session rows and
+  attempting a 21st assessment returned `429 daily_limit_reached`, created no session row,
+  and left `usage_events` untouched — nothing reached Claude.
+- **The timezone conversion matters and works.** With one session at 22:00 UTC on 1 Sep
+  (01:00 on 2 Sep in Kampala), the Kampala-day count was **20** and the UTC-day count
+  **18**. On UTC the account would still have had two assessments in hand.
+- An assessment **already under way** returned 200 with a real reply while the account was
+  at its limit.
 
 ## Applying migrations
 

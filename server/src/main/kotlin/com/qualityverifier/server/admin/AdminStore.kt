@@ -80,6 +80,16 @@ data class AdminMessageRow(
     val photoHashes: List<String>,
 )
 
+/** A browser an admin asked to be remembered. The token itself is never stored. */
+data class TrustedDevice(
+    val id: String,
+    val adminId: String,
+    val label: String?,
+    val createdAt: Instant,
+    val lastUsedAt: Instant?,
+    val expiresAt: Instant,
+)
+
 /** One page of results plus whether there is another. */
 data class Page<T>(val items: List<T>, val hasMore: Boolean)
 
@@ -107,6 +117,41 @@ interface AdminStore {
     suspend fun recordSignIn(adminId: String)
     suspend fun recordFailure(adminId: String, lockFor: Duration, threshold: Int): Int
     suspend fun setPasswordHash(adminId: String, hash: String)
+
+    /**
+     * Replaces the TOTP secret and forces re-enrolment. For a lost authenticator.
+     *
+     * Deliberately not a "clear the secret" call: an account with no secret cannot sign in
+     * at all, and the route that handles that case treats it as a fault. A fresh secret
+     * with [confirmTotp] not yet called is the state the enrolment page already knows how
+     * to drive.
+     *
+     * Returns the new secret so it can be shown once, and to whoever performed the reset
+     * rather than to the account being reset — they are the ones who can hand it over in
+     * person.
+     */
+    suspend fun resetTotp(adminId: String): String?
+
+    /** Remembers a browser. [tokenHash] is SHA-256 of the cookie value. */
+    suspend fun trustDevice(adminId: String, tokenHash: String, label: String?, expiresAt: Instant)
+
+    /** The live, unexpired device for this hash, if any. */
+    suspend fun trustedDevice(tokenHash: String): TrustedDevice?
+
+    suspend fun touchTrustedDevice(id: String)
+
+    suspend fun trustedDevices(adminId: String): List<TrustedDevice>
+
+    /**
+     * Forgets every remembered browser for this admin. Returns how many.
+     *
+     * Called on a password change and on a 2FA reset, not only from the button. A reset
+     * that left a remembered browser in place would let the person who lost their
+     * authenticator carry on signing in without ever enrolling the new secret — which
+     * would make the reset look like it worked while leaving the account with no second
+     * factor at all.
+     */
+    suspend fun revokeTrustedDevices(adminId: String): Int
     suspend fun setDisabled(adminId: String, disabled: Boolean)
     suspend fun admins(): List<AdminRow>
     /** How many admins can still sign in. Used to refuse disabling the last one. */
@@ -281,6 +326,107 @@ class PostgresAdminStore(private val dataSource: DataSource) : AdminStore {
                 statement.executeQuery().use { rows -> if (rows.next()) rows.getInt(1) else 0 }
             }
         }
+
+    override suspend fun resetTotp(adminId: String): String? = query { connection ->
+        val secret = Totp.newSecret()
+        val updated = connection.prepareStatement(
+            """
+            update admins
+               set totp_secret = ?, totp_confirmed_at = null,
+                   failed_sign_ins = 0, locked_until = null
+             where id = ?::uuid and disabled_at is null
+            """.trimIndent()
+        ).use { statement ->
+            statement.setString(1, secret)
+            statement.setString(2, adminId)
+            statement.executeUpdate()
+        }
+        // Clearing the lockout too: somebody who has just lost their authenticator has
+        // usually tried a few stale codes on the way to asking for help.
+        if (updated == 1) secret else null
+    }
+
+    override suspend fun trustDevice(
+        adminId: String,
+        tokenHash: String,
+        label: String?,
+        expiresAt: Instant,
+    ) = query { connection ->
+        connection.prepareStatement(
+            """
+            insert into admin_trusted_devices (id, admin_id, token_hash, label, expires_at)
+            values (gen_random_uuid(), ?::uuid, ?, ?, ?)
+            """.trimIndent()
+        ).use { statement ->
+            statement.setString(1, adminId)
+            statement.setString(2, tokenHash)
+            statement.setString(3, label)
+            statement.setTimestamp(4, java.sql.Timestamp.from(expiresAt))
+            statement.executeUpdate()
+        }
+        Unit
+    }
+
+    override suspend fun trustedDevice(tokenHash: String): TrustedDevice? = query { connection ->
+        connection.prepareStatement(
+            """
+            select id::text, admin_id::text, label, created_at, last_used_at, expires_at
+              from admin_trusted_devices
+             where token_hash = ? and expires_at > now()
+            """.trimIndent()
+        ).use { statement ->
+            statement.setString(1, tokenHash)
+            statement.executeQuery().use { rows ->
+                if (rows.next()) rows.toTrustedDevice() else null
+            }
+        }
+    }
+
+    override suspend fun touchTrustedDevice(id: String) = query { connection ->
+        connection.prepareStatement(
+            "update admin_trusted_devices set last_used_at = now() where id = ?::uuid"
+        ).use { statement ->
+            statement.setString(1, id)
+            statement.executeUpdate()
+        }
+        Unit
+    }
+
+    override suspend fun trustedDevices(adminId: String): List<TrustedDevice> = query { connection ->
+        connection.prepareStatement(
+            """
+            select id::text, admin_id::text, label, created_at, last_used_at, expires_at
+              from admin_trusted_devices
+             where admin_id = ?::uuid and expires_at > now()
+             order by created_at desc
+            """.trimIndent()
+        ).use { statement ->
+            statement.setString(1, adminId)
+            statement.executeQuery().use { rows ->
+                val out = mutableListOf<TrustedDevice>()
+                while (rows.next()) out += rows.toTrustedDevice()
+                out
+            }
+        }
+    }
+
+    override suspend fun revokeTrustedDevices(adminId: String): Int = query { connection ->
+        connection.prepareStatement(
+            "delete from admin_trusted_devices where admin_id = ?::uuid"
+        ).use { statement ->
+            statement.setString(1, adminId)
+            statement.executeUpdate()
+        }
+    }
+
+    private fun java.sql.ResultSet.toTrustedDevice() = TrustedDevice(
+        id = getString(1),
+        adminId = getString(2),
+        label = getString(3),
+        createdAt = getTimestamp(4).toInstant(),
+        lastUsedAt = getTimestamp(5)?.toInstant(),
+        expiresAt = getTimestamp(6).toInstant(),
+    )
 
     override suspend fun setPasswordHash(adminId: String, hash: String) = query { connection ->
         connection.prepareStatement(

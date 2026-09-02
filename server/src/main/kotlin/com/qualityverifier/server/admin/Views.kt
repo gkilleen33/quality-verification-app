@@ -103,6 +103,9 @@ private const val CSS = """
   .err { background:#fdeaea; border:1px solid #e7b0b0; border-radius:6px; padding:10px 12px;
          margin-bottom:16px; }
   .muted { color:var(--muted); } .mono { font-family:ui-monospace,Menlo,monospace; font-size:13px; }
+  /* Padding is part of the code: the quiet zone is white and needs somewhere to sit. */
+  .qr { margin:16px 0; padding:8px; background:#fff; display:inline-block; border-radius:4px; }
+  .check { display:block; margin:12px 0; font-weight:400; }
   .pager { margin-top:16px; display:flex; gap:12px; }
 """
 
@@ -215,24 +218,65 @@ fun HTML.twoFactorPage(error: String?, enrolment: Enrolment?) =
             if (error != null) errorBox(error)
             if (enrolment != null) {
                 p {
-                    +"Add this secret to an authenticator app, then enter the code it shows. "
-                    +"You will not be able to see the secret again."
+                    +"Scan this with an authenticator app, then enter the code it shows. "
+                    +"You will not be able to see it again."
                 }
-                p("mono") { code { +enrolment.secret } }
+                qrCode(enrolment.uri)
                 p("muted") {
-                    +"If your app scans, this is the same thing as a URI: "
+                    +"Cannot scan? Type this into the app instead:"
                     br()
-                    span("mono") { +enrolment.uri }
+                    span("mono") { +enrolment.secret }
                 }
             }
             form(action = "/admin/2fa", method = kotlinx.html.FormMethod.post) {
                 labelledField("Six-digit code", "code")
+                label("check") {
+                    input(type = InputType.checkBox, name = "remember")
+                    +" Remember this browser for 30 days"
+                }
+                p("muted") {
+                    +"Only on a computer you control. It skips the code, not the password — "
+                    +"and it can be undone from the Admins page."
+                }
                 button(type = ButtonType.submit) { +"Sign in" }
             }
         }
     }
 
 data class Enrolment(val secret: String, val uri: String)
+
+/**
+ * The enrolment QR, inline.
+ *
+ * `unsafe` is doing something genuinely unsafe, so the path data is checked against a
+ * strict pattern before it is emitted. [Qr] builds it from integers and the characters
+ * `Mhvz,-` and nothing else, so the check should never fire — which is the point: if a
+ * future change ever routes user input through here, this fails closed and falls back to
+ * the typed secret rather than injecting markup into a page that renders customer text.
+ */
+private fun FlowContent.qrCode(uri: String) {
+    val qr = runCatching { Qr.encode(uri) }.getOrNull()
+    if (qr == null || !SAFE_PATH.matches(qr.pathData)) {
+        // No QR is a worse experience, not a broken one: the secret is shown below either
+        // way, so enrolment still completes by typing.
+        p("muted") { +"(Could not draw the QR code — use the secret below.)" }
+        return
+    }
+    div("qr") {
+        unsafe {
+            +"""<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${qr.modules} ${qr.modules}" """
+            +"""width="220" height="220" shape-rendering="crispEdges" role="img" """
+            +"""aria-label="Authenticator enrolment QR code">"""
+            // White behind the code, always. A dark-mode browser inverting the page would
+            // otherwise leave a code no scanner can read.
+            +"""<rect width="${qr.modules}" height="${qr.modules}" fill="#fff"/>"""
+            +"""<path d="${qr.pathData}" fill="#000"/></svg>"""
+        }
+    }
+}
+
+private val SAFE_PATH = Regex("[Mhvz0-9,\\-]*")
+
 
 fun HTML.overviewPage(session: AdminSession, counts: Overview) = page("Overview", session, "home") {
     subtitle("What is in the system right now.")
@@ -442,6 +486,7 @@ fun HTML.adminsPage(
     admins: List<AdminRow>,
     notice: String?,
     createdSecret: Enrolment?,
+    devices: List<TrustedDevice>,
 ) = page("Admins", session, "admins") {
     subtitle("People who can read this portal.")
     if (notice != null) warning(notice)
@@ -449,9 +494,10 @@ fun HTML.adminsPage(
         div("warn") {
             p {
                 strongText("Give this to them in person or over something private. ")
-                +"It is shown once and cannot be recovered — if it is lost, delete the "
-                +"account and make another."
+                +"It is shown once and cannot be recovered — if it is lost, reset their "
+                +"2FA below and hand over the new one."
             }
+            qrCode(createdSecret.uri)
             p("mono") { code { +createdSecret.secret } }
         }
     }
@@ -488,9 +534,53 @@ fun HTML.adminsPage(
                             postForm("/admin/admins/${admin.id}/$action", session, inline = true) {
                                 button(type = ButtonType.submit, classes = "quiet") { +action }
                             }
+                            if (!admin.disabled && admin.twoFactorReady) {
+                                // Password-confirmed, because a reset is how somebody with
+                                // a borrowed session would move a second factor onto their
+                                // own device.
+                                postForm(
+                                    "/admin/admins/${admin.id}/reset-2fa",
+                                    session,
+                                    inline = true,
+                                ) {
+                                    input(type = InputType.password, name = "password") {
+                                        attributes["placeholder"] = "your password"
+                                    }
+                                    button(type = ButtonType.submit, classes = "quiet") {
+                                        +"Reset 2FA"
+                                    }
+                                }
+                            }
                         } else span("muted") { +"you" }
                     }
                 }
+            }
+        }
+    }
+    h2 { +"Remembered browsers" }
+    div("card") {
+        if (devices.isEmpty()) {
+            p("muted") { +"None. You will be asked for a code every time you sign in." }
+        } else {
+            p {
+                +"These browsers skip the code until they expire. Revoke them if one is on a "
+                +"computer you no longer have."
+            }
+            table {
+                thead { tr { th { +"Browser" }; th { +"Remembered" }; th { +"Last used" }; th { +"Expires" } } }
+                tbody {
+                    devices.forEach { device ->
+                        tr {
+                            td { +(device.label ?: "unknown") }
+                            td { +device.createdAt.readable() }
+                            td { +(device.lastUsedAt?.readable() ?: "not since") }
+                            td { +device.expiresAt.readable() }
+                        }
+                    }
+                }
+            }
+            postForm("/admin/devices/revoke", session) {
+                button(type = ButtonType.submit, classes = "quiet") { +"Forget all of them" }
             }
         }
     }
