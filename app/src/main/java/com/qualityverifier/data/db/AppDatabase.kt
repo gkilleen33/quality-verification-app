@@ -14,7 +14,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         PendingTesterFeedbackEntity::class,
         DismissedSessionEntity::class,
     ],
-    version = 7,
+    version = 8,
     exportSchema = true,
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -117,9 +117,23 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        /**
+         * Adds `sessions.verdictUnverifiedCount`.
+         *
+         * The reports badge says "No faults found" rather than "Sound" when the verdict
+         * left anything unchecked, and this is the bit it reads. Null on every existing
+         * row, which the badge treats as nothing unchecked — so old rows keep the wording
+         * they already had rather than gaining a caveat nobody derived.
+         */
+        val MIGRATION_7_8 = object : Migration(7, 8) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE sessions ADD COLUMN verdictUnverifiedCount INTEGER")
+            }
+        }
+
         val MIGRATIONS = arrayOf(
             MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6,
-            MIGRATION_6_7,
+            MIGRATION_6_7, MIGRATION_7_8,
         )
     }
 }

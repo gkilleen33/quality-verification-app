@@ -13,6 +13,30 @@ import org.junit.Test
 class ShareReportTest {
 
     @Test
+    fun `a shared clean verdict does not claim more than was checked`() {
+        // The share text is the highest-stakes place this word appears: it gets forwarded
+        // to people who never saw the card, the summary or the couldn't-verify list, and
+        // the first line is what they read.
+        fun shareOf(verdict: Verdict) = buildShareText(
+            itemType = ItemType.WOODEN_STOOL,
+            verdict = verdict,
+            date = "21 Aug",
+            labels = ReportLabels.ENGLISH,
+        )
+        val clean = Verdict(levelId = "sound", headline = "Nothing wrong with it")
+
+        val certain = shareOf(clean)
+        assertTrue(certain, certain.contains("VERDICT: SOUND — Nothing wrong with it"))
+
+        val hedged = shareOf(clean.copy(unverified = listOf("Underside of the seat")))
+        assertTrue(hedged, hedged.contains("VERDICT: NO FAULTS FOUND — Nothing wrong with it"))
+        assertFalse("must not still claim the piece is sound", hedged.contains("VERDICT: SOUND"))
+        // And the gap itself still travels, under its own heading.
+        assertTrue(hedged, hedged.contains("Not checked:"))
+        assertTrue(hedged, hedged.contains("Underside of the seat"))
+    }
+
+    @Test
     fun `a full verdict renders as a flat readable message`() {
         val text = buildShareText(
             itemType = ItemType.WOODEN_STOOL,

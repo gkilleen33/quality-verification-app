@@ -30,6 +30,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImage
 import com.qualityverifier.text.ReportLabels
+import com.qualityverifier.text.streamingProse
+import com.qualityverifier.ui.chat.MarkdownText
 import com.qualityverifier.ui.chat.PlanRun
 import java.io.File
 import java.util.Locale
@@ -38,19 +40,26 @@ import java.util.Locale
  * What the app shows while an inspection is in flight.
  *
  * The mockup ticks off content areas — frame geometry, joints, surface and finish — as
- * though it could watch the assessment happen. It cannot: this is one request with no
- * streaming, so the app knows only that it sent something and is waiting. Animating
- * those ticks would be theatre, and inventing certainty is the one thing this product
- * cannot afford to do anywhere, including in a spinner.
+ * though it could watch the assessment happen. It cannot, and animating those ticks
+ * would be theatre: inventing certainty is the one thing this product cannot afford to
+ * do anywhere, including in a spinner. So the ticks here are the steps the app really
+ * completed — the photos it prepared, the answers it recorded — and what is genuinely in
+ * progress gets a spinner. The list of what is being examined is the plan's own items,
+ * stated rather than pretended to track.
  *
- * So the ticks here are the steps the app really completed — the photos it prepared, the
- * answers it recorded — and what is genuinely in progress gets a spinner. The list of
- * what is being examined is the plan's own items, stated rather than pretended to track.
+ * Since streaming, there is one thing here that is not a placeholder. [streamingProse]
+ * carries the assessment's own words as they are written, which on this screen is the
+ * whole verdict in prose: the prompt writes it twice, once as prose and once as the block
+ * the cards are built from, and the prose comes first. So a customer reads the verdict
+ * during the wait and sees the cards when it ends, rather than watching a spinner for
+ * twenty-seven seconds and then being handed everything at once.
  */
 @Composable
 fun InspectingScreen(
     run: PlanRun,
     labels: ReportLabels,
+    /** The reply so far, or null before anything has arrived. */
+    streaming: String? = null,
     modifier: Modifier = Modifier,
 ) {
     val paths = run.takenPaths
@@ -95,6 +104,24 @@ fun InspectingScreen(
         StageRow(labels.stagePreparing, done = true)
         StageRow(labels.stageSending, done = true)
         StageRow(labels.stageExamining, done = false)
+
+        // Above the plan list, not below it: this is the answer arriving, and it should
+        // not be the thing a customer has to scroll to find.
+        val prose = streaming?.let { streamingProse(it) }.orEmpty()
+        if (prose.isNotBlank()) {
+            Spacer(Modifier.height(20.dp))
+            Surface(
+                color = MaterialTheme.colorScheme.surfaceVariant,
+                shape = RoundedCornerShape(12.dp),
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                MarkdownText(
+                    text = prose,
+                    style = MaterialTheme.typography.bodyLarge,
+                    modifier = Modifier.padding(14.dp),
+                )
+            }
+        }
 
         if (run.plan.photos.isNotEmpty() || run.plan.tests.isNotEmpty()) {
             Spacer(Modifier.height(24.dp))

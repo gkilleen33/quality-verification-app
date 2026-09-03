@@ -1,6 +1,7 @@
 package com.qualityverifier.server.chat
 
 import com.qualityverifier.data.chat.AnthropicRequest
+import com.qualityverifier.data.chat.MessageStream
 import com.qualityverifier.data.chat.dto.ErrorEnvelope
 import com.qualityverifier.data.chat.dto.MessagesResponse
 import com.qualityverifier.domain.Attachment
@@ -60,6 +61,29 @@ interface ClaudeClient {
         history: List<ChatMessage>,
         imageBytes: (Attachment) -> ByteArray?,
     ): ClaudeResult
+
+    /**
+     * The same call, delivering the reply as it is written.
+     *
+     * [onDelta] receives increments, never the accumulated text, and the returned
+     * [ClaudeResult.Success] still carries the whole reply — the caller needs both: the
+     * deltas to forward and the complete text to store.
+     *
+     * The default implementation waits for [send] and hands over the answer in one piece.
+     * That is what a non-streaming backend looks like from here, and it keeps this
+     * interface honest about being swappable: a Bedrock class that only implements [send]
+     * still satisfies the route, it just does not stream.
+     */
+    suspend fun stream(
+        systemPrompt: String,
+        history: List<ChatMessage>,
+        imageBytes: (Attachment) -> ByteArray?,
+        onDelta: suspend (String) -> Unit,
+    ): ClaudeResult {
+        val result = send(systemPrompt, history, imageBytes)
+        if (result is ClaudeResult.Success) onDelta(result.text)
+        return result
+    }
 }
 
 class AnthropicClient(
@@ -75,6 +99,29 @@ class AnthropicClient(
         systemPrompt: String,
         history: List<ChatMessage>,
         imageBytes: (Attachment) -> ByteArray?,
+    ): ClaudeResult = perform(systemPrompt, history, imageBytes, streaming = false) { }
+
+    override suspend fun stream(
+        systemPrompt: String,
+        history: List<ChatMessage>,
+        imageBytes: (Attachment) -> ByteArray?,
+        onDelta: suspend (String) -> Unit,
+    ): ClaudeResult = perform(systemPrompt, history, imageBytes, streaming = true, onDelta)
+
+    /**
+     * One request, with the retry rules both modes share.
+     *
+     * The two differ in exactly two places — the `stream` flag on the payload and how the
+     * body is read — so they are one function. Splitting them duplicated the key check,
+     * the retry classification and the usage logging, which is three chances for the
+     * streaming path to quietly drift from the one that has been in production.
+     */
+    private suspend fun perform(
+        systemPrompt: String,
+        history: List<ChatMessage>,
+        imageBytes: (Attachment) -> ByteArray?,
+        streaming: Boolean,
+        onDelta: suspend (String) -> Unit,
     ): ClaudeResult = withContext(Dispatchers.IO) {
         val key = apiKey()
         if (key.isNullOrBlank()) {
@@ -89,13 +136,24 @@ class AnthropicClient(
             history = history,
             imageBytes = imageBytes,
             encodeBase64 = { Base64.getEncoder().encodeToString(it) },
+            stream = streaming,
         )
         val body = AnthropicRequest.json.encodeToString(payload)
 
+        // Set once the customer has seen a single character. After that a retry is not a
+        // retry: the reply is already on their screen, and starting a second one would
+        // either duplicate what they read or replace it with something different. A
+        // stream that fails after it has begun fails for good.
+        var delivered = false
+
         var attempt = 0
         while (true) {
-            val result = attemptSend(key, body)
-            val retryable = result is ClaudeResult.Failure && when (result.error) {
+            val result = if (streaming) {
+                attemptStream(key, body) { chunk -> delivered = true; onDelta(chunk) }
+            } else {
+                attemptSend(key, body)
+            }
+            val retryable = !delivered && result is ClaudeResult.Failure && when (result.error) {
                 UpstreamError.RATE_LIMIT, UpstreamError.OVERLOADED, UpstreamError.SERVER -> true
                 else -> false
             }
@@ -104,6 +162,90 @@ class AnthropicClient(
             delay(RETRY_DELAY_MILLIS * attempt)
         }
         @Suppress("UNREACHABLE_CODE") error("unreachable")
+    }
+
+    /**
+     * Reads an SSE body, forwarding text as it arrives.
+     *
+     * Line by line off the socket rather than through an SSE library: the whole grammar
+     * this needs is "lines beginning `data:`", [MessageStream] owns the meaning of the
+     * payloads, and a dependency for the remaining two lines of parsing would be a
+     * dependency to keep patched for no benefit.
+     */
+    private suspend fun attemptStream(
+        key: String,
+        body: String,
+        onDelta: suspend (String) -> Unit,
+    ): ClaudeResult {
+        val request = Request.Builder()
+            .url(baseUrl)
+            .addHeader("x-api-key", key)
+            .addHeader("anthropic-version", AnthropicRequest.VERSION)
+            .addHeader("accept", "text/event-stream")
+            .post(body.toRequestBody(JSON))
+            .build()
+
+        return try {
+            client.newCall(request).execute().use { response ->
+                if (!response.isSuccessful) {
+                    // An error before the stream starts is an ordinary HTTP failure and
+                    // arrives as JSON, not as events.
+                    return failureFor(response.code, response.body?.string().orEmpty())
+                }
+                val source = response.body?.source()
+                    ?: return ClaudeResult.Failure(UpstreamError.UNKNOWN, "Empty response body")
+
+                val accumulator = MessageStream()
+                while (true) {
+                    val line = source.readUtf8Line() ?: break
+                    accumulator.accept(line)?.let { onDelta(it) }
+                    if (accumulator.isComplete || accumulator.errorMessage != null) break
+                }
+                finish(accumulator)
+            }
+        } catch (e: IOException) {
+            // Covers the socket dying mid-stream as well as never opening. Either way the
+            // caller decides what to do with a partial reply; this reports the failure.
+            log.warn("Upstream stream failed", e)
+            ClaudeResult.Failure(UpstreamError.NETWORK, "Could not reach the assistant")
+        }
+    }
+
+    private fun finish(stream: MessageStream): ClaudeResult {
+        val usage = TokenUsage(
+            stream.inputTokens, stream.outputTokens,
+            stream.cacheCreationTokens, stream.cacheReadTokens,
+        )
+        log.info(
+            "tokens in={} cacheWrite={} cacheRead={} out={} stop={} streamed=true",
+            usage.inputTokens, usage.cacheCreationTokens,
+            usage.cacheReadTokens, usage.outputTokens, stream.stopReason,
+        )
+
+        stream.errorMessage?.let { message ->
+            // A 200 that turned into an error part way through. Reported as SERVER so the
+            // route treats it like any other upstream fault; the usage above is still
+            // recorded, because tokens generated before the error were billed.
+            log.warn("Upstream sent an error event: {}", message)
+            return ClaudeResult.Failure(UpstreamError.SERVER, message, usage = usage)
+        }
+
+        val text = stream.text.trim()
+        if (!stream.isComplete) {
+            // The socket closed without message_stop. What arrived is real text, but it
+            // is a truncated answer, and the route needs to know it never finished.
+            log.warn("Stream ended after {} chars without message_stop", text.length)
+            return ClaudeResult.Failure(
+                UpstreamError.NETWORK, "The answer was cut off", usage = usage,
+            )
+        }
+        if (text.isBlank()) {
+            log.warn("Streamed reply was empty; stop_reason={}", stream.stopReason)
+            return ClaudeResult.Failure(
+                UpstreamError.UNKNOWN, "The assistant returned no answer", usage = usage,
+            )
+        }
+        return ClaudeResult.Success(text, usage, stream.model)
     }
 
     private fun attemptSend(key: String, body: String): ClaudeResult {

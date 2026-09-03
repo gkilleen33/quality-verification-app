@@ -2,6 +2,7 @@ package com.qualityverifier.text
 
 import com.qualityverifier.domain.ItemType
 import com.qualityverifier.domain.Severity
+import com.qualityverifier.domain.Verdict
 import com.qualityverifier.domain.VerdictLevel
 
 /**
@@ -28,6 +29,13 @@ data class ReportLabels(
     val whatToDoHeading: String,
     val askAboutThis: String,
     val inProgress: String,
+    /**
+     * What a clean assessment is called when something went unchecked.
+     *
+     * "Sound" is a claim about the furniture; this is a claim about the inspection, which
+     * is all we are ever in a position to make. See [verdictWord].
+     */
+    val noFaultsFound: String,
     private val levels: Map<VerdictLevel, String>,
     private val severities: Map<Severity, String>,
     private val areas: Map<String, String>,
@@ -154,6 +162,35 @@ data class ReportLabels(
 
     fun level(level: VerdictLevel): String = levels[level] ?: levels.getValue(VerdictLevel.UNKNOWN)
 
+    /**
+     * The one word that stands for a whole assessment: on the reports list, at the top of
+     * a shared report, and in the message that opens a comparison.
+     *
+     * "Sound" overclaims. It reads as a statement that the furniture is good, when what
+     * the assistant can honestly say is that it found nothing wrong in what it was able to
+     * check — and after a rapid assessment, that is two photographs. The verdict card has
+     * room to be careful about this: the summary says it in words and the couldn't-verify
+     * card lists the gaps. A badge has one word, and that word was making the strongest
+     * claim of the three.
+     *
+     * So a clean verdict with anything left unchecked is called [noFaultsFound] instead.
+     * Nothing about the level itself changes — same id, same colour, same meaning in the
+     * data — because the alternative was a fourth level, and the only place to put
+     * "nothing found but I am unsure" would have been `fair`, which already means
+     * "real issues, but fixable". That is the level a customer reads when deciding whether
+     * to negotiate or walk away, and it cannot mean two things.
+     *
+     * [anythingUnchecked] comes from `Verdict.unverified` being non-empty, which the model
+     * is already required to fill in and already forbidden from leaving empty after a
+     * rapid assessment. The app is therefore not guessing at confidence; it is reading a
+     * list the assistant wrote.
+     */
+    fun verdictWord(level: VerdictLevel, anythingUnchecked: Boolean): String =
+        if (level == VerdictLevel.SOUND && anythingUnchecked) noFaultsFound else level(level)
+
+    fun verdictWord(verdict: Verdict): String =
+        verdictWord(verdict.level, verdict.unverified.isNotEmpty())
+
     fun severity(severity: Severity): String = severities[severity].orEmpty()
 
     /** Falls back to the raw value so an area the schema does not list still labels itself. */
@@ -192,6 +229,7 @@ data class ReportLabels(
             whatToDoHeading = "THE FIX",
             askAboutThis = "Ask about this piece",
             inProgress = "In progress",
+            noFaultsFound = "No faults found",
             levels = mapOf(
                 VerdictLevel.SOUND to "Sound",
                 VerdictLevel.FAIR to "Fair",
@@ -298,6 +336,9 @@ data class ReportLabels(
             whatToDoHeading = "MATENGENEZO",
             askAboutThis = "Uliza kuhusu kipande hiki",
             inProgress = "Inaendelea",
+            // Needs the same native-speaker pass as the three level words, and for the
+            // same reason: this one stands in for a judgement somebody acts on.
+            noFaultsFound = "Hakuna dosari zilizoonekana",
             levels = mapOf(
                 VerdictLevel.SOUND to "Imara",
                 VerdictLevel.FAIR to "Wastani",

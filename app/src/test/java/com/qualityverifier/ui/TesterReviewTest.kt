@@ -238,6 +238,7 @@ class TesterReviewTest {
             sessionId: String,
             itemType: ItemType,
             history: List<ChatMessage>,
+            onDelta: suspend (String) -> Unit,
         ): ChatResult = error("these tests never send")
     }
 

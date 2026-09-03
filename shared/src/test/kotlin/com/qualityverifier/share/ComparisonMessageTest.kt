@@ -17,6 +17,19 @@ import org.junit.Test
 class ComparisonMessageTest {
 
     @Test
+    fun `a clean earlier verdict is carried across without overclaiming`() {
+        // This text is the customer's own message, so it should say about the earlier
+        // piece exactly what their reports list says about it.
+        val clean = Verdict(levelId = "sound", headline = "Nothing wrong with it")
+        val hedged = clean.copy(unverified = listOf("Whether the top is sealed"))
+
+        assertTrue(buildComparisonRequest("Table", clean, ReportLabels.ENGLISH).contains("SOUND"))
+        val text = buildComparisonRequest("Table", hedged, ReportLabels.ENGLISH)
+        assertTrue(text, text.contains("NO FAULTS FOUND"))
+        assertFalse(text, text.contains(": SOUND"))
+    }
+
+    @Test
     fun `the earlier verdict and every defect travel with the request`() {
         val text = buildComparisonRequest("Table", VERDICT, ReportLabels.ENGLISH)
 

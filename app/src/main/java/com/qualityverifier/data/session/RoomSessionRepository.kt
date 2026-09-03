@@ -43,6 +43,7 @@ class RoomSessionRepository(
                     messageCount = row.messageCount,
                     verdictLevel = row.verdictLevelId?.let(VerdictLevel::fromId),
                     verdictLanguage = row.verdictLanguage,
+                    verdictUnverifiedCount = row.verdictUnverifiedCount,
                 )
             }
         }
@@ -110,7 +111,9 @@ class RoomSessionRepository(
             // Flatten before truncating: cutting first can leave half a `**` pair behind.
             ?: markdownToPlainText(content.prose.ifBlank { text })
         dao.touchSession(sessionId, message.createdAt, preview.take(PREVIEW_LIMIT))
-        content.verdict?.let { dao.setVerdict(sessionId, it.level.id, it.language) }
+        content.verdict?.let {
+            dao.setVerdict(sessionId, it.level.id, it.language, it.unverified.size)
+        }
         return message
     }
 
@@ -138,6 +141,11 @@ class RoomSessionRepository(
                 previewText = session.preview.take(PREVIEW_LIMIT),
                 verdictLevelId = session.verdictLevelId,
                 verdictLanguage = session.verdictLanguage,
+                // Read out of the conversation we have just been handed rather than out
+                // of a new sync field. The verdict block is in these messages either way,
+                // and parsing it here keeps the API unchanged and gives a report the same
+                // badge whichever handset it was assessed on.
+                verdictUnverifiedCount = unverifiedCountIn(messages),
                 previousSessionId = session.previousSessionId,
                 intakeAnswers = session.intakeAnswers,
             )
@@ -267,6 +275,21 @@ class RoomSessionRepository(
         },
         createdAt = message.createdAt,
     )
+
+    /**
+     * How many things the assessment's verdict could not check, or null if it has none.
+     *
+     * Searched from the end: a conversation can carry more than one verdict once the
+     * customer has asked a follow-up that produced a fresh one, and the badge is about
+     * where the assessment ended up.
+     */
+    private fun unverifiedCountIn(messages: List<SyncedMessage>): Int? =
+        messages.asReversed().asSequence()
+            .filter { it.role == Role.ASSISTANT }
+            .mapNotNull { parseAssistantContent(it.text).verdict }
+            .firstOrNull()
+            ?.unverified
+            ?.size
 
     private companion object {
         const val PREVIEW_LIMIT = 160

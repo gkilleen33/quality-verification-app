@@ -18,13 +18,17 @@ import com.qualityverifier.server.routes.ChatRequest
 import io.ktor.client.plugins.contentnegotiation.ContentNegotiation as ClientContentNegotiation
 import io.ktor.client.request.header
 import io.ktor.client.request.post
+import io.ktor.client.request.preparePost
 import io.ktor.client.request.setBody
+import io.ktor.client.statement.bodyAsChannel
 import io.ktor.client.statement.bodyAsText
 import io.ktor.http.ContentType
 import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.contentType
 import io.ktor.serialization.kotlinx.json.json
+import io.ktor.utils.io.readUTF8Line
+import kotlinx.coroutines.CompletableDeferred
 import io.ktor.server.testing.ApplicationTestBuilder
 import io.ktor.server.testing.testApplication
 import org.junit.Assert.assertEquals
@@ -188,6 +192,167 @@ class ChatRouteTest {
         // the bill are reconciled from.
         assertEquals(1, store.usageRows)
     }
+
+    @Test
+    fun `a streamed turn arrives as delta events and is stored once`() = testApplication {
+        val store = FakeChatStore()
+        val claude = StreamingClaude(listOf("This table ", "wobbles ", "badly."))
+        val app = withChat(store, claude)
+
+        val response = app.post("/v1/chat/stream") {
+            auth(); contentType(ContentType.Application.Json)
+            setBody(request())
+        }
+
+        assertEquals(HttpStatusCode.OK, response.status)
+        val body = response.bodyAsText()
+        // Three increments, then the whole thing once.
+        assertEquals("three deltas expected in $body", 3, body.split("event: delta").size - 1)
+        assertTrue(body, body.contains("""data: {"text":"This table "}"""))
+        assertTrue(body, body.contains("event: done"))
+        assertTrue(body, body.contains("This table wobbles badly."))
+        // Stored exactly once, at the end — not a row per delta.
+        assertEquals(1, store.assistantTurns)
+        assertEquals(1, store.usageRows)
+    }
+
+    @Test
+    fun `the first piece arrives before the reply is finished`() = testApplication {
+        // The one property the whole feature rests on, and the one every other test here
+        // is blind to: reading a completed body cannot tell a stream from a buffer. The
+        // upstream is held after its first delta, so if this text can be read while it is
+        // still held, nothing between here and the socket is waiting for the end.
+        val gate = CompletableDeferred<Unit>()
+        val app = withChat(FakeChatStore(), GatedClaude(gate))
+
+        app.preparePost("/v1/chat/stream") {
+            auth(); contentType(ContentType.Application.Json)
+            setBody(request())
+        }.execute { response ->
+            val channel = response.bodyAsChannel()
+            val early = StringBuilder()
+            // Read only as far as the first complete event. Anything more would block on
+            // the upstream that is deliberately still held.
+            while (!early.contains("The first thing I notice")) {
+                val line = channel.readUTF8Line() ?: break
+                early.appendLine(line)
+            }
+
+            assertTrue(
+                "the first delta should be readable while the reply is still being written",
+                early.contains("The first thing I notice"),
+            )
+            assertTrue("the reply cannot be finished yet", !early.contains("event: done"))
+
+            gate.complete(Unit)
+
+            val rest = StringBuilder()
+            while (true) {
+                val line = channel.readUTF8Line() ?: break
+                rest.appendLine(line)
+            }
+            assertTrue(rest.toString(), rest.contains("event: done"))
+            assertTrue(rest.toString(), rest.contains("is the back leg."))
+        }
+    }
+
+    @Test
+    fun `the streamed response tells nginx not to buffer it`() = testApplication {
+        // Without this the proxy holds the whole stream until it is finished, which is
+        // the blank wait streaming exists to remove — with more moving parts than before.
+        val app = withChat(FakeChatStore(), StreamingClaude(listOf("ok")))
+
+        val response = app.post("/v1/chat/stream") {
+            auth(); contentType(ContentType.Application.Json)
+            setBody(request())
+        }
+
+        assertEquals("no", response.headers["X-Accel-Buffering"])
+        assertTrue(
+            response.headers["Content-Type"].orEmpty(),
+            response.headers["Content-Type"].orEmpty().startsWith("text/event-stream"),
+        )
+    }
+
+    @Test
+    fun `a delta carrying newlines stays one event`() = testApplication {
+        // SSE is a line protocol and a verdict has paragraphs in it. Sent raw, one delta
+        // would arrive as several data lines and the client would have to guess.
+        val app = withChat(FakeChatStore(), StreamingClaude(listOf("Two things.\n\nFirst,")))
+
+        val body = app.post("/v1/chat/stream") {
+            auth(); contentType(ContentType.Application.Json)
+            setBody(request())
+        }.bodyAsText()
+
+        assertTrue(body, body.contains("""data: {"text":"Two things.\n\nFirst,"}"""))
+        assertEquals("one delta only", 1, body.split("event: delta").size - 1)
+    }
+
+    @Test
+    fun `a stream that fails part way stores nothing but still records the spend`() =
+        testApplication {
+            // Storing the fragment would make the truncation permanent: the message id is
+            // the idempotency key, so every retry would replay half a verdict instead of
+            // producing a whole one.
+            val store = FakeChatStore()
+            // Two pieces get through, the third never arrives.
+            val claude = StreamingClaude(
+                listOf("The back leg ", "is ", "loose at the joint."), failAfter = 2,
+            )
+            val app = withChat(store, claude)
+
+            val body = app.post("/v1/chat/stream") {
+                auth(); contentType(ContentType.Application.Json)
+                setBody(request())
+            }.bodyAsText()
+
+            assertTrue(body, body.contains("event: error"))
+            assertTrue(body, !body.contains("event: done"))
+            assertEquals("nothing may be stored", 0, store.assistantTurns)
+            // Tokens generated before it broke were billed to us either way.
+            assertEquals(1, store.usageRows)
+        }
+
+    @Test
+    fun `the streaming route enforces the daily limit, in JSON`() = testApplication {
+        // The check must not be reachable on one route and not the other. And a refusal
+        // that happens before the stream starts is an ordinary status code, not an event:
+        // there is no stream yet to put an error into.
+        val store = FakeChatStore(access = SessionAccess.DailyLimitReached(limit = 20))
+        val claude = StreamingClaude(listOf("should not run"))
+        val app = withChat(store, claude)
+
+        val response = app.post("/v1/chat/stream") {
+            auth(); contentType(ContentType.Application.Json)
+            setBody(request())
+        }
+
+        assertEquals(HttpStatusCode.TooManyRequests, response.status)
+        assertTrue(response.bodyAsText(), response.bodyAsText().contains("daily_limit_reached"))
+        assertEquals("nothing may be spent", 0, claude.calls)
+    }
+
+    @Test
+    fun `a retried turn is replayed on the streaming route without paying again`() =
+        testApplication {
+            val store = FakeChatStore(
+                turnAlreadyStored = true,
+                storedReply = StoredReply("m-stored", "the stored answer"),
+            )
+            val claude = StreamingClaude(listOf("should not run"))
+            val app = withChat(store, claude)
+
+            val body = app.post("/v1/chat/stream") {
+                auth(); contentType(ContentType.Application.Json)
+                setBody(request())
+            }.bodyAsText()
+
+            assertTrue(body, body.contains("event: done"))
+            assertTrue(body, body.contains("the stored answer"))
+            assertTrue(body, body.contains("m-stored"))
+            assertEquals(0, claude.calls)
+        }
 
     @Test
     fun `a retried turn returns the stored reply without paying again`() = testApplication {
@@ -375,7 +540,9 @@ class ChatRouteTest {
 
     private fun ApplicationTestBuilder.withChat(
         store: ChatStore,
-        claude: FakeClaude,
+        // The interface, not FakeClaude: the streaming tests supply a client that hands
+        // its answer over in pieces.
+        claude: ClaudeClient,
         prompts: PromptRepository = RecordingPrompts(),
         dailyLimit: Int = Config.DEFAULT_DAILY_ASSESSMENT_LIMIT,
         testerLimit: Int = Config.DEFAULT_TESTER_DAILY_ASSESSMENT_LIMIT,
@@ -418,6 +585,75 @@ class ChatRouteTest {
             calls++
             lastSystemPrompt = systemPrompt
             return result
+        }
+    }
+
+    /**
+     * A client that hands over its answer in pieces, as the real one does.
+     *
+     * [FakeClaude] exercises the default [ClaudeClient.stream], which delivers everything
+     * in one delta — right for the route tests that only care that a reply came back, and
+     * useless for pinning the event shape.
+     */
+    private class StreamingClaude(
+        private val pieces: List<String>,
+        private val failAfter: Int? = null,
+    ) : ClaudeClient {
+        var calls = 0
+            private set
+
+        override suspend fun send(
+            systemPrompt: String,
+            history: List<ChatMessage>,
+            imageBytes: (Attachment) -> ByteArray?,
+        ): ClaudeResult = error("these tests stream")
+
+        override suspend fun stream(
+            systemPrompt: String,
+            history: List<ChatMessage>,
+            imageBytes: (Attachment) -> ByteArray?,
+            onDelta: suspend (String) -> Unit,
+        ): ClaudeResult {
+            calls++
+            pieces.forEachIndexed { index, piece ->
+                if (failAfter != null && index >= failAfter) {
+                    return ClaudeResult.Failure(
+                        UpstreamError.NETWORK, "The answer was cut off",
+                        usage = TokenUsage(2, 40, 0, 8340),
+                    )
+                }
+                onDelta(piece)
+            }
+            return ClaudeResult.Success(pieces.joinToString(""), TokenUsage(2, 90, 0, 8340), "m")
+        }
+    }
+
+    /**
+     * Emits one piece, waits to be released, then emits the rest.
+     *
+     * Exists for one test: proving the first piece reaches the client while the reply is
+     * still being written. Every other streaming test reads a finished body, which cannot
+     * tell a real stream from a buffered one.
+     */
+    private class GatedClaude(private val gate: CompletableDeferred<Unit>) : ClaudeClient {
+        override suspend fun send(
+            systemPrompt: String,
+            history: List<ChatMessage>,
+            imageBytes: (Attachment) -> ByteArray?,
+        ): ClaudeResult = error("this test streams")
+
+        override suspend fun stream(
+            systemPrompt: String,
+            history: List<ChatMessage>,
+            imageBytes: (Attachment) -> ByteArray?,
+            onDelta: suspend (String) -> Unit,
+        ): ClaudeResult {
+            onDelta("The first thing I notice")
+            gate.await()
+            onDelta(" is the back leg.")
+            return ClaudeResult.Success(
+                "The first thing I notice is the back leg.", TokenUsage(2, 90, 0, 8340), "m",
+            )
         }
     }
 

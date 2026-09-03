@@ -18,6 +18,7 @@ import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
+import okhttp3.Response
 import java.io.IOException
 import java.security.MessageDigest
 
@@ -44,6 +45,21 @@ private data class ChatReply(
 
 @Serializable
 private data class MissingBlobs(val missing: List<String> = emptyList())
+
+/** Just enough of the server's error shape to tell one 404 from another. */
+@Serializable
+private data class ErrorEnvelope(val error: String = "")
+
+/** One increment of a streamed reply. Mirrors ChatDelta on the server. */
+@Serializable
+private data class StreamDelta(val text: String = "")
+
+/** The end of a streamed reply, carrying the whole of it. Mirrors ChatDone. */
+@Serializable
+private data class StreamDone(
+    @SerialName("message_id") val messageId: String = "",
+    val text: String = "",
+)
 
 /**
  * Phase 2's [ChatService]: posts one turn to our server instead of the whole
@@ -80,6 +96,7 @@ class ServerChatService(
         sessionId: String,
         itemType: ItemType,
         history: List<ChatMessage>,
+        onDelta: suspend (String) -> Unit,
     ): ChatResult = withContext(io) {
         // Only the newest customer turn goes on the wire. Its id is the idempotency key,
         // so a retry after a lost response returns the stored reply rather than paying
@@ -130,7 +147,7 @@ class ServerChatService(
         )
         // One retry, and only for the two conditions a retry can actually fix: a token
         // that has just been refreshed, or photos the server turned out not to have.
-        postTurn(body, turn, hashes, allowRetry = true)
+        postTurn(body, turn, hashes, allowRetry = true, onDelta = onDelta)
     }
 
     private suspend fun postTurn(
@@ -138,20 +155,47 @@ class ServerChatService(
         turn: ChatMessage,
         hashes: List<String>,
         allowRetry: Boolean,
+        onDelta: suspend (String) -> Unit,
+        /**
+         * Set after a 404 on the streaming route, which means a server that predates it.
+         * Only ever tried once, and only for that: falling back on any other failure
+         * would turn one paid-for turn into two.
+         */
+        streaming: Boolean = true,
     ): ChatResult {
         val token = tokens.accessToken()
             ?: return ChatResult.Failure(ChatErrorKind.AUTH, "Please sign in again.")
 
+        val path = if (streaming) "v1/chat/stream" else "v1/chat"
         val request = Request.Builder()
-            .url(baseUrl + "v1/chat")
+            .url(baseUrl + path)
             .addHeader("Authorization", "Bearer $token")
+            .apply { if (streaming) addHeader("Accept", "text/event-stream") }
             .post(body.toRequestBody(JSON))
             .build()
 
         return try {
             client.newCall(request).execute().use { response ->
+                // Read lazily for a stream and eagerly otherwise: calling string() on a
+                // streamed body would wait for the last byte, which is precisely the wait
+                // being removed.
+                if (streaming && response.isSuccessful) {
+                    return@use readStream(response, onDelta)
+                }
                 val text = response.body?.string().orEmpty()
                 when {
+                    // A server without the streaming route. Nothing has been spent and
+                    // nothing has been shown, so the old route is a clean second attempt.
+                    //
+                    // Distinguished from the route's own 404 by the body: an unmatched
+                    // route in Ktor answers with nothing at all, while "this session is
+                    // not yours" answers with an error code. Retrying that one on
+                    // /v1/chat would only earn the same 404 from the other route.
+                    streaming && response.code == 404 && !namesAnError(text) -> {
+                        Log.i(TAG, "No streaming route on this server; using /v1/chat")
+                        postTurn(body, turn, hashes, allowRetry, onDelta, streaming = false)
+                    }
+
                     response.isSuccessful -> {
                         val decoded = json.decodeFromString<ChatReply>(text)
                         if (decoded.text.isBlank()) {
@@ -168,7 +212,7 @@ class ServerChatService(
                         if (refreshed == null) {
                             ChatResult.Failure(ChatErrorKind.AUTH, "Please sign in again.")
                         } else {
-                            postTurn(body, turn, hashes, allowRetry = false)
+                            postTurn(body, turn, hashes, false, onDelta, streaming)
                         }
                     }
 
@@ -182,7 +226,7 @@ class ServerChatService(
                         Log.w(TAG, "Server is missing ${missing.size} photo(s); re-uploading")
                         val reuploaded = reupload(missing, turn)
                         if (reuploaded != null) reuploaded
-                        else postTurn(body, turn, hashes, allowRetry = false)
+                        else postTurn(body, turn, hashes, false, onDelta, streaming)
                     }
 
                     else -> failureFor(response.code, text)
@@ -196,6 +240,68 @@ class ServerChatService(
         } catch (e: Exception) {
             Log.w(TAG, "Chat request failed", e)
             ChatResult.Failure(ChatErrorKind.UNKNOWN, "Something went wrong. Please try again.")
+        }
+    }
+
+    /**
+     * Reads a streamed reply, forwarding each increment as it lands.
+     *
+     * Three events, and only `done` produces a result worth storing. A stream that ends
+     * without one is a reply that was cut off: the server discards its half of it too, so
+     * a retry re-asks rather than replaying a truncated verdict for ever.
+     *
+     * The text handed back is the one `done` carried, not the increments added up. They
+     * should be identical, and when they are not it is because a delta was lost — in which
+     * case the server's copy is the one both sides should agree on.
+     */
+    private suspend fun readStream(
+        response: Response,
+        onDelta: suspend (String) -> Unit,
+    ): ChatResult {
+        val source = response.body?.source()
+            ?: return ChatResult.Failure(ChatErrorKind.UNKNOWN, "No answer came back.")
+
+        var event = ""
+        var done: StreamDone? = null
+        var failed = false
+
+        while (true) {
+            val line = source.readUtf8Line() ?: break
+            when {
+                line.startsWith("event:") -> event = line.removePrefix("event:").trim()
+                line.startsWith("data:") -> {
+                    val payload = line.removePrefix("data:").trim()
+                    when (event) {
+                        EVENT_DELTA -> runCatching {
+                            json.decodeFromString<StreamDelta>(payload).text
+                        }.getOrNull()?.takeIf { it.isNotEmpty() }?.let { onDelta(it) }
+
+                        EVENT_DONE -> done = runCatching {
+                            json.decodeFromString<StreamDone>(payload)
+                        }.getOrNull()
+
+                        EVENT_ERROR -> failed = true
+                    }
+                }
+                // A blank line ends an event. Clearing the name here means a stray data
+                // line outside an event is ignored rather than read as the last one.
+                line.isBlank() -> event = ""
+            }
+            if (done != null || failed) break
+        }
+
+        return when {
+            done != null && done.text.isNotBlank() -> ChatResult.Success(done.text)
+            failed -> ChatResult.Failure(
+                ChatErrorKind.SERVER,
+                "The assistant is unavailable right now. Please try again.",
+            )
+            // Ended without either. On a mobile connection this is usually the connection,
+            // so it is worded as one and the turn stays retryable.
+            else -> ChatResult.Failure(
+                ChatErrorKind.NETWORK,
+                "The answer stopped part way. Your answers were saved — tap retry.",
+            )
         }
     }
 
@@ -250,6 +356,15 @@ class ServerChatService(
             }
         }.getOrElse { networkFailure() }
     }
+
+    /**
+     * Whether a body is one of our own error envelopes rather than an empty response.
+     *
+     * Only used to tell "no such route" from "no such session", both of which are 404.
+     */
+    private fun namesAnError(body: String): Boolean = runCatching {
+        json.decodeFromString<ErrorEnvelope>(body).error.isNotBlank()
+    }.getOrDefault(false)
 
     private fun blobUrl(sha: String) = baseUrl + "v1/blobs/" + sha
 
@@ -313,6 +428,12 @@ class ServerChatService(
 
     private companion object {
         const val TAG = "ServerChatService"
+
+        // The three event names /v1/chat/stream sends. Kept as constants on both sides
+        // rather than typed once here and once there.
+        const val EVENT_DELTA = "delta"
+        const val EVENT_DONE = "done"
+        const val EVENT_ERROR = "error"
 
         /** The server's error code for the per-account daily allowance. */
         const val DAILY_LIMIT = "daily_limit_reached"

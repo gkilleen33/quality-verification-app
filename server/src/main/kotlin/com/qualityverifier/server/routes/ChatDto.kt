@@ -32,3 +32,28 @@ data class MissingBlobsResponse(
     val error: String = "missing_blobs",
     val missing: List<String>,
 )
+
+/**
+ * One increment of a streamed reply.
+ *
+ * A JSON object rather than the bare text, because SSE is a line protocol and a reply
+ * contains newlines: sending the text raw would split one delta across several `data:`
+ * lines and hand the client the job of putting it back together. Encoded as a JSON string
+ * it cannot contain a literal newline at all.
+ */
+@Serializable
+data class ChatDelta(val text: String)
+
+/**
+ * The end of a streamed reply, carrying the whole thing.
+ *
+ * Deliberately redundant with the deltas the client already has. The client commits this
+ * text, not its own accumulation, so what it stores is exactly what the server stored —
+ * a dropped delta becomes a cosmetic glitch during the wait rather than a conversation
+ * whose two copies disagree from then on.
+ */
+@Serializable
+data class ChatDone(
+    @SerialName("message_id") val messageId: String,
+    val text: String,
+)
