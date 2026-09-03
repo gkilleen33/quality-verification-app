@@ -12,6 +12,7 @@ import com.qualityverifier.server.chat.ClaudeResult
 import com.qualityverifier.server.chat.TokenUsage
 import com.qualityverifier.server.chat.UpstreamError
 import com.qualityverifier.server.db.ChatStore
+import com.qualityverifier.server.routes.SessionLocation
 import com.qualityverifier.server.db.SessionAccess
 import com.qualityverifier.server.db.StoredReply
 import com.qualityverifier.server.routes.ChatRequest
@@ -187,6 +188,71 @@ class ChatRouteTest {
         // Written on success too, not only on failure: this is what per-user quotas and
         // the bill are reconciled from.
         assertEquals(1, store.usageRows)
+    }
+
+    @Test
+    fun `an assessment's location is recorded, and never sent upstream`() = testApplication {
+        val store = FakeChatStore()
+        val claude = FakeClaude(ClaudeResult.Success("Here is the plan", TokenUsage(), "m"))
+        val app = withChat(store, claude)
+
+        app.post("/v1/chat") {
+            auth(); contentType(ContentType.Application.Json)
+            setBody(request(latitude = 0.3476, longitude = 32.5825, accuracyM = 12.0))
+        }
+
+        assertEquals(1, store.locations.size)
+        assertEquals(0.3476, store.locations.single().latitude, 1e-9)
+        assertEquals(32.5825, store.locations.single().longitude, 1e-9)
+        assertEquals(12.0, store.locations.single().accuracyMetres, 1e-9)
+        // The guarantee that matters. history() selects id, role, text and created_at
+        // from messages; a column on sessions is not in that query, so a coordinate
+        // cannot reach the model. Asserted against the prompt and the conversation the
+        // client was actually given.
+        assertTrue(claude.lastSystemPrompt.orEmpty(), !claude.lastSystemPrompt.orEmpty().contains("32.58"))
+        assertTrue(claude.lastHistoryText, !claude.lastHistoryText.contains("32.58"))
+        assertTrue(claude.lastHistoryText, !claude.lastHistoryText.contains("0.3476"))
+    }
+
+    @Test
+    fun `a turn with no location records nothing`() = testApplication {
+        // The common case: switched off, or no fix indoors. It must not write a row and
+        // must not fail the turn.
+        val store = FakeChatStore()
+        val app = withChat(store, FakeClaude(ClaudeResult.Success("ok", TokenUsage(), "m")))
+
+        val response = app.post("/v1/chat") {
+            auth(); contentType(ContentType.Application.Json)
+            setBody(request())
+        }
+
+        assertEquals(HttpStatusCode.OK, response.status)
+        assertTrue(store.locations.isEmpty())
+    }
+
+    @Test
+    fun `a partial or absurd location is dropped, not refused`() = testApplication {
+        // Optional data on a turn somebody spent minutes taking photographs for. Failing
+        // their assessment over a bad coordinate would be the wrong trade.
+        val store = FakeChatStore()
+        val app = withChat(store, FakeClaude(ClaudeResult.Success("ok", TokenUsage(), "m")))
+        val cases = listOf(
+            request(latitude = 0.3476, longitude = 32.5825),                       // no accuracy
+            request(latitude = 0.3476, accuracyM = 12.0),                           // no longitude
+            request(latitude = 91.0, longitude = 32.5825, accuracyM = 12.0),        // off the planet
+            request(latitude = 0.3476, longitude = 32.5825, accuracyM = 0.0),       // no accuracy at all
+            request(latitude = 0.3476, longitude = 32.5825, accuracyM = 9000.0),    // a district
+        )
+        // One application, five turns: each request() carries its own session id, and the
+        // store accumulates, so a single assertion at the end covers all of them.
+        for (body in cases) {
+            val response = app.post("/v1/chat") {
+                auth(); contentType(ContentType.Application.Json)
+                setBody(body)
+            }
+            assertEquals("the turn must still succeed", HttpStatusCode.OK, response.status)
+        }
+        assertTrue("nothing should have been stored: ${store.locations}", store.locations.isEmpty())
     }
 
     @Test
@@ -366,11 +432,18 @@ class ChatRouteTest {
         header(HttpHeaders.Authorization, "Bearer ${AccessTokens(KEY).issue(USER).token}")
     }
 
-    private fun request() = ChatRequest(
+    private fun request(
+        latitude: Double? = null,
+        longitude: Double? = null,
+        accuracyM: Double? = null,
+    ) = ChatRequest(
         sessionId = UUID.randomUUID().toString(),
         itemTypeId = "wooden-table",
         messageId = UUID.randomUUID().toString(),
         text = "I am buying this.",
+        latitude = latitude,
+        longitude = longitude,
+        accuracyMetres = accuracyM,
     )
 
     private fun ApplicationTestBuilder.withChat(
@@ -410,6 +483,10 @@ class ChatRouteTest {
         var lastSystemPrompt: String? = null
             private set
 
+        /** Everything the model was told, flattened, so a test can assert an absence. */
+        var lastHistoryText: String = ""
+            private set
+
         override suspend fun send(
             systemPrompt: String,
             history: List<ChatMessage>,
@@ -417,6 +494,7 @@ class ChatRouteTest {
         ): ClaudeResult {
             calls++
             lastSystemPrompt = systemPrompt
+            lastHistoryText = history.joinToString("\n") { it.text }
             return result
         }
     }
@@ -426,6 +504,17 @@ class ChatRouteTest {
         private val turnAlreadyStored: Boolean = false,
         private val storedReply: StoredReply? = null,
     ) : ChatStore {
+        override suspend fun recordSessionLocation(
+            sessionId: String,
+            userId: String,
+            location: SessionLocation,
+        ) {
+            locations += location
+        }
+
+        /** What the route tried to store, so a test can assert it was or was not called. */
+        val locations = mutableListOf<SessionLocation>()
+
         var assistantTurns = 0
             private set
         var usageRows = 0

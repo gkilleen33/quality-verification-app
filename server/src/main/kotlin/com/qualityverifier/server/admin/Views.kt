@@ -46,6 +46,7 @@ import kotlinx.html.ul
 import kotlinx.html.unsafe
 import java.time.Instant
 import java.time.ZoneId
+import kotlin.math.roundToInt
 import java.time.format.DateTimeFormatter
 
 /**
@@ -521,6 +522,19 @@ fun HTML.conversationPage(
         // is the mistake this whole flag exists to prevent.
         warning("One of our evaluators, not a customer. Exclude from pilot findings.")
     }
+    header.locationLine()?.let { line ->
+        p("sub") {
+            +line
+            +" "
+            // OpenStreetMap rather than Google: no key, no tracking of which admin looked
+            // at which workshop, and it renders the informal roads around Kampala better
+            // than the alternatives do.
+            a(
+                href = "https://www.openstreetmap.org/?mlat=${header.latitude}" +
+                    "&mlon=${header.longitude}#map=17/${header.latitude}/${header.longitude}",
+            ) { +"open the map" }
+        }
+    }
     critique?.let { testerCritique(it) }
     turns.forEach { turn ->
         div(if (turn.role == "USER") "turn user" else "turn") {
@@ -559,6 +573,22 @@ fun HTML.conversationPage(
             }
         }
     }
+}
+
+/**
+ * "Recorded at -0.31274, 32.58219 (±12 m)", or null when there is no point.
+ *
+ * The accuracy travels with the coordinates rather than being dropped: a fix good to
+ * twelve metres and one good to two kilometres read identically without it, and only one
+ * of them places a shop. Five decimal places is about a metre, which is finer than any
+ * fix here will be — more would be inventing precision.
+ */
+private fun AdminSessionRow.locationLine(): String? {
+    val lat = latitude ?: return null
+    val lon = longitude ?: return null
+    val point = "%.5f, %.5f".format(lat, lon)
+    val accuracy = locationAccuracyM?.let { " (±${it.roundToInt()} m)" }.orEmpty()
+    return "Recorded at $point$accuracy"
 }
 
 fun HTML.invitesPage(session: AdminSession, invites: List<InviteRow>, notice: String?) =

@@ -13,11 +13,53 @@ does not.
 >
 > If you are at your business right now, you can save its location. That is optional, you
 > can skip it, and you can register without it. We use it only to place your business on a
-> map of workshops; we do not track where you are afterwards.
+> map of workshops.
 
 On the location step specifically, next to the button:
 
 > **Save this location** · Only tap this if you are at the business now.
+
+### 1a. The per-assessment location setting
+
+**This section supersedes a sentence that used to sit above.** The registration wording
+originally ended "we do not track where you are afterwards", which was true when the only
+location the app held was a business's own premises. It is no longer true, and leaving it
+in place would have made the consent notice inaccurate — so it is removed above and
+replaced by an explicit setting here.
+
+Shown to every account at sign-up, on by default, with the switch and the hint together:
+
+> **Record a GPS point at the start of new evaluations.**
+>
+> We use this for research, to link assessments to the shops they were made in. Nothing is
+> recorded at any other time. You can change this any time in Settings.
+
+And the same two strings again in Settings, under a **Location** heading, because somebody
+who agreed to something at sign-up should find that same sentence when they go looking for
+it rather than a differently worded version that leaves them guessing.
+
+**Why on by default, and what that obliges us to do.** The pilot cannot link assessments to
+shops retrospectively, so a default of off would mean the question is effectively never
+answered. A default nobody was told about is not consent, though — which is why the
+sentence is on the sign-up form itself rather than only in Settings, and why the switch sits
+directly above the words describing what it does.
+
+**What is actually collected.** One fix, at the moment an assessment begins, while the app
+is in the foreground. Nothing afterwards. The app holds no background location permission
+and must not acquire one. Null is the expected value in the table and means only "not
+captured" — the setting may be off, Android may have refused, and indoors a fix frequently
+never arrives at all. It must never be read as "no shop".
+
+**Deletion.** `anonymise_user` clears these points along with the business premises, added
+in `V13__assessment_location.sql`. That was not optional: a trail of points is at least as
+identifying as the one address the function already cleared, and leaving it behind would
+have made the deletion wording in section 3 false.
+
+**Still to do before a pilot.** The Swahili for both strings is unreviewed placeholder copy,
+and by the reasoning in section 4 it should not ship that way — this is a consent notice,
+where a mistranslation misstates what we do with somebody's location. And the IRB protocol
+needs to cover this: it is a new category of collection about identifiable premises, not a
+technical extension of the premises field.
 
 ## 2. When deleting an assessment
 

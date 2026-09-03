@@ -12,6 +12,8 @@ import com.qualityverifier.data.chat.ChatService
 import com.qualityverifier.data.chat.ServerChatService
 import com.qualityverifier.data.db.AppDatabase
 import com.qualityverifier.data.db.ImageFileStore
+import com.qualityverifier.data.location.LocationCapture
+import com.qualityverifier.data.location.LocationPreference
 import com.qualityverifier.data.session.RoomSessionRepository
 import com.qualityverifier.data.session.SessionRepository
 import com.qualityverifier.data.sync.AccountActions
@@ -63,6 +65,17 @@ class AppContainer(context: Context) {
     val images: ImageFileStore = ImageFileStore(appContext)
 
     val tokenStore: TokenStore = EncryptedPrefsTokenStore(appContext)
+
+    /** Whether assessments record where they were made. Chosen at sign-up, set in Settings. */
+    val locationPreference = LocationPreference(appContext)
+
+    /**
+     * One fix per assessment, taken without the customer doing anything.
+     *
+     * Held here rather than created per screen so the preference and the capture cannot
+     * disagree about whether recording is on.
+     */
+    val locationCapture = LocationCapture(appContext, locationPreference)
 
     val authClient: AuthClient = AuthClient(
         client = httpClient,

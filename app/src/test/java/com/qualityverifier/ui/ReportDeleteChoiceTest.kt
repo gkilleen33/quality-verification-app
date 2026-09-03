@@ -6,6 +6,7 @@ import com.qualityverifier.domain.AssessmentContext
 import com.qualityverifier.domain.Attachment
 import com.qualityverifier.domain.ChatMessage
 import com.qualityverifier.domain.ItemType
+import com.qualityverifier.domain.LocationFix
 import com.qualityverifier.domain.Role
 import com.qualityverifier.domain.SessionStart
 import com.qualityverifier.domain.SessionSummary
@@ -92,6 +93,8 @@ class ReportDeleteChoiceTest {
     }
 
     private class FakeRepository : SessionRepository {
+        override suspend fun recordLocation(sessionId: String, fix: LocationFix) = Unit
+
         val dismissed = mutableSetOf<String>()
         val pendingDeletes = mutableListOf<String>()
         val deletedLocally = mutableListOf<String>()

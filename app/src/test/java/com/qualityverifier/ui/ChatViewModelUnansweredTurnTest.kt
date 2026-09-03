@@ -9,6 +9,7 @@ import com.qualityverifier.domain.AssessmentContext
 import com.qualityverifier.domain.Attachment
 import com.qualityverifier.domain.ChatMessage
 import com.qualityverifier.domain.ItemType
+import com.qualityverifier.domain.LocationFix
 import com.qualityverifier.domain.Role
 import com.qualityverifier.domain.SessionStart
 import com.qualityverifier.domain.SessionSummary
@@ -210,6 +211,8 @@ class ChatViewModelUnansweredTurnTest {
         existing: List<ChatMessage> = emptyList(),
         private var sessionExists: Boolean = false,
     ) : SessionRepository {
+        override suspend fun recordLocation(sessionId: String, fix: LocationFix) = Unit
+
         private val state = MutableStateFlow(existing)
 
         fun snapshot(): List<ChatMessage> = state.value

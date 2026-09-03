@@ -15,4 +15,13 @@ data class SessionStart(
     val itemType: ItemType?,
     val previousSessionId: String?,
     val intake: AssessmentContext?,
+    /**
+     * Where the assessment was made, if the customer left that on and a fix arrived.
+     *
+     * Carried here rather than passed through ChatService.send because it is written
+     * minutes after the conversation begins — the fix resolves while the customer is
+     * answering the intake — and this is already read on every turn. A turn sent before
+     * the fix landed simply carries null, and the next one carries it.
+     */
+    val location: LocationFix? = null,
 )

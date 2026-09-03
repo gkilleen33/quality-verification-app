@@ -79,6 +79,11 @@ class AuthLabelsTest {
             en.signOutConfirmBody to sw.signOutConfirmBody,
             en.staySignedIn to sw.staySignedIn,
             en.dataRetentionNotice to sw.dataRetentionNotice,
+            en.locationHeading to sw.locationHeading,
+            en.recordLocationLabel to sw.recordLocationLabel,
+            en.recordLocationHint to sw.recordLocationHint,
+            en.locationPermissionNeeded to sw.locationPermissionNeeded,
+            en.allowLocationAccess to sw.allowLocationAccess,
             en.humanReviewNotice to sw.humanReviewNotice,
             en.savedLocation(5) to sw.savedLocation(5),
         ).forEach { (english, swahili) ->

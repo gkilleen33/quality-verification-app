@@ -78,6 +78,13 @@ data class AdminSessionRow(
     val byTester: Boolean = false,
     /** A critique of this assessment exists. */
     val hasTesterFeedback: Boolean = false,
+    /**
+     * Where the assessment was made, when the customer had recording on and a fix
+     * arrived. Null is the common case and means "not captured" — never "no shop".
+     */
+    val latitude: Double? = null,
+    val longitude: Double? = null,
+    val locationAccuracyM: Double? = null,
 )
 
 data class AdminMessageRow(
@@ -690,7 +697,9 @@ class PostgresAdminStore(private val dataSource: DataSource) : AdminStore {
             select s.id::text, s.item_type_id, u.phone, u.display_name,
                    s.created_at, s.updated_at,
                    (select count(*)::int from messages m where m.session_id = s.id),
-                   s.verdict_level_id, 0, (s.client_deleted_at is not null)
+                   s.verdict_level_id, 0, (s.client_deleted_at is not null),
+                   ST_Y(s.location::geometry), ST_X(s.location::geometry),
+                   s.location_accuracy_m
             from sessions s left join users u on u.id = s.user_id
             where s.id = ?::uuid
             """.trimIndent()
@@ -708,6 +717,11 @@ class PostgresAdminStore(private val dataSource: DataSource) : AdminStore {
                     verdictLevelId = rows.getString(8),
                     photoCount = rows.getInt(9),
                     clientDeleted = rows.getBoolean(10),
+                    // getDouble returns 0.0 for SQL NULL, and 0,0 is a real place in the
+                    // Atlantic. wasNull is the only way to tell them apart.
+                    latitude = rows.getDouble(11).takeUnless { rows.wasNull() },
+                    longitude = rows.getDouble(12).takeUnless { rows.wasNull() },
+                    locationAccuracyM = rows.getDouble(13).takeUnless { rows.wasNull() },
                 )
             }
         }

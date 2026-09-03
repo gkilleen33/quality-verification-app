@@ -7,6 +7,7 @@ import com.qualityverifier.server.chat.TokenUsage
 import com.qualityverifier.server.db.AuthStore
 import com.qualityverifier.server.db.FeedbackStore
 import com.qualityverifier.server.db.ChatStore
+import com.qualityverifier.server.routes.SessionLocation
 import com.qualityverifier.server.db.Credentials
 import com.qualityverifier.server.db.MessageRow
 import com.qualityverifier.server.db.RegisterOutcome
@@ -425,6 +426,17 @@ class SyncRouteTest {
          */
         private val ownedBlobs: Map<String, Set<String>> = emptyMap(),
     ) : ChatStore {
+        override suspend fun recordSessionLocation(
+            sessionId: String,
+            userId: String,
+            location: SessionLocation,
+        ) {
+            locations += location
+        }
+
+        /** What the route tried to store, so a test can assert it was or was not called. */
+        val locations = mutableListOf<SessionLocation>()
+
         var askedFor: String? = null
             private set
         var deleted: String? = null

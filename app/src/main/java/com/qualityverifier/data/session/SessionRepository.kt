@@ -4,6 +4,7 @@ import com.qualityverifier.domain.AssessmentContext
 import com.qualityverifier.domain.Attachment
 import com.qualityverifier.domain.ChatMessage
 import com.qualityverifier.domain.ItemType
+import com.qualityverifier.domain.LocationFix
 import com.qualityverifier.domain.SessionStart
 import com.qualityverifier.domain.SessionSummary
 import kotlinx.coroutines.flow.Flow
@@ -26,6 +27,14 @@ interface SessionRepository {
      * is the normal state until the first send.
      */
     suspend fun startOf(sessionId: String): SessionStart?
+
+    /**
+     * Records where the assessment was made. A no-op once one is already recorded.
+     *
+     * Separate from [createSession] because the fix arrives minutes later — it resolves
+     * while the customer answers the intake — and nothing waits for it.
+     */
+    suspend fun recordLocation(sessionId: String, fix: LocationFix)
 
     /**
      * Creates the session row. Called on the first send, not on item selection.

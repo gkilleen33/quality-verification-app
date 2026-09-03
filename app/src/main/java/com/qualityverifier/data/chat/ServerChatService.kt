@@ -34,6 +34,16 @@ private data class ChatBody(
      */
     @SerialName("previous_session_id") val previousSessionId: String? = null,
     @SerialName("intake_answers") val intakeAnswers: String? = null,
+    /**
+     * Where the assessment was made, when there is one. Same rule as the two above: sent
+     * on every turn and applied by the server only if it has none yet, so no turn is the
+     * special one that has to carry it. That matters more here than for the others,
+     * because the fix lands minutes after the conversation starts and there is no way to
+     * know in advance which turn will be the first to have it.
+     */
+    val latitude: Double? = null,
+    val longitude: Double? = null,
+    @SerialName("accuracy_m") val accuracyMetres: Double? = null,
 )
 
 @Serializable
@@ -126,6 +136,9 @@ class ServerChatService(
                 blobs = hashes,
                 previousSessionId = start?.previousSessionId,
                 intakeAnswers = start?.intake?.let(::encodeIntake),
+                latitude = start?.location?.latitude,
+                longitude = start?.location?.longitude,
+                accuracyMetres = start?.location?.accuracyMetres,
             )
         )
         // One retry, and only for the two conditions a retry can actually fix: a token
