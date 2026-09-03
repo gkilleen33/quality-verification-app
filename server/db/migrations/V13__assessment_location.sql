@@ -23,19 +23,28 @@
 -- premises — into a point per assessment, which taken together is a record of where
 -- somebody has been. That is why anonymise_user is extended below rather than in a later
 -- migration: an account deletion that left this behind would make the promise in V11 false.
+--
+-- The column itself is older than this file. V1__init created sessions.location and its
+-- index and left them empty; what is added here is the accuracy and the timestamp that
+-- make a point usable, the constraints, and the deletion behaviour.
 
 BEGIN;
 
+-- sessions.location and sessions_location_idx are NOT created here. V1__init already
+-- made both, with the comment "nothing populates this yet; it is the hook the extension
+-- above exists for" — this is the migration that populates it. Adding the column again
+-- fails the whole file, which is how this was found: the first attempt to apply it errored
+-- with "column location of relation sessions already exists" and rolled back.
+--
+-- So only the two companions are new. Same three-column shape as users.business_location,
+-- for the same reason: a point without its accuracy is a false precision, and a fix good
+-- to 2km and one good to 5m are indistinguishable once it is dropped.
 ALTER TABLE sessions
-    -- Same three-column shape as users.business_location, for the same reason: a point
-    -- without its accuracy is a false precision, and a fix good to 2km and one good to 5m
-    -- are indistinguishable once it is dropped.
-    ADD COLUMN location            geography(Point, 4326),
-    ADD COLUMN location_accuracy_m real,
+    ADD COLUMN IF NOT EXISTS location_accuracy_m real,
     -- When the fix was taken, which is not when the assessment started. A cached fix
     -- carries no hint of its age and a stale one is the more dangerous kind, because the
     -- accuracy figure makes it look trustworthy.
-    ADD COLUMN location_at         timestamptz;
+    ADD COLUMN IF NOT EXISTS location_at         timestamptz;
 
 ALTER TABLE sessions
     ADD CONSTRAINT sessions_location_is_complete
@@ -46,10 +55,6 @@ ALTER TABLE sessions
     ADD CONSTRAINT sessions_location_accuracy_sane
         CHECK (location_accuracy_m IS NULL
                OR (location_accuracy_m > 0 AND location_accuracy_m <= 5000));
-
--- For "which assessments happened near here", which is the question this was collected
--- for. Same index type as the users equivalent.
-CREATE INDEX sessions_location_idx ON sessions USING gist (location);
 
 -- Extends V11. A trail of points is at least as identifying as the premises column that
 -- function already clears — arguably more, since it records movement rather than one
