@@ -11,6 +11,7 @@ import com.qualityverifier.domain.AssessmentLanguage
 import com.qualityverifier.domain.Attachment
 import com.qualityverifier.domain.ChatMessage
 import com.qualityverifier.domain.ItemType
+import com.qualityverifier.domain.LocationFix
 import com.qualityverifier.domain.Ownership
 import com.qualityverifier.domain.Role
 import com.qualityverifier.domain.SessionStart
@@ -277,6 +278,8 @@ class ChatViewModelNextItemTest {
         private val self: Session? = null,
         private val others: Map<String, Session> = emptyMap(),
     ) : SessionRepository {
+        override suspend fun recordLocation(sessionId: String, fix: LocationFix) = Unit
+
         val messages = mutableListOf<ChatMessage>()
         var createdFrom: String? = null
             private set

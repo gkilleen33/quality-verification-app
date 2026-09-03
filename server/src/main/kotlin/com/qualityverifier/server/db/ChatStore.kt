@@ -1,6 +1,7 @@
 package com.qualityverifier.server.db
 
 import com.qualityverifier.domain.Attachment
+import com.qualityverifier.server.routes.SessionLocation
 import com.qualityverifier.domain.ChatMessage
 import com.qualityverifier.domain.Role
 import com.qualityverifier.server.chat.TokenUsage
@@ -72,6 +73,19 @@ interface ChatStore {
         /** The higher allowance for one of our own evaluators. */
         testerDailyLimit: Int,
     ): SessionAccess
+
+    /**
+     * Records where an assessment was made, once.
+     *
+     * Separate from [ensureSession] because the fix arrives minutes after the session
+     * row does — it resolves while the customer answers the intake — so it lands on
+     * whichever turn happens to be the first to carry it.
+     */
+    suspend fun recordSessionLocation(
+        sessionId: String,
+        userId: String,
+        location: SessionLocation,
+    )
 
     suspend fun appendUserTurn(
         sessionId: String,
@@ -230,6 +244,39 @@ class PostgresChatStore(private val dataSource: DataSource) : ChatStore {
             statement.executeUpdate()
         }
         SessionAccess.Ok(created = true)
+    }
+
+    /**
+     * Write-once, and only into the caller's own session.
+     *
+     * `location is null` in the WHERE makes a second fix a no-op rather than a
+     * correction: this records where the assessment started, and a later fix — after the
+     * customer has walked to the next stall — would quietly move it. The user_id check
+     * is belt and braces; the route has already established ownership.
+     */
+    override suspend fun recordSessionLocation(
+        sessionId: String,
+        userId: String,
+        location: SessionLocation,
+    ) = tx { connection ->
+        connection.prepareStatement(
+            """
+            update sessions
+               set location = ST_SetSRID(ST_MakePoint(?, ?), 4326)::geography,
+                   location_accuracy_m = ?,
+                   location_at = now()
+             where id = ?::uuid and user_id = ?::uuid and location is null
+            """.trimIndent()
+        ).use { statement ->
+            // Longitude first: ST_MakePoint takes x then y.
+            statement.setDouble(1, location.longitude)
+            statement.setDouble(2, location.latitude)
+            statement.setDouble(3, location.accuracyMetres)
+            statement.setString(4, sessionId)
+            statement.setString(5, userId)
+            statement.executeUpdate()
+        }
+        Unit
     }
 
     /**

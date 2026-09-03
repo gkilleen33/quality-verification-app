@@ -216,6 +216,37 @@ class AdminRouteTest {
     }
 
     @Test
+    fun `an assessment's location is shown with a map link`() = testApplication {
+        // The whole reason it is collected: a reviewer has to be able to tell which shop
+        // an assessment happened in.
+        val app = withAdmin(
+            FakeAdminStore(latitude = 0.34760, longitude = 32.58250, accuracyM = 12.0),
+        )
+        app.signIn()
+
+        val body = app.get("/admin/assessments/$SESSION_ID").bodyAsText()
+
+        assertTrue(body, body.contains("0.34760, 32.58250"))
+        // Accuracy travels with the point: without it a fix good to 12m and one good to
+        // 2km read identically, and only one of them places a shop.
+        assertTrue(body, body.contains("±12 m"))
+        assertTrue(body, body.contains("openstreetmap.org"))
+    }
+
+    @Test
+    fun `an assessment with no location says nothing about it`() = testApplication {
+        // Null is the common case and means "not captured", never "no shop". An empty
+        // row or a "no location" line would invite reading it the other way.
+        val app = withAdmin(FakeAdminStore())
+        app.signIn()
+
+        val body = app.get("/admin/assessments/$SESSION_ID").bodyAsText()
+
+        assertFalse(body.contains("Recorded at"))
+        assertFalse(body.contains("openstreetmap.org"))
+    }
+
+    @Test
     fun `a verdict is drawn as cards rather than as the JSON it arrived in`() = testApplication {
         // What this page is for is judging an assessment, and it used to print the fenced
         // block verbatim — so the verdict, the one part a reviewer is grading, arrived as
@@ -1024,6 +1055,9 @@ class AdminRouteTest {
         private val knownBlobs: Set<String> = setOf(PHOTO_SHA),
         private val totpConfirmed: Boolean = true,
         private val byTester: Boolean = false,
+        private val latitude: Double? = null,
+        private val longitude: Double? = null,
+        private val accuracyM: Double? = null,
         val critique: TesterFeedback? = null,
     ) : AdminStore {
         val audits = mutableListOf<AuditRow>()
@@ -1170,6 +1204,7 @@ class AdminRouteTest {
             userName = "A Buyer", createdAt = Instant.now(), updatedAt = Instant.now(),
             messageCount = 2, verdictLevelId = "fair", photoCount = 1, clientDeleted = false,
             byTester = byTester, hasTesterFeedback = critique != null,
+            latitude = latitude, longitude = longitude, locationAccuracyM = accuracyM,
         )
 
         override suspend fun conversation(sessionId: String) = conversation

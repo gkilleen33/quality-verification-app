@@ -148,7 +148,15 @@ fun Route.chatRoutes(
                 return@post
             }
 
-            val isNewTurn = store.appendUserTurn(
+            // Recorded before the upstream call, and never allowed to affect it. A failure here
+    // must not cost the customer their turn: this is optional research data attached to
+    // an assessment somebody has spent minutes on.
+    request.locationOrNull?.let { location ->
+        runCatching { store.recordSessionLocation(request.sessionId, userId, location) }
+            .onFailure { log.warn("Could not record the assessment location", it) }
+    }
+
+    val isNewTurn = store.appendUserTurn(
                 sessionId = request.sessionId,
                 messageId = request.messageId,
                 text = request.text,

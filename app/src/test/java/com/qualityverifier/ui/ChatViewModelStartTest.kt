@@ -10,6 +10,8 @@ import com.qualityverifier.images.ImageQuality
 import com.qualityverifier.domain.Attachment
 import com.qualityverifier.domain.ChatMessage
 import com.qualityverifier.domain.ItemType
+import com.qualityverifier.data.location.LocationSource
+import com.qualityverifier.domain.LocationFix
 import com.qualityverifier.domain.Role
 import com.qualityverifier.domain.SessionStart
 import com.qualityverifier.domain.SessionSummary
@@ -326,19 +328,94 @@ class ChatViewModelStartTest {
         assertTrue(model.notice.value.orEmpty().contains("could not be read"))
     }
 
+    @Test
+    fun `a new assessment records where it was started`() = runTest(dispatcher) {
+        val sessions = FakeSessions(emptyList())
+        val location = FakeLocation()
+
+        viewModel(sessions, FakeChat(ChatResult.Success("hello")), captureFix = location)
+        dispatcher.scheduler.advanceUntilIdle()
+
+        assertEquals(1, location.captures)
+        assertEquals(1, sessions.locations.size)
+        assertEquals(0.3476, sessions.locations.single().latitude, 1e-9)
+    }
+
+    @Test
+    fun `reopening a report does not record anything`() = runTest(dispatcher) {
+        // The fix would be where it was read, not where the furniture was, and it would
+        // be a second point for one assessment.
+        val sessions = FakeSessions(
+            listOf(ChatMessage("m1", Role.ASSISTANT, "Here is the verdict")),
+        )
+        val location = FakeLocation()
+
+        viewModel(sessions, FakeChat(ChatResult.Success("hello")), captureFix = location)
+        dispatcher.scheduler.advanceUntilIdle()
+
+        assertEquals(0, location.captures)
+        assertTrue(sessions.locations.isEmpty())
+    }
+
+    @Test
+    fun `nothing is captured when the setting is off`() = runTest(dispatcher) {
+        // isAvailable covers all three refusals — switched off, permission never granted,
+        // location services off — and none of them should start a coroutine.
+        val sessions = FakeSessions(emptyList())
+        val location = FakeLocation(isAvailable = false)
+
+        viewModel(sessions, FakeChat(ChatResult.Success("hello")), captureFix = location)
+        dispatcher.scheduler.advanceUntilIdle()
+
+        assertEquals(0, location.captures)
+        assertTrue(sessions.locations.isEmpty())
+    }
+
+    @Test
+    fun `a fix that never arrives is not an error`() = runTest(dispatcher) {
+        // Indoors this is the normal outcome. The assessment must be untouched by it.
+        val sessions = FakeSessions(emptyList())
+        val location = FakeLocation(fix = null)
+
+        val model = viewModel(
+            sessions, FakeChat(ChatResult.Success("hello")), captureFix = location,
+        )
+        dispatcher.scheduler.advanceUntilIdle()
+
+        assertEquals(1, location.captures)
+        assertTrue(sessions.locations.isEmpty())
+        assertNull(model.error.value)
+    }
+
     private fun viewModel(
         sessions: SessionRepository,
         chat: ChatService,
         declaredItemType: ItemType? = ItemType.WOODEN_TABLE,
         images: SessionImageStore = NoImages,
+        captureFix: LocationSource = LocationSource.None,
     ) = ChatViewModel(
         sessionId = "s1",
         declaredItemType = declaredItemType,
         sessions = sessions,
         chat = chat,
         images = images,
+        captureFix = captureFix,
         io = dispatcher,
     )
+
+    /** A location provider that always answers, so the trigger can be observed. */
+    private class FakeLocation(
+        override val isAvailable: Boolean = true,
+        private val fix: LocationFix? = LocationFix(0.3476, 32.5825, 12.0, 1_756_000_000_000L),
+    ) : LocationSource {
+        var captures = 0
+            private set
+
+        override suspend fun capture(): LocationFix? {
+            captures++
+            return fix
+        }
+    }
 
     private class FakeChat(vararg results: ChatResult) : ChatService {
         private val queue = results.toMutableList()
@@ -364,6 +441,13 @@ class ChatViewModelStartTest {
         private var sessionExists: Boolean = false,
         private val itemType: ItemType? = ItemType.WOODEN_TABLE,
     ) : SessionRepository {
+        /** Recorded so a test can assert an assessment asked for a fix — or did not. */
+        val locations = mutableListOf<LocationFix>()
+
+        override suspend fun recordLocation(sessionId: String, fix: LocationFix) {
+            locations += fix
+        }
+
         val messages = mutableListOf<ChatMessage>()
         var created = false
             private set

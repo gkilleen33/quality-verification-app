@@ -83,6 +83,20 @@ data class AuthLabels(
      * they have been told a fact about a decision already made.
      */
     val dataRetentionNotice: String,
+    // Recording where an assessment was made. Offered at sign-up and changeable in
+    // Settings, which is why the same four strings serve both screens.
+    val locationHeading: String,
+    val recordLocationLabel: String,
+    val recordLocationHint: String,
+    /**
+     * Shown when the setting is on but Android has not been asked, or was refused.
+     *
+     * A switch that is on while the permission is denied would otherwise read as
+     * working. The setting is the customer's answer; the permission is the system's, and
+     * they can disagree.
+     */
+    val locationPermissionNeeded: String,
+    val allowLocationAccess: String,
 
     /** REVIEW CRITICAL: says a person may read an assessment, including its photos. */
     val humanReviewNotice: String,
@@ -152,6 +166,14 @@ data class AuthLabels(
             signOutConfirmBody = "You will need your phone number and password to sign in " +
                 "again. Assessments already on this phone stay on it.",
             staySignedIn = "Stay signed in",
+            locationHeading = "Location",
+            recordLocationLabel = "Record a GPS point at the start of new evaluations.",
+            recordLocationHint = "We use this for research, to link assessments to the " +
+                "shops they were made in. Nothing is recorded at any other time. You can " +
+                "change this any time in Settings.",
+            locationPermissionNeeded = "Android has not given the app access to location " +
+                "yet, so nothing is being recorded.",
+            allowLocationAccess = "Allow location access",
             dataRetentionNotice = "We may keep your assessments and their photos " +
                 "indefinitely — they are what this research studies. If you delete your " +
                 "account we remove your name, phone number, business and location, and keep " +
@@ -222,6 +244,14 @@ data class AuthLabels(
             signOutConfirmBody = "Utahitaji namba yako ya simu na neno la siri kuingia " +
                 "tena. Ukaguzi ulio kwenye simu hii unabaki.",
             staySignedIn = "Baki umeingia",
+            locationHeading = "Mahali",
+            recordLocationLabel = "Rekodi mahali (GPS) kila ukaguzi mpya unapoanza.",
+            recordLocationHint = "Tunatumia hii kwa utafiti, kuunganisha ukaguzi na maduka " +
+                "yalikofanyika. Hakuna kinachorekodiwa wakati mwingine. Unaweza kubadilisha " +
+                "hii wakati wowote katika Mipangilio.",
+            locationPermissionNeeded = "Android haijaipa programu ruhusa ya mahali, kwa hivyo " +
+                "hakuna kinachorekodiwa.",
+            allowLocationAccess = "Ruhusu matumizi ya mahali",
             dataRetentionNotice = "Tunaweza kubaki na ukaguzi wako na picha zake kwa muda " +
                 "usiojulikana — ndio utafiti huu unachunguza. Ukifuta akaunti yako " +
                 "tunaondoa jina lako, namba yako ya simu, biashara yako na mahali pako, na " +

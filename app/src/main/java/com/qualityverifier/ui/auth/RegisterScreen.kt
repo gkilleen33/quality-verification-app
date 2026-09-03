@@ -46,6 +46,7 @@ import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.qualityverifier.ui.appContainer
+import com.qualityverifier.ui.location.LocationOptIn
 import com.qualityverifier.ui.rememberAuthLabels
 
 /**
@@ -215,6 +216,12 @@ fun RegisterScreen(onRegistered: () -> Unit, onSignIn: () -> Unit) {
                 )
             }
         }
+
+        Spacer(Modifier.height(20.dp))
+        // Every account, not only businesses: the point above is about a business saving
+        // its own premises, and this is about where an assessment happened, which applies
+        // to somebody checking a chair in a market as much as to a workshop.
+        LocationOptIn(labels)
 
         Spacer(Modifier.height(20.dp))
         // Above the button that creates the account, not tucked into a settings screen

@@ -57,6 +57,26 @@ interface SessionDao {
     @Insert
     suspend fun insertSession(session: SessionEntity)
 
+    /**
+     * Written once, and only into an empty slot.
+     *
+     * The `latitude IS NULL` guard makes a late second fix a no-op rather than a
+     * correction: this records where the assessment *started*, and a fix that arrived
+     * after the customer walked to the next stall would quietly move it.
+     */
+    @Query(
+        "UPDATE sessions SET latitude = :latitude, longitude = :longitude, " +
+            "locationAccuracyM = :accuracyM, locationAt = :capturedAt " +
+            "WHERE id = :sessionId AND latitude IS NULL"
+    )
+    suspend fun setLocation(
+        sessionId: String,
+        latitude: Double,
+        longitude: Double,
+        accuracyM: Double,
+        capturedAt: Long,
+    )
+
     @Query("SELECT * FROM sessions WHERE id = :sessionId")
     suspend fun findSession(sessionId: String): SessionEntity?
 

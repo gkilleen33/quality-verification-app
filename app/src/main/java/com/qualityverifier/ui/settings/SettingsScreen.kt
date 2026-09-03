@@ -40,6 +40,7 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.qualityverifier.ui.appContainer
+import com.qualityverifier.ui.location.LocationOptIn
 import com.qualityverifier.ui.rememberAuthLabels
 
 /**
@@ -147,6 +148,14 @@ fun SettingsScreen(onBack: () -> Unit, onAccountDeleted: () -> Unit) {
             HorizontalDivider()
             Spacer(Modifier.height(24.dp))
 
+            // Between the password and the deletion sections: this is the one setting
+            // somebody is likely to come here to change, and the section below it is the
+            // irreversible one.
+            Text(labels.locationHeading, style = MaterialTheme.typography.titleMedium)
+            Spacer(Modifier.height(8.dp))
+            LocationOptIn(labels)
+
+            Spacer(Modifier.height(28.dp))
             Text(labels.deleteAccount, style = MaterialTheme.typography.titleMedium)
             Text(
                 labels.deleteAccountBlurb,

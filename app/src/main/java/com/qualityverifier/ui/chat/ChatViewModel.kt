@@ -8,6 +8,7 @@ import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
 import com.qualityverifier.data.chat.ChatErrorKind
 import com.qualityverifier.data.chat.ChatResult
+import com.qualityverifier.data.location.LocationSource
 import com.qualityverifier.data.chat.ChatService
 import com.qualityverifier.data.db.SessionImageStore
 import com.qualityverifier.data.session.LocalTesterFeedback
@@ -123,6 +124,14 @@ class ChatViewModel(
      * fake client to answer five questions.
      */
     private val pushReviews: suspend () -> Unit = {},
+    /**
+     * The one location fix for a new assessment.
+     *
+     * An interface with a do-nothing default so the tests, which are about conversations,
+     * do not each have to stub a GPS. The default's [LocationSource.isAvailable] is false,
+     * so nothing is even launched.
+     */
+    private val captureFix: LocationSource = LocationSource.None,
     private val images: SessionImageStore,
     /**
      * Where file work happens. Injected so that tests can drive it with the same
@@ -285,8 +294,13 @@ class ChatViewModel(
             }
             if (_carryForward.value == null) _carryForward.value = start?.intake
             previousSessionId = previousSessionId ?: start?.previousSessionId
-            _needsIntake.value = sessions.messagesOnce(sessionId).isEmpty()
+            val isNewAssessment = sessions.messagesOnce(sessionId).isEmpty()
+            _needsIntake.value = isNewAssessment
             loadPreviousVerdict()
+            // Only for an assessment that is actually beginning. Reopening a report from
+            // history must not record where it was read, which would be both wrong and a
+            // second point per assessment.
+            if (isNewAssessment) captureLocation()
         }
         // Recomputed on every change rather than once at startup, so a flag that arrived
         // late still opens the questionnaire. The screen decides *when* to offer it, from
@@ -723,6 +737,27 @@ class ChatViewModel(
         }
     }
 
+    /**
+     * Starts the one location fix for this assessment, if the customer left that on.
+     *
+     * Its own coroutine, and nothing joins it. The fix takes up to ninety seconds to
+     * settle, which is time the customer spends answering the intake and taking
+     * photographs — so it costs them nothing and is never waited on. A turn sent before
+     * the fix lands carries no location and the next one carries it.
+     *
+     * Failure is silence on purpose. This is optional research data, and an assessment
+     * must not show an error, stall, or behave differently because a GPS fix did not
+     * arrive.
+     */
+    private fun captureLocation() {
+        if (!captureFix.isAvailable) return
+        viewModelScope.launch {
+            runCatching {
+                captureFix.capture()?.let { fix -> sessions.recordLocation(sessionId, fix) }
+            }
+        }
+    }
+
     private suspend fun deliver(type: ItemType) {
         val history = sessions.messagesOnce(sessionId)
         when (val result = chat.send(sessionId, type, history)) {
@@ -750,6 +785,7 @@ class ChatViewModel(
                     images = container.images,
                     isTester = { container.isTester },
                     pushReviews = { container.assessmentSync.pushReviews() },
+                    captureFix = container.locationCapture,
                 )
             }
         }

@@ -39,6 +39,18 @@ data class SessionEntity(
      */
     val verdictUnverifiedCount: Int? = null,
     /**
+     * Where this assessment was made, when the customer left that switched on and a fix
+     * arrived. All four are null together — see LocationFix, and the same CHECK the
+     * server keeps on its own copy.
+     *
+     * Null is overwhelmingly common and means "not captured", never "no shop": indoors a
+     * fix often never arrives, and the setting can be off.
+     */
+    val latitude: Double? = null,
+    val longitude: Double? = null,
+    val locationAccuracyM: Double? = null,
+    val locationAt: Long? = null,
+    /**
      * The assessment this one was started from, when the customer tapped "check another"
      * at the end of it. Null for an assessment started from the grid, which is most.
      *

@@ -12,6 +12,7 @@ import com.qualityverifier.domain.AssessmentContext
 import com.qualityverifier.domain.Attachment
 import com.qualityverifier.domain.ChatMessage
 import com.qualityverifier.domain.ItemType
+import com.qualityverifier.domain.LocationFix
 import com.qualityverifier.domain.Role
 import com.qualityverifier.domain.SessionStart
 import com.qualityverifier.domain.SessionSummary
@@ -60,8 +61,21 @@ class RoomSessionRepository(
                 itemType = ItemType.fromId(row.itemTypeId),
                 previousSessionId = row.previousSessionId,
                 intake = decodeIntake(row.intakeAnswers),
+                location = row.locationFix(),
             )
         }
+
+    override suspend fun recordLocation(sessionId: String, fix: LocationFix) {
+        // Guarded in SQL rather than here: two assessments started in quick succession
+        // share nothing, but one assessment can outlive more than one fix arriving.
+        dao.setLocation(
+            sessionId = sessionId,
+            latitude = fix.latitude,
+            longitude = fix.longitude,
+            accuracyM = fix.accuracyMetres,
+            capturedAt = fix.capturedAt,
+        )
+    }
 
     override suspend fun sessionExists(sessionId: String): Boolean =
         dao.findSession(sessionId) != null
@@ -260,6 +274,15 @@ class RoomSessionRepository(
             )
         }
         return ChatMessage(id, role, text, attachments, timestamp)
+    }
+
+    /** All four columns or none, so a half-written row reads as absent rather than as (0, 0). */
+    private fun SessionEntity.locationFix(): LocationFix? {
+        val lat = latitude ?: return null
+        val lon = longitude ?: return null
+        val accuracy = locationAccuracyM ?: return null
+        val at = locationAt ?: return null
+        return LocationFix(lat, lon, accuracy, at)
     }
 
     private fun MessageWithAttachments.toDomain() = ChatMessage(

@@ -4,9 +4,13 @@
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.CAMERA" />
 
-    <!-- Optional, and only used once: a business account may save where its premises are
-         while the owner is standing in them. Nothing tracks location afterwards, which is
-         why there is no background location permission here and should not be. -->
+    <!-- Two uses, both in the foreground, both optional.
+         A business account may save where its premises are while the owner is standing in
+         them; and an assessment records one point as it starts, if the customer left that
+         switched on at sign-up. Nothing is read at any other time.
+         There is no background location permission here and there must not be: every read
+         happens with the app open and the customer in it. See LocationCapture, and
+         docs/retention-and-profile-wording.md section 1a for what they were told. -->
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
 
