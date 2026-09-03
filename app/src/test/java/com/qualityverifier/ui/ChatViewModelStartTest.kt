@@ -351,6 +351,7 @@ class ChatViewModelStartTest {
             sessionId: String,
             itemType: ItemType,
             history: List<ChatMessage>,
+            onDelta: suspend (String) -> Unit,
         ): ChatResult {
             calls++
             histories += history

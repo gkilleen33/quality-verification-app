@@ -77,7 +77,7 @@ class ServerChatServiceTest {
     @Test
     fun `only the newest turn is sent, not the conversation`() = runTest {
         // The saving that made this whole design worthwhile: the server holds the history.
-        server.enqueue(json("""{"message_id":"m1","text":"thanks"}"""))
+        server.enqueue(sse("thanks"))
 
         val result = service().send("s1", ItemType.WOODEN_STOOL, history())
 
@@ -89,11 +89,107 @@ class ServerChatServiceTest {
     }
 
     @Test
+    fun `the reply arrives in pieces, in order`() = runTest {
+        // The whole point of the feature: something on screen in about a second instead
+        // of a blank wait as long as the answer takes to write.
+        server.enqueue(sse("This table ", "has a loose ", "back leg."))
+        val seen = mutableListOf<String>()
+
+        val result = service().send("s1", ItemType.WOODEN_STOOL, history()) { seen += it }
+
+        assertEquals(listOf("This table ", "has a loose ", "back leg."), seen)
+        assertEquals("This table has a loose back leg.", (result as ChatResult.Success).text)
+        assertTrue(server.takeRequest().path, true)
+    }
+
+    @Test
+    fun `the turn goes to the streaming route`() = runTest {
+        server.enqueue(sse("ok"))
+
+        service().send("s1", ItemType.WOODEN_STOOL, history())
+
+        assertEquals("/v1/chat/stream", server.takeRequest().path)
+    }
+
+    @Test
+    fun `what gets stored is what the server says, not what was accumulated`() = runTest {
+        // The deltas are for the eyes; the last event is the record. If a delta is lost
+        // the wait looks slightly wrong, and the stored turn still matches the server's
+        // copy of the conversation — which is the copy every later turn is built from.
+        server.enqueue(sse("partial ", "text", whole = "the whole reply"))
+
+        val result = service().send("s1", ItemType.WOODEN_STOOL, history())
+
+        assertEquals("the whole reply", (result as ChatResult.Success).text)
+    }
+
+    @Test
+    fun `an error event mid-stream is a failure, not a short answer`() = runTest {
+        // Half a verdict must not be handed back as if it were a verdict.
+        server.enqueue(
+            MockResponse()
+                .setHeader("Content-Type", "text/event-stream")
+                .setBody(
+                    "event: delta\ndata: {\"text\":\"Looking at the join\"}\n\n" +
+                        "event: error\ndata: {\"error\":\"upstream_unavailable\"}\n\n"
+                ),
+        )
+        val seen = mutableListOf<String>()
+
+        val result = service().send("s1", ItemType.WOODEN_STOOL, history()) { seen += it }
+
+        assertEquals(listOf("Looking at the join"), seen)
+        assertEquals(ChatErrorKind.SERVER, (result as ChatResult.Failure).kind)
+    }
+
+    @Test
+    fun `a stream that stops without finishing is retryable`() = runTest {
+        // A dropped connection on a Kampala mobile network. The customer's turn is still
+        // stored on both sides, so the wording has to point at retrying rather than at
+        // starting the assessment again.
+        server.enqueue(truncatedSse("The frame looks "))
+
+        val result = service().send("s1", ItemType.WOODEN_STOOL, history())
+
+        val failure = result as ChatResult.Failure
+        assertEquals(ChatErrorKind.NETWORK, failure.kind)
+        assertTrue(failure.message, failure.message.contains("retry"))
+    }
+
+    @Test
+    fun `an older server without the streaming route still answers`() = runTest {
+        // A phone updated before the server is. An unmatched route in Ktor answers 404
+        // with an empty body, and that — and only that — is worth a second attempt.
+        server.enqueue(MockResponse().setResponseCode(404))
+        server.enqueue(json("""{"message_id":"m1","text":"from the old route"}"""))
+
+        val result = service().send("s1", ItemType.WOODEN_STOOL, history())
+
+        assertEquals("from the old route", (result as ChatResult.Success).text)
+        assertEquals(
+            listOf("/v1/chat/stream", "/v1/chat"),
+            listOf(server.takeRequest().path, server.takeRequest().path),
+        )
+    }
+
+    @Test
+    fun `a 404 that names an error is not retried on the old route`() = runTest {
+        // "This session is not yours" is also a 404. Retrying it on /v1/chat would earn
+        // the same answer from the other route and spend a second round trip to do it.
+        server.enqueue(json("""{"error":"no_such_session"}""", code = 404))
+
+        val result = service().send("s1", ItemType.WOODEN_STOOL, history())
+
+        assertEquals(ChatErrorKind.REQUEST, (result as ChatResult.Failure).kind)
+        assertEquals("one attempt only", 1, server.requestCount)
+    }
+
+    @Test
     fun `a photo already on the server is not uploaded again`() = runTest {
         // HEAD says present, so no PUT. This is what stops a nine-photo assessment
         // re-uploading everything on every turn.
         server.enqueue(MockResponse().setResponseCode(200))
-        server.enqueue(json("""{"message_id":"m1","text":"ok"}"""))
+        server.enqueue(sse("ok"))
 
         service().send("s1", ItemType.WOODEN_STOOL, history(Attachment("a", "/tmp/one.jpg")))
 
@@ -105,7 +201,7 @@ class ServerChatServiceTest {
     fun `a photo the server lacks is uploaded once, then the turn is sent`() = runTest {
         server.enqueue(MockResponse().setResponseCode(404)) // HEAD
         server.enqueue(MockResponse().setResponseCode(201)) // PUT
-        server.enqueue(json("""{"message_id":"m1","text":"ok"}"""))
+        server.enqueue(sse("ok"))
 
         service().send("s1", ItemType.WOODEN_STOOL, history(Attachment("a", "/tmp/one.jpg")))
 
@@ -123,7 +219,7 @@ class ServerChatServiceTest {
         // in again" the moment a customer submitted photos.
         server.enqueue(MockResponse().setResponseCode(404)) // HEAD
         server.enqueue(MockResponse().setResponseCode(201)) // PUT
-        server.enqueue(json("""{"message_id":"m1","text":"ok"}"""))
+        server.enqueue(sse("ok"))
 
         service().send("s1", ItemType.WOODEN_STOOL, history(Attachment("a", "/tmp/one.jpg")))
 
@@ -142,7 +238,7 @@ class ServerChatServiceTest {
     fun `a 401 refreshes once and retries the same turn`() = runTest {
         // The turn must survive: the customer has already taken the photos.
         server.enqueue(MockResponse().setResponseCode(401))
-        server.enqueue(json("""{"message_id":"m1","text":"after refresh"}"""))
+        server.enqueue(sse("after refresh"))
 
         val result = service().send("s1", ItemType.WOODEN_STOOL, history())
 
@@ -175,7 +271,7 @@ class ServerChatServiceTest {
             json("""{"error":"missing_blobs","missing":["$SHA_OF_FAKE_BYTES"]}""", code = 409)
         )
         server.enqueue(MockResponse().setResponseCode(201)) // forced PUT
-        server.enqueue(json("""{"message_id":"m1","text":"second time"}"""))
+        server.enqueue(sse("second time"))
 
         val result = service().send(
             "s1", ItemType.WOODEN_STOOL, history(Attachment("a", "/tmp/one.jpg")),
@@ -188,7 +284,7 @@ class ServerChatServiceTest {
 
     @Test
     fun `an unreadable photo costs the photo, not the turn`() = runTest {
-        server.enqueue(json("""{"message_id":"m1","text":"ok"}"""))
+        server.enqueue(sse("ok"))
 
         val result = service().send(
             "s1", ItemType.WOODEN_STOOL, history(Attachment("a", "/tmp/missing.jpg")),
@@ -264,12 +360,16 @@ class ServerChatServiceTest {
     fun `statuses map to something a person can act on`() = runTest {
         val cases = mapOf(
             429 to ChatErrorKind.RATE_LIMIT,
+            // Bodied on purpose. A 404 with nothing in it means the streaming route is
+            // not there and is retried on the old one — see the fallback test below.
             404 to ChatErrorKind.REQUEST,
             413 to ChatErrorKind.REQUEST,
             503 to ChatErrorKind.SERVER,
         )
         for ((status, kind) in cases) {
-            server.enqueue(MockResponse().setResponseCode(status))
+            server.enqueue(
+                MockResponse().setResponseCode(status).setBody("""{"error":"refused"}"""),
+            )
             val result = service().send("s1", ItemType.WOODEN_STOOL, history())
             assertEquals("for $status", kind, (result as ChatResult.Failure).kind)
         }
@@ -310,7 +410,7 @@ class ServerChatServiceTest {
                 depth = AssessmentDepth.FULL,
             ),
         )
-        server.enqueue(json("""{"message_id":"m1","text":"ok"}"""))
+        server.enqueue(sse("ok"))
 
         service().send("s1", ItemType.WOODEN_STOOL, history())
 
@@ -324,7 +424,7 @@ class ServerChatServiceTest {
         // An assessment started from the grid has no previous session, and an intake
         // handed over to the assistant has no answers to carry. Neither is an error.
         sessionStart = SessionStart(ItemType.WOODEN_STOOL, null, null)
-        server.enqueue(json("""{"message_id":"m1","text":"ok"}"""))
+        server.enqueue(sse("ok"))
 
         val result = service().send("s1", ItemType.WOODEN_STOOL, history())
 
@@ -338,7 +438,7 @@ class ServerChatServiceTest {
     fun `no system prompt is ever sent`() = runTest {
         // The server assembles it. A field here would be a way for a client to spend our
         // budget on a prompt of its own choosing.
-        server.enqueue(json("""{"message_id":"m1","text":"ok"}"""))
+        server.enqueue(sse("ok"))
 
         service().send("s1", ItemType.WOODEN_STOOL, history())
 
@@ -351,6 +451,35 @@ class ServerChatServiceTest {
         .setResponseCode(code)
         .setHeader("Content-Type", "application/json")
         .setBody(body)
+
+    /**
+     * A streamed reply, in the shape /v1/chat/stream sends: some deltas, then `done`
+     * carrying the whole thing.
+     *
+     * [whole] defaults to the deltas joined, which is the normal case. Passing something
+     * different is how the tests pin the rule that the client stores what `done` says
+     * rather than its own accumulation.
+     */
+    private fun sse(vararg deltas: String, whole: String? = null, messageId: String = "m1") =
+        MockResponse()
+            .setHeader("Content-Type", "text/event-stream")
+            .setBody(
+                buildString {
+                    deltas.forEach { append("event: delta\ndata: {\"text\":\"$it\"}\n\n") }
+                    val text = whole ?: deltas.joinToString("")
+                    append("event: done\n")
+                    append("data: {\"message_id\":\"$messageId\",\"text\":\"$text\"}\n\n")
+                }
+            )
+
+    /** A stream that starts and stops: deltas, then the socket closes with no `done`. */
+    private fun truncatedSse(vararg deltas: String) = MockResponse()
+        .setHeader("Content-Type", "text/event-stream")
+        .setBody(
+            buildString {
+                deltas.forEach { append("event: delta\ndata: {\"text\":\"$it\"}\n\n") }
+            }
+        )
 
     private object FakeImages : ImageBytesSource {
         override fun bytesForUpload(file: File): ByteArray? =

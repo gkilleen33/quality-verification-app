@@ -12,10 +12,22 @@ import com.qualityverifier.domain.ItemType
  * which is why the swap was one file in AppContainer.
  */
 interface ChatService {
+    /**
+     * @param onDelta called with each increment of the reply as it arrives, on whatever
+     *   thread the transport is reading. Increments, never the accumulated text. The
+     *   returned [ChatResult.Success] still carries the whole reply, and that — not an
+     *   accumulation of these — is what a caller should store: a delta lost to a flaky
+     *   connection then costs a flicker during the wait rather than a stored turn that
+     *   differs from the server's copy of it.
+     *
+     *   Defaulted, so a caller that has nothing to show mid-reply need not care. A
+     *   transport with no streaming may call it once with everything.
+     */
     suspend fun send(
         sessionId: String,
         itemType: ItemType,
         history: List<ChatMessage>,
+        onDelta: suspend (String) -> Unit = {},
     ): ChatResult
 }
 
