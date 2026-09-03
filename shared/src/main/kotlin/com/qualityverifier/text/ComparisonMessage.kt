@@ -30,7 +30,7 @@ fun buildComparisonRequest(
 ): String = buildString {
     appendLine(labels.compareIntro(previousItemName))
 
-    val level = labels.level(previous.level).uppercase()
+    val level = labels.verdictWord(previous).uppercase()
     if (previous.headline.isBlank()) {
         appendLine("${labels.shareVerdict}: $level")
     } else {

@@ -29,6 +29,16 @@ data class SessionEntity(
      */
     val verdictLanguage: String? = null,
     /**
+     * How many things that verdict could not check, so the reports list can tell a clean
+     * assessment from a confident one without re-parsing the conversation.
+     *
+     * Null for a verdict stored before this was recorded, which the badge treats as
+     * nothing unchecked. That is not a claim it is true — it is refusing to invent a
+     * caveat for a row whose verdict we would have to re-parse to know about, and it
+     * leaves those rows reading exactly as they did before.
+     */
+    val verdictUnverifiedCount: Int? = null,
+    /**
      * The assessment this one was started from, when the customer tapped "check another"
      * at the end of it. Null for an assessment started from the grid, which is most.
      *

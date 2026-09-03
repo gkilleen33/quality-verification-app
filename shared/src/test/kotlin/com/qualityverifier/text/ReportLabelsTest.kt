@@ -1,7 +1,9 @@
 package com.qualityverifier.text
 
 import com.qualityverifier.domain.ItemType
+import com.qualityverifier.domain.Defect
 import com.qualityverifier.domain.Severity
+import com.qualityverifier.domain.Verdict
 import com.qualityverifier.domain.VerdictLevel
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertSame
@@ -135,6 +137,57 @@ class ReportLabelsTest {
     }
 
     @Test
+    fun `a clean verdict with gaps is not called sound`() {
+        // "Sound" reads as a claim that the furniture is good. What the assistant can
+        // honestly say is that it found nothing in what it managed to check, and after a
+        // rapid assessment that is two photographs.
+        assertEquals(
+            "No faults found",
+            ReportLabels.ENGLISH.verdictWord(VerdictLevel.SOUND, anythingUnchecked = true),
+        )
+        assertEquals(
+            "Sound",
+            ReportLabels.ENGLISH.verdictWord(VerdictLevel.SOUND, anythingUnchecked = false),
+        )
+    }
+
+    @Test
+    fun `only a clean verdict is reworded`() {
+        // fair and serious_concerns already assert that something is wrong, and something
+        // being wrong is not in doubt just because the check was incomplete.
+        listOf(VerdictLevel.FAIR, VerdictLevel.SERIOUS, VerdictLevel.UNKNOWN).forEach { level ->
+            assertEquals(
+                "$level should read the same either way",
+                ReportLabels.ENGLISH.level(level),
+                ReportLabels.ENGLISH.verdictWord(level, anythingUnchecked = true),
+            )
+        }
+    }
+
+    @Test
+    fun `the wording is read off the unverified list, not guessed at`() {
+        val clean = Verdict(levelId = "sound", headline = "Nothing wrong with it")
+        val withGaps = clean.copy(unverified = listOf("Underside of the seat"))
+        assertEquals("Sound", ReportLabels.ENGLISH.verdictWord(clean))
+        assertEquals("No faults found", ReportLabels.ENGLISH.verdictWord(withGaps))
+        // A defect makes the level fair or worse, so this pair is about the level rather
+        // than the gaps: a verdict that found something is never reworded.
+        val faulty = Verdict(
+            levelId = "fair",
+            defects = listOf(Defect(title = "Loose joint")),
+            unverified = listOf("Underside of the seat"),
+        )
+        assertEquals(ReportLabels.ENGLISH.level(VerdictLevel.FAIR), ReportLabels.ENGLISH.verdictWord(faulty))
+    }
+
+    @Test
+    fun `the reworded verdict exists in Swahili too`() {
+        val withGaps = Verdict(levelId = "sound", unverified = listOf("Chini ya kiti"))
+        assertEquals(ReportLabels.SWAHILI.noFaultsFound, ReportLabels.SWAHILI.verdictWord(withGaps))
+        assertTrue(ReportLabels.SWAHILI.noFaultsFound.isNotBlank())
+    }
+
+    @Test
     fun `the two label sets are complete against each other`() {
         // A heading added to one language and forgotten in the other is the failure
         // this catches: it would ship a card that is half translated.
@@ -148,6 +201,7 @@ class ReportLabelsTest {
             en.whatToDoHeading to sw.whatToDoHeading,
             en.askAboutThis to sw.askAboutThis,
             en.inProgress to sw.inProgress,
+            en.noFaultsFound to sw.noFaultsFound,
             en.shareHeader to sw.shareHeader,
             en.shareVerdict to sw.shareVerdict,
             en.shareWhatToLookAt to sw.shareWhatToLookAt,

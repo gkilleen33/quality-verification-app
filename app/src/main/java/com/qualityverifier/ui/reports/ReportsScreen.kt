@@ -160,7 +160,9 @@ private fun ReportRow(
                 // Null while an assessment is still running, which is the honest state:
                 // a row with no badge has not reached a verdict, and should not look as
                 // though it has.
-                session.verdictLevel?.let { VerdictBadge(it, labels) }
+                session.verdictLevel?.let {
+                    VerdictBadge(it, session.anythingUnchecked, labels)
+                }
                 if (session.verdictLevel == null) {
                     Text(
                         labels.inProgress,
@@ -191,8 +193,15 @@ private fun ReportRow(
     }
 }
 
+/**
+ * The one word that stands for a whole assessment.
+ *
+ * [anythingUnchecked] softens a clean verdict from "Sound" to "No faults found" — see
+ * `ReportLabels.verdictWord`. The colour does not change with it: the level still means
+ * what it meant, and a row a customer learned to read as green should stay green.
+ */
 @Composable
-fun VerdictBadge(level: VerdictLevel, labels: ReportLabels) {
+fun VerdictBadge(level: VerdictLevel, anythingUnchecked: Boolean, labels: ReportLabels) {
     val colors = verdictColors(level)
     Surface(
         color = colors.container,
@@ -200,7 +209,7 @@ fun VerdictBadge(level: VerdictLevel, labels: ReportLabels) {
         shape = RoundedCornerShape(6.dp),
     ) {
         Text(
-            text = labels.level(level).uppercase(),
+            text = labels.verdictWord(level, anythingUnchecked).uppercase(),
             style = MaterialTheme.typography.labelSmall,
             fontWeight = FontWeight.Bold,
             modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),

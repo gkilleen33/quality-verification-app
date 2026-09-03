@@ -24,7 +24,7 @@ fun buildShareText(
     labels: ReportLabels,
 ): String = buildString {
     appendLine("${labels.shareHeader} · ${labels.itemName(itemType)} · $date")
-    val level = labels.level(verdict.level).uppercase()
+    val level = labels.verdictWord(verdict).uppercase()
     if (verdict.headline.isBlank()) {
         appendLine("${labels.shareVerdict}: $level")
     } else {

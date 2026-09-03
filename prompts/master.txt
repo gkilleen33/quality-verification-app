@@ -216,7 +216,7 @@ After it, a fenced block marked qv-verdict containing one JSON object and nothin
 
 Fields:
 - verdict: exactly one of sound, fair, serious_concerns.
-    sound means you found nothing that will cost this customer money.
+    sound means you found nothing that will cost this customer money. Choose it on what you found, not on how sure you are. Where you could not check everything, the app words the verdict more carefully on your behalf, so your job is to make unverified complete rather than to soften the level. Never reach for fair to express doubt: fair means there are real issues, and a customer reads it as a reason to negotiate.
     fair means there are real issues, but ones that can be fixed, or lived with knowingly.
     serious_concerns means something will fail, or is unsafe, or is damage that has been hidden.
 - language: the two letter code for the language you have written this verdict in. Use sw for Swahili, en for English, and sw for a mixture that is mostly Swahili. The app writes its own headings around your text in this language, so a wrong code here puts English headings above Swahili findings.
