@@ -14,14 +14,6 @@ data class MessagesRequest(
      */
     val system: List<SystemBlock>,
     val messages: List<ApiMessage>,
-    /**
-     * Null rather than false when off, so a non-streaming request serialises to exactly
-     * the bytes it did before streaming existed — `explicitNulls = false` drops the field
-     * entirely. It is not part of the cached prefix either way (caching covers tools,
-     * system and messages), but the two callers have to agree byte-for-byte and the
-     * cheapest way to guarantee that is to emit nothing at all.
-     */
-    val stream: Boolean? = null,
 )
 
 @Serializable

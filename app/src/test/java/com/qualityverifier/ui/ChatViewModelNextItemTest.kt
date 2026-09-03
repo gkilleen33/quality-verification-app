@@ -266,7 +266,6 @@ class ChatViewModelNextItemTest {
             sessionId: String,
             itemType: ItemType,
             history: List<ChatMessage>,
-            onDelta: suspend (String) -> Unit,
         ): ChatResult {
             calls++
             return if (queue.size > 1) queue.removeAt(0) else queue.first()

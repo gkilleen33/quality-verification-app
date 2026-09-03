@@ -4,12 +4,6 @@ import android.Manifest
 import android.content.pm.PackageManager
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.animation.core.RepeatMode
-import androidx.compose.animation.core.animateFloat
-import androidx.compose.animation.core.infiniteRepeatable
-import androidx.compose.animation.core.rememberInfiniteTransition
-import androidx.compose.animation.core.tween
-import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -56,9 +50,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
@@ -84,7 +76,6 @@ import com.qualityverifier.ui.plan.PlanActionBar
 import com.qualityverifier.ui.plan.PlanCard
 import com.qualityverifier.text.ReportLabels
 import com.qualityverifier.text.parseAssistantContent
-import com.qualityverifier.text.streamingProse
 import com.qualityverifier.ui.appContainer
 import com.qualityverifier.ui.rememberReportLabels
 import com.qualityverifier.ui.rememberTesterLabels
@@ -122,7 +113,6 @@ fun ChatScreen(
     val messages by viewModel.messages.collectAsState()
     val pending by viewModel.pending.collectAsState()
     val sending by viewModel.sending.collectAsState()
-    val streaming by viewModel.streaming.collectAsState()
     val error by viewModel.error.collectAsState()
     val unansweredTurn by viewModel.unansweredTurn.collectAsState()
     val reviewDue by viewModel.reviewDue.collectAsState()
@@ -206,19 +196,6 @@ fun ChatScreen(
         }
     }
 
-    // Keeps a reply that is still arriving in view as it grows.
-    //
-    // Keyed on the length in coarse steps rather than on the text, because the text
-    // changes once per token: a scroll per delta would be hundreds of animations for one
-    // paragraph. Every few lines is enough to stay pinned to the bottom, and not so often
-    // that it wrestles a reader who has scrolled up.
-    val streamedChunks = (streaming?.length ?: 0) / STREAM_SCROLL_CHARS
-    LaunchedEffect(streaming != null, streamedChunks) {
-        if (streaming != null && messages.isNotEmpty()) {
-            listState.animateScrollToItem(messages.lastIndex + 1)
-        }
-    }
-
     // The evaluator questionnaire, at the other end of the same conversation. Full screen
     // like the intake: it is five questions and a slider, and squeezing it into the message
     // list would make a research instrument feel like an afterthought.
@@ -276,7 +253,7 @@ fun ChatScreen(
     }
 
     submittedRun?.takeIf { submitting }?.let { inFlight ->
-        InspectingScreen(inFlight, rememberReportLabels(inFlight.plan.language), streaming)
+        InspectingScreen(inFlight, rememberReportLabels(inFlight.plan.language))
         return
     }
 
@@ -426,11 +403,6 @@ fun ChatScreen(
                                 )
                             }
                         }
-                        // The reply as it arrives. Its own item rather than a real
-                        // message: nothing is in Room yet, and this has no id to key on.
-                        streaming?.let { partial ->
-                            item(key = "streaming") { StreamingBubble(partial) }
-                        }
                         // Pinned to the end of the conversation rather than under the
                         // verdict itself, so that follow-up questions do not push it
                         // out of reach.
@@ -481,7 +453,18 @@ fun ChatScreen(
                     CircularProgressIndicator(Modifier.size(20.dp))
                     Spacer(Modifier.width(12.dp))
                     Text(
-                        if (messages.isEmpty()) "Starting the check…" else "Looking at the furniture…",
+                        // Three waits, and the longest of them is the one straight after
+                        // the intake, where the assistant is working out what to ask for.
+                        // Saying so — and saying it will take a moment — is the difference
+                        // between a customer waiting and a customer deciding the app hung.
+                        // A wait with a reply already on screen is a follow-up question,
+                        // which is quick and needs no apology.
+                        when {
+                            messages.isEmpty() -> "Starting the check…"
+                            messages.none { it.role == Role.ASSISTANT } ->
+                                "Preparing the evaluation. This may take a moment."
+                            else -> "Looking at the furniture…"
+                        },
                         style = MaterialTheme.typography.bodyMedium,
                     )
                 }
@@ -774,68 +757,6 @@ private fun MessageBubble(
         }
     }
 }
-
-/**
- * The reply while it is still being written.
- *
- * Shows the prose and only the prose — [streamingProse] stops at the first fence, so the
- * customer never watches `qv-verdict` being typed at them. Once the prose is finished and
- * the block has started there is nothing more to show, and this falls back to the same
- * three dots as the wait before the first token: honest, because the assistant genuinely
- * is still working, and the verdict cards are a second away.
- *
- * Styled as an assistant bubble rather than as something special. When the last token
- * lands this is replaced by the stored message, and a change of appearance at that moment
- * would read as the answer being re-drawn.
- */
-@Composable
-private fun StreamingBubble(partial: String) {
-    val prose = remember(partial) { streamingProse(partial) }
-    Surface(
-        color = MaterialTheme.colorScheme.surface,
-        shape = RoundedCornerShape(16.dp),
-        tonalElevation = 2.dp,
-        modifier = Modifier.fillMaxWidth(0.92f),
-    ) {
-        if (prose.isBlank()) {
-            TypingDots(Modifier.padding(horizontal = 14.dp, vertical = 12.dp))
-        } else {
-            MarkdownText(
-                text = prose,
-                style = MaterialTheme.typography.bodyLarge,
-                modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
-            )
-        }
-    }
-}
-
-/** Three dots that fade in turn: the assistant is working and has nothing to show yet. */
-@Composable
-private fun TypingDots(modifier: Modifier = Modifier) {
-    val transition = rememberInfiniteTransition(label = "typing")
-    Row(modifier, horizontalArrangement = Arrangement.spacedBy(5.dp)) {
-        repeat(3) { index ->
-            val alpha by transition.animateFloat(
-                initialValue = 0.25f,
-                targetValue = 1f,
-                animationSpec = infiniteRepeatable(
-                    animation = tween(600, delayMillis = index * 200),
-                    repeatMode = RepeatMode.Reverse,
-                ),
-                label = "dot$index",
-            )
-            Box(
-                Modifier
-                    .size(7.dp)
-                    .alpha(alpha)
-                    .background(MaterialTheme.colorScheme.onSurfaceVariant, CircleShape),
-            )
-        }
-    }
-}
-
-/** How many characters of new text are worth another scroll. Roughly two lines. */
-private const val STREAM_SCROLL_CHARS = 160
 
 private const val MAX_IMAGES_PER_PICK = 5
 

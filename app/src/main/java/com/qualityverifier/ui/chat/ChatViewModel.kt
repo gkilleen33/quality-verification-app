@@ -142,20 +142,6 @@ class ChatViewModel(
     private val _sending = MutableStateFlow(false)
     val sending: StateFlow<Boolean> = _sending.asStateFlow()
 
-    /**
-     * The reply as it is being written, or null when nothing is in flight.
-     *
-     * Held here rather than written to Room a delta at a time. Two reasons: a Room write
-     * per token would churn the database for the length of a verdict, and a partial reply
-     * must not survive the app dying mid-stream — a half-written assessment in the reports
-     * list, with a headline it never reached, would be worse than no row at all.
-     *
-     * What finally gets stored is the text the server sends back with the last event, not
-     * this. See ChatService.send.
-     */
-    private val _streaming = MutableStateFlow<String?>(null)
-    val streaming: StateFlow<String?> = _streaming.asStateFlow()
-
     private val _error = MutableStateFlow<ChatError?>(null)
     val error: StateFlow<ChatError?> = _error.asStateFlow()
 
@@ -739,35 +725,9 @@ class ChatViewModel(
 
     private suspend fun deliver(type: ItemType) {
         val history = sessions.messagesOnce(sessionId)
-        // Empty, not null: null means nothing is in flight, and the wait between sending
-        // and the first token is a real part of the wait the customer sits through. An
-        // empty string says "started, nothing yet" and lets the UI keep its spinner.
-        _streaming.value = ""
-        try {
-            val result = chat.send(sessionId, type, history) { delta ->
-                _streaming.update { (it ?: "") + delta }
-            }
-            when (result) {
-                is ChatResult.Success -> {
-                    // Stored before the partial is dropped, so the bubble is replaced
-                    // rather than briefly disappearing. The two states overlap for at
-                    // most a frame, which reads as the text settling.
-                    sessions.appendAssistantMessage(sessionId, result.text)
-                    _streaming.value = null
-                }
-
-                is ChatResult.Failure -> {
-                    // Dropped, not kept. A reply that failed part way is not a turn the
-                    // customer can act on, and leaving it on screen under an error would
-                    // invite them to act on half a verdict.
-                    _streaming.value = null
-                    _error.value = ChatError(result.kind, result.message)
-                }
-            }
-        } finally {
-            // Cancellation lands here — leaving the screen mid-reply must not leave the
-            // partial behind for the next time this conversation is opened.
-            _streaming.value = null
+        when (val result = chat.send(sessionId, type, history)) {
+            is ChatResult.Success -> sessions.appendAssistantMessage(sessionId, result.text)
+            is ChatResult.Failure -> _error.value = ChatError(result.kind, result.message)
         }
     }
 

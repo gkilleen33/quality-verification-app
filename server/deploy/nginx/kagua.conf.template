@@ -82,15 +82,5 @@ server {
         # slow uploader on a Kampala mobile connection does not hold a temp file open
         # for the duration.
         proxy_request_buffering off;
-
-        # Note the absence of proxy_buffering off, and do not add it here.
-        #
-        # Response buffering is on by default and would hold a streamed reply until it
-        # was complete — the exact blank wait that streaming exists to remove. It is
-        # switched off per response instead: /v1/chat/stream sends X-Accel-Buffering: no,
-        # which nginx honours for that response alone. That keeps the setting in the jar,
-        # where it is deployed atomically and cannot be left behind by an operator who
-        # updated the jar but not this file. Turning it off for the whole location would
-        # also un-buffer photo downloads and every admin page, which want buffering.
     }
 }
