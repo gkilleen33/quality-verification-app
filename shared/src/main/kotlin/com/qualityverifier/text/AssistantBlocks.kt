@@ -133,35 +133,6 @@ fun parseAssistantContent(text: String): AssistantContent {
     )
 }
 
-/**
- * What to show of a reply that is still arriving.
- *
- * Everything up to the first fence, and nothing after it. The prompt writes the prose
- * first and the blocks addressed to the app last, so the text before the first fence is
- * the whole of what a reader was ever going to see — and once the fence appears, the
- * readable part is finished and what follows is machinery.
- *
- * [parseAssistantContent] already drops an unterminated `qv-verdict` block rather than
- * printing it, so the JSON itself was never the risk. The risk is narrower and only
- * exists mid-stream: a fence line that is itself half-written. "```qv-verd" is not a tag
- * this recognises, so it would be echoed into the prose as literal backticks for as long
- * as it takes the next few tokens to arrive. Cutting at the first fence removes that
- * whole class of flicker rather than chasing its instances.
- *
- * A blank result means the prose is done and the assistant is writing a block — which is
- * a real state, and the caller should say the assistant is still working rather than
- * show an empty bubble.
- */
-fun streamingProse(partial: String): String {
-    val lines = partial.lines()
-    val fence = lines.indexOfFirst { it.trimStart().startsWith(FENCE) }
-    val visible = if (fence >= 0) lines.take(fence) else lines
-    // A trailing run of backticks is a fence being typed one character at a time; a
-    // single backtick could equally be the start of inline code, and either way it is
-    // punctuation the reader does not need to watch arrive.
-    return visible.joinToString("\n").trimEnd().trimEnd('`').trimEnd()
-}
-
 /** The info string of a fence line, or null if this is not a fence line. */
 private fun fenceTagAt(line: String): String? {
     val trimmed = line.trim()

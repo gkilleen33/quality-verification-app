@@ -69,15 +69,9 @@ object AnthropicRequest {
         encodeBase64: (ByteArray) -> String,
         model: String = MODEL,
         maxTokens: Int = MAX_TOKENS,
-        /**
-         * Asks for the reply as a series of deltas. Changes nothing about the prefix, so
-         * a streamed turn still reads the same cache a non-streamed one wrote.
-         */
-        stream: Boolean = false,
     ): MessagesRequest = MessagesRequest(
         model = model,
         maxTokens = maxTokens,
-        stream = if (stream) true else null,
         // Two breakpoints, well inside the limit of four. The system prompt is identical
         // for every conversation about this item type; the message prefix grows by one
         // exchange per turn, and a walkthrough is a dozen turns carrying several photos,

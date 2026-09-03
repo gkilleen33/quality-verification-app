@@ -196,7 +196,6 @@ class ChatViewModelUnansweredTurnTest {
             sessionId: String,
             itemType: ItemType,
             history: List<ChatMessage>,
-            onDelta: suspend (String) -> Unit,
         ): ChatResult {
             chatCalls++
             return held?.await() ?: result

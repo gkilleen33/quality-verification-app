@@ -266,7 +266,8 @@ data class ReportLabels(
             inspecting = "Inspecting",
             stagePreparing = "Preparing the photos",
             stageSending = "Sending",
-            stageExamining = "Looking at the furniture",
+            stageExamining = "Evaluating the furniture. This takes some time so we can " +
+                "check all the details.",
             seeVerdict = "See the verdict",
             submissionTestsHeading = "Test results",
             notDone = "not done",
@@ -375,7 +376,8 @@ data class ReportLabels(
             inspecting = "Inakagua",
             stagePreparing = "Inatayarisha picha",
             stageSending = "Inatuma",
-            stageExamining = "Inaangalia samani",
+            stageExamining = "Inakagua samani. Hii inachukua muda ili tuweze kuangalia " +
+                "kila kitu kwa makini.",
             seeVerdict = "Ona uamuzi",
             submissionTestsHeading = "Majibu ya majaribio",
             notDone = "haikufanyika",
