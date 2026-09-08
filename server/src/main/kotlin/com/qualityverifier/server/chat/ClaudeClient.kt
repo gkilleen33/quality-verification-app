@@ -32,6 +32,17 @@ enum class UpstreamError {
     SERVER,
     /** Malformed or oversized request — a bug on our side, not a transient failure. */
     REQUEST,
+
+    /**
+     * The model ran out of room and stopped mid-answer.
+     *
+     * Its own kind because it is the one failure that arrives as a 200 with plausible
+     * content in it. Treated as a failure rather than stored, for two reasons: an answer
+     * the model did not finish is not an answer, and a truncated turn would join the
+     * cached conversation prefix and be re-sent on every later turn — so the model would
+     * spend the rest of the assessment reading its own half-written JSON.
+     */
+    TRUNCATED,
     NETWORK,
     UNKNOWN,
 }
@@ -153,6 +164,19 @@ class AnthropicClient(
             .joinToString("\n")
             .trim()
 
+        if (decoded.stopReason == STOP_MAX_TOKENS) {
+            // Not stored, and said out loud. This is what silently broke every full
+            // assessment: the reply looked fine, its fenced block did not close, the
+            // block was dropped as unparseable, and nothing anywhere reported a problem.
+            log.error(
+                "Reply hit max_tokens at {} output tokens; discarding a truncated answer",
+                usage.outputTokens,
+            )
+            return ClaudeResult.Failure(
+                UpstreamError.TRUNCATED, "The answer was cut off", usage = usage,
+            )
+        }
+
         if (text.isBlank()) {
             // A 200 with nothing usable in it: a refusal, or only non-text blocks. Not a
             // transient failure, so no retry.
@@ -188,6 +212,9 @@ class AnthropicClient(
     }
 
     private companion object {
+        /** The API's own word for "I ran out of room". */
+        const val STOP_MAX_TOKENS = "max_tokens"
+
         val JSON = "application/json; charset=utf-8".toMediaType()
         const val MAX_RETRIES = 1
         const val RETRY_DELAY_MILLIS = 1500L

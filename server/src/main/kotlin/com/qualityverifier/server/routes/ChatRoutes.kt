@@ -148,15 +148,15 @@ fun Route.chatRoutes(
                 return@post
             }
 
-            // Recorded before the upstream call, and never allowed to affect it. A failure here
-    // must not cost the customer their turn: this is optional research data attached to
-    // an assessment somebody has spent minutes on.
-    request.locationOrNull?.let { location ->
-        runCatching { store.recordSessionLocation(request.sessionId, userId, location) }
-            .onFailure { log.warn("Could not record the assessment location", it) }
-    }
+            // Recorded before the upstream call, and never allowed to affect it. A failure
+            // here must not cost the customer their turn: this is optional research data
+            // attached to an assessment somebody has spent minutes on.
+            request.locationOrNull?.let { location ->
+                runCatching { store.recordSessionLocation(request.sessionId, userId, location) }
+                    .onFailure { log.warn("Could not record the assessment location", it) }
+            }
 
-    val isNewTurn = store.appendUserTurn(
+            val isNewTurn = store.appendUserTurn(
                 sessionId = request.sessionId,
                 messageId = request.messageId,
                 text = request.text,
@@ -213,12 +213,19 @@ fun Route.chatRoutes(
                         UpstreamError.RATE_LIMIT -> HttpStatusCode.TooManyRequests
                         UpstreamError.OVERLOADED, UpstreamError.AUTH -> HttpStatusCode.ServiceUnavailable
                         UpstreamError.NETWORK -> HttpStatusCode.GatewayTimeout
-                        UpstreamError.SERVER -> HttpStatusCode.BadGateway
+                        UpstreamError.SERVER, UpstreamError.TRUNCATED -> HttpStatusCode.BadGateway
                         UpstreamError.REQUEST, UpstreamError.UNKNOWN -> HttpStatusCode.InternalServerError
                     }
                     // Our upstream's message never reaches the phone: it can name a model,
                     // a quota or an account, none of which are the customer's business.
-                    call.respond(status, ErrorResponse("upstream_unavailable"))
+                    // The code does, though — a cut-off answer needs different wording
+                    // from an assistant that is busy, and the phone reads this to choose.
+                    val code = if (result.error == UpstreamError.TRUNCATED) {
+                        "answer_truncated"
+                    } else {
+                        "upstream_unavailable"
+                    }
+                    call.respond(status, ErrorResponse(code))
                 }
             }
         }

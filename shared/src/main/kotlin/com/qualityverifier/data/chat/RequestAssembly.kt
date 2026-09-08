@@ -30,7 +30,22 @@ object AnthropicRequest {
     const val MESSAGES_URL = "https://api.anthropic.com/v1/messages"
     const val VERSION = "2023-06-01"
     const val MODEL = "claude-sonnet-5"
-    const val MAX_TOKENS = 4096
+    /**
+     * The output ceiling, and it has to be generous.
+     *
+     * 4096 was too low and failed in the worst possible way. A full assessment's plan is
+     * six shots and several tests with their answer options; its verdict is a defect per
+     * finding, each with three written fields. Both are JSON, which tokenises badly — the
+     * measured turns ran 0.9 to 1.3 characters per token against 2.6 for prose — so both
+     * blocks ran past 4096 and were cut off mid-string. `parseAssistantContent` then
+     * dropped the unparseable block, exactly as designed, and the customer got prose with
+     * no verdict cards and no photo run. Every full assessment on 3 and 8 September
+     * failed this way; the rapid ones, being shorter, did not.
+     *
+     * A ceiling is not a spend — the bill is for tokens generated, not tokens allowed —
+     * so the cost of raising it is latency on the replies that use it, not money.
+     */
+    const val MAX_TOKENS = 16_000
 
     /**
      * Supplies the opening user turn the API requires.

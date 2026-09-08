@@ -296,10 +296,22 @@ class ServerChatService(
                 "Too many requests just now. Please try again in a moment.",
             )
         }
-        502, 503, 504 -> ChatResult.Failure(
-            ChatErrorKind.SERVER,
-            "The assistant is busy. Please try again in a moment.",
-        )
+        // Two very different things arrive as 502, so the code in the body decides the
+        // wording. "Busy, try in a moment" was what an evaluator saw for weeks when the
+        // real problem was an answer that ran out of room — advice that led nowhere,
+        // because waiting a moment does not make a reply shorter.
+        502, 503, 504 -> if (body.contains(ERROR_TRUNCATED)) {
+            ChatResult.Failure(
+                ChatErrorKind.SERVER,
+                "The assessment came back unfinished. Tap retry — your photos and " +
+                    "answers are saved.",
+            )
+        } else {
+            ChatResult.Failure(
+                ChatErrorKind.SERVER,
+                "The assistant is busy. Please try again in a moment.",
+            )
+        }
         in 500..599 -> ChatResult.Failure(
             ChatErrorKind.SERVER,
             "Our server had a problem. Please try again.",
@@ -326,6 +338,9 @@ class ServerChatService(
 
     private companion object {
         const val TAG = "ServerChatService"
+
+        /** The server's code for a reply the model did not finish. */
+        const val ERROR_TRUNCATED = "answer_truncated"
 
         /** The server's error code for the per-account daily allowance. */
         const val DAILY_LIMIT = "daily_limit_reached"
