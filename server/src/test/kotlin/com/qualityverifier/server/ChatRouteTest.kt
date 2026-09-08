@@ -378,6 +378,40 @@ class ChatRouteTest {
     }
 
     @Test
+    fun `a cut-off answer is not stored and says so`() = testApplication {
+        // The bug this exists for: a reply that hit max_tokens looked like a success, its
+        // fenced block never closed, the block was dropped as unparseable, and the
+        // customer got prose with no verdict cards. Every full assessment failed this way
+        // for a week with nothing reporting it.
+        val store = FakeChatStore()
+        val app = withChat(
+            store,
+            FakeClaude(
+                ClaudeResult.Failure(
+                    UpstreamError.TRUNCATED,
+                    "The answer was cut off",
+                    usage = TokenUsage(2, 4096, 0, 26494),
+                ),
+            ),
+        )
+
+        val response = app.post("/v1/chat") {
+            auth(); contentType(ContentType.Application.Json); setBody(request())
+        }
+
+        assertEquals(HttpStatusCode.BadGateway, response.status)
+        // The code, not just the status: 502 also means "busy", and telling somebody to
+        // wait a moment does not make the next reply shorter.
+        assertTrue(response.bodyAsText(), response.bodyAsText().contains("answer_truncated"))
+        // Nothing stored. A truncated turn would join the cached prefix and be re-sent on
+        // every later turn, so the model would read its own half-written JSON all the way
+        // to the end of the assessment.
+        assertEquals(0, store.assistantTurns)
+        // The spend is still recorded: those 4096 tokens were billed to us.
+        assertEquals(1, store.usageRows)
+    }
+
+    @Test
     fun `an unknown item type is refused rather than guessed`() = testApplication {
         val app = withChat(FakeChatStore(), FakeClaude(ClaudeResult.Success("x", TokenUsage(), null)))
 

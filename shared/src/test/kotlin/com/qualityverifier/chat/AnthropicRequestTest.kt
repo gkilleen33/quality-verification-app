@@ -204,7 +204,19 @@ class AnthropicRequestTest {
     fun `the model and token ceiling are fixed in one place`() {
         val request = build(listOf(ChatMessage("1", Role.USER, "hi")))
         assertEquals("claude-sonnet-5", request.model)
-        assertEquals(4096, request.maxTokens)
+        assertEquals(16_000, request.maxTokens)
+    }
+
+    @Test
+    fun `the ceiling leaves room for a full assessment`() {
+        // 4096 silently broke every full assessment: the plan and the verdict are both
+        // JSON, which tokenises at about one character per token, and both ran past it
+        // and were cut off mid-string. The measured verdicts wanted 4096 and were still
+        // unfinished, so the floor for this number is well above them.
+        assertTrue(
+            "a full verdict needs far more than the 4096 that truncated it",
+            AnthropicRequest.MAX_TOKENS >= 8192,
+        )
     }
 
     @Test

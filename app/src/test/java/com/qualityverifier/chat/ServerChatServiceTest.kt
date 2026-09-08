@@ -261,6 +261,34 @@ class ServerChatServiceTest {
     }
 
     @Test
+    fun `a cut-off answer is worded as retryable, not as busy`() = runTest {
+        // Both arrive as 502. "The assistant is busy, try again in a moment" is what an
+        // evaluator actually saw while the real problem was a reply that ran out of room —
+        // and waiting a moment does not make the next reply shorter.
+        server.enqueue(json("""{"error":"answer_truncated"}""", code = 502))
+
+        val message = (service().send("s1", ItemType.WOODEN_STOOL, history())
+            as ChatResult.Failure).message
+
+        assertTrue(message, message.contains("unfinished"))
+        assertTrue(message, message.contains("retry"))
+        // The reassurance matters: the photos took five minutes and are still on the phone.
+        assertTrue(message, message.contains("saved"))
+        assertTrue("must not tell them to wait", !message.contains("busy"))
+    }
+
+    @Test
+    fun `an ordinary 502 still reads as busy`() = runTest {
+        server.enqueue(json("""{"error":"upstream_unavailable"}""", code = 502))
+
+        val message = (service().send("s1", ItemType.WOODEN_STOOL, history())
+            as ChatResult.Failure).message
+
+        assertTrue(message, message.contains("busy"))
+        assertTrue("must not claim it was cut off", !message.contains("unfinished"))
+    }
+
+    @Test
     fun `statuses map to something a person can act on`() = runTest {
         val cases = mapOf(
             429 to ChatErrorKind.RATE_LIMIT,
