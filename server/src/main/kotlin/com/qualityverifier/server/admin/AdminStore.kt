@@ -4,6 +4,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.sql.Connection
 import java.time.Duration
+import com.qualityverifier.domain.QualityRecord
 import java.time.Instant
 import java.util.UUID
 import javax.sql.DataSource
@@ -191,6 +192,18 @@ interface AdminStore {
         /** True to show only evaluators' assessments, which is how staff runs are excluded. */
         testersOnly: Boolean = false,
     ): Page<AdminSessionRow>
+    /**
+     * The pieces behind each account's two quality rates, oldest first.
+     *
+     * One call for a whole page of users rather than one per row: the portal shows both
+     * rates in the users table, and a query per row is the kind of thing that is fine for
+     * three people and embarrassing at thirty.
+     *
+     * Accounts with no evaluated pieces are simply absent from the map, which the caller
+     * renders as "nothing assessed yet" rather than as a zero.
+     */
+    suspend fun qualityRecords(userIds: List<String>): Map<String, List<QualityRecord.Piece>>
+
     suspend fun sessionHeader(sessionId: String): AdminSessionRow?
     suspend fun conversation(sessionId: String): List<AdminMessageRow>
     suspend fun blobExists(sha: String): Boolean
@@ -687,6 +700,61 @@ class PostgresAdminStore(private val dataSource: DataSource) : AdminStore {
                     hasTesterFeedback = rows.getBoolean(12),
                 )
                 Page(out.take(limit), hasMore = out.size > limit)
+            }
+        }
+    }
+
+    override suspend fun qualityRecords(
+        userIds: List<String>,
+    ): Map<String, List<QualityRecord.Piece>> {
+        if (userIds.isEmpty()) return emptyMap()
+        return query { connection ->
+            val placeholders = userIds.joinToString(",") { "?" }
+            // Ordered by piece then assessment, because both rates depend on sequence:
+            // "the first time" is the earliest verdict, and a repair is a later one.
+            connection.prepareStatement(
+                """
+                select p.user_id::text, p.id::text, s.verdict_defect_count
+                from pieces p
+                join sessions s on s.piece_id = p.id
+                where p.user_id in ($placeholders)
+                order by p.user_id, p.created_at, s.created_at
+                """.trimIndent()
+            ).use { statement ->
+                userIds.forEachIndexed { index, id -> statement.setString(index + 1, id) }
+                statement.executeQuery().use { rows ->
+                    // Accumulated in query order, so each user's list is oldest-first and
+                    // each piece's counts are in assessment order — which is what
+                    // QualityRecord's windowing assumes.
+                    val byUser = linkedMapOf<String, MutableList<QualityRecord.Piece>>()
+                    var currentPiece: String? = null
+                    var counts = mutableListOf<Int?>()
+
+                    fun flush(user: String) {
+                        val piece = currentPiece ?: return
+                        byUser.getOrPut(user) { mutableListOf() } +=
+                            QualityRecord.Piece(piece, counts.toList())
+                    }
+
+                    var currentUser: String? = null
+                    while (rows.next()) {
+                        val user = rows.getString(1)
+                        val piece = rows.getString(2)
+                        // getInt returns 0 for SQL NULL, and 0 means "a verdict that
+                        // found nothing" — the one value that must not be invented.
+                        val count = rows.getInt(3).takeUnless { rows.wasNull() }
+
+                        if (piece != currentPiece) {
+                            currentUser?.let { flush(it) }
+                            currentPiece = piece
+                            counts = mutableListOf()
+                        }
+                        currentUser = user
+                        counts += count
+                    }
+                    currentUser?.let { flush(it) }
+                    byUser
+                }
             }
         }
     }

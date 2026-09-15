@@ -456,7 +456,7 @@ class SyncRouteTest {
         override suspend fun history(sessionId: String, blobPath: (String) -> String) = emptyList<com.qualityverifier.domain.ChatMessage>()
         override suspend fun appendAssistantTurn(
             sessionId: String, text: String, preview: String,
-            verdictLevelId: String?, verdictLanguage: String?,
+            verdictLevelId: String?, verdictLanguage: String?, defectCount: Int?,
         ) = "a1"
 
         override suspend fun recordUsage(

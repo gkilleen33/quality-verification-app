@@ -287,7 +287,11 @@ fun Route.adminRoutes(
             if (search != null) {
                 store.audit(session.adminId, session.email, "search-users", detail = search, ip = call.clientIp())
             }
-            call.respondHtml { usersPage(session, page, offset, PAGE_SIZE, search) }
+            // One query for the whole page's accounts, not one per row.
+            val quality = store.qualityRecords(page.items.map { it.id })
+            call.respondHtml {
+                usersPage(session, page, offset, PAGE_SIZE, search, quality = quality)
+            }
         }
 
         get("/assessments") {
@@ -710,7 +714,10 @@ private suspend fun RoutingContext.respondUsers(
     status: HttpStatusCode = HttpStatusCode.OK,
 ) {
     val page = store.users(PAGE_SIZE, 0, null)
-    call.respondHtml(status) { usersPage(session, page, 0, PAGE_SIZE, null, notice) }
+    val quality = store.qualityRecords(page.items.map { it.id })
+    call.respondHtml(status) {
+        usersPage(session, page, 0, PAGE_SIZE, null, notice, quality)
+    }
 }
 
 private suspend fun RoutingContext.requireAdmin(): AdminSession? {

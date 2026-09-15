@@ -557,6 +557,9 @@ class ChatRouteTest {
             private set
         var lastVerdictLanguage: String? = null
             private set
+        /** Null and zero are different here, which is the point — see V15. */
+        var lastDefectCount: Int? = null
+            private set
         var lastPreview: String? = null
             private set
 
@@ -586,12 +589,13 @@ class ChatRouteTest {
 
         override suspend fun appendAssistantTurn(
             sessionId: String, text: String, preview: String,
-            verdictLevelId: String?, verdictLanguage: String?,
+            verdictLevelId: String?, verdictLanguage: String?, defectCount: Int?,
         ): String {
             assistantTurns++
             lastPreview = preview
             lastVerdictLevel = verdictLevelId
             lastVerdictLanguage = verdictLanguage
+            lastDefectCount = defectCount
             return "assistant-1"
         }
 
