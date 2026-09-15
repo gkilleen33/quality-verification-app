@@ -106,3 +106,38 @@ it beats English — that reasoning does not hold for a retention notice, where 
 mistranslation misstates what we do with somebody's photographs. These four strings should
 go to the same native speaker who reviews `ReportLabels`, and should ship in English until
 then rather than in my Swahili.
+
+## 5. Fundi Bora: "deleted" will mean hidden, not gone
+
+Recorded here because it is a promise, and because the promise the app currently makes is
+not this one.
+
+The decision for Fundi Bora is that deleting an account **hides a producer's record from
+public view and retains it**. That is a reasonable position — a certification that
+evaporates is worth little to the buyer who relied on it, and the research needs the
+series — but it is not what section 2 above says, and it is not what `anonymise_user`
+does. That function clears identifying columns; this is about publication, which is a
+different axis and currently has no implementation because nothing in the project is
+public yet.
+
+Two consequences, in the order they will bite:
+
+**The wording has to change before a fundi is asked to agree to it.** Today's copy says we
+remove what we hold about somebody. Hidden-but-retained is not that, and discovering the
+difference after the fact is exactly the failure this document exists to prevent. Draft,
+for review:
+
+> **Delete my account?**
+>
+> Your workshop, your skill file and your certification stop being shown to anyone. We
+> keep the record itself, because the assessments are what the research is made of and
+> because a buyer who saw your certificate should not find it has vanished. Your name and
+> phone number are removed.
+
+**Badges need a visibility flag from their first day.** Not added later. A published thing
+with no way to unpublish it is how the sentence above becomes untrue between one release
+and the next. See `docs/fundi-bora.md`.
+
+The Swahili for the above is not drafted, for the reason in section 4: this is a consent
+notice about what happens to somebody's record, and an unreviewed translation of it
+misstates a promise rather than merely reading awkwardly.
