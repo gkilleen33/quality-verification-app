@@ -104,6 +104,14 @@ interface ChatStore {
         preview: String,
         verdictLevelId: String?,
         verdictLanguage: String?,
+        /**
+         * How many defects the verdict listed, or null when there is no verdict.
+         *
+         * Null and zero mean different things and the difference is load-bearing: a
+         * truncated reply produces no verdict at all, and counting those as defect-free
+         * would invert the rate they feed. See V15.
+         */
+        defectCount: Int?,
     ): String
 
     suspend fun recordUsage(
@@ -408,6 +416,7 @@ class PostgresChatStore(private val dataSource: DataSource) : ChatStore {
         preview: String,
         verdictLevelId: String?,
         verdictLanguage: String?,
+        defectCount: Int?,
     ): String = tx { connection ->
         val id = connection.prepareStatement(
             """
@@ -425,11 +434,20 @@ class PostgresChatStore(private val dataSource: DataSource) : ChatStore {
         touch(connection, sessionId, preview)
         if (verdictLevelId != null) {
             connection.prepareStatement(
-                "update sessions set verdict_level_id = ?, verdict_language = ? where id = ?::uuid"
+                "update sessions set verdict_level_id = ?, verdict_language = ?, " +
+                    "verdict_defect_count = ? where id = ?::uuid"
             ).use { statement ->
                 statement.setString(1, verdictLevelId)
                 statement.setString(2, verdictLanguage)
-                statement.setString(3, sessionId)
+                // Typed setNull, not zero. Null means no verdict was recorded; zero means
+                // a verdict found nothing wrong. The two rates a maker is judged on turn
+                // on that distinction — see V15.
+                if (defectCount != null) {
+                    statement.setInt(3, defectCount)
+                } else {
+                    statement.setNull(3, java.sql.Types.INTEGER)
+                }
+                statement.setString(4, sessionId)
                 statement.executeUpdate()
             }
         }

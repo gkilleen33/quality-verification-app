@@ -1,5 +1,6 @@
 package com.qualityverifier.server
 
+import com.qualityverifier.domain.QualityRecord
 import com.qualityverifier.server.admin.AdminCredentials
 import com.qualityverifier.server.admin.AdminMessageRow
 import com.qualityverifier.server.admin.AdminRow
@@ -213,6 +214,76 @@ class AdminRouteTest {
 
         assertFalse("a script tag must not survive", body.contains("<script>alert"))
         assertTrue("it should be visible as text", body.contains("&lt;script&gt;"))
+    }
+
+    // ------------------------------------------------- the two quality rates
+
+    private fun piece(vararg counts: Int?) =
+        QualityRecord.Piece("p${counts.hashCode()}", counts.toList())
+
+    @Test
+    fun `both rates are shown as sentences with their denominators`() = testApplication {
+        val store = FakeAdminStore()
+        // Ten pieces: seven clean first time, three flagged of which two were repaired.
+        store.quality = mapOf(
+            CUSTOMER_ID to (1..7).map { piece(0) } + listOf(
+                piece(2, 0), piece(1, 0), piece(3, 1),
+            ),
+        )
+        val app = withAdmin(store)
+        app.signIn()
+
+        val body = app.get("/admin/users").bodyAsText()
+
+        assertTrue(body, body.contains("7 of the last 10 pieces came back with no defects the first time."))
+        // Three flagged, not ten: the two windows are independent, so the repair
+        // denominator counts only the pieces that had something to repair.
+        assertTrue(body, body.contains("Of the 3 pieces with a defect flagged, 2 were confirmed repaired."))
+    }
+
+    @Test
+    fun `under ten pieces the sentence says how many there really were`() = testApplication {
+        // "3 of 10" for a maker with four pieces would read as seven failures that never
+        // happened.
+        val store = FakeAdminStore()
+        store.quality = mapOf(
+            CUSTOMER_ID to listOf(piece(0), piece(0), piece(0), piece(2, 0)),
+        )
+        val app = withAdmin(store)
+        app.signIn()
+
+        val body = app.get("/admin/users").bodyAsText()
+
+        assertTrue(body, body.contains("3 of 4 pieces came back with no defects the first time."))
+        // Singular, because one flagged piece is not "1 pieces".
+        assertTrue(body, body.contains("Of the 1 piece with a defect flagged, 1 was confirmed repaired."))
+    }
+
+    @Test
+    fun `an account with nothing assessed is not given a zero`() = testApplication {
+        // Zero of zero is not a score, and rendering it as one would say something false
+        // about somebody who has simply not started.
+        val app = withAdmin(FakeAdminStore())
+        app.signIn()
+
+        val body = app.get("/admin/users").bodyAsText()
+
+        assertTrue(body, body.contains("Nothing assessed yet"))
+        assertFalse(body.contains("0 of 0"))
+    }
+
+    @Test
+    fun `a flawless maker has no repair rate rather than a bad one`() = testApplication {
+        val store = FakeAdminStore()
+        store.quality = mapOf(CUSTOMER_ID to listOf(piece(0), piece(0)))
+        val app = withAdmin(store)
+        app.signIn()
+
+        val body = app.get("/admin/users").bodyAsText()
+
+        assertTrue(body, body.contains("2 of 2 pieces came back with no defects the first time."))
+        // Never "0 of 0 repaired": nothing was flagged, so there was nothing to repair.
+        assertTrue(body, body.contains("No defects flagged yet."))
     }
 
     @Test
@@ -1060,6 +1131,12 @@ class AdminRouteTest {
         private val accuracyM: Double? = null,
         val critique: TesterFeedback? = null,
     ) : AdminStore {
+        /** Set by a test that cares; empty means every account reads "nothing assessed yet". */
+        var quality: Map<String, List<QualityRecord.Piece>> = emptyMap()
+
+        override suspend fun qualityRecords(userIds: List<String>) =
+            quality.filterKeys { it in userIds }
+
         val audits = mutableListOf<AuditRow>()
         var failures = 0
             private set

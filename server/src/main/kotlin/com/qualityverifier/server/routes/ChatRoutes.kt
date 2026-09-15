@@ -193,6 +193,10 @@ fun Route.chatRoutes(
                             ?: markdownToPlainText(parsed.prose.ifBlank { result.text }),
                         verdictLevelId = parsed.verdict?.level?.id,
                         verdictLanguage = parsed.verdict?.language,
+                        // Already parsed, and until now thrown away. Null when there is
+                        // no verdict, which is not the same as a verdict that found
+                        // nothing wrong — see V15.
+                        defectCount = parsed.verdict?.defects?.size,
                     )
                     store.recordUsage(
                         userId, request.sessionId, result.model, result.usage,

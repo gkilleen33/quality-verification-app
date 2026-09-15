@@ -153,6 +153,11 @@ val API_ASSESSMENT = ApiAssessment(
 class RecordingAudit : com.qualityverifier.server.admin.AdminStore {
     val audits = mutableListOf<com.qualityverifier.server.admin.AuditRow>()
 
+    override suspend fun qualityRecords(
+        userIds: List<String>,
+    ): Map<String, List<com.qualityverifier.domain.QualityRecord.Piece>> =
+        error("the data API never reads a maker's quality record")
+
     override suspend fun audit(
         adminId: String?,
         adminEmail: String,

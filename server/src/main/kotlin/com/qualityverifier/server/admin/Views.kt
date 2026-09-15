@@ -11,6 +11,7 @@ import kotlinx.html.button
 import kotlinx.html.code
 import kotlinx.html.div
 import kotlinx.html.form
+import com.qualityverifier.domain.QualityRecord
 import com.qualityverifier.server.api.ApiKeyRow
 import com.qualityverifier.server.db.TesterFeedback
 import kotlinx.html.dl
@@ -155,6 +156,9 @@ private const val CSS = """
   .md code { background:#f2ece3; border-radius:3px; padding:1px 4px;
              font-family:ui-monospace,Menlo,monospace; font-size:.9em; }
   .mdlink { text-decoration:underline dotted; }
+  /* Two sentences per cell, so they need room to wrap without stretching the table. */
+  .qrec { max-width:320px; font-size:13px; line-height:1.45; }
+  .qrec div + div { margin-top:4px; }
   .raw { margin-top:12px; }
   .raw summary { font-size:12px; color:var(--muted); cursor:pointer; }
   .raw .text { margin-top:8px; padding:10px 12px; background:#f7f2ea;
@@ -383,6 +387,8 @@ fun HTML.usersPage(
     limit: Int,
     search: String?,
     notice: String? = null,
+    /** The pieces behind each account's two rates. Absent means nothing assessed yet. */
+    quality: Map<String, List<QualityRecord.Piece>> = emptyMap(),
 ) =
     page("Users", session, "users") {
         subtitle("Everyone with an account, newest first.")
@@ -397,7 +403,8 @@ fun HTML.usersPage(
             thead {
                 tr {
                     th { +"Phone" }; th { +"Name" }; th { +"Type" }; th { +"Business" }
-                    th { +"Assessments" }; th { +"Joined" }; th { +"Evaluator" }
+                    th { +"Assessments" }; th { +"Quality record" }
+                    th { +"Joined" }; th { +"Evaluator" }
                 }
             }
             tbody {
@@ -415,6 +422,7 @@ fun HTML.usersPage(
                                 a(href = "/admin/assessments?user=${user.id}") { +user.assessments.toString() }
                             } else +"0"
                         }
+                        td("qrec") { qualityRecord(quality[user.id].orEmpty()) }
                         td { +user.createdAt.readable() }
                         td {
                             if (user.deleted) {
@@ -571,6 +579,61 @@ fun HTML.conversationPage(
             a(href = "/admin/export/assessment/${header.id}?photos=true") {
                 +"This conversation as JSON, photos included"
             }
+        }
+    }
+}
+
+/**
+ * The two sentences a maker's record is judged on.
+ *
+ * Two rates rather than one score, because they answer different questions and a shop can
+ * be strong at one and weak at the other: whether it avoids mistakes, and what happens
+ * when it makes one. A shop that slips sometimes but reliably puts it right is a different
+ * proposition from one that does not, and an average would hide that.
+ *
+ * The denominator is stated rather than assumed. "3 of 10" for a maker with four pieces
+ * would read as seven failures that never happened, so under ten the sentence says how
+ * many there actually were.
+ *
+ * English only, and formatted here rather than in ReportLabels, because this is the admin
+ * portal and admins read English. The producer app will need both languages and should
+ * take these strings into the label sets when it does — see docs/fundi-bora.md.
+ */
+private fun FlowContent.qualityRecord(pieces: List<QualityRecord.Piece>) {
+    val clean = QualityRecord.firstTimeClean(pieces)
+    val repairs = QualityRecord.repairsConfirmed(pieces)
+
+    if (!clean.hasData) {
+        // Not "0 of 0", which would read as a judgement on somebody who has not started.
+        span("muted") { +"Nothing assessed yet" }
+        return
+    }
+
+    div {
+        val scope = if (clean.outOf >= QualityRecord.WINDOW) {
+            "the last ${QualityRecord.WINDOW} pieces"
+        } else {
+            "${clean.outOf} ${if (clean.outOf == 1) "piece" else "pieces"}"
+        }
+        +"${clean.count} of $scope came back with no defects the first time."
+    }
+    div {
+        if (!repairs.hasData) {
+            // A maker with nothing flagged has no repair rate, and saying "0 of 0 repaired"
+            // about a flawless run would be actively wrong.
+            span("muted") { +"No defects flagged yet." }
+        } else {
+            val flagged = if (repairs.outOf >= QualityRecord.WINDOW) {
+                "the last ${QualityRecord.WINDOW} pieces"
+            } else {
+                "the ${repairs.outOf} ${if (repairs.outOf == 1) "piece" else "pieces"}"
+            }
+            // Built first, then emitted: kotlinx.html's unaryPlus takes one string, and
+            // concatenating across it does not parse.
+            val verb = if (repairs.count == 1) "was" else "were"
+            val sentence =
+                "Of $flagged with a defect flagged, ${repairs.count} $verb confirmed repaired."
+            +sentence
         }
     }
 }
