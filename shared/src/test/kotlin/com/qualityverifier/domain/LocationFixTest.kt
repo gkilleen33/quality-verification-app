@@ -14,13 +14,13 @@ import org.junit.Test
 class LocationFixTest {
 
     private fun fix(
-        lat: Double = 0.3476,
-        lon: Double = 32.5825,
+        lat: Double = -1.2921,
+        lon: Double = 36.8219,
         accuracy: Double = 12.0,
     ) = LocationFix(lat, lon, accuracy, capturedAt = 1_756_000_000_000L)
 
     @Test
-    fun `a normal Kampala fix is usable`() {
+    fun `a normal Nairobi fix is usable`() {
         assertTrue(fix().isUsable)
     }
 

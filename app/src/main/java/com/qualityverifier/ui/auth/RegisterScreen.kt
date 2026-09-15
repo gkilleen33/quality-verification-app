@@ -71,7 +71,7 @@ fun RegisterScreen(onRegistered: () -> Unit, onSignIn: () -> Unit) {
 
     var invite by remember { mutableStateOf("") }
     var name by remember { mutableStateOf("") }
-    var phone by remember { mutableStateOf("+256") }
+    var phone by remember { mutableStateOf("+254") }
     var password by remember { mutableStateOf("") }
     var isBusiness by remember { mutableStateOf(false) }
     var businessName by remember { mutableStateOf("") }

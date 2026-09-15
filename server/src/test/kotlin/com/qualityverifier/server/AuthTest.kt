@@ -72,7 +72,7 @@ class AuthTest {
             base.copy(latitude = 95.0, longitude = 0.0, accuracyMetres = 5.0).validate(),
         )
         // 5km is a district, not a location. Storing it would let "workshops near me"
-        // place a shop on the wrong side of Kampala.
+        // place a shop on the wrong side of Nairobi.
         assertEquals(
             "accuracy_m is too coarse to store",
             base.copy(latitude = 0.3, longitude = 32.6, accuracyMetres = 9000.0).validate(),

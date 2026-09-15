@@ -61,7 +61,7 @@ import java.time.format.DateTimeFormatter
  * Postgres, and for three people, anything more is cost without benefit.
  */
 private val TIMESTAMP: DateTimeFormatter =
-    DateTimeFormatter.ofPattern("d MMM yyyy HH:mm").withZone(ZoneId.of("Africa/Kampala"))
+    DateTimeFormatter.ofPattern("d MMM yyyy HH:mm").withZone(ZoneId.of("Africa/Nairobi"))
 
 /** East African time throughout: it is when the assessments actually happened. */
 fun Instant.readable(): String = TIMESTAMP.format(this)
@@ -527,7 +527,7 @@ fun HTML.conversationPage(
             +line
             +" "
             // OpenStreetMap rather than Google: no key, no tracking of which admin looked
-            // at which workshop, and it renders the informal roads around Kampala better
+            // at which workshop, and it renders the informal roads around Nairobi better
             // than the alternatives do.
             a(
                 href = "https://www.openstreetmap.org/?mlat=${header.latitude}" +

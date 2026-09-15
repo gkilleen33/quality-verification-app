@@ -89,7 +89,7 @@ fun RegisterRequest.validate(): String? = when {
     longitude != null && longitude !in -180.0..180.0 -> "longitude out of range"
     accuracyMetres != null && accuracyMetres <= 0 -> "accuracy_m must be positive"
     // 5km is not a location, it is a district. Storing it would let a later "workshops
-    // near me" put a shop on the wrong side of Kampala.
+    // near me" put a shop on the wrong side of Nairobi.
     accuracyMetres != null && accuracyMetres > 5000 -> "accuracy_m is too coarse to store"
     else -> null
 }

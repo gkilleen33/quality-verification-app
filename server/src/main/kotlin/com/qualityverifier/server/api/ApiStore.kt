@@ -66,7 +66,7 @@ class PostgresApiStore(private val dataSource: DataSource) : ApiStore {
                     name = rows.getString(3),
                     accountType = rows.getString(4),
                     businessName = rows.getString(5),
-                    // Y then X: ST_Y is the latitude. Reversed, every workshop in Kampala
+                    // Y then X: ST_Y is the latitude. Reversed, every workshop in Nairobi
                     // lands in the Indian Ocean and nothing errors.
                     latitude = rows.nullableDouble(6),
                     longitude = rows.nullableDouble(7),

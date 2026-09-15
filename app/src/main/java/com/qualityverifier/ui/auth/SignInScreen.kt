@@ -50,7 +50,7 @@ fun SignInScreen(onSignedIn: () -> Unit, onRegister: () -> Unit) {
     val error by viewModel.error.collectAsState()
     val signedIn by viewModel.signedIn.collectAsState()
 
-    var phone by remember { mutableStateOf("+256") }
+    var phone by remember { mutableStateOf("+254") }
     var password by remember { mutableStateOf("") }
 
     LaunchedEffect(signedIn) { if (signedIn) onSignedIn() }
@@ -75,7 +75,7 @@ fun SignInScreen(onSignedIn: () -> Unit, onRegister: () -> Unit) {
             value = phone,
             onValueChange = { phone = it.filter { c -> c.isDigit() || c == '+' } },
             label = { Text(labels.phoneLabel) },
-            // Prefilled with +256 and digits-only afterwards, because the server requires
+            // Prefilled with +254 and digits-only afterwards, because the server requires
             // international format and rejecting "0700..." after the fact teaches nothing.
             supportingText = { Text(labels.phoneHint) },
             keyboardOptions = KeyboardOptions(
