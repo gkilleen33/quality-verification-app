@@ -2,6 +2,7 @@ package com.qualityverifier.server
 
 import com.qualityverifier.data.prompts.PromptRepository
 import com.qualityverifier.domain.Attachment
+import com.qualityverifier.domain.Audience
 import com.qualityverifier.domain.ChatMessage
 import com.qualityverifier.domain.ItemType
 import com.qualityverifier.domain.Role
@@ -412,6 +413,23 @@ class ChatRouteTest {
     }
 
     @Test
+    fun `the chat route still asks for the buyer master`() = testApplication {
+        // Nothing sets a session's audience yet, and until the producer app exists the
+        // only correct answer is buyer. Pinned because the default is what stops this
+        // route silently handing a customer the coaching prompt.
+        val prompts = RecordingPrompts()
+        val app = withChat(
+            FakeChatStore(),
+            FakeClaude(ClaudeResult.Success("ok", TokenUsage(), null)),
+            prompts = prompts,
+        )
+
+        app.post("/v1/chat") { auth(); contentType(ContentType.Application.Json); setBody(request()) }
+
+        assertEquals(Audience.BUYER, prompts.askedAudience)
+    }
+
+    @Test
     fun `an unknown item type is refused rather than guessed`() = testApplication {
         val app = withChat(FakeChatStore(), FakeClaude(ClaudeResult.Success("x", TokenUsage(), null)))
 
@@ -504,8 +522,13 @@ class ChatRouteTest {
 
     private class RecordingPrompts : PromptRepository {
         var asked: ItemType? = null
-        override suspend fun systemPromptFor(itemType: ItemType): String {
+        /** Which master the route asked for. Buyer until something sets a session's audience. */
+        var askedAudience: Audience? = null
+            private set
+
+        override suspend fun systemPromptFor(itemType: ItemType, audience: Audience): String {
             asked = itemType
+            askedAudience = audience
             return "PROMPT FOR ${itemType.id}"
         }
         override suspend fun clearCache() = Unit

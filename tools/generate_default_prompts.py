@@ -13,7 +13,11 @@ import sys
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 PROMPTS = ROOT / "prompts"
-OUT = ROOT / "app/src/main/java/com/qualityverifier/data/prompts/DefaultPrompts.kt"
+# shared/, not app/. DefaultPrompts moved here in the Phase 2 refactor and this path was
+# never updated, so the generator pointed at a directory that no longer exists: it would
+# have crashed on the first run, and DefaultPrompts.kt has been edited by hand ever since
+# despite the header saying not to. DefaultPromptsInSyncTest is what kept them aligned.
+OUT = ROOT / "shared/src/main/kotlin/com/qualityverifier/data/prompts/DefaultPrompts.kt"
 
 # Sequences that would break a Kotlin raw string or the enclosing KDoc block.
 FORBIDDEN = {
@@ -35,6 +39,7 @@ def read(path):
 
 
 master = read(PROMPTS / "master.txt")
+fundi_master = read(PROMPTS / "fundi-master.txt")
 
 items = []
 for path in sorted((PROMPTS / "items").glob("*.txt")):
@@ -67,6 +72,19 @@ object DefaultPrompts {{
 {master}
 """.trimIndent()
 
+    /**
+     * The inward-pointing master, for Fundi Bora.
+     *
+     * A second master rather than a branch inside the first. The two have opposite jobs —
+     * one decides whether to buy a piece, the other how to put it right — and one prompt
+     * trying to do both would be longer than either and read as neither. The item
+     * protocols are shared, because what to photograph on a table does not depend on who
+     * is asking.
+     */
+    val FUNDI_MASTER: String = """
+{fundi_master}
+""".trimIndent()
+
     /** Keyed by [ItemType.id]. Items with an empty prompt file are simply absent. */
     private val ITEMS: Map<String, String> = mapOf(
 {entries}
@@ -75,4 +93,7 @@ object DefaultPrompts {{
     fun forItem(itemType: ItemType): String = ITEMS[itemType.id].orEmpty()
 }}
 ''')
-print(f"wrote {OUT.relative_to(ROOT)}: master={len(master)} chars, items={[s for s, _ in items]}")
+print(
+    f"wrote {OUT.relative_to(ROOT)}: master={len(master)} chars, "
+    f"fundi={len(fundi_master)} chars, items={[s for s, _ in items]}"
+)

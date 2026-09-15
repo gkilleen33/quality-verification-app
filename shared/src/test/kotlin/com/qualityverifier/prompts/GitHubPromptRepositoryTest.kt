@@ -4,6 +4,7 @@ import com.qualityverifier.data.prompts.DefaultPrompts
 import com.qualityverifier.data.prompts.GitHubPromptRepository
 import com.qualityverifier.data.prompts.PromptCache
 import com.qualityverifier.data.prompts.assembleSystemPrompt
+import com.qualityverifier.domain.Audience
 import com.qualityverifier.domain.ItemType
 import kotlinx.coroutines.test.runTest
 import okhttp3.OkHttpClient
@@ -11,6 +12,7 @@ import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Rule
@@ -59,6 +61,45 @@ class GitHubPromptRepositoryTest {
         assertEquals("MASTER TEXT\n\nTABLE TEXT", prompt)
         assertEquals("/prompts/master.txt", server.takeRequest().path)
         assertEquals("/prompts/items/wooden-table.txt", server.takeRequest().path)
+    }
+
+    @Test
+    fun `the audience picks the master, and shares the item protocol`() = runTest {
+        // The item file is fetched by the same path for both audiences on purpose: what
+        // to photograph on a table, and which hands-on tests apply to it, does not depend
+        // on whether a buyer or its maker is holding the phone. Only the master differs.
+        server.enqueue(MockResponse().setBody("FUNDI MASTER"))
+        server.enqueue(MockResponse().setBody("TABLE TEXT"))
+
+        val prompt = repository().systemPromptFor(ItemType.WOODEN_TABLE, Audience.FUNDI)
+
+        assertEquals("FUNDI MASTER\n\nTABLE TEXT", prompt)
+        assertEquals("/prompts/fundi-master.txt", server.takeRequest().path)
+        assertEquals("/prompts/items/wooden-table.txt", server.takeRequest().path)
+    }
+
+    @Test
+    fun `the buyer is the default, so existing callers are unchanged`() = runTest {
+        server.enqueue(MockResponse().setBody("MASTER TEXT"))
+        server.enqueue(MockResponse().setBody("TABLE TEXT"))
+
+        repository().systemPromptFor(ItemType.WOODEN_TABLE)
+
+        assertEquals("/prompts/master.txt", server.takeRequest().path)
+    }
+
+    @Test
+    fun `each audience falls back to its own compiled-in master`() = runTest {
+        // A fresh server with no cache and GitHub unreachable must not hand a fundi the
+        // buyer-facing prompt: it would coach nobody and ask a maker whether to buy their
+        // own work.
+        server.enqueue(MockResponse().setResponseCode(500))
+        server.enqueue(MockResponse().setBody(""))
+
+        val prompt = repository().systemPromptFor(ItemType.OTHER, Audience.FUNDI)
+
+        assertTrue(prompt, prompt.contains("You are Fundi Bora"))
+        assertFalse("the buyer-facing master leaked to a fundi", prompt.contains("You are Kagua"))
     }
 
     @Test

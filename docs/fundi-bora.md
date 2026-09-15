@@ -22,7 +22,7 @@ that literally.
 ## Module shape
 
 ```
-shared/     grows — Fundi.kt (the closed vocabularies), fb-* block parsing
+shared/     Fundi.kt (vocabularies), Diagnosis/FixPlan, fb-* parsing, FUNDI_MASTER
 capture/    NOT YET — see "deferred" below
 app/        Kagua, buyer-facing
 fundi/      NOT YET — Fundi Bora, producer-facing
@@ -46,8 +46,16 @@ Not a fork. One parameter, threaded through:
 
 - `sessions.audience` and `usage_events.audience` (`V14`). Both default to `buyer`; every
   row that existed before Fundi Bora was one.
-- `PromptRepository.systemPromptFor(itemType)` → `(itemType, audience)`, with a second
-  master in `prompts/` pointed inward.
+- `PromptRepository.systemPromptFor(itemType, audience)` — **done**. `prompts/fundi-master.txt`
+  is the inward-pointing master; `Audience.BUYER` is the default so existing callers are
+  unchanged, and each audience caches its own master under its own path. The item
+  protocols are shared, because what to photograph on a table does not depend on who is
+  asking.
+- **Not yet wired**: nothing sets `sessions.audience`, and the chat route still asks for
+  the buyer master (pinned by a test). That plumbing needs the producer client to exist,
+  and a decision about whether audience is claimed by the request or derived from whether
+  the account has a `fundi_workshops` row. Derive it — a client should not be able to pick
+  its own prompt.
 - The daily limit becomes per-audience. A fundi assessing their own work all morning is a
   completely different shape of use from a buyer checking one table.
 
@@ -82,11 +90,20 @@ the aggregation is a rubric decision that will change, and a stored score freeze
 decision: a subject who can overwrite a measurement turns the series into a mixture of what
 was measured and what they preferred to record, with nothing able to tell which is which.
 
-**Output blocks.** `qv-plan` is reused as-is. New: `fb-diagnosis` (the mockup is explicit —
-"Not a grade — a cause", with what-happened / manufacturing-cause / root-habit, plus a
-clarifying question that changes the answer) and `fb-fixplan` (fix now / prevent / drill,
-each with a time and a cost). `parseAssistantContent` leaves unrecognised tags in prose, so
-adding them is additive and older clients degrade rather than break.
+**Output blocks — done.** `qv-plan` and `qv-options` are reused as-is, and so is
+`qv-verdict`: the re-assessment issues one, which is what fills
+`sessions.verdict_defect_count` and therefore the two rates. A re-assessment that stopped
+emitting a verdict would leave every repair unrecorded with nothing failing, so the prompt
+says why and a test pins it.
+
+New: `fb-diagnosis` ("Not a grade — a cause": what-happened / manufacturing-cause /
+root-habit, plus one clarifying question) and `fb-fixplan` (fix now / prevent / drill, each
+with a time and a cost, plus an optional tool with a price *range*).
+`parseAssistantContent` leaves unrecognised tags in prose, so adding them was additive and
+older clients degrade rather than break — asserted against a tag nothing implements yet.
+
+Only the worst finding carries a cause; the rest are recorded so the piece's defect count
+is right. A fundi handed six habits to change changes none of them.
 
 ## Deletion, and the wording it needs
 
@@ -101,6 +118,17 @@ observations cascade from `sessions`, which V11 keeps on purpose.
 
 **Outstanding:** the app's deletion wording promises to remove what we hold about somebody.
 Hidden-but-retained is not that. See `retention-and-profile-wording.md` §5.
+
+## One deliberate departure from the mockup
+
+The mockup quotes a price uplift — "KSh 3,800–4,000 work now, not 3,000 work". The prompt
+declines to. Costs a maker can check are allowed (materials, tool prices as a range, rough
+build times); what the finished piece is *worth* is not, for the same reason Kagua's master
+forbids naming figures: we have no price data for their market, and a number invented here
+becomes a number they quote a customer. It says that better work commands a better price,
+which is true, without saying what the price is.
+
+Worth revisiting — it is a product decision, not a technical one, and the mockup disagrees.
 
 ## Open before the first screen
 

@@ -411,8 +411,10 @@ class SyncRouteTest {
     }
 
     private object UnusedPrompts : com.qualityverifier.data.prompts.PromptRepository {
-        override suspend fun systemPromptFor(itemType: com.qualityverifier.domain.ItemType) =
-            error("no sync route should need a prompt")
+        override suspend fun systemPromptFor(
+            itemType: com.qualityverifier.domain.ItemType,
+            audience: com.qualityverifier.domain.Audience,
+        ) = error("no sync route should need a prompt")
         override suspend fun clearCache() = Unit
     }
 
