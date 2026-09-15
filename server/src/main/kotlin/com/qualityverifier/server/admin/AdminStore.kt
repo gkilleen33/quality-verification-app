@@ -225,8 +225,8 @@ class PostgresAdminStore(private val dataSource: DataSource) : AdminStore {
               (select count(*)::int from users where deleted_at is null),
               (select count(*)::int from sessions),
               (select count(*)::int from sessions
-                where (created_at at time zone 'Africa/Kampala')::date
-                    = (now() at time zone 'Africa/Kampala')::date),
+                where (created_at at time zone 'Africa/Nairobi')::date
+                    = (now() at time zone 'Africa/Nairobi')::date),
               (select count(distinct sha256)::int from attachments),
               (select count(*)::int from invite_codes i
                 where i.revoked_at is null

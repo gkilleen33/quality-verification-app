@@ -12,7 +12,7 @@ import java.security.MessageDigest
  * Photos are stored under their SHA-256 rather than a filename, which is what lets the
  * phone stop re-uploading. The app re-sends the whole conversation on every turn, so
  * without this the same nine photos would arrive three or four times per assessment —
- * over a Kampala mobile connection that is the most expensive thing the app does.
+ * over a Nairobi mobile connection that is the most expensive thing the app does.
  *
  * Two levels of fan-out on the first two hex characters: 256 directories, so no single
  * directory holds the whole corpus. ext4 copes either way, but `ls` on a directory with

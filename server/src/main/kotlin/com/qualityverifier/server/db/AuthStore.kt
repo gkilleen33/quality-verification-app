@@ -170,7 +170,7 @@ class PostgresAuthStore(private val dataSource: DataSource) : AuthStore {
                 statement.setString(3, registration.accountType)
                 statement.setString(4, registration.businessName)
                 // Longitude first: ST_MakePoint takes x then y. The wrong way round puts
-                // a Kampala workshop in the Indian Ocean, with no error at all.
+                // a Nairobi workshop in the Indian Ocean, with no error at all.
                 setNullableDouble(statement, 5, registration.longitude.takeIf { hasPoint })
                 setNullableDouble(statement, 6, registration.latitude.takeIf { hasPoint })
                 setNullableDouble(statement, 7, registration.accuracyMetres.takeIf { hasPoint })

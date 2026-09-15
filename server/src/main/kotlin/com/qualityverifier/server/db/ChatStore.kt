@@ -214,16 +214,19 @@ class PostgresChatStore(private val dataSource: DataSource) : ChatStore {
                 """
                 select count(*)::int from sessions
                 where user_id = ?::uuid
-                  and (created_at at time zone 'Africa/Kampala')::date
-                      = (now() at time zone 'Africa/Kampala')::date
+                  and (created_at at time zone 'Africa/Nairobi')::date
+                      = (now() at time zone 'Africa/Nairobi')::date
                 """.trimIndent()
             ).use { statement ->
                 statement.setString(1, userId)
                 statement.executeQuery().use { rows -> if (rows.next()) rows.getInt(1) else 0 }
             }
-            // The customer's own day, not UTC's. Uganda and Kenya are both UTC+3, so one
-            // zone covers everybody; on UTC the allowance would reset at 3am local, which
-            // is defensible but makes "resets at midnight" untrue.
+            // The customer's own day, not UTC's. On UTC the allowance would reset at
+            // 3am local, which is defensible but makes "resets at midnight" untrue.
+            // Nairobi rather than a configured zone because the whole project is in
+            // Kenya; if that ever stops being true this is one of four places to change,
+            // the others being the admin portal's clock, its own day boundary, and the
+            // phone prefix the sign-in form prefills.
             if (startedToday >= limit) return@tx SessionAccess.DailyLimitReached(limit)
         }
 

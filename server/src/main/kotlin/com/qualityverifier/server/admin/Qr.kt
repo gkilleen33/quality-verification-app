@@ -28,7 +28,7 @@ object Qr {
      *
      * A single path rather than a rect per module: an otpauth URI is around 45 modules
      * square, so per-module rects would be a couple of thousand elements of markup for a
-     * page that has to render on a laptop over a Kampala connection.
+     * page that has to render on a laptop over a Nairobi connection.
      */
     data class Svg(val pathData: String, val modules: Int)
 
