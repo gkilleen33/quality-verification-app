@@ -184,10 +184,43 @@ class FundiBlocksTest {
     }
 
     @Test
-    fun `the prose is suppressed once the diagnosis cards can speak`() {
-        // The prompt writes it twice so a parse failure leaves something readable. When
-        // the block parses, showing both says it twice.
-        assertEquals("", parseAssistantContent(diagnosisTurn).displayProse)
+    fun `a diagnosis still leaves prose to show, because nothing draws it yet`() {
+        // The defect this exists to prevent. displayProse used to blank for a diagnosis,
+        // by analogy with the verdict — but ChatScreen draws cards only for a verdict and
+        // falls back to prose for everything else, so the result was a turn with no prose
+        // and no cards: a silent gap where the answer should be.
+        //
+        // Reachable the moment an account gets a fundi_workshops row, which is how anyone
+        // would test the coaching prompt before the producer app exists.
+        val content = parseAssistantContent(diagnosisTurn)
+
+        assertNotNull(content.diagnosis)
+        assertTrue(
+            "a build with no diagnosis renderer must still have something to show",
+            content.displayProse.isNotBlank(),
+        )
+        assertTrue(content.displayProse, content.displayProse.contains("rear left joint"))
+    }
+
+    @Test
+    fun `no parsed block leaves a turn with nothing at all to render`() {
+        // The general shape of the bug above: for every block, a caller that cannot draw
+        // it must still be able to show the reader something. The verdict is the sole
+        // exception, and only because ChatScreen returns early and draws cards for it
+        // before looking at the prose.
+        val prose = "Here is what I found."
+        val bodies = mapOf(
+            "fb-diagnosis" to """{"findings":[{"title":"Gap","what_happened":"A gap."}]}""",
+            "fb-fixplan" to """{"fix_now":{"summary":"Re-glue it.","steps":["Open it."]}}""",
+            "qv-plan" to """{"summary":"Six photos.","photos":[{"title":"Whole piece"}]}""",
+        )
+        bodies.forEach { (tag, body) ->
+            val content = parseAssistantContent("$prose\n\n```$tag\n$body\n```")
+            assertTrue(
+                "$tag leaves nothing to render",
+                content.displayProse.isNotBlank(),
+            )
+        }
     }
 
     // -------------------------------------------------------------- fix plan

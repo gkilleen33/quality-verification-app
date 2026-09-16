@@ -53,10 +53,19 @@ data class AssistantContent(
     val displayProse: String
         get() = when {
             verdict != null -> ""
-            // Same reasoning as the verdict: the cards say all of it, and the prompt
-            // writes the prose only so that a block which will not parse still leaves
-            // the maker something readable.
-            diagnosis != null -> ""
+            // NOT blanked for a diagnosis, deliberately, even though the reasoning above
+            // would seem to apply. Nothing draws diagnosis cards yet: ChatScreen renders
+            // cards for a verdict and falls back to this for everything else, so blanking
+            // here produced a turn with no prose and no cards — a silent gap where the
+            // answer should be. Reachable the moment an account gets a fundi_workshops
+            // row, which is the obvious way to test the coaching prompt before the
+            // producer app exists.
+            //
+            // The renderer is the right place for this decision, and already is one:
+            // ChatScreen returns early on a verdict before ever reading this. When a
+            // screen exists that can draw a diagnosis, it should do the same rather than
+            // this reaching back into a guess about who is looking.
+            //
             // Same reasoning as the plan: the cards are drawn immediately below, so
             // anything past the opening acknowledgement is the plan a second time.
             plan != null || fixPlan != null -> prose.substringBefore("\n\n").trim()
