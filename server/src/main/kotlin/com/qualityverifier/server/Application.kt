@@ -28,7 +28,10 @@ import io.ktor.server.plugins.contentnegotiation.ContentNegotiation
 import io.ktor.server.auth.Authentication
 import io.ktor.server.auth.jwt.JWTPrincipal
 import io.ktor.server.auth.jwt.jwt
+import io.ktor.server.application.ApplicationCall
+import io.ktor.server.plugins.BadRequestException
 import io.ktor.server.plugins.statuspages.StatusPages
+import kotlinx.serialization.SerializationException
 import io.ktor.server.sessions.SessionTransportTransformerMessageAuthentication
 import io.ktor.server.sessions.Sessions
 import io.ktor.server.sessions.cookie
@@ -291,6 +294,27 @@ fun Application.module(
         format { call -> "${call.request.local.method.value} ${call.request.path()} -> ${call.response.status()?.value}" }
     }
     install(StatusPages) {
+        // A body the server could not read is the client's problem, not ours, and it has
+        // to say so. Without this it fell through to the handler below and answered 500,
+        // which told the phone "our server had a problem" — so a request the phone had
+        // malformed came back looking like an outage, logged at error alongside real
+        // ones. Found while testing that a client cannot smuggle an audience field: the
+        // strict JSON refuses the stray key, and the refusal arrived as a 500.
+        //
+        // Ktor wraps a deserialisation failure in BadRequestException; the bare
+        // SerializationException is caught too, because which one surfaces depends on
+        // where the parse happened and the distinction is not worth relying on.
+        val badRequest: suspend (ApplicationCall, Throwable) -> Unit = { call, cause ->
+            // warn, not error: a malformed request is routine and a client bug, and
+            // logging it at error is how the log stops being worth reading.
+            log.warn("Unreadable request on {}: {}", call.request.path(), cause.message)
+            // No detail on the wire. The message can name a field or quote the body,
+            // and request bodies here are photographs of people's homes.
+            call.respond(HttpStatusCode.BadRequest, mapOf("error" to "invalid_request"))
+        }
+        exception<BadRequestException> { call, cause -> badRequest(call, cause) }
+        exception<SerializationException> { call, cause -> badRequest(call, cause) }
+
         exception<Throwable> { call, cause ->
             log.error("Unhandled failure on {}", call.request.path(), cause)
             // The message stays server-side. A stack trace on the wire tells an

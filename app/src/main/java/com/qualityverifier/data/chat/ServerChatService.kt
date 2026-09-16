@@ -277,6 +277,15 @@ class ServerChatService(
      */
     private fun failureFor(status: Int, body: String = ""): ChatResult = when (status) {
         401, 403 -> ChatResult.Failure(ChatErrorKind.AUTH, "Please sign in again.")
+        // The server could not read what this app sent, which means a bug in this app.
+        // Retrying sends exactly the same thing again, so the wording does not promise
+        // that it will help — it asks them to report it, which is the only thing that
+        // actually gets this fixed.
+        400, 422 -> ChatResult.Failure(
+            ChatErrorKind.REQUEST,
+            "The app sent something our server could not read. Please tell us if this " +
+                "keeps happening — retrying is unlikely to help on its own.",
+        )
         404 -> ChatResult.Failure(
             ChatErrorKind.REQUEST,
             "This assessment could not be found on our server.",

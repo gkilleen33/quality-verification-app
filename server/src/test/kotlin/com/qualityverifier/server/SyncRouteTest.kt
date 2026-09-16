@@ -1,5 +1,6 @@
 package com.qualityverifier.server
 
+import com.qualityverifier.domain.Audience
 import com.qualityverifier.server.auth.AccessTokens
 import com.qualityverifier.server.auth.Passwords
 import com.qualityverifier.server.blobs.BlobStore
@@ -428,6 +429,14 @@ class SyncRouteTest {
          */
         private val ownedBlobs: Map<String, Set<String>> = emptyMap(),
     ) : ChatStore {
+        /** Set by a test; the route derives this and never takes it from the request. */
+        var audience: Audience = Audience.BUYER
+        /** What the route resolved and passed to ensureSession. */
+        var storedAudience: Audience? = null
+            private set
+
+        override suspend fun audienceFor(userId: String, sessionId: String) = audience
+
         override suspend fun recordSessionLocation(
             sessionId: String,
             userId: String,
@@ -447,6 +456,7 @@ class SyncRouteTest {
         override suspend fun ensureSession(
             sessionId: String, userId: String, itemTypeId: String,
             previousSessionId: String?, intakeAnswers: String?, promptSha: String?,
+            audience: Audience,
             dailyLimit: Int, testerDailyLimit: Int,
         ) = SessionAccess.Ok(created = true)
 

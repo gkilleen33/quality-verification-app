@@ -116,10 +116,16 @@ fun Route.chatRoutes(
                 return@post
             }
 
+            // Resolved before the prompt, because it chooses which prompt. Derived from
+            // the account's own profile and never from the request: there is no field on
+            // ChatRequest for it, and a client that could name its own audience could ask
+            // for the coaching prompt instead of the buying one.
+            val audience = store.audienceFor(userId, request.sessionId)
+
             // The system prompt is assembled here from the protocols on GitHub, and
             // whatever the client sends is irrelevant — a client that could supply its own
             // would be spending our budget on a prompt of its choosing.
-            val systemPrompt = prompts.systemPromptFor(itemType)
+            val systemPrompt = prompts.systemPromptFor(itemType, audience)
 
             val access = store.ensureSession(
                 sessionId = request.sessionId,
@@ -128,6 +134,7 @@ fun Route.chatRoutes(
                 previousSessionId = request.previousSessionId,
                 intakeAnswers = request.intakeAnswers,
                 promptSha = sha256Of(systemPrompt),
+                audience = audience,
                 dailyLimit = dailyAssessmentLimit,
                 testerDailyLimit = testerDailyAssessmentLimit,
             )
