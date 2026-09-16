@@ -20,6 +20,7 @@ import com.qualityverifier.domain.AssessmentPlan
 import com.qualityverifier.domain.Attachment
 import com.qualityverifier.domain.ChatMessage
 import com.qualityverifier.domain.ItemType
+import com.qualityverifier.domain.PlanRun
 import com.qualityverifier.domain.Role
 import com.qualityverifier.domain.Verdict
 import com.qualityverifier.text.ReportLabels
@@ -64,31 +65,6 @@ sealed interface CaptureTarget {
     data object Opening : CaptureTarget
 
     data class PlanShot(val index: Int) : CaptureTarget
-}
-
-/**
- * A collection run in progress: the plan the assistant issued, and what has been
- * gathered against it so far.
- *
- * [shots] and [answers] are keyed by index into the plan's own lists. Presence in the
- * map means the step has been dealt with; a **null value means it was skipped**, which
- * is a real outcome and gets said out loud in the submitted turn. A heavy wardrobe
- * nobody could tip over must not read as a wardrobe with a clean underside.
- */
-data class PlanRun(
-    val plan: AssessmentPlan,
-    val sourceMessageId: String,
-    val shots: Map<Int, String?> = emptyMap(),
-    val answers: Map<Int, String?> = emptyMap(),
-) {
-    val nextShot: Int? get() = plan.photos.indices.firstOrNull { it !in shots }
-    val nextTest: Int? get() = plan.tests.indices.firstOrNull { it !in answers }
-    val photosDone: Boolean get() = nextShot == null
-    val isComplete: Boolean get() = nextShot == null && nextTest == null
-    val photosTaken: Int get() = plan.photos.indices.count { shots[it] != null }
-
-    /** Paths in plan order, which is the order the assistant expects to see them. */
-    val takenPaths: List<String> get() = plan.photos.indices.mapNotNull { shots[it] }
 }
 
 data class ChatError(val kind: ChatErrorKind, val message: String)
