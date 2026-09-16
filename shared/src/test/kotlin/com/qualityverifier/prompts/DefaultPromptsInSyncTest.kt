@@ -1,6 +1,9 @@
 package com.qualityverifier.prompts
 
 import com.qualityverifier.data.prompts.DefaultPrompts
+import com.qualityverifier.domain.MeasurementUnit
+import com.qualityverifier.domain.SkillDimension
+import com.qualityverifier.domain.ToolKind
 import com.qualityverifier.domain.ItemType
 import com.qualityverifier.domain.TestDiagram
 import org.junit.Assert.assertEquals
@@ -35,6 +38,150 @@ class DefaultPromptsInSyncTest {
             "DefaultPrompts.MASTER is stale - regenerate it",
             onDisk,
             DefaultPrompts.MASTER,
+        )
+    }
+
+    @Test
+    fun `compiled-in fundi master matches its prompt file`() {
+        val onDisk = promptFile("fundi-master.txt").readText().trimEnd('\n')
+        assertEquals(
+            "DefaultPrompts.FUNDI_MASTER is stale - regenerate it",
+            onDisk,
+            DefaultPrompts.FUNDI_MASTER,
+        )
+    }
+
+    @Test
+    fun `the fundi master defines every block the app parses`() {
+        // Renaming a fence tag in the prompt without renaming it in AssistantBlocks
+        // silently stops the cards from ever appearing, with no error anywhere.
+        val fundi = DefaultPrompts.FUNDI_MASTER
+        listOf("qv-options", "qv-plan", "fb-diagnosis", "fb-fixplan", "qv-verdict")
+            .forEach { tag ->
+                assertTrue("$tag is undocumented in the fundi master", fundi.contains(tag))
+            }
+    }
+
+    @Test
+    fun `the re-assessment still issues a verdict, because the rates depend on it`() {
+        // The two rates a maker is judged on are computed from
+        // sessions.verdict_defect_count, which is filled from a qv-verdict block. A
+        // re-assessment that stops emitting one leaves every repair unrecorded and the
+        // maker's own numbers wrong, with nothing failing.
+        val fundi = DefaultPrompts.FUNDI_MASTER
+        assertTrue(
+            "the fundi master no longer asks for a verdict on re-assessment",
+            fundi.contains("issue a qv-verdict block"),
+        )
+        assertTrue(
+            "the reason the verdict matters is no longer stated",
+            fundi.contains("leaves the repair unrecorded"),
+        )
+    }
+
+    @Test
+    fun `the fundi master does not price the finished piece`() {
+        // Costs a maker can check are allowed: what a fix needs in materials, what a tool
+        // costs, roughly how long work takes. What the piece is worth is not — we have no
+        // price data for their market, and a number invented here becomes a number they
+        // quote to a customer. The mockup shows a price uplift; this is the one place the
+        // implementation deliberately declines to follow it.
+        val fundi = DefaultPrompts.FUNDI_MASTER
+        assertTrue(
+            "the ban on pricing the piece is gone",
+            fundi.contains("Do not put a figure on what the finished piece is worth"),
+        )
+        assertTrue(
+            "the prompt no longer says why",
+            fundi.contains("We have no price data"),
+        )
+        // Tool prices are permitted, and only as a range.
+        assertTrue(
+            "tool prices are no longer required to be a range",
+            fundi.contains("Give a price range and never a single figure"),
+        )
+    }
+
+    @Test
+    fun `the diagnosis is a cause and only the worst finding is coached`() {
+        val fundi = DefaultPrompts.FUNDI_MASTER
+        assertTrue(
+            "the prompt no longer distinguishes a cause from a grade",
+            fundi.contains("THE DIAGNOSIS IS A CAUSE, NOT A GRADE"),
+        )
+        assertTrue(
+            "the prompt no longer coaches only the first finding",
+            fundi.contains("coach only the first one"),
+        )
+        assertTrue(
+            "the reason is gone: six things to change means none get changed",
+            fundi.contains("changes none of them"),
+        )
+        assertTrue(
+            "the one-question limit is gone",
+            fundi.contains("One check, and only one"),
+        )
+    }
+
+    @Test
+    fun `the habit is named and the person is not`() {
+        // The one field where an insult would land. A fundi told they are careless stops
+        // using the app, and the coaching is worthless without them.
+        val fundi = DefaultPrompts.FUNDI_MASTER
+        assertTrue(
+            "the ban on judging the person is gone",
+            fundi.contains("never describe a maker as careless"),
+        )
+        assertTrue(
+            "the habit-not-the-person rule is gone",
+            fundi.contains("The habit is the thing you name, never the person"),
+        )
+    }
+
+    @Test
+    fun `the fix works with the tools the maker actually has`() {
+        val fundi = DefaultPrompts.FUNDI_MASTER
+        assertTrue(
+            "tool-awareness is gone from the fix plan",
+            fundi.contains("Work with the tools they told you they have"),
+        )
+        assertTrue(
+            "the borrowed-tool caveat is gone",
+            fundi.contains("available for this piece and possibly not the next"),
+        )
+        assertTrue(
+            "buying a tool may now be the whole of the fix",
+            fundi.contains("Never make buying a tool the whole of the fix"),
+        )
+    }
+
+    @Test
+    fun `every vocabulary the fundi master names is one the schema accepts`() {
+        // The prompt is data and changes without a release. A value it invents reaches a
+        // CHECK constraint and fails a turn the maker spent twenty minutes photographing.
+        val fundi = DefaultPrompts.FUNDI_MASTER
+        SkillDimension.entries.forEach {
+            assertTrue("dimension ${it.id} is not offered to the prompt", fundi.contains(it.id))
+        }
+        MeasurementUnit.entries.forEach {
+            assertTrue("unit ${it.id} is not offered to the prompt", fundi.contains(it.id))
+        }
+        ToolKind.entries.forEach {
+            assertTrue("tool ${it.id} is not offered to the prompt", fundi.contains(it.id))
+        }
+        listOf("serious", "moderate", "minor", "cosmetic").forEach {
+            assertTrue("severity $it is undocumented", fundi.contains(it))
+        }
+    }
+
+    @Test
+    fun `the fundi master says out loud that its coaching content is a draft`() {
+        // It is machinery written by somebody who has never cut a mortise. The blocks and
+        // the discipline are settled; the carpentry and the prices are not, and anybody
+        // reading this file should know that before a fundi does.
+        assertTrue(
+            "the draft warning is gone",
+            DefaultPrompts.FUNDI_MASTER.contains("DRAFT, v0.1"),
         )
     }
 

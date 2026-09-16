@@ -1,26 +1,41 @@
 package com.qualityverifier.text
 
 import com.qualityverifier.domain.AssessmentPlan
+import com.qualityverifier.domain.Diagnosis
+import com.qualityverifier.domain.FixPlan
 import com.qualityverifier.domain.Verdict
 import kotlinx.serialization.json.Json
 
 /**
  * An assistant turn split into the parts the UI renders differently.
  *
- * The assistant sends one string. Three fenced blocks inside it are meant for the app
- * rather than for the reader: `qv-options` becomes tappable reply chips, `qv-plan`
- * becomes a run of capture and test screens, and `qv-verdict` becomes the verdict cards.
- * All three are stripped out of [prose].
+ * The assistant sends one string. Fenced blocks inside it are meant for the app rather
+ * than for the reader, and are stripped out of [prose].
  *
- * When [verdict] is present the prompt has also written the same assessment in prose, so
- * that a parse failure still leaves the customer with a readable answer. [prose] is
- * therefore only worth showing when [verdict] is null — see [displayProse].
+ * Shared by both audiences: `qv-options` becomes tappable reply chips, `qv-plan` becomes
+ * a run of capture and test screens, and `qv-verdict` becomes the verdict cards. Fundi
+ * Bora reuses all three — the same camera, the same tests, and the same verdict on a
+ * re-assessment — and adds two of its own: `fb-diagnosis` becomes the cause cards and
+ * `fb-fixplan` the three-horizon plan.
+ *
+ * When [verdict] or [diagnosis] is present the prompt has also written the same finding
+ * in prose, so that a parse failure still leaves the reader a readable answer. [prose] is
+ * therefore only worth showing when neither is set — see [displayProse].
  */
 data class AssistantContent(
     val prose: String,
     val options: List<String> = emptyList(),
     val verdict: Verdict? = null,
     val plan: AssessmentPlan? = null,
+    /**
+     * Fundi Bora's two blocks. Null for every buyer-facing turn, which is most of them.
+     *
+     * Added to this type rather than a parallel one because the turn is the same shape
+     * either way: the same fences in the same message, parsed once. A second parser would
+     * be a second place for the fence vocabulary to drift.
+     */
+    val diagnosis: Diagnosis? = null,
+    val fixPlan: FixPlan? = null,
 ) {
     /**
      * What to put in the message bubble.
@@ -38,7 +53,13 @@ data class AssistantContent(
     val displayProse: String
         get() = when {
             verdict != null -> ""
-            plan != null -> prose.substringBefore("\n\n").trim()
+            // Same reasoning as the verdict: the cards say all of it, and the prompt
+            // writes the prose only so that a block which will not parse still leaves
+            // the maker something readable.
+            diagnosis != null -> ""
+            // Same reasoning as the plan: the cards are drawn immediately below, so
+            // anything past the opening acknowledgement is the plan a second time.
+            plan != null || fixPlan != null -> prose.substringBefore("\n\n").trim()
             else -> prose
         }
 }
@@ -47,6 +68,12 @@ private const val FENCE = "```"
 private const val OPTIONS_TAG = "qv-options"
 private const val VERDICT_TAG = "qv-verdict"
 private const val PLAN_TAG = "qv-plan"
+
+// Fundi Bora's blocks. A distinct prefix because they are a different audience's
+// vocabulary, and because an unrecognised tag is left in the prose — so a buyer-facing
+// build meeting one of these degrades to showing the text rather than breaking.
+private const val DIAGNOSIS_TAG = "fb-diagnosis"
+private const val FIX_PLAN_TAG = "fb-fixplan"
 
 /** At most this many chips; more than a handful stops being a choice and starts being a list. */
 private const val MAX_OPTIONS = 5
@@ -71,6 +98,8 @@ fun parseAssistantContent(text: String): AssistantContent {
     var options = emptyList<String>()
     var verdict: Verdict? = null
     var plan: AssessmentPlan? = null
+    var diagnosis: Diagnosis? = null
+    var fixPlan: FixPlan? = null
 
     val lines = text.lines()
     var i = 0
@@ -97,6 +126,15 @@ fun parseAssistantContent(text: String): AssistantContent {
                 // parse is dropped, never printed. The prose alongside it lists the
                 // shots in words, so the customer is not left with nothing.
                 plan = parsePlan(body.joinToString("\n"))
+            }
+            DIAGNOSIS_TAG -> {
+                // Same rule as the verdict: a block addressed to us that will not parse
+                // is dropped, never printed. The prose alongside it carries the same
+                // finding in words.
+                diagnosis = decode<Diagnosis>(body.joinToString("\n"))
+            }
+            FIX_PLAN_TAG -> {
+                fixPlan = decode<FixPlan>(body.joinToString("\n"))
             }
             VERDICT_TAG -> {
                 // A block the model addressed to us. If it will not parse, drop it
@@ -130,6 +168,8 @@ fun parseAssistantContent(text: String): AssistantContent {
         options = options,
         verdict = verdict?.takeIf { it.isRenderable },
         plan = plan?.takeIf { it.isRunnable },
+        diagnosis = diagnosis?.takeIf { it.isRenderable },
+        fixPlan = fixPlan?.takeIf { it.isRunnable },
     )
 }
 

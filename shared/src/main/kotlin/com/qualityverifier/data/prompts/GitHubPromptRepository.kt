@@ -1,5 +1,6 @@
 package com.qualityverifier.data.prompts
 
+import com.qualityverifier.domain.Audience
 import com.qualityverifier.domain.ItemType
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
@@ -33,8 +34,14 @@ class GitHubPromptRepository(
     private val warn: (String, Throwable?) -> Unit = { _, _ -> },
 ) : PromptRepository {
 
-    override suspend fun systemPromptFor(itemType: ItemType): String = withContext(io) {
-        val master = load(MASTER_PATH, blankIsValid = false) { DefaultPrompts.MASTER }
+    override suspend fun systemPromptFor(
+        itemType: ItemType,
+        audience: Audience,
+    ): String = withContext(io) {
+        // Two masters, cached under their own paths, so each audience keeps its own
+        // prefix warm rather than evicting the other's.
+        val masterPath = masterPathFor(audience)
+        val master = load(masterPath, blankIsValid = false) { defaultMasterFor(audience) }
         // Blank is a valid answer for an item: most item files are still empty
         // placeholders, and a 404 (file not yet pushed) is not worth surfacing. The
         // compiled-in copy covers the case where the file has never been fetched at all.
@@ -84,5 +91,16 @@ class GitHubPromptRepository(
 
     companion object {
         const val MASTER_PATH = "master.txt"
+        const val FUNDI_MASTER_PATH = "fundi-master.txt"
+
+        fun masterPathFor(audience: Audience): String = when (audience) {
+            Audience.BUYER -> MASTER_PATH
+            Audience.FUNDI -> FUNDI_MASTER_PATH
+        }
+
+        fun defaultMasterFor(audience: Audience): String = when (audience) {
+            Audience.BUYER -> DefaultPrompts.MASTER
+            Audience.FUNDI -> DefaultPrompts.FUNDI_MASTER
+        }
     }
 }
