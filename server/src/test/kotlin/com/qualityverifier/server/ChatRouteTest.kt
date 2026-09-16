@@ -25,11 +25,14 @@ import io.ktor.client.statement.bodyAsText
 import io.ktor.http.ContentType
 import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
+import io.ktor.http.content.TextContent
+import io.ktor.http.isSuccess
 import io.ktor.http.contentType
 import io.ktor.serialization.kotlinx.json.json
 import io.ktor.server.testing.ApplicationTestBuilder
 import io.ktor.server.testing.testApplication
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
@@ -412,6 +415,103 @@ class ChatRouteTest {
         assertEquals(1, store.usageRows)
     }
 
+    // ------------------------------------------------------- the audience
+
+    @Test
+    fun `an account with a workshop gets the coaching prompt`() = testApplication {
+        val store = FakeChatStore().apply { audience = Audience.FUNDI }
+        val prompts = RecordingPrompts()
+        val app = withChat(
+            store,
+            FakeClaude(ClaudeResult.Success("ok", TokenUsage(), null)),
+            prompts = prompts,
+        )
+
+        app.post("/v1/chat") { auth(); contentType(ContentType.Application.Json); setBody(request()) }
+
+        assertEquals(Audience.FUNDI, prompts.askedAudience)
+        // And the session records which half of the project it belonged to.
+        assertEquals(Audience.FUNDI, store.storedAudience)
+    }
+
+    @Test
+    fun `an account without one gets the buying prompt`() = testApplication {
+        val store = FakeChatStore()
+        val prompts = RecordingPrompts()
+        val app = withChat(
+            store,
+            FakeClaude(ClaudeResult.Success("ok", TokenUsage(), null)),
+            prompts = prompts,
+        )
+
+        app.post("/v1/chat") { auth(); contentType(ContentType.Application.Json); setBody(request()) }
+
+        assertEquals(Audience.BUYER, prompts.askedAudience)
+        assertEquals(Audience.BUYER, store.storedAudience)
+    }
+
+    @Test
+    fun `a client cannot ask for the other prompt`() = testApplication {
+        // The two prompts are not interchangeable — one decides whether to buy a piece,
+        // the other how to put it right — so letting a client choose would be letting it
+        // choose what the assistant is for.
+        //
+        // Two things stop it, and this pins both: there is no audience field on
+        // ChatRequest, and the server's JSON is strict, so a body carrying one is refused
+        // outright rather than quietly ignored. Either alone would be enough; the test
+        // asserts the observable outcome, which is that nothing reaches the prompt.
+        val store = FakeChatStore()
+        val prompts = RecordingPrompts()
+        val app = withChat(
+            store,
+            FakeClaude(ClaudeResult.Success("ok", TokenUsage(), null)),
+            prompts = prompts,
+        )
+
+        // TextContent, not a String: the client has ContentNegotiation installed, so a
+        // bare String would be serialised *as* a JSON string and the route would reject
+        // it before ever reaching the prompt — which would make this test pass for
+        // entirely the wrong reason.
+        val body = """
+            {"session_id":"${UUID.randomUUID()}","item_type_id":"wooden-table",
+             "message_id":"${UUID.randomUUID()}","text":"hello",
+             "blobs":[],"audience":"fundi"}
+        """.trimIndent()
+        val response = app.post("/v1/chat") {
+            auth()
+            setBody(TextContent(body, ContentType.Application.Json))
+        }
+
+        // Refused, and refused as a client error: a stray field is the caller's mistake,
+        // not an outage, and it used to come back as a 500.
+        assertEquals(HttpStatusCode.BadRequest, response.status)
+        assertTrue(response.bodyAsText(), response.bodyAsText().contains("invalid_request"))
+
+        assertNull("the prompt must never have been asked for", prompts.askedAudience)
+    }
+
+    @Test
+    fun `an unreadable body is a client error, not an outage`() = testApplication {
+        // It used to be a 500, which the phone words as "our server had a problem" and
+        // which lands in the log at error next to real failures. A body we could not
+        // parse is neither.
+        val app = withChat(
+            FakeChatStore(),
+            FakeClaude(ClaudeResult.Success("ok", TokenUsage(), null)),
+        )
+
+        val response = app.post("/v1/chat") {
+            auth()
+            setBody(TextContent("{ this is not json", ContentType.Application.Json))
+        }
+
+        assertEquals(HttpStatusCode.BadRequest, response.status)
+        assertTrue(response.bodyAsText(), response.bodyAsText().contains("invalid_request"))
+        // And nothing of the parse failure reaches the wire: the message can name a
+        // field or quote the body, and bodies here carry photographs of people's homes.
+        assertTrue(response.bodyAsText(), !response.bodyAsText().contains("this is not json"))
+    }
+
     @Test
     fun `the chat route still asks for the buyer master`() = testApplication {
         // Nothing sets a session's audience yet, and until the producer app exists the
@@ -561,6 +661,14 @@ class ChatRouteTest {
         private val turnAlreadyStored: Boolean = false,
         private val storedReply: StoredReply? = null,
     ) : ChatStore {
+        /** Set by a test; the route derives this and never takes it from the request. */
+        var audience: Audience = Audience.BUYER
+        /** What the route resolved and passed to ensureSession. */
+        var storedAudience: Audience? = null
+            private set
+
+        override suspend fun audienceFor(userId: String, sessionId: String) = audience
+
         override suspend fun recordSessionLocation(
             sessionId: String,
             userId: String,
@@ -589,10 +697,12 @@ class ChatRouteTest {
         override suspend fun ensureSession(
             sessionId: String, userId: String, itemTypeId: String,
             previousSessionId: String?, intakeAnswers: String?, promptSha: String?,
+            audience: Audience,
             dailyLimit: Int, testerDailyLimit: Int,
         ) = access.also {
             sawDailyLimit = dailyLimit
             sawTesterDailyLimit = testerDailyLimit
+            storedAudience = audience
         }
 
         /** What the route passed down, so a test can prove the config reaches the store. */

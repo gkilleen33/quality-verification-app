@@ -51,13 +51,25 @@ Not a fork. One parameter, threaded through:
   unchanged, and each audience caches its own master under its own path. The item
   protocols are shared, because what to photograph on a table does not depend on who is
   asking.
-- **Not yet wired**: nothing sets `sessions.audience`, and the chat route still asks for
-  the buyer master (pinned by a test). That plumbing needs the producer client to exist,
-  and a decision about whether audience is claimed by the request or derived from whether
-  the account has a `fundi_workshops` row. Derive it — a client should not be able to pick
-  its own prompt.
-- The daily limit becomes per-audience. A fundi assessing their own work all morning is a
-  completely different shape of use from a buyer checking one table.
+- **Wired, and derived.** `ChatStore.audienceFor(userId, sessionId)` answers in one query:
+  an existing session reports the audience it was created with, and a new one is answered
+  by whether the account has a `fundi_workshops` row. The route resolves it before
+  assembling the prompt, because it chooses which prompt, and passes it to `ensureSession`
+  to be written once at creation.
+
+  **Never from the request.** There is no `audience` field on `ChatRequest`, and the
+  server's JSON is strict, so a body carrying one is refused outright. The two prompts are
+  not interchangeable, so letting a client choose would be letting it choose what the
+  assistant is for.
+
+  **A session keeps the audience it was created with.** A buyer who later registers a
+  workshop does not retrospectively turn their old assessments into coaching sessions —
+  they were conducted as a buyer, and the record should say so.
+- **The daily limit is still not per-audience**, and this is the next thing that will bite.
+  A fundi assessing their own work all morning is a completely different shape of use from
+  a buyer checking one table, and today they share the customer allowance. The code path
+  already distinguishes evaluator from customer, so adding a third is small — but it needs
+  a number, and that is a research decision rather than a guess.
 
 ### Where the maker's context goes, and why it is not the system prompt
 

@@ -1,6 +1,7 @@
 package com.qualityverifier.server.db
 
 import com.qualityverifier.domain.Attachment
+import com.qualityverifier.domain.Audience
 import com.qualityverifier.server.routes.SessionLocation
 import com.qualityverifier.domain.ChatMessage
 import com.qualityverifier.domain.Role
@@ -61,6 +62,21 @@ data class MessageRow(
  * of them need Postgres to state. The SQL is verified against the real database.
  */
 interface ChatStore {
+    /**
+     * Which half of the project this turn belongs to.
+     *
+     * Derived here and never taken from the request. A client that could name its own
+     * audience could ask for the coaching prompt, and the two prompts are not
+     * interchangeable: one decides whether to buy a piece, the other how to put it right.
+     * There is no field on ChatRequest for it, and this is why.
+     *
+     * An existing session keeps the audience it was created with, whatever the account
+     * has become since. A buyer who later registers a workshop does not retrospectively
+     * turn their old assessments into coaching sessions — they were conducted as a buyer,
+     * and the record should say so.
+     */
+    suspend fun audienceFor(userId: String, sessionId: String): Audience
+
     suspend fun ensureSession(
         sessionId: String,
         userId: String,
@@ -68,6 +84,8 @@ interface ChatStore {
         previousSessionId: String?,
         intakeAnswers: String?,
         promptSha: String?,
+        /** Resolved by [audienceFor], never by the client. Written once, at creation. */
+        audience: Audience,
         /** Assessments allowed per day for a customer. Zero or less disables the check. */
         dailyLimit: Int,
         /** The higher allowance for one of our own evaluators. */
@@ -178,6 +196,36 @@ class PostgresChatStore(private val dataSource: DataSource) : ChatStore {
      * exactly as a session that does not exist: telling the difference would let anybody
      * enumerate which ids are real.
      */
+    override suspend fun audienceFor(userId: String, sessionId: String): Audience =
+        tx { connection ->
+            // One query, two cases. An existing session answers for itself; a new one is
+            // answered by whether the account has a workshop profile, which is what makes
+            // somebody a fundi.
+            connection.prepareStatement(
+                """
+                select coalesce(
+                    (select s.audience from sessions s
+                      where s.id = ?::uuid and s.user_id = ?::uuid),
+                    case when exists (
+                        select 1 from fundi_workshops w where w.user_id = ?::uuid
+                    ) then 'fundi' else 'buyer' end
+                )
+                """.trimIndent()
+            ).use { statement ->
+                statement.setString(1, sessionId)
+                statement.setString(2, userId)
+                statement.setString(3, userId)
+                statement.executeQuery().use { rows ->
+                    val id = if (rows.next()) rows.getString(1) else null
+                    // An unrecognised value in the column reads as buyer rather than
+                    // throwing. The CHECK makes that unreachable today; if a later
+                    // migration widens it, the wrong prompt is a better failure than a
+                    // dead route.
+                    Audience.fromId(id.orEmpty()) ?: Audience.BUYER
+                }
+            }
+        }
+
     override suspend fun ensureSession(
         sessionId: String,
         userId: String,
@@ -185,6 +233,7 @@ class PostgresChatStore(private val dataSource: DataSource) : ChatStore {
         previousSessionId: String?,
         intakeAnswers: String?,
         promptSha: String?,
+        audience: Audience,
         dailyLimit: Int,
         testerDailyLimit: Int,
     ): SessionAccess = tx { connection ->
@@ -241,8 +290,9 @@ class PostgresChatStore(private val dataSource: DataSource) : ChatStore {
         connection.prepareStatement(
             """
             insert into sessions (
-                id, user_id, item_type_id, previous_session_id, intake_answers, prompt_sha
-            ) values (?::uuid, ?::uuid, ?, ?::uuid, ?, ?)
+                id, user_id, item_type_id, previous_session_id, intake_answers, prompt_sha,
+                audience
+            ) values (?::uuid, ?::uuid, ?, ?::uuid, ?, ?, ?)
             on conflict (id) do nothing
             """.trimIndent()
         ).use { statement ->
@@ -252,6 +302,8 @@ class PostgresChatStore(private val dataSource: DataSource) : ChatStore {
             statement.setString(4, previousSessionId)
             statement.setString(5, intakeAnswers)
             statement.setString(6, promptSha)
+            // Written once, here. Nothing updates it afterwards: see audienceFor.
+            statement.setString(7, audience.id)
             statement.executeUpdate()
         }
         SessionAccess.Ok(created = true)

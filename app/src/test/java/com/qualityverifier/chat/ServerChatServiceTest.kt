@@ -289,6 +289,20 @@ class ServerChatServiceTest {
     }
 
     @Test
+    fun `a 400 does not promise that retrying will help`() = runTest {
+        // A 400 from our own server means this app sent something unreadable — a bug
+        // here, not an outage there. "Please try again" sends the identical request and
+        // reads as an apology for something the customer can fix, which they cannot.
+        server.enqueue(json("""{"error":"invalid_request"}""", code = 400))
+
+        val failure = service().send("s1", ItemType.WOODEN_STOOL, history()) as ChatResult.Failure
+
+        assertEquals(ChatErrorKind.REQUEST, failure.kind)
+        assertTrue(failure.message, failure.message.contains("could not read"))
+        assertTrue("must not simply say try again", !failure.message.contains("Please try again."))
+    }
+
+    @Test
     fun `statuses map to something a person can act on`() = runTest {
         val cases = mapOf(
             429 to ChatErrorKind.RATE_LIMIT,
