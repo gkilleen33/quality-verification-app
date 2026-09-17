@@ -25,7 +25,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImage
 import com.qualityverifier.text.ReportLabels
-import com.qualityverifier.ui.chat.PlanRun
+import com.qualityverifier.domain.PlanRun
 import java.io.File
 
 /**

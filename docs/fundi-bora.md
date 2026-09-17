@@ -29,10 +29,26 @@ fundi/      NOT YET — Fundi Bora, producer-facing
 server/     grows — audience parameter, fundi_* routes
 ```
 
-`fundi/` and `capture/` are deliberately absent from this change. An empty Android module
-builds a blank APK on every CI run and proves nothing, and `capture/` cannot be extracted
-usefully until there is a second consumer to extract it *for*. Both arrive together, with
-the first Fundi Bora screen.
+`fundi/` and `capture/` are still absent. An empty Android module builds a blank APK on
+every CI run and proves nothing, and the extraction is better done alongside the first
+screen than before it — the seam is easier to get right with something on the other side
+of it.
+
+**The groundwork is done, though.** `PlanRun` moved into `:shared`, which was the only
+app-internal type the capture screens depended on. The five files that would move —
+`CaptureScreen`, `PlanCard`, `PhysicalTestsScreen`, `InspectingScreen`, `TestDiagrams` —
+now import nothing of ours outside `:shared`:
+
+| File | Imports from our code |
+|---|---|
+| `CaptureScreen` | `text.markdownToPlainText` |
+| `PlanCard` | `text.ReportLabels`, `domain.PlanRun` |
+| `InspectingScreen` | `text.ReportLabels`, `domain.PlanRun` |
+| `PhysicalTestsScreen` | `text.ReportLabels`, `domain.PlannedTest` |
+| `TestDiagrams` | `domain.TestDiagram` |
+
+So the extraction is now a file move plus a build file, with no import rewrites outside
+the moved files. That is the whole reason to have done the `PlanRun` move first.
 
 **When they do, the extraction is the important half.** The capture pipeline — CameraX,
 the shot instruction over the viewfinder, normalisation on capture, the plan runner, the
