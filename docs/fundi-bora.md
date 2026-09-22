@@ -24,11 +24,25 @@ that literally.
 
 ```
 shared/     Fundi.kt (vocabularies), Diagnosis/FixPlan, fb-* parsing, FUNDI_MASTER
+core/       tokens, chat client, database, images, sync, location — used by both apps
 capture/    the camera, the plan runner, the physical tests — used by both apps
 app/        Kagua, buyer-facing
 fundi/      NOT YET — Fundi Bora, producer-facing
 server/     grows — audience parameter, fundi_* routes
 ```
+
+`core/` **exists** — the whole data layer, 23 files, moved out of `:app` unchanged. More
+was at stake here than in `:capture`: both apps sign in against the same server, store the
+same assessments and upload the same photographs, and the things that are easy to get
+subtly wrong are all in here — one refresh in flight at a time, a turn replayed rather
+than paid for twice, a blob uploaded only when the server says it lacks it. A fix to any
+of those, applied to one copy, would fail in the other by costing money or losing an
+assessment rather than by crashing.
+
+`AppContainer` came too, with the server's base URL as a constructor parameter. That was
+the only thing in the entire layer that knew which app it had been compiled into. What
+stayed behind is `ui.appContainer`, which reads the `Application` subclass and is per-app
+by definition.
 
 `capture/` **exists** — an Android library holding the five screens both apps run
 unchanged: `CaptureScreen`, `PlanCard`, `PhysicalTestsScreen`, `InspectingScreen`,
@@ -51,7 +65,8 @@ only project dependency and holds no Android types. No resources either — ever
 arrives through `ReportLabels`, because the wording is fetched with the prompts and is not
 a compile-time constant.
 
-`fundi/` is still absent. An empty Android module builds a blank APK on every CI run and
+`fundi/` is still absent — and is now the only thing missing between here and a producer
+running an assessment. An empty Android module builds a blank APK on every CI run and
 proves nothing; it arrives with the first screen that needs it.
 
 ## The audience dimension

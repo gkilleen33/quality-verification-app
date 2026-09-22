@@ -20,6 +20,7 @@ dependencyResolutionManagement {
 
 rootProject.name = "QualityVerifier"
 include(":shared")
+include(":core")
 include(":capture")
 include(":app")
 include(":server")

@@ -3,7 +3,6 @@ package com.qualityverifier.di
 import android.content.Context
 import android.os.Build
 import androidx.room.Room
-import com.qualityverifier.BuildConfig
 import com.qualityverifier.data.auth.AuthClient
 import com.qualityverifier.data.auth.EncryptedPrefsTokenStore
 import com.qualityverifier.data.auth.TokenProvider
@@ -35,8 +34,24 @@ import java.util.concurrent.TimeUnit
  *    no longer fetches protocols and cannot substitute one
  *
  * No ViewModel or screen changed for any of that, which was the claim being tested.
+ *
+ * **Shared by both apps**, which is why it lives in `:core`. It holds what Kagua and Fundi
+ * Bora both need and nothing either one has to itself; an app that needs more composes
+ * this rather than reimplementing it. The lookup that reaches it — `ui.appContainer` —
+ * stays with each app, because it reads that app's own Application subclass.
  */
-class AppContainer(context: Context) {
+class AppContainer(
+    context: Context,
+    /**
+     * Where the server is.
+     *
+     * A parameter rather than `BuildConfig.SERVER_BASE_URL`, which was the only thing in
+     * this whole layer that knew which app it was compiled into. Each app still compiles
+     * its own value in and passes it here, so the deployment story is unchanged: changing
+     * the backend still means a release.
+     */
+    private val baseUrl: String,
+) {
 
     private val appContext = context.applicationContext
 
@@ -80,7 +95,7 @@ class AppContainer(context: Context) {
     val authClient: AuthClient = AuthClient(
         client = httpClient,
         store = tokenStore,
-        baseUrl = BuildConfig.SERVER_BASE_URL,
+        baseUrl = baseUrl,
         json = json,
         // For the refresh_tokens row, so a lost handset can be identified when its
         // token is revoked. Model only; nothing that identifies a person.
@@ -100,7 +115,7 @@ class AppContainer(context: Context) {
     private val syncClient = SyncClient(
         client = httpClient,
         tokens = tokenProvider,
-        baseUrl = BuildConfig.SERVER_BASE_URL,
+        baseUrl = baseUrl,
         json = json,
     )
 
@@ -109,7 +124,7 @@ class AppContainer(context: Context) {
         tokens = tokenProvider,
         images = images,
         sessionStart = sessionRepository::startOf,
-        baseUrl = BuildConfig.SERVER_BASE_URL,
+        baseUrl = baseUrl,
         json = json,
     )
 
