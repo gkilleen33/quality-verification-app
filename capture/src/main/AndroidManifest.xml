@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The camera permission belongs with the only code that opens a camera. Declared here
+     rather than in each app so a second app cannot ship without it and find a dead
+     viewfinder; the manifest merger folds it into whichever app depends on :capture. -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <uses-permission android:name="android.permission.CAMERA" />
+
+    <!-- Not required: a handset with no camera can still read an assessment somebody else
+         captured, and the Play listing should not exclude one. -->
+    <uses-feature android:name="android.hardware.camera.any" android:required="false" />
+
+</manifest>

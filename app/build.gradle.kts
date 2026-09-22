@@ -4,9 +4,11 @@ plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
     alias(libs.plugins.kotlin.compose)
-    alias(libs.plugins.kotlin.serialization)
-    alias(libs.plugins.ksp)
 }
+
+// No kotlin-serialization and no KSP any more. Both were here for the data layer — the
+// wire types and Room's generated code — and both went to :core with it. Nothing left in
+// this module is annotated.
 
 // Release signing material comes from `keystore.properties` (local, gitignored) or from
 // environment variables (CI). Absent both, the release build falls back to the debug key
@@ -131,14 +133,12 @@ android {
     }
 }
 
-ksp {
-    arg("room.schemaLocation", "$projectDir/schemas")
-}
-
 dependencies {
     implementation(project(":shared"))
-    // The camera, the plan runner and the physical tests. Shared with Fundi Bora, which
-    // is why they are no longer in here.
+    // Tokens, the chat client, the database, the image store, the sync queue and the
+    // location fix. Shared with Fundi Bora, which is why they are no longer in here.
+    implementation(project(":core"))
+    // The camera, the plan runner and the physical tests. Likewise.
     implementation(project(":capture"))
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.lifecycle.runtime.ktx)
@@ -156,23 +156,10 @@ dependencies {
 
     implementation(libs.androidx.navigation.compose)
 
-    implementation(libs.androidx.room.runtime)
-    implementation(libs.androidx.room.ktx)
-    ksp(libs.androidx.room.compiler)
-
-    implementation(libs.androidx.security.crypto)
-    implementation(libs.okhttp)
-    implementation(libs.kotlinx.serialization.json)
+    // Room, the encrypted prefs, EXIF and okhttp all went to :core; CameraX went to
+    // :capture. What is left here is what this module's own code names directly.
     implementation(libs.coil.compose)
-    implementation(libs.androidx.exifinterface)
-    // In-app capture rather than the system camera intent: the shot instruction has to
-    // sit on top of the live preview, which an intent cannot do.
-    implementation(libs.androidx.camera.core)
-    implementation(libs.androidx.camera.camera2)
-    implementation(libs.androidx.camera.lifecycle)
-    implementation(libs.androidx.camera.view)
 
     testImplementation(libs.junit)
-    testImplementation(libs.okhttp.mockwebserver)
     testImplementation(libs.kotlinx.coroutines.test)
 }

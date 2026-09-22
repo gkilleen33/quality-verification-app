@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The permissions this module's code actually uses, declared here rather than in each
+     app, so a second app cannot ship without them and discover it at runtime. The
+     manifest merger folds them into whichever app depends on :core. -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <uses-permission android:name="android.permission.INTERNET" />
+
+    <!-- Two uses, both in the foreground, both optional.
+         A business account may save where its premises are while the owner is standing in
+         them; and an assessment records one point as it starts, if the customer left that
+         switched on at sign-up. Nothing is read at any other time.
+         There is no background location permission here and there must not be: every read
+         happens with the app open and the customer in it. See LocationCapture, and
+         docs/retention-and-profile-wording.md section 1a for what they were told. -->
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+
+</manifest>

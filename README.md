@@ -170,7 +170,7 @@ with the *square* of the shot count rather than linearly. Collection is now one 
 The hands-on tests are racking, bottle-top roll, sighting along a surface, fingernail
 press, drawer pull, foam press and the one-leg lift. Three of them — racking, sighting
 along, and the one-leg lift — get a schematic diagram, drawn in
-[`TestDiagrams.kt`](app/src/main/java/com/qualityverifier/ui/plan/TestDiagrams.kt) rather
+[`TestDiagrams.kt`](capture/src/main/java/com/qualityverifier/ui/plan/TestDiagrams.kt) rather
 than shipped as vector XML, because each needs the furniture in one colour and the motion
 in another and a tinted drawable cannot do that. The rest get none: "press your thumbnail
 into the underside" does not need a picture, and a drawing on every test teaches the
@@ -461,15 +461,34 @@ Each capture is measured on-device for blur (variance of the Laplacian) and dark
 (mean luma) before being attached. The check is advisory: a photo it dislikes is held up
 with an explanation and a "use it anyway", and a photo it cannot measure is attached
 without comment. Both thresholds in
-[`ImageQuality.kt`](app/src/main/java/com/qualityverifier/images/ImageQuality.kt) are
+[`ImageQuality.kt`](core/src/main/java/com/qualityverifier/images/ImageQuality.kt) are
 engineering judgement, not measurement — they have not been calibrated against real
 photos from real workshops, which is why they sit low enough to fire only on obvious
 cases.
 
 ## Architecture
 
-The data layer is deliberately separated from the UI so Phase 2 (server-backed) is a
-swap of implementations rather than a rewrite. Four interfaces are the whole contract:
+Five Gradle modules. The split is driven by a second app — Fundi Bora, the producer-facing
+half (`docs/fundi-bora.md`) — which runs the same assessment engine pointed inward.
+Anything both apps use lives below `app/`, because a copy is a thing that diverges
+silently.
+
+| Module     | What is in it                                                              | Android? |
+| ---------- | -------------------------------------------------------------------------- | -------- |
+| `shared/`  | Item protocols, prompt assembly, the fenced-block parser, wire types, report wording. Used by the phone **and the server**, so the two cannot drift. | no |
+| `core/`    | Tokens and refresh, the chat client, the Room database, the image store, the sync queue, the location fix. | library |
+| `capture/` | The camera with the shot instruction over the viewfinder, the plan runner, the physical tests and their diagrams. | library |
+| `app/`     | Kagua: the buyer-facing screens, view models and navigation.                 | app |
+| `server/`  | Ktor: the chat proxy, auth, sync and the admin portal.                       | no |
+
+Each module declares the permissions its own code needs — `INTERNET` and the two
+foreground location permissions in `core/`, `CAMERA` in `capture/` — and the manifest
+merger folds them into whichever app depends on it, so a second app cannot ship without
+one and discover it at runtime.
+
+Within that, the data layer is deliberately separated from the UI so Phase 2
+(server-backed) was a swap of implementations rather than a rewrite. Four interfaces were
+the whole contract:
 
 | Interface           | Phase 1                       | Phase 2                          |
 | ------------------- | ----------------------------- | -------------------------------- |
@@ -478,9 +497,15 @@ swap of implementations rather than a rewrite. Four interfaces are the whole con
 | `SessionRepository` | `RoomSessionRepository`       | Room + server sync               |
 | `ApiKeyStore`       | `EncryptedPrefsApiKeyStore`   | deleted; key lives on the server |
 
-They are wired in [AppContainer.kt](app/src/main/java/com/qualityverifier/di/AppContainer.kt),
+They are wired in [AppContainer.kt](core/src/main/java/com/qualityverifier/di/AppContainer.kt),
 which carries the Phase 2 migration checklist. No ViewModel or screen touches a key, a
 URL, or a Room type, so none of them need to change.
+
+The container takes the server's base URL as a parameter rather than reading
+`BuildConfig`: it is shared by both apps, and each compiles in its own value and passes it.
+The lookup that reaches the container — `ui.appContainer` — stays with each app, because
+it reads that app's own `Application` subclass. The exported Room schemas moved with the
+database and now live in `core/schemas/`.
 
 `serverId` and `updatedAt` columns already exist in the schema so Phase 2 sync needs no
 migration.
