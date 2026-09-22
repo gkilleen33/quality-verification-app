@@ -18,11 +18,13 @@ data class FundiProfile(
     /**
      * One entry per tool we asked about, including the ones they do not have.
      *
-     * Absence is not the same as [ToolOwnership.NONE] and the difference matters: a tool
-     * missing from this list means nobody asked, and a tool marked `NONE` means they told
-     * us they have none. Only the second licenses the coaching to work around it. See
-     * [com.qualityverifier.text.buildFundiContextMessage], which says both out loud rather
-     * than leaving the model to infer either.
+     * Absence is not the same as [ToolOwnership.NONE] and the difference matters twice
+     * over. For the coaching: a tool missing from this list means nobody asked, and a tool
+     * marked `NONE` means they told us they have none, and only the second licenses the
+     * fix plan to work around it — see
+     * [com.qualityverifier.text.buildFundiContextMessage], which says both out loud. For
+     * the record: a tool dropping out of an answer is not evidence it was disposed of, so
+     * [toolChanges] leaves it alone rather than writing history nobody reported.
      */
     val tools: List<OwnedTool> = emptyList(),
     val goals: Set<FundiGoal> = emptySet(),
@@ -82,4 +84,61 @@ data class OwnedTool(
      * this never reaches the assistant either.
      */
     val dayRateKes: Int? = null,
+    /**
+     * Why this answer differs from the last one we recorded, when we asked.
+     *
+     * Metadata about a *change*, carried on the state it produces because that is how the
+     * setup screen collects it — "you told us you had chisels; what happened?" sits beside
+     * the toggle that changed. Ignored entirely when the answer is the same as before, and
+     * never sent to the assistant: the coaching cares what is on the bench today.
+     */
+    val changeReason: ToolChangeReason? = null,
+    /** The maker's own words, when the closed set does not fit. */
+    val changeNote: String? = null,
 )
+
+/**
+ * One transition in a maker's tool list.
+ *
+ * [from] is null the first time we are told about a tool at all, which is a different fact
+ * from being told they have none of it: "nobody ever asked about a router" and "they used
+ * to own a router and sold it" are not the same, and only the second has a from.
+ */
+data class ToolChange(
+    val kind: ToolKind,
+    val from: ToolOwnership?,
+    val to: ToolOwnership,
+    val reason: ToolChangeReason? = null,
+    val note: String? = null,
+)
+
+/**
+ * What changed between the tools we had recorded and the ones just answered.
+ *
+ * A pure function, and separated from the store on purpose: this is the rule that decides
+ * what the research record ends up containing, and it should be readable and testable
+ * without a database.
+ *
+ * Three rules, each of which was a way to lose data:
+ *  - **A tool absent from [next] is left alone.** Nobody said anything about it, and an
+ *    answer we were not given is not an answer that it is gone. This is the rule the
+ *    first version broke by deleting every row and reinserting.
+ *  - **An unchanged answer produces nothing.** Re-saving a profile untouched must not
+ *    make it look like a maker sold and rebought everything they own.
+ *  - **Going to [ToolOwnership.NONE] is a change like any other**, not a deletion. It is
+ *    the maker saying they have none, which is exactly what the fix plan needs to know.
+ */
+fun toolChanges(previous: List<OwnedTool>, next: List<OwnedTool>): List<ToolChange> {
+    val before = previous.associate { it.kind to it.ownership }
+    return next.distinctBy { it.kind }
+        .filter { before[it.kind] != it.ownership }
+        .map { tool ->
+            ToolChange(
+                kind = tool.kind,
+                from = before[tool.kind],
+                to = tool.ownership,
+                reason = tool.changeReason,
+                note = tool.changeNote?.trim()?.takeIf { it.isNotEmpty() },
+            )
+        }
+}

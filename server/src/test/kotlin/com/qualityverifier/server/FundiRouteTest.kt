@@ -4,14 +4,18 @@ import com.qualityverifier.domain.Audience
 import com.qualityverifier.domain.FundiGoal
 import com.qualityverifier.domain.FundiProfile
 import com.qualityverifier.domain.OwnedTool
+import com.qualityverifier.domain.ToolChange
+import com.qualityverifier.domain.ToolChangeReason
 import com.qualityverifier.domain.ToolKind
 import com.qualityverifier.domain.ToolOwnership
 import com.qualityverifier.domain.Workshop
+import com.qualityverifier.domain.toolChanges
 import com.qualityverifier.server.auth.AccessTokens
 import com.qualityverifier.server.auth.Passwords
 import com.qualityverifier.server.db.AuthStore
 import com.qualityverifier.server.db.Credentials
 import com.qualityverifier.server.db.FundiStore
+import com.qualityverifier.server.db.RecordedToolChange
 import com.qualityverifier.server.db.RegisterOutcome
 import com.qualityverifier.server.db.Registration
 import com.qualityverifier.server.db.StoredRefresh
@@ -148,6 +152,75 @@ class FundiRouteTest {
         assertEquals(HttpStatusCode.Unauthorized, app.get("/v1/fundi/profile").status)
     }
 
+    // Why a tool went is the part worth having, so it has to survive the wire. An
+    // unrecognised reason costs the reason and never the change: losing "they sold it"
+    // because the word for why was new would be the worse trade.
+    @Test
+    fun `why a tool went reaches the store, and an unknown reason does not cost the change`() =
+        testApplication {
+            val store = FakeFundiStore(
+                existing = FundiProfile(
+                    workshop = Workshop(makes = "stools"),
+                    tools = listOf(
+                        OwnedTool(ToolKind.CIRCULAR_SAW, ToolOwnership.OWNED),
+                        OwnedTool(ToolKind.ROUTER, ToolOwnership.OWNED),
+                    ),
+                ),
+            )
+            val app = withFundi(store, audience = Audience.FUNDI)
+
+            val response = app.put("/v1/fundi/profile") {
+                auth(FUNDI)
+                contentType(ContentType.Application.Json)
+                setBody(
+                    """
+                    {"tools":[
+                      {"kind":"circular_saw","ownership":"none","change_reason":"sold",
+                       "change_note":"bad month"},
+                      {"kind":"router","ownership":"none","change_reason":"repossessed"}]}
+                    """.trimIndent(),
+                )
+            }
+
+            assertEquals(HttpStatusCode.OK, response.status)
+            val changes = store.toolHistory(FUNDI).map { it.change }
+            assertEquals(2, changes.size)
+
+            val saw = changes.single { it.kind == ToolKind.CIRCULAR_SAW }
+            assertEquals(ToolOwnership.OWNED, saw.from)
+            assertEquals(ToolChangeReason.SOLD, saw.reason)
+            assertEquals("bad month", saw.note)
+
+            val router = changes.single { it.kind == ToolKind.ROUTER }
+            assertEquals(ToolOwnership.NONE, router.to)
+            assertNull("an unknown reason is dropped, the change is not", router.reason)
+        }
+
+    // The rule the first version of this broke: it deleted every tool row and reinserted,
+    // so a tool left out of an answer vanished along with any record it had existed.
+    @Test
+    fun `a tool left out of the answer keeps its place`() = testApplication {
+        val store = FakeFundiStore(
+            existing = FundiProfile(
+                workshop = Workshop(makes = "stools"),
+                tools = listOf(OwnedTool(ToolKind.CHISELS, ToolOwnership.OWNED)),
+            ),
+        )
+        val app = withFundi(store, audience = Audience.FUNDI)
+
+        app.put("/v1/fundi/profile") {
+            auth(FUNDI)
+            contentType(ContentType.Application.Json)
+            setBody("""{"tools":[{"kind":"drill","ownership":"owned"}]}""")
+        }
+
+        assertEquals(
+            "chisels were not mentioned, so nothing happened to them",
+            listOf(ToolKind.DRILL),
+            store.toolHistory(FUNDI).map { it.change.kind },
+        )
+    }
+
     // rents_tools and the day rate are for the deferred marketplace, so they round-trip
     // rather than being quietly dropped — but nothing sends them to the model.
     @Test
@@ -187,13 +260,21 @@ class FundiRouteTest {
 
     private class FakeFundiStore(private val existing: FundiProfile? = null) : FundiStore {
         val saved = mutableMapOf<String, FundiProfile>()
+        val history = mutableMapOf<String, List<RecordedToolChange>>()
 
         override suspend fun profileFor(userId: String): FundiProfile? =
             saved[userId] ?: existing
 
         override suspend fun saveProfile(userId: String, profile: FundiProfile) {
+            // The real store derives the history from what it already holds; this only
+            // needs to prove the route hands the reason down, which toolChanges then uses.
+            val before = (saved[userId] ?: existing)?.tools.orEmpty()
+            history[userId] = toolChanges(before, profile.tools)
+                .map { RecordedToolChange(it, changedAtMillis = 0L) }
             saved[userId] = profile
         }
+
+        override suspend fun toolHistory(userId: String) = history[userId].orEmpty()
     }
 
     private class FakeAuth(private val audience: Audience) : AuthStore {
