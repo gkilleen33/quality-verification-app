@@ -417,25 +417,13 @@ class ChatRouteTest {
 
     // ------------------------------------------------------- the audience
 
+    // THE POINT OF TWO ENDPOINTS. Kagua's own endpoint has no path to the coaching
+    // prompt: not a branch that happens to be false, but no branch at all. The previous
+    // shape resolved the audience from the account here, which meant a data change with
+    // no code change could have had a buyer in a furniture shop told how to re-glue the
+    // joint they were inspecting — and nothing about that is an error any test catches.
     @Test
-    fun `an account with a workshop gets the coaching prompt`() = testApplication {
-        val store = FakeChatStore().apply { audience = Audience.FUNDI }
-        val prompts = RecordingPrompts()
-        val app = withChat(
-            store,
-            FakeClaude(ClaudeResult.Success("ok", TokenUsage(), null)),
-            prompts = prompts,
-        )
-
-        app.post("/v1/chat") { auth(); contentType(ContentType.Application.Json); setBody(request()) }
-
-        assertEquals(Audience.FUNDI, prompts.askedAudience)
-        // And the session records which half of the project it belonged to.
-        assertEquals(Audience.FUNDI, store.storedAudience)
-    }
-
-    @Test
-    fun `an account without one gets the buying prompt`() = testApplication {
+    fun `Kagua's endpoint always asks for the buying prompt`() = testApplication {
         val store = FakeChatStore()
         val prompts = RecordingPrompts()
         val app = withChat(
@@ -447,19 +435,81 @@ class ChatRouteTest {
         app.post("/v1/chat") { auth(); contentType(ContentType.Application.Json); setBody(request()) }
 
         assertEquals(Audience.BUYER, prompts.askedAudience)
+        // And the session records which half of the project it belonged to.
         assertEquals(Audience.BUYER, store.storedAudience)
     }
 
     @Test
+    fun `Fundi Bora's endpoint always asks for the coaching prompt`() = testApplication {
+        val store = FakeChatStore()
+        val prompts = RecordingPrompts()
+        val app = withChat(
+            store,
+            FakeClaude(ClaudeResult.Success("ok", TokenUsage(), null)),
+            prompts = prompts,
+            accountAudience = Audience.FUNDI,
+        )
+
+        app.post("/v1/fundi/chat") {
+            auth(); contentType(ContentType.Application.Json); setBody(request())
+        }
+
+        assertEquals(Audience.FUNDI, prompts.askedAudience)
+        assertEquals(Audience.FUNDI, store.storedAudience)
+    }
+
+    // A fundi account cannot get coaching out of Kagua either, so the answer does not
+    // depend on which app somebody typed their password into. Refused before the prompt
+    // is assembled and before anything is spent upstream.
+    @Test
+    fun `a fundi account is refused by Kagua's endpoint`() = testApplication {
+        val store = FakeChatStore()
+        val prompts = RecordingPrompts()
+        val app = withChat(
+            store,
+            FakeClaude(ClaudeResult.Success("ok", TokenUsage(), null)),
+            prompts = prompts,
+            accountAudience = Audience.FUNDI,
+        )
+
+        val response = app.post("/v1/chat") {
+            auth(); contentType(ContentType.Application.Json); setBody(request())
+        }
+
+        assertEquals(HttpStatusCode.Forbidden, response.status)
+        assertTrue(response.bodyAsText().contains("wrong_app"))
+        assertNull("no prompt was assembled", prompts.askedAudience)
+        assertEquals("nothing was spent", 0, store.usageRows)
+    }
+
+    @Test
+    fun `a Kagua account is refused by Fundi Bora's endpoint`() = testApplication {
+        val store = FakeChatStore()
+        val prompts = RecordingPrompts()
+        val app = withChat(
+            store,
+            FakeClaude(ClaudeResult.Success("ok", TokenUsage(), null)),
+            prompts = prompts,
+        )
+
+        val response = app.post("/v1/fundi/chat") {
+            auth(); contentType(ContentType.Application.Json); setBody(request())
+        }
+
+        assertEquals(HttpStatusCode.Forbidden, response.status)
+        assertNull("no prompt was assembled", prompts.askedAudience)
+        assertEquals("nothing was spent", 0, store.usageRows)
+    }
+
+    @Test
     fun `a client cannot ask for the other prompt`() = testApplication {
-        // The two prompts are not interchangeable — one decides whether to buy a piece,
-        // the other how to put it right — so letting a client choose would be letting it
-        // choose what the assistant is for.
+        // Belt and braces now that the endpoint decides. The audience is fixed by the URL
+        // the client posted to, so a field in the body could not change it even if the
+        // route read one — but the field must not be quietly accepted either, because the
+        // day somebody adds a knob here is the day this stops being true.
         //
-        // Two things stop it, and this pins both: there is no audience field on
-        // ChatRequest, and the server's JSON is strict, so a body carrying one is refused
-        // outright rather than quietly ignored. Either alone would be enough; the test
-        // asserts the observable outcome, which is that nothing reaches the prompt.
+        // Two things stop it: there is no audience field on ChatRequest, and the server's
+        // JSON is strict, so a body carrying one is refused outright rather than ignored.
         val store = FakeChatStore()
         val prompts = RecordingPrompts()
         val app = withChat(
@@ -604,12 +654,14 @@ class ChatRouteTest {
         prompts: PromptRepository = RecordingPrompts(),
         dailyLimit: Int = Config.DEFAULT_DAILY_ASSESSMENT_LIMIT,
         testerLimit: Int = Config.DEFAULT_TESTER_DAILY_ASSESSMENT_LIMIT,
+        /** Which app the signed-in account belongs to. Kagua unless a test says otherwise. */
+        accountAudience: Audience = Audience.BUYER,
     ) = run {
         application {
             module(
                 version = "test",
                 database = null,
-                auth = Auth(NoAuthStore, AccessTokens(KEY)),
+                auth = Auth(AccountStore(accountAudience), AccessTokens(KEY)),
                 chat = Chat(
                     store, BlobStore(folder.newFolder()), claude, prompts, NoFeedback,
                     dailyAssessmentLimit = dailyLimit,
@@ -622,7 +674,7 @@ class ChatRouteTest {
 
     private class RecordingPrompts : PromptRepository {
         var asked: ItemType? = null
-        /** Which master the route asked for. Buyer until something sets a session's audience. */
+        /** Which master the route asked for. Null when it never got as far as asking. */
         var askedAudience: Audience? = null
             private set
 
@@ -661,13 +713,9 @@ class ChatRouteTest {
         private val turnAlreadyStored: Boolean = false,
         private val storedReply: StoredReply? = null,
     ) : ChatStore {
-        /** Set by a test; the route derives this and never takes it from the request. */
-        var audience: Audience = Audience.BUYER
-        /** What the route resolved and passed to ensureSession. */
+        /** What the route passed to ensureSession. Fixed by the endpoint, not resolved. */
         var storedAudience: Audience? = null
             private set
-
-        override suspend fun audienceFor(userId: String, sessionId: String) = audience
 
         override suspend fun recordSessionLocation(
             sessionId: String,
@@ -752,10 +800,21 @@ class ChatRouteTest {
 }
 
 /** Auth is installed so the chat routes can authenticate; none of these tests use it. */
-private object NoAuthStore : com.qualityverifier.server.db.AuthStore {
+/**
+ * An account of a given audience.
+ *
+ * The chat endpoints refuse an account belonging to the other app, so these tests need a
+ * real account row rather than the null this used to return.
+ */
+private class AccountStore(
+    private val audience: Audience = Audience.BUYER,
+) : com.qualityverifier.server.db.AuthStore {
     override suspend fun register(registration: com.qualityverifier.server.db.Registration) =
         com.qualityverifier.server.db.RegisterOutcome.InviteUnusable
-    override suspend fun findUser(userId: String) = null
+    override suspend fun findUser(userId: String) = com.qualityverifier.server.db.UserRow(
+        id = userId, displayName = "A Customer", accountType = "individual",
+        businessName = null, disabled = false, isTester = false, audience = audience,
+    )
     override suspend fun issueRefresh(
         userId: String, token: String, expiresAt: java.time.Instant,
         userAgent: String?, replaces: String?,

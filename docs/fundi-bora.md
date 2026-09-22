@@ -80,11 +80,25 @@ Not a fork. One parameter, threaded through:
   unchanged, and each audience caches its own master under its own path. The item
   protocols are shared, because what to photograph on a table does not depend on who is
   asking.
+- **The route is the audience.** Two endpoints, because there are two apps, and each
+  hard-codes the prompt it serves: Kagua's `/v1/chat` passes `Audience.BUYER` and Fundi
+  Bora's `/v1/fundi/chat` passes `Audience.FUNDI`. Neither reads anything to decide, and
+  the shared body below that choice is one function so the money-spending path cannot
+  drift between them.
+
+  **This replaced a single endpoint that resolved the audience from the account.** That
+  worked and was the wrong shape: it left a live path to the coaching prompt inside
+  Kagua's own endpoint, reachable by a data change with no code change and no client
+  involved. A buyer standing in a furniture shop being told how to re-glue the joint they
+  are inspecting is not a failure any test catches, because nothing about it is an error.
+  Kagua now has no code path there at all.
+
 - **A property of the account** (`V16`). `users.audience`, established at registration and
-  never changed. `ChatStore.audienceFor(userId, sessionId)` answers in one query: an
-  existing session reports the audience it was created with, a new one is answered by the
-  account. The route resolves it before assembling the prompt, because it chooses which
-  prompt, and passes it to `ensureSession` to be written once at creation.
+  never changed. It is now a **guard, not a selector**: each endpoint refuses an account
+  belonging to the other app with `403 wrong_app`, before the prompt is assembled and
+  before anything is spent upstream. So a fundi account cannot get coaching out of Kagua
+  either, and the answer does not depend on which app somebody typed their password into.
+  The route passes its own audience to `ensureSession`, to be written once at creation.
 
   **It comes from the invite code**, exactly as `is_tester` does — `invite_codes.audience`,
   read in the same transaction that redeems it. Registration is invite-gated for the pilot
@@ -93,12 +107,10 @@ Not a fork. One parameter, threaded through:
   invite form is therefore **the only way a Fundi Bora account can come into existence**,
   and a test pins that.
 
-  **Never from the request.** There is no `audience` field on `ChatRequest`, and the
-  server's JSON is strict, so a body carrying one is refused outright. An app identifier on
-  the register request was the alternative and was rejected for the same reason: the
-  audience selects the system prompt, one prompt decides whether to buy a piece and the
-  other how to put it right, and a client that could ask for either would be choosing what
-  the assistant is for.
+  **Never from the request.** There is no `audience` field on `ChatRequest` and the
+  server's JSON is strict, so a body carrying one is refused outright — belt and braces,
+  since the URL already decided. An app identifier on the register request was the
+  alternative there and was rejected for the same reason.
 
   **`V14` inferred it instead**, from the presence of a `fundi_workshops` row. That is
   wrong once accounts are independent, and wrong in a way that bites on day one: every
@@ -110,11 +122,11 @@ Not a fork. One parameter, threaded through:
   account's today. It is kept because the session is the research record, and what an
   assessment was conducted as is a property of the assessment.
 
-  **Outstanding:** nothing yet refuses a cross-app sign-in. A Kagua account's credentials
-  typed into Fundi Bora would authenticate, because `/v1/auth/sign-in` does not ask which
-  app is asking. Enforcing it needs the client to say, which is safe here — it can only
-  refuse its own sign-in — but it belongs with the producer app's auth screen rather than
-  ahead of it.
+  **Cross-app sign-in still succeeds**, because `/v1/auth/sign-in` does not ask which app
+  is asking. It no longer matters for the prompt: whichever app you sign in to, the only
+  assessment endpoint your account may use is its own. What it still costs is a confusing
+  session — a fundi signed into Kagua can read their reports and start nothing. Refusing
+  it outright belongs with the producer app's auth screen.
 - **The daily limit is still not per-audience**, and this is the next thing that will bite.
   A fundi assessing their own work all morning is a completely different shape of use from
   a buyer checking one table, and today they share the customer allowance. The code path
@@ -206,5 +218,7 @@ Worth revisiting — it is a product decision, not a technical one, and the mock
   more than the buyer's app does, not less.
 - Certification is "3 of 10" in the mockup, with no definition of what qualifies. That is a
   research decision and it determines what `fundi_observations` has to record.
-- Cross-app sign-in is not refused yet — see the audience section above.
+- Cross-app sign-in still succeeds. It no longer affects which prompt anybody gets — see
+  the audience section — but it leaves a fundi able to sign into Kagua and find nothing
+  they can do.
 - The daily limit is not per-audience yet, and needs a number.

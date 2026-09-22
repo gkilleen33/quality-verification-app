@@ -429,13 +429,9 @@ class SyncRouteTest {
          */
         private val ownedBlobs: Map<String, Set<String>> = emptyMap(),
     ) : ChatStore {
-        /** Set by a test; the route derives this and never takes it from the request. */
-        var audience: Audience = Audience.BUYER
-        /** What the route resolved and passed to ensureSession. */
+        /** What the route passed to ensureSession. Fixed by the endpoint, not resolved. */
         var storedAudience: Audience? = null
             private set
-
-        override suspend fun audienceFor(userId: String, sessionId: String) = audience
 
         override suspend fun recordSessionLocation(
             sessionId: String,
