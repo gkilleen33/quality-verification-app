@@ -4,6 +4,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.sql.Connection
 import java.time.Duration
+import com.qualityverifier.domain.Audience
 import com.qualityverifier.domain.QualityRecord
 import java.time.Instant
 import java.util.UUID
@@ -40,6 +41,11 @@ data class InviteRow(
     val timesUsed: Int,
     /** Whoever redeems this becomes one of our evaluators rather than a customer. */
     val grantsTester: Boolean,
+    /**
+     * Which app the account will be for. Independent of [grantsTester]: one of our own
+     * evaluators can be testing either half.
+     */
+    val audience: Audience,
 )
 
 data class UserRow(
@@ -172,7 +178,17 @@ interface AdminStore {
     /** How many admins can still sign in. Used to refuse disabling the last one. */
     suspend fun activeAdminCount(): Int
     suspend fun invites(): List<InviteRow>
-    suspend fun createInvite(code: String, label: String?, grantsTester: Boolean): Boolean
+    suspend fun createInvite(
+        code: String,
+        label: String?,
+        grantsTester: Boolean,
+        /**
+         * Which app the account will be for. The only way a Fundi Bora account comes into
+         * existence, because nothing else sets it: the register endpoint reads it off the
+         * code and no client may name its own.
+         */
+        audience: Audience,
+    ): Boolean
 
     /**
      * Marks an account as one of our evaluators, or stops it being one.
@@ -535,7 +551,7 @@ class PostgresAdminStore(private val dataSource: DataSource) : AdminStore {
             """
             select i.code, i.label, i.created_at, i.revoked_at,
                    (select count(*)::int from users u where u.invite_code = i.code),
-                   i.grants_tester
+                   i.grants_tester, i.audience
             from invite_codes i
             order by i.created_at desc
             """.trimIndent()
@@ -549,6 +565,7 @@ class PostgresAdminStore(private val dataSource: DataSource) : AdminStore {
                     revokedAt = rows.getTimestamp(4)?.toInstant(),
                     timesUsed = rows.getInt(5),
                     grantsTester = rows.getBoolean(6),
+                    audience = Audience.fromId(rows.getString(7).orEmpty()) ?: Audience.BUYER,
                 )
                 out
             }
@@ -559,16 +576,18 @@ class PostgresAdminStore(private val dataSource: DataSource) : AdminStore {
         code: String,
         label: String?,
         grantsTester: Boolean,
+        audience: Audience,
     ): Boolean = query { connection ->
         connection.prepareStatement(
             """
-            insert into invite_codes (code, label, grants_tester)
-            values (?, ?, ?) on conflict do nothing
+            insert into invite_codes (code, label, grants_tester, audience)
+            values (?, ?, ?, ?) on conflict do nothing
             """.trimIndent()
         ).use { statement ->
             statement.setString(1, code)
             statement.setString(2, label)
             statement.setBoolean(3, grantsTester)
+            statement.setString(4, audience.id)
             statement.executeUpdate() > 0
         }
     }

@@ -200,7 +200,12 @@ class RecordingAudit : com.qualityverifier.server.admin.AdminStore {
     override suspend fun admins() = no()
     override suspend fun activeAdminCount() = no()
     override suspend fun invites() = no()
-    override suspend fun createInvite(code: String, label: String?, grantsTester: Boolean) = no()
+    override suspend fun createInvite(
+        code: String,
+        label: String?,
+        grantsTester: Boolean,
+        audience: com.qualityverifier.domain.Audience,
+    ) = no()
     override suspend fun revokeInvite(code: String) = no()
     override suspend fun users(limit: Int, offset: Int, search: String?) = no()
     override suspend fun sessions(

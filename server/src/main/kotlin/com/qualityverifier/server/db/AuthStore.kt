@@ -136,15 +136,20 @@ class PostgresAuthStore(private val dataSource: DataSource) : AuthStore {
      * same moment would both pass that check. The constraint cannot be raced.
      */
     override suspend fun register(registration: Registration): RegisterOutcome = tx { connection ->
-        // The grant comes with the code, read in the same transaction that redeems it. A
+        // Both grants come with the code, read in the same transaction that redeems it. A
         // customer cannot ask to be an evaluator, and an evaluator should not have to
-        // remember to tick anything at registration.
-        val grantsTester = connection.prepareStatement(
-            "select grants_tester from invite_codes where code = ? and revoked_at is null"
+        // remember to tick anything at registration. The audience is the same shape of
+        // fact: which of the two apps this account is for, decided by whoever handed the
+        // code out rather than by the app doing the registering.
+        val grants = connection.prepareStatement(
+            "select grants_tester, audience from invite_codes where code = ? and revoked_at is null"
         ).use { statement ->
             statement.setString(1, registration.inviteCode)
-            statement.executeQuery().use { if (it.next()) it.getBoolean(1) else null }
+            statement.executeQuery().use {
+                if (it.next()) it.getBoolean(1) to it.getString(2) else null
+            }
         } ?: return@tx RegisterOutcome.InviteUnusable
+        val (grantsTester, audienceId) = grants
 
         // No CASE around the point: ST_MakePoint(NULL, NULL) is already NULL, and
         // `? is null` gives Postgres no type to infer, which fails at prepare time
@@ -153,8 +158,8 @@ class PostgresAuthStore(private val dataSource: DataSource) : AuthStore {
             insert into users (
                 invite_code, display_name, account_type, business_name,
                 business_location, business_location_accuracy_m, business_location_at,
-                phone, password_hash, password_set_at, is_tester
-            ) values (?, ?, ?, ?, ST_SetSRID(ST_MakePoint(?, ?), 4326)::geography, ?, ?, ?, ?, now(), ?)
+                phone, password_hash, password_set_at, is_tester, audience
+            ) values (?, ?, ?, ?, ST_SetSRID(ST_MakePoint(?, ?), 4326)::geography, ?, ?, ?, ?, now(), ?, ?)
             returning id::text
         """.trimIndent()
 
@@ -182,6 +187,9 @@ class PostgresAuthStore(private val dataSource: DataSource) : AuthStore {
                 statement.setString(9, registration.phone)
                 statement.setString(10, registration.passwordHash)
                 statement.setBoolean(11, grantsTester)
+                // Straight through from the code. The CHECK on the column is the backstop
+                // if a code is ever given a value this build has not heard of.
+                statement.setString(12, audienceId)
                 statement.executeQuery().use { rows ->
                     rows.next()
                     RegisterOutcome.Created(rows.getString(1))

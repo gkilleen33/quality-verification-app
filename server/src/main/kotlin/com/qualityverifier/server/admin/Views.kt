@@ -11,7 +11,10 @@ import kotlinx.html.button
 import kotlinx.html.code
 import kotlinx.html.div
 import kotlinx.html.form
+import com.qualityverifier.domain.Audience
 import com.qualityverifier.domain.QualityRecord
+import kotlinx.html.option
+import kotlinx.html.select
 import com.qualityverifier.server.api.ApiKeyRow
 import com.qualityverifier.server.db.TesterFeedback
 import kotlinx.html.dl
@@ -654,6 +657,18 @@ private fun AdminSessionRow.locationLine(): String? {
     return "Recorded at $point$accuracy"
 }
 
+/** The app an audience belongs to, as somebody handing out a code would name it. */
+fun appName(audience: Audience): String = when (audience) {
+    Audience.BUYER -> "Kagua"
+    Audience.FUNDI -> "Fundi Bora"
+}
+
+/** What a person of this audience is called. */
+fun audienceNoun(audience: Audience): String = when (audience) {
+    Audience.BUYER -> "customer"
+    Audience.FUNDI -> "fundi"
+}
+
 fun HTML.invitesPage(session: AdminSession, invites: List<InviteRow>, notice: String?) =
     page("Invite codes", session, "invites") {
         subtitle("A code is needed to create an account. Sign-in does not use one.")
@@ -661,6 +676,26 @@ fun HTML.invitesPage(session: AdminSession, invites: List<InviteRow>, notice: St
         div("card") {
             postForm("/admin/invites", session) {
                 labelledField("Who is it for", "label")
+                // The only place an account's app is ever decided. Registration reads it
+                // off the code, and no client may ask for one — so a code created here
+                // for the wrong app means handing somebody an account in the wrong app.
+                label {
+                    +"Which app"
+                    select {
+                        name = "audience"
+                        Audience.entries.forEach { audience ->
+                            option {
+                                value = audience.id
+                                selected = audience == Audience.BUYER
+                                +appName(audience)
+                            }
+                        }
+                    }
+                }
+                p("muted") {
+                    +"The two apps have entirely separate accounts. A code for one cannot "
+                    +"create an account on the other, and this cannot be changed afterwards."
+                }
                 label("check") {
                     input(type = InputType.checkBox, name = "tester")
                     +" This is one of our evaluators"
@@ -668,7 +703,8 @@ fun HTML.invitesPage(session: AdminSession, invites: List<InviteRow>, notice: St
                 p("muted") {
                     +"Evaluators are asked what they made of the assistant after each "
                     +"assessment, get a higher daily allowance, and can be filtered out of "
-                    +"pilot findings."
+                    +"pilot findings. Independent of the app — an evaluator can be testing "
+                    +"either one."
                 }
                 button(type = ButtonType.submit) { +"Create a code" }
             }
@@ -677,8 +713,8 @@ fun HTML.invitesPage(session: AdminSession, invites: List<InviteRow>, notice: St
         table {
             thead {
                 tr {
-                    th { +"Code" }; th { +"For" }; th { +"Grants" }; th { +"Used" }
-                    th { +"Created" }; th { }
+                    th { +"Code" }; th { +"For" }; th { +"App" }; th { +"Grants" }
+                    th { +"Used" }; th { +"Created" }; th { }
                 }
             }
             tbody {
@@ -687,7 +723,15 @@ fun HTML.invitesPage(session: AdminSession, invites: List<InviteRow>, notice: St
                         td("mono") { +invite.code }
                         td { +(invite.label ?: "—") }
                         td {
-                            if (invite.grantsTester) span("tag") { +"evaluator" } else +"customer"
+                            if (invite.audience == Audience.BUYER) {
+                                +appName(invite.audience)
+                            } else {
+                                span("tag") { +appName(invite.audience) }
+                            }
+                        }
+                        td {
+                            if (invite.grantsTester) span("tag") { +"evaluator" }
+                            else +audienceNoun(invite.audience)
                         }
                         td { +invite.timesUsed.toString() }
                         td { +invite.createdAt.readable() }

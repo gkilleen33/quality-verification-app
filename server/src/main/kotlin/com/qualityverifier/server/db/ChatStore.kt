@@ -65,15 +65,18 @@ interface ChatStore {
     /**
      * Which half of the project this turn belongs to.
      *
-     * Derived here and never taken from the request. A client that could name its own
+     * Read here and never taken from the request. A client that could name its own
      * audience could ask for the coaching prompt, and the two prompts are not
      * interchangeable: one decides whether to buy a piece, the other how to put it right.
      * There is no field on ChatRequest for it, and this is why.
      *
-     * An existing session keeps the audience it was created with, whatever the account
-     * has become since. A buyer who later registers a workshop does not retrospectively
-     * turn their old assessments into coaching sessions — they were conducted as a buyer,
-     * and the record should say so.
+     * The account settles it. Kagua and Fundi Bora are separate apps with entirely
+     * independent accounts, so an account is one audience or the other from registration —
+     * `users.audience`, carried by the invite code. Nothing changes it afterwards.
+     *
+     * An existing session still answers for itself rather than re-reading the account.
+     * That cannot differ today, and is kept because the session is the research record:
+     * what an assessment was conducted as is a property of the assessment.
      */
     suspend fun audienceFor(userId: String, sessionId: String): Audience
 
@@ -199,16 +202,16 @@ class PostgresChatStore(private val dataSource: DataSource) : ChatStore {
     override suspend fun audienceFor(userId: String, sessionId: String): Audience =
         tx { connection ->
             // One query, two cases. An existing session answers for itself; a new one is
-            // answered by whether the account has a workshop profile, which is what makes
-            // somebody a fundi.
+            // answered by the account, which belongs to one app or the other from the day
+            // it was registered — see V16. It is not inferred from a workshop profile,
+            // which would have read every fundi as a buyer until they finished setup.
             connection.prepareStatement(
                 """
                 select coalesce(
                     (select s.audience from sessions s
                       where s.id = ?::uuid and s.user_id = ?::uuid),
-                    case when exists (
-                        select 1 from fundi_workshops w where w.user_id = ?::uuid
-                    ) then 'fundi' else 'buyer' end
+                    (select u.audience from users u where u.id = ?::uuid),
+                    'buyer'
                 )
                 """.trimIndent()
             ).use { statement ->
