@@ -137,6 +137,9 @@ ksp {
 
 dependencies {
     implementation(project(":shared"))
+    // The camera, the plan runner and the physical tests. Shared with Fundi Bora, which
+    // is why they are no longer in here.
+    implementation(project(":capture"))
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.lifecycle.runtime.ktx)
     implementation(libs.androidx.lifecycle.viewmodel.compose)

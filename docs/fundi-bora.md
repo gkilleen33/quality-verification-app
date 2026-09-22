@@ -24,38 +24,35 @@ that literally.
 
 ```
 shared/     Fundi.kt (vocabularies), Diagnosis/FixPlan, fb-* parsing, FUNDI_MASTER
-capture/    NOT YET — see "deferred" below
+capture/    the camera, the plan runner, the physical tests — used by both apps
 app/        Kagua, buyer-facing
 fundi/      NOT YET — Fundi Bora, producer-facing
 server/     grows — audience parameter, fundi_* routes
 ```
 
-`fundi/` and `capture/` are still absent. An empty Android module builds a blank APK on
-every CI run and proves nothing, and the extraction is better done alongside the first
-screen than before it — the seam is easier to get right with something on the other side
-of it.
+`capture/` **exists** — an Android library holding the five screens both apps run
+unchanged: `CaptureScreen`, `PlanCard`, `PhysicalTestsScreen`, `InspectingScreen`,
+`TestDiagrams`. Extracting it was the important half. The capture pipeline — CameraX, the
+shot instruction over the viewfinder, normalisation on capture, the plan runner, the test
+screens and their diagrams — is substantial, identical for both audiences, and the thing
+that would silently diverge if it were copied: one app would gain a fix to the rotation
+handling or the skip flow and the other would not, and nothing would fail. Mockup scene 6
+is this shot runner verbatim, down to "Shot 5 of 7" and "Same eyes as the buyer's app".
 
-**The groundwork is done, though.** `PlanRun` moved into `:shared`, which was the only
-app-internal type the capture screens depended on. The five files that would move —
-`CaptureScreen`, `PlanCard`, `PhysicalTestsScreen`, `InspectingScreen`, `TestDiagrams` —
-now import nothing of ours outside `:shared`:
+It was a file move plus a build file, with no import rewrites at all — the packages
+(`ui.capture`, `ui.plan`) went across unchanged, and only `ChatScreen` imported them. That
+is what the earlier `PlanRun` move bought: it was the only app-internal type those screens
+depended on, so after it they imported nothing of ours outside `:shared`.
 
-| File | Imports from our code |
-|---|---|
-| `CaptureScreen` | `text.markdownToPlainText` |
-| `PlanCard` | `text.ReportLabels`, `domain.PlanRun` |
-| `InspectingScreen` | `text.ReportLabels`, `domain.PlanRun` |
-| `PhysicalTestsScreen` | `text.ReportLabels`, `domain.PlannedTest` |
-| `TestDiagrams` | `domain.TestDiagram` |
+**What may not come into `:capture`.** Nothing that knows who is asking. The screens take a
+plan, some labels and callbacks, and hand back photographs and answers; the audience, the
+conversation, the database and the server stay in the app that owns them. `:shared` is its
+only project dependency and holds no Android types. No resources either — every string
+arrives through `ReportLabels`, because the wording is fetched with the prompts and is not
+a compile-time constant.
 
-So the extraction is now a file move plus a build file, with no import rewrites outside
-the moved files. That is the whole reason to have done the `PlanRun` move first.
-
-**When they do, the extraction is the important half.** The capture pipeline — CameraX,
-the shot instruction over the viewfinder, normalisation on capture, the plan runner, the
-test screens and their diagrams — is substantial, identical for both audiences, and the
-thing that will silently diverge if it is copied. Mockup scene 6 is the existing shot
-runner verbatim, down to "Shot 5 of 7" and "Same eyes as the buyer's app".
+`fundi/` is still absent. An empty Android module builds a blank APK on every CI run and
+proves nothing; it arrives with the first screen that needs it.
 
 ## The audience dimension
 
