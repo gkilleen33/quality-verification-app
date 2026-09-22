@@ -23,7 +23,7 @@ data class UserRow(
      * and never changed — see `V16__account_audience.sql`.
      *
      * Read on every assessment turn, where each endpoint refuses an account belonging to
-     * the other app.
+     * the other app, and on the Fundi Bora profile endpoints.
      */
     val audience: Audience = Audience.BUYER,
 )
