@@ -1,5 +1,6 @@
 package com.qualityverifier.server
 
+import com.qualityverifier.domain.Audience
 import com.qualityverifier.domain.QualityRecord
 import com.qualityverifier.server.admin.AdminCredentials
 import com.qualityverifier.server.admin.AdminMessageRow
@@ -711,6 +712,66 @@ class AdminRouteTest {
         assertEquals(listOf(false), store.invitesGrantingTester)
     }
 
+    // This form is the only way a Fundi Bora account can come into existence: registration
+    // reads the audience off the code, and no client may ask for one. If the select stops
+    // reaching the store, the producer app becomes unreachable with nothing failing.
+    @Test
+    fun `an invite can be created for Fundi Bora`() = testApplication {
+        val store = FakeAdminStore()
+        val app = withAdmin(store)
+        app.signIn()
+        val csrf = app.csrfToken()
+
+        app.submitForm(
+            "/admin/invites",
+            parameters {
+                append("csrf", csrf); append("label", "Antony"); append("audience", "fundi")
+            },
+        )
+
+        assertEquals(listOf(Audience.FUNDI), store.invitesFor)
+        val entry = store.audits.single { it.action == "create-invite" }
+        assertTrue(
+            "which app the account is for belongs in the audit line",
+            entry.detail!!.contains("Fundi Bora"),
+        )
+    }
+
+    // The two are independent axes. Our own evaluator testing the coaching app is the
+    // obvious combination, and a form that folded them together could not express it.
+    @Test
+    fun `an invite can grant both an evaluator and Fundi Bora`() = testApplication {
+        val store = FakeAdminStore()
+        val app = withAdmin(store)
+        app.signIn()
+        val csrf = app.csrfToken()
+
+        app.submitForm(
+            "/admin/invites",
+            parameters {
+                append("csrf", csrf); append("tester", "on"); append("audience", "fundi")
+            },
+        )
+
+        assertEquals(listOf(true), store.invitesGrantingTester)
+        assertEquals(listOf(Audience.FUNDI), store.invitesFor)
+    }
+
+    @Test
+    fun `an invite with no app named is for the app that already exists`() = testApplication {
+        val store = FakeAdminStore()
+        val app = withAdmin(store)
+        app.signIn()
+        val csrf = app.csrfToken()
+
+        app.submitForm(
+            "/admin/invites",
+            parameters { append("csrf", csrf); append("audience", "not-an-app") },
+        )
+
+        assertEquals(listOf(Audience.BUYER), store.invitesFor)
+    }
+
     @Test
     fun `an existing account can be promoted and demoted`() = testApplication {
         // Somebody hired after they registered should not need a second account.
@@ -1145,6 +1206,7 @@ class AdminRouteTest {
         var invitesCreated = 0
             private set
         val invitesGrantingTester = mutableListOf<Boolean>()
+        val invitesFor = mutableListOf<Audience>()
         val testerChanges = mutableListOf<Pair<String, Boolean>>()
         var adminsCreated = 0
             private set
@@ -1238,12 +1300,28 @@ class AdminRouteTest {
 
         override suspend fun activeAdminCount() = activeAdmins
         override suspend fun invites() = listOf(
-            InviteRow("ABCD-2345", "a buyer", Instant.now(), null, 0, grantsTester = false),
-            InviteRow("EFGH-6789", "an evaluator", Instant.now(), null, 0, grantsTester = true),
+            InviteRow(
+                "ABCD-2345", "a buyer", Instant.now(), null, 0,
+                grantsTester = false, audience = Audience.BUYER,
+            ),
+            InviteRow(
+                "EFGH-6789", "an evaluator", Instant.now(), null, 0,
+                grantsTester = true, audience = Audience.BUYER,
+            ),
+            InviteRow(
+                "IJKL-2345", "a fundi", Instant.now(), null, 0,
+                grantsTester = false, audience = Audience.FUNDI,
+            ),
         )
 
-        override suspend fun createInvite(code: String, label: String?, grantsTester: Boolean): Boolean {
+        override suspend fun createInvite(
+            code: String,
+            label: String?,
+            grantsTester: Boolean,
+            audience: Audience,
+        ): Boolean {
             invitesGrantingTester += grantsTester
+            invitesFor += audience
             invitesCreated++
             return true
         }

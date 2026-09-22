@@ -1,6 +1,9 @@
 package com.qualityverifier.server.routes
 
+import com.qualityverifier.domain.Audience
 import com.qualityverifier.server.admin.AdminSession
+import com.qualityverifier.server.admin.appName
+import com.qualityverifier.server.admin.audienceNoun
 import com.qualityverifier.server.db.FeedbackStore
 import com.qualityverifier.server.api.ApiKeyStore
 import com.qualityverifier.server.admin.apiKeysPage
@@ -353,17 +356,27 @@ fun Route.adminRoutes(
             val label = form["label"]?.trim()?.takeIf { it.isNotEmpty() }
             val code = newInviteCode()
             val grantsTester = form["tester"] != null
-            store.createInvite(code, label, grantsTester)
+            // An unrecognised value falls back to a buyer rather than refusing. This form
+            // is only reachable by a signed-in admin, so a value we do not know means the
+            // select and this build disagree — and the safe side of that is the app that
+            // already exists.
+            val audience = Audience.fromId(form["audience"].orEmpty()) ?: Audience.BUYER
+            store.createInvite(code, label, grantsTester, audience)
             store.audit(
                 session.adminId, session.email, "create-invite", target = code,
                 // Recorded in the audit line rather than only in the row: who was made an
-                // evaluator, and by whom, is the part somebody would come back asking about.
-                detail = listOfNotNull(label, "evaluator".takeIf { grantsTester }).joinToString(" — ")
-                    .takeIf { it.isNotEmpty() },
+                // evaluator, and by whom, is the part somebody would come back asking
+                // about. The app it was for is the same kind of question.
+                detail = listOfNotNull(
+                    label,
+                    "evaluator".takeIf { grantsTester },
+                    appName(audience),
+                ).joinToString(" — ").takeIf { it.isNotEmpty() },
                 ip = call.clientIp(),
             )
             val invites = store.invites()
-            val notice = if (grantsTester) "Created $code for an evaluator." else "Created $code."
+            val who = if (grantsTester) "an evaluator" else "a ${audienceNoun(audience)}"
+            val notice = "Created $code for $who on ${appName(audience)}."
             call.respondHtml { invitesPage(session, invites, notice) }
         }
 

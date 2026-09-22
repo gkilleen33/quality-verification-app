@@ -14,6 +14,7 @@ that literally.
 | One server or two? | **One.** Same jar, same systemd unit, same nginx. |
 | One database or two? | **One.** The flywheel — "certified fundis win Kagua buyers" — is a join. Two databases would make the central mechanism of the intervention a cross-database query. |
 | One repo? | **Yes**, and one Gradle build. `shared/` already exists because prompt caching is a byte-exact prefix match; both halves need it. |
+| Shared accounts? | **No.** Two apps, one backend, **entirely independent accounts.** Nobody holds one account that is both. |
 | Country | **Kenya.** No multi-market abstraction. Kagua's `+254` prefill and `Africa/Nairobi` day boundary were moved separately — see the Kenya change. |
 | Deletion | **Hides from public, retains the record.** See below — this is not what `anonymise_user` does. |
 | Voice | **Out.** Mockup scene 10 is voice-first Swahili; typed for now. |
@@ -67,20 +68,41 @@ Not a fork. One parameter, threaded through:
   unchanged, and each audience caches its own master under its own path. The item
   protocols are shared, because what to photograph on a table does not depend on who is
   asking.
-- **Wired, and derived.** `ChatStore.audienceFor(userId, sessionId)` answers in one query:
-  an existing session reports the audience it was created with, and a new one is answered
-  by whether the account has a `fundi_workshops` row. The route resolves it before
-  assembling the prompt, because it chooses which prompt, and passes it to `ensureSession`
-  to be written once at creation.
+- **A property of the account** (`V16`). `users.audience`, established at registration and
+  never changed. `ChatStore.audienceFor(userId, sessionId)` answers in one query: an
+  existing session reports the audience it was created with, a new one is answered by the
+  account. The route resolves it before assembling the prompt, because it chooses which
+  prompt, and passes it to `ensureSession` to be written once at creation.
+
+  **It comes from the invite code**, exactly as `is_tester` does — `invite_codes.audience`,
+  read in the same transaction that redeems it. Registration is invite-gated for the pilot
+  and every tester is somebody we hand a code to by name, so the code is already how we
+  decide who may spend the budget; it can decide which app they spend it in. The portal's
+  invite form is therefore **the only way a Fundi Bora account can come into existence**,
+  and a test pins that.
 
   **Never from the request.** There is no `audience` field on `ChatRequest`, and the
-  server's JSON is strict, so a body carrying one is refused outright. The two prompts are
-  not interchangeable, so letting a client choose would be letting it choose what the
-  assistant is for.
+  server's JSON is strict, so a body carrying one is refused outright. An app identifier on
+  the register request was the alternative and was rejected for the same reason: the
+  audience selects the system prompt, one prompt decides whether to buy a piece and the
+  other how to put it right, and a client that could ask for either would be choosing what
+  the assistant is for.
 
-  **A session keeps the audience it was created with.** A buyer who later registers a
-  workshop does not retrospectively turn their old assessments into coaching sessions —
-  they were conducted as a buyer, and the record should say so.
+  **`V14` inferred it instead**, from the presence of a `fundi_workshops` row. That is
+  wrong once accounts are independent, and wrong in a way that bites on day one: every
+  fundi between signing up and finishing the workshop screens has no row, so they would
+  read as a buyer and get the buying prompt for their first assessments. The inference is
+  gone.
+
+  **A session keeps the audience it was created with.** That cannot differ from the
+  account's today. It is kept because the session is the research record, and what an
+  assessment was conducted as is a property of the assessment.
+
+  **Outstanding:** nothing yet refuses a cross-app sign-in. A Kagua account's credentials
+  typed into Fundi Bora would authenticate, because `/v1/auth/sign-in` does not ask which
+  app is asking. Enforcing it needs the client to say, which is safe here — it can only
+  refuse its own sign-in — but it belongs with the producer app's auth screen rather than
+  ahead of it.
 - **The daily limit is still not per-audience**, and this is the next thing that will bite.
   A fundi assessing their own work all morning is a completely different shape of use from
   a buyer checking one table, and today they share the customer allowance. The code path
@@ -158,10 +180,19 @@ which is true, without saying what the price is.
 
 Worth revisiting — it is a product decision, not a technical one, and the mockup disagrees.
 
-## Open before the first screen
+## Open
 
+- **The coaching prompt has never been run against a real photograph** — issue #41.
+  `prompts/fundi-master.txt` is marked `DRAFT, v0.1` and its coaching content was written
+  by somebody with no workshop experience: the diagnosis chain, the fix/prevent/drill
+  times and costs, the tool substitutions and the price ranges are all guesses. Reviewed
+  *after* the app can run an assessment end to end, deliberately — a diagnosis is far
+  easier to judge beside the photographs that produced it than as the instruction that
+  asked for it, and prompts are data, so the review is an edit to a text file.
 - The two Fundi Bora consent strings do not exist yet, and Kagua's Swahili is still
   unreviewed placeholder copy (issue #20). A producer-facing app in Kenya needs that pass
   more than the buyer's app does, not less.
 - Certification is "3 of 10" in the mockup, with no definition of what qualifies. That is a
   research decision and it determines what `fundi_observations` has to record.
+- Cross-app sign-in is not refused yet — see the audience section above.
+- The daily limit is not per-audience yet, and needs a number.
