@@ -62,24 +62,6 @@ data class MessageRow(
  * of them need Postgres to state. The SQL is verified against the real database.
  */
 interface ChatStore {
-    /**
-     * Which half of the project this turn belongs to.
-     *
-     * Read here and never taken from the request. A client that could name its own
-     * audience could ask for the coaching prompt, and the two prompts are not
-     * interchangeable: one decides whether to buy a piece, the other how to put it right.
-     * There is no field on ChatRequest for it, and this is why.
-     *
-     * The account settles it. Kagua and Fundi Bora are separate apps with entirely
-     * independent accounts, so an account is one audience or the other from registration —
-     * `users.audience`, carried by the invite code. Nothing changes it afterwards.
-     *
-     * An existing session still answers for itself rather than re-reading the account.
-     * That cannot differ today, and is kept because the session is the research record:
-     * what an assessment was conducted as is a property of the assessment.
-     */
-    suspend fun audienceFor(userId: String, sessionId: String): Audience
-
     suspend fun ensureSession(
         sessionId: String,
         userId: String,
@@ -87,7 +69,10 @@ interface ChatStore {
         previousSessionId: String?,
         intakeAnswers: String?,
         promptSha: String?,
-        /** Resolved by [audienceFor], never by the client. Written once, at creation. */
+        /**
+         * Which app this assessment was conducted in. Fixed by the route that took it —
+         * Kagua's chat endpoint only ever passes BUYER — and written once, at creation.
+         */
         audience: Audience,
         /** Assessments allowed per day for a customer. Zero or less disables the check. */
         dailyLimit: Int,
@@ -199,36 +184,6 @@ class PostgresChatStore(private val dataSource: DataSource) : ChatStore {
      * exactly as a session that does not exist: telling the difference would let anybody
      * enumerate which ids are real.
      */
-    override suspend fun audienceFor(userId: String, sessionId: String): Audience =
-        tx { connection ->
-            // One query, two cases. An existing session answers for itself; a new one is
-            // answered by the account, which belongs to one app or the other from the day
-            // it was registered — see V16. It is not inferred from a workshop profile,
-            // which would have read every fundi as a buyer until they finished setup.
-            connection.prepareStatement(
-                """
-                select coalesce(
-                    (select s.audience from sessions s
-                      where s.id = ?::uuid and s.user_id = ?::uuid),
-                    (select u.audience from users u where u.id = ?::uuid),
-                    'buyer'
-                )
-                """.trimIndent()
-            ).use { statement ->
-                statement.setString(1, sessionId)
-                statement.setString(2, userId)
-                statement.setString(3, userId)
-                statement.executeQuery().use { rows ->
-                    val id = if (rows.next()) rows.getString(1) else null
-                    // An unrecognised value in the column reads as buyer rather than
-                    // throwing. The CHECK makes that unreachable today; if a later
-                    // migration widens it, the wrong prompt is a better failure than a
-                    // dead route.
-                    Audience.fromId(id.orEmpty()) ?: Audience.BUYER
-                }
-            }
-        }
-
     override suspend fun ensureSession(
         sessionId: String,
         userId: String,
@@ -305,7 +260,7 @@ class PostgresChatStore(private val dataSource: DataSource) : ChatStore {
             statement.setString(4, previousSessionId)
             statement.setString(5, intakeAnswers)
             statement.setString(6, promptSha)
-            // Written once, here. Nothing updates it afterwards: see audienceFor.
+            // Written once, here. Nothing updates it afterwards.
             statement.setString(7, audience.id)
             statement.executeUpdate()
         }

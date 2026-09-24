@@ -1,5 +1,6 @@
 package com.qualityverifier.server.db
 
+import com.qualityverifier.domain.Audience
 import com.qualityverifier.server.auth.Tokens
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -17,6 +18,14 @@ data class UserRow(
     val disabled: Boolean,
     /** One of our own evaluators, not a buyer. Drives the exit questionnaire and the cap. */
     val isTester: Boolean = false,
+    /**
+     * Which of the two apps this account is for. Fixed at registration by the invite code
+     * and never changed — see `V16__account_audience.sql`.
+     *
+     * Read on every assessment turn, where each endpoint refuses an account belonging to
+     * the other app.
+     */
+    val audience: Audience = Audience.BUYER,
 )
 
 /** What registration was given. Validated before it reaches here. */
@@ -223,7 +232,7 @@ class PostgresAuthStore(private val dataSource: DataSource) : AuthStore {
                 """
                 select id::text, display_name, account_type, business_name,
                        (disabled_at is not null or deleted_at is not null) as gone,
-                       is_tester
+                       is_tester, audience
                 from users where id = ?::uuid
                 """.trimIndent()
             ).use { statement ->
@@ -236,6 +245,8 @@ class PostgresAuthStore(private val dataSource: DataSource) : AuthStore {
                         businessName = rows.getString(4),
                         disabled = rows.getBoolean(5),
                         isTester = rows.getBoolean(6),
+                        audience = Audience.fromId(rows.getString(7).orEmpty())
+                            ?: Audience.BUYER,
                     )
                 }
             }

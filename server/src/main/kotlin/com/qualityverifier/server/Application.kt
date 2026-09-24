@@ -328,8 +328,11 @@ fun Application.module(
         // Chat needs auth: every route inside it authenticates, and mounting them
         // without the plugin installed would fail at request time rather than here.
         if (auth != null) chat?.let {
+            // Two endpoints, one per app, each hard-coded to its own prompt. The auth
+            // store is here to refuse an account belonging to the other app — a guard,
+            // not a way to pick a prompt.
             chatRoutes(
-                it.store, it.blobs, it.claude, it.prompts,
+                it.store, auth.store, it.blobs, it.claude, it.prompts,
                 it.dailyAssessmentLimit, it.testerDailyAssessmentLimit,
             )
             // Reading assessments back, plus the two account actions. Needs both halves:
