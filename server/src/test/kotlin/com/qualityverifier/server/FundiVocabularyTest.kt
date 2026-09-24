@@ -5,6 +5,7 @@ import com.qualityverifier.domain.Defect
 import com.qualityverifier.domain.FundiGoal
 import com.qualityverifier.domain.MeasurementUnit
 import com.qualityverifier.domain.SkillDimension
+import com.qualityverifier.domain.ToolChangeReason
 import com.qualityverifier.domain.ToolKind
 import com.qualityverifier.domain.ToolOwnership
 import org.junit.Assert.assertTrue
@@ -26,21 +27,37 @@ import java.io.File
  */
 class FundiVocabularyTest {
 
-    private val migration: String by lazy {
-        val file = File("db/migrations/V14__fundi_bora.sql")
+    private fun read(name: String): String {
+        val file = File("db/migrations/$name")
         assertTrue(
             "expected the migration at ${file.absolutePath}; the module root moved?",
             file.exists(),
         )
-        file.readText()
+        return file.readText()
     }
 
-    private fun assertAllAllowed(what: String, ids: List<String>) {
+    private val migration: String by lazy { read("V14__fundi_bora.sql") }
+
+    /**
+     * The tool history, added later.
+     *
+     * Its own file rather than folded into the V14 text, because it restates the tool
+     * vocabulary in three more CHECKs and the drift this test exists to catch is exactly
+     * one of them falling behind.
+     */
+    private val toolHistory: String by lazy { read("V17__fundi_tool_history.sql") }
+
+    private fun assertAllAllowed(
+        what: String,
+        ids: List<String>,
+        sql: String = migration,
+        where: String = "V14",
+    ) {
         ids.forEach { id ->
             assertTrue(
-                "$what '$id' is in the Kotlin enum but not in any CHECK in V14 — " +
+                "$what '$id' is in the Kotlin enum but not in any CHECK in $where — " +
                     "writing it would violate a constraint at runtime",
-                migration.contains("'$id'"),
+                sql.contains("'$id'"),
             )
         }
     }
@@ -63,6 +80,29 @@ class FundiVocabularyTest {
     @Test
     fun `every goal is allowed by the constraint`() {
         assertAllAllowed("goal", FundiGoal.entries.map { it.id })
+    }
+
+    @Test
+    fun `every tool change reason is allowed by the constraint`() {
+        assertAllAllowed(
+            "reason", ToolChangeReason.entries.map { it.id },
+            sql = toolHistory, where = "V17",
+        )
+    }
+
+    // V17 restates the tool and ownership vocabularies for the history table. A tool kind
+    // added to V14 and not to V17 would store fine and then fail the moment somebody got
+    // rid of one, which is the only moment the history matters.
+    @Test
+    fun `the history table knows every tool kind and ownership state too`() {
+        assertAllAllowed(
+            "tool kind", ToolKind.entries.map { it.id },
+            sql = toolHistory, where = "V17",
+        )
+        assertAllAllowed(
+            "ownership", ToolOwnership.entries.map { it.id },
+            sql = toolHistory, where = "V17",
+        )
     }
 
     @Test

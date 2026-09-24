@@ -83,6 +83,40 @@ enum class ToolOwnership(val id: String) {
     }
 }
 
+/**
+ * Why a tool arrived or left.
+ *
+ * Recorded because the change is the interesting part. A shop that owned a circular saw
+ * last March and does not now has told us something — sold to cover a bad month, broken
+ * and never replaced, stolen — and each is a different story about the business. The
+ * reverse is the clearest evidence the coaching did anything: a maker who bought a marking
+ * gauge after a fix plan named its absence as the cause.
+ *
+ * Always optional. It is null whenever nobody asked, and it has to stay allowed to be null
+ * even once the setup screen does ask, because a maker who would rather not say should
+ * still be able to correct their tool list.
+ *
+ * The list is a guess and flagged as one in `V17`; it belongs with the setup-copy review
+ * in issue #41.
+ */
+enum class ToolChangeReason(val id: String) {
+    BOUGHT("bought"),
+    /** Given or inherited. */
+    GIFT("gift"),
+    SOLD("sold"),
+    /** Broke and was not replaced. */
+    BROKE("broke"),
+    STOLEN("stolen"),
+    /** A borrowed tool went back to whoever owns it. */
+    RETURNED("returned"),
+    OTHER("other");
+
+    companion object {
+        fun fromId(id: String): ToolChangeReason? =
+            entries.firstOrNull { it.id == id.trim().lowercase() }
+    }
+}
+
 /** What the maker said they wanted, from the three the setup screen offers. */
 enum class FundiGoal(val id: String) {
     /** "+ KSh 500 per piece". */

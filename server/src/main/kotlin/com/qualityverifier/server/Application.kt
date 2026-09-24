@@ -52,11 +52,14 @@ import com.qualityverifier.server.chat.AnthropicClient
 import com.qualityverifier.server.chat.ClaudeClient
 import com.qualityverifier.server.db.AuthStore
 import com.qualityverifier.server.db.ChatStore
+import com.qualityverifier.server.db.FundiStore
 import com.qualityverifier.server.db.PostgresChatStore
+import com.qualityverifier.server.db.PostgresFundiStore
 import com.qualityverifier.server.db.PostgresAuthStore
 import com.qualityverifier.server.routes.ErrorResponse
 import com.qualityverifier.server.routes.authRoutes
 import com.qualityverifier.server.routes.chatRoutes
+import com.qualityverifier.server.routes.fundiRoutes
 import com.qualityverifier.server.routes.syncRoutes
 import okhttp3.OkHttpClient
 import java.io.File
@@ -122,6 +125,10 @@ fun main() {
         null
     }
 
+    // Needs only a database. No Anthropic key and no session key, so a server that has
+    // neither still keeps a maker's setup answers rather than losing them.
+    val fundi = database?.let { Fundi(PostgresFundiStore(it.source)) }
+
     val admin = if (database != null && config.adminSessionKey != null) {
         Admin(
             store = PostgresAdminStore(database.source),
@@ -185,7 +192,7 @@ fun main() {
     )
 
     embeddedServer(Netty, port = config.port, host = config.host) {
-        module(config.version, database, auth, chat, admin)
+        module(config.version, database, auth, chat, fundi, admin)
     }.start(wait = true)
 }
 
@@ -203,6 +210,15 @@ private val SWEEP_INTERVAL = 24.hours
 
 /** Bundled so the module signature does not grow a parameter per collaborator. */
 class Auth(val store: AuthStore, val accessTokens: AccessTokens)
+
+/**
+ * Fundi Bora's own endpoints. Only the setup profile so far.
+ *
+ * Its own bundle rather than a field on [Chat]: an assessment and a maker's workshop
+ * details are answered at completely different times, and the chat bundle needs an
+ * Anthropic key that this has no use for.
+ */
+class Fundi(val store: FundiStore)
 
 /** The admin portal. Absent when no session key is configured, so it simply is not mounted. */
 class Admin(
@@ -253,6 +269,7 @@ fun Application.module(
     database: DatabaseHealth?,
     auth: Auth? = null,
     chat: Chat? = null,
+    fundi: Fundi? = null,
     admin: Admin? = null,
 ) {
     install(ContentNegotiation) { json() }
@@ -339,6 +356,11 @@ fun Application.module(
             // the chat store for sessions and the auth store for credentials.
             syncRoutes(it.store, auth.store, it.blobs, it.feedback)
         }
+
+        // Also behind auth, but deliberately not inside the `chat` block: the setup
+        // answers are worth storing on a server with no Anthropic key configured, and
+        // folding them in there would take them down with chat.
+        if (auth != null) fundi?.let { fundiRoutes(it.store, auth.store) }
 
         admin?.let {
             adminRoutes(it.store, it.blobs, it.feedback, it.apiKeys, it.secureCookie)
