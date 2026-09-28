@@ -29,7 +29,7 @@ core/       tokens, chat client, database, images, sync, location — used by bo
 capture/    the camera, the plan runner, the physical tests — used by both apps
 design/     colour scheme, type scale, verdict palette — used by both apps
 app/        Kagua, buyer-facing
-fundi/      NOT YET — Fundi Bora, producer-facing
+fundi/      Fundi Bora, producer-facing — scaffolding only
 server/     grows — audience parameter, fundi_* routes
 ```
 
@@ -80,9 +80,24 @@ somebody to keep them in step by hand; it now generates its rules from the share
 using the same `levelClass` function the markup applies, so a level cannot get a rule
 nothing selects or a class nothing styles. `VerdictPaletteTest` pins that.
 
-`fundi/` is still absent — and is now the only thing missing between here and a producer
-running an assessment. An empty Android module builds a blank APK on every CI run and
-proves nothing; it arrives with the first screen that needs it.
+`fundi/` **exists, as scaffolding.** A second application module rather than a flavour of
+Kagua: the two share a backend and four libraries and nothing else — separate accounts,
+separate invite codes, separate launcher entries, and since the chat endpoints were split,
+no way for either to reach the other's prompt. A flavour would have made "which app am I"
+a runtime question in code that both ship.
+
+What it draws is a placeholder that says so. The point of the slice was not the screen but
+the chain underneath it: `:core`'s container constructing against Fundi Bora's own
+`BuildConfig`, `:design`'s theme applying, the manifest merging the permissions its
+libraries declare (it declares none and gets all four), and CI signing and publishing a
+second APK. Those are what break when a module is added, and they break at assembly time
+rather than in a screen.
+
+Release signing moved to `gradle/release-signing.gradle.kts` first, so the resolution
+order and the which-piece-is-missing failure message exist once rather than per app.
+
+Still to come: auth and workshop setup, then the assessment loop and the diagnosis and
+fix-plan cards.
 
 ## The audience dimension
 

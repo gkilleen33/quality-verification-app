@@ -4,12 +4,17 @@ plugins {
     alias(libs.plugins.kotlin.compose)
 }
 
-// No kotlin-serialization and no KSP any more. Both were here for the data layer — the
-// wire types and Room's generated code — and both went to :core with it. Nothing left in
-// this module is annotated.
-
-// Release signing, resolved by the script both apps share. It publishes these through
-// `extra` and leaves the signingConfigs block to each app — see the script for why.
+// Fundi Bora: the producer-facing app. See docs/fundi-bora.md.
+//
+// A second application module rather than a flavour of Kagua. The two share a backend and
+// four libraries, but nothing else: separate accounts, separate invite codes, separate
+// entries in the launcher, and — since the chat endpoints were split — no way for either
+// to reach the other's prompt. A flavour would have made "which app am I" a runtime
+// question in code that both ship.
+//
+// It owns almost nothing. The camera and plan runner are :capture, the data layer is
+// :core, the look is :design, and the vocabularies and parsing are :shared. What lives
+// here is the producer's own screens and the navigation between them.
 apply(from = rootProject.file("gradle/release-signing.gradle.kts"))
 
 val releaseKeystore = extra["releaseKeystore"] as File?
@@ -19,22 +24,21 @@ val releaseKeyPassword = extra["releaseKeyPassword"] as String?
 val hasReleaseSigning = extra["hasReleaseSigning"] as Boolean
 
 android {
-    namespace = "com.qualityverifier"
+    namespace = "com.qualityverifier.fundi"
     compileSdk = 36
 
     defaultConfig {
-        applicationId = "com.qualityverifier"
+        // Its own id, so both apps can sit on one handset. Under the project's namespace
+        // rather than a new top-level one: same repo, same signing key, same store entry
+        // when there is one.
+        applicationId = "com.qualityverifier.fundibora"
         minSdk = 24
         targetSdk = 36
         versionCode = 1
         versionName = "0.1.0"
 
-        // The one value that points the app at its backend. Compiled in, so changing it
-        // means a release — which is why it is worth picking a hostname you will keep.
-        //
-        // Prompts are no longer fetched here: the server assembles the system prompt from
-        // the protocols on GitHub, so a client cannot substitute one. PROMPT_BASE_URL and
-        // the app's copy of GitHubPromptRepository went with that change.
+        // The same backend as Kagua, which is the whole architecture — one server, one
+        // database, two apps. Compiled in, as it is there.
         buildConfigField(
             "String",
             "SERVER_BASE_URL",
@@ -55,15 +59,12 @@ android {
 
     buildTypes {
         release {
-            // A stable signing key is what lets a new build install over an older one.
-            // Debug keys are generated per machine and per CI run, so builds signed with
-            // them are rejected as a signature mismatch on upgrade.
             signingConfig = if (hasReleaseSigning) {
                 signingConfigs.getByName("release")
             } else {
                 logger.lifecycle(
-                    "No release keystore configured; signing the release build with the " +
-                        "debug key. It will not install over a differently signed build."
+                    "No release keystore configured; signing Fundi Bora with the debug " +
+                        "key. It will not install over a differently signed build."
                 )
                 signingConfigs.getByName("debug")
             }
@@ -99,13 +100,10 @@ android {
 
 dependencies {
     implementation(project(":shared"))
-    // The colour scheme, type scale and verdict palette. Shared with Fundi Bora.
-    implementation(project(":design"))
-    // Tokens, the chat client, the database, the image store, the sync queue and the
-    // location fix. Shared with Fundi Bora, which is why they are no longer in here.
     implementation(project(":core"))
-    // The camera, the plan runner and the physical tests. Likewise.
     implementation(project(":capture"))
+    implementation(project(":design"))
+
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.lifecycle.runtime.ktx)
     implementation(libs.androidx.lifecycle.viewmodel.compose)
@@ -121,9 +119,6 @@ dependencies {
     debugImplementation(libs.androidx.ui.tooling)
 
     implementation(libs.androidx.navigation.compose)
-
-    // Room, the encrypted prefs, EXIF and okhttp all went to :core; CameraX went to
-    // :capture. What is left here is what this module's own code names directly.
     implementation(libs.coil.compose)
 
     testImplementation(libs.junit)
