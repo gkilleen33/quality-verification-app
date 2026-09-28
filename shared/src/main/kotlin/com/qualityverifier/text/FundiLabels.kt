@@ -1,7 +1,9 @@
 package com.qualityverifier.text
 
+import com.qualityverifier.domain.FixHorizon
 import com.qualityverifier.domain.FundiGoal
 import com.qualityverifier.domain.ToolKind
+import com.qualityverifier.domain.ToolOwnership
 
 /**
  * Fundi Bora's own wording.
@@ -32,7 +34,53 @@ data class FundiLabels(
     private val borrowedFormat: String,
     val toolNames: Map<ToolKind, String>,
     val goalNames: Map<FundiGoal, String>,
+    // ---- the setup flow. Three screens, in the order the mockup asks them.
+    val setupWorkshopTitle: String,
+    val setupWorkshopBlurb: String,
+    val setupWorksAt: String,
+    val setupYears: String,
+    val setupWorkers: String,
+    val setupMakes: String,
+    val setupPiecesPerMonth: String,
+    val setupTimber: String,
+    val setupToolsTitle: String,
+    val setupToolsBlurb: String,
+    val setupGoalsTitle: String,
+    val setupGoalsBlurb: String,
+    val ownershipNames: Map<ToolOwnership, String>,
+    val setupNext: String,
+    val setupBack: String,
+    val setupFinish: String,
+    val setupSkip: String,
+    val setupSaving: String,
+    val setupFailed: String,
+    // ---- the two cards. The mockup's own words where it has them.
+    val diagnosisHeading: String,
+    /** "Not a grade — a cause". The one line that says what this screen is for. */
+    val diagnosisSubhead: String,
+    val whatHappenedHeading: String,
+    val whereItWentWrongHeading: String,
+    val habitToChangeHeading: String,
+    val alsoFoundHeading: String,
+    val oneCheckHeading: String,
+    val nothingFound: String,
+    val horizonNames: Map<FixHorizon, String>,
+    val horizonBlurbs: Map<FixHorizon, String>,
+    val toolHeading: String,
+    val checkLocally: String,
+    val noCost: String,
+    private val minutesFormat: String,
+    private val costFormat: String,
 ) {
+    fun minutes(n: Int): String = minutesFormat.replace("{n}", n.toString())
+
+    /** Zero is a real answer and worth saying out loud: it is what gets the fix done. */
+    fun cost(kes: Int): String =
+        if (kes <= 0) noCost else costFormat.replace("{n}", kes.toString())
+
+    fun nameOf(horizon: FixHorizon): String = horizonNames.getValue(horizon)
+    fun blurbOf(horizon: FixHorizon): String = horizonBlurbs.getValue(horizon)
+
     fun worksAt(place: String): String = worksAtFormat.replace("{place}", place)
     fun years(count: Int): String = yearsFormat.replace("{n}", count.toString())
     fun workers(count: Int): String = workersFormat.replace("{n}", count.toString())
@@ -77,6 +125,61 @@ data class FundiLabels(
                 ToolKind.SANDER to "sander",
                 ToolKind.OTHER to "other tools",
             ),
+            setupWorkshopTitle = "About your workshop",
+            // Every field optional, and the screen says so: a maker who will not say how
+            // many pieces they finish should still reach the coaching.
+            setupWorkshopBlurb = "All of this is optional. It helps the advice fit the " +
+                "work you actually do.",
+            setupWorksAt = "Where you work",
+            setupYears = "Years in the trade",
+            setupWorkers = "People working with you",
+            setupMakes = "What you mostly make",
+            setupPiecesPerMonth = "Pieces a month",
+            setupTimber = "Timber you usually use",
+            setupToolsTitle = "Your tools",
+            // The one screen that is not optional in spirit, and the blurb says why
+            // rather than enforcing it — a fix built around a tool they do not own is
+            // the failure the coaching prompt calls out by name.
+            setupToolsBlurb = "The advice is built around what you have. Tell us what " +
+                "you do not have too — that is how we avoid suggesting it.",
+            setupGoalsTitle = "What you want from this",
+            setupGoalsBlurb = "Pick any that fit.",
+            ownershipNames = mapOf(
+                ToolOwnership.OWNED to "Have it",
+                ToolOwnership.BORROWED to "Can borrow",
+                ToolOwnership.NONE to "Do not have",
+            ),
+            setupNext = "Next",
+            setupBack = "Back",
+            setupFinish = "Finish setup",
+            setupSkip = "Skip for now",
+            setupSaving = "Saving…",
+            setupFailed = "Could not save that. Check your connection and try again.",
+            diagnosisHeading = "DIAGNOSIS",
+            diagnosisSubhead = "Not a grade — a cause",
+            whatHappenedHeading = "WHAT HAPPENED",
+            whereItWentWrongHeading = "WHERE IT WENT WRONG",
+            // "Habit", never the person. The prompt forbids calling a maker careless,
+            // and this heading is where that would otherwise creep back in.
+            habitToChangeHeading = "THE HABIT TO CHANGE",
+            alsoFoundHeading = "ALSO FOUND",
+            oneCheckHeading = "ONE THING TO CHECK",
+            nothingFound = "Nothing to put right on this one.",
+            horizonNames = mapOf(
+                FixHorizon.FIX_NOW to "FIX NOW",
+                FixHorizon.PREVENT to "PREVENT",
+                FixHorizon.DRILL to "DRILL",
+            ),
+            horizonBlurbs = mapOf(
+                FixHorizon.FIX_NOW to "This piece, today.",
+                FixHorizon.PREVENT to "From the next piece onwards.",
+                FixHorizon.DRILL to "Practice on offcuts.",
+            ),
+            toolHeading = "A TOOL WORTH BUYING",
+            checkLocally = "Prices move. Check with your own supplier.",
+            noCost = "No cost",
+            minutesFormat = "{n} min",
+            costFormat = "KSh {n}",
             goalNames = mapOf(
                 FundiGoal.PRICE_PER_PIECE to "a better price per piece",
                 FundiGoal.MORE_ORDERS to "more orders",

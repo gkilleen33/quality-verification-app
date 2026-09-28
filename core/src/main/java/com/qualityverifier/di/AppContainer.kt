@@ -11,6 +11,8 @@ import com.qualityverifier.data.chat.ChatService
 import com.qualityverifier.data.chat.ServerChatService
 import com.qualityverifier.data.db.AppDatabase
 import com.qualityverifier.data.db.ImageFileStore
+import com.qualityverifier.data.fundi.FundiProfileClient
+import com.qualityverifier.data.fundi.FundiProfiles
 import com.qualityverifier.data.location.LocationCapture
 import com.qualityverifier.data.location.LocationPreference
 import com.qualityverifier.data.session.RoomSessionRepository
@@ -51,6 +53,16 @@ class AppContainer(
      * the backend still means a release.
      */
     private val baseUrl: String,
+    /**
+     * Which assessment endpoint this app posts to.
+     *
+     * The second thing in this layer that differs between the apps, and for the same
+     * reason as the first: the endpoint chooses the system prompt, so it is part of what
+     * an app *is*. Defaulted to Kagua's, which is the safe direction to be wrong in — a
+     * caller that forgets gets the buying prompt, and the server refuses it outright if
+     * the account is a fundi's rather than quietly coaching a buyer.
+     */
+    private val chatPath: String = "v1/chat",
 ) {
 
     private val appContext = context.applicationContext
@@ -126,6 +138,7 @@ class AppContainer(
         sessionStart = sessionRepository::startOf,
         baseUrl = baseUrl,
         json = json,
+        chatPath = chatPath,
     )
 
     val assessmentSync: AssessmentSync = AssessmentSync(
@@ -139,6 +152,21 @@ class AppContainer(
     val isTester: Boolean get() = tokenStore.isTester()
 
     val account: AccountActions = AccountActions(syncClient)
+
+    /**
+     * The maker's setup answers. Only Fundi Bora constructs a screen that touches it;
+     * Kagua links it and never calls it.
+     *
+     * Held here rather than built by that app so it goes through the same http client and
+     * the same single-flight token provider as everything else. An app that assembled its
+     * own would be one 401 away from spending a rotated refresh token twice.
+     */
+    val fundiProfiles: FundiProfiles = FundiProfileClient(
+        client = httpClient,
+        tokens = tokenProvider,
+        baseUrl = baseUrl,
+        json = json,
+    )
 
     /** Signs out locally. The refresh token stays revocable server-side regardless. */
     fun signOut() = tokenProvider.signOut()

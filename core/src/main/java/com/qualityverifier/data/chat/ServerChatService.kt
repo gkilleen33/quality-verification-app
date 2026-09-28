@@ -83,6 +83,16 @@ class ServerChatService(
     private val sessionStart: suspend (String) -> SessionStart?,
     private val baseUrl: String,
     private val json: Json,
+    /**
+     * Which app's assessment endpoint this posts to.
+     *
+     * The endpoint chooses the system prompt — Kagua's `v1/chat` is hard-coded to the
+     * buying prompt and Fundi Bora's `v1/fundi/chat` to the coaching one — so this is
+     * the client's half of that decision and there is no request field for it. Getting
+     * it wrong is refused rather than silently answered: the server checks the account's
+     * audience against the endpoint and returns 403 `wrong_app`.
+     */
+    private val chatPath: String = "v1/chat",
     private val io: CoroutineDispatcher = Dispatchers.IO,
 ) : ChatService {
 
@@ -156,7 +166,7 @@ class ServerChatService(
             ?: return ChatResult.Failure(ChatErrorKind.AUTH, "Please sign in again.")
 
         val request = Request.Builder()
-            .url(baseUrl + "v1/chat")
+            .url(baseUrl + chatPath)
             .addHeader("Authorization", "Bearer $token")
             .post(body.toRequestBody(JSON))
             .build()
@@ -276,7 +286,21 @@ class ServerChatService(
      * name a model or a quota. These are written for somebody standing in a shop.
      */
     private fun failureFor(status: Int, body: String = ""): ChatResult = when (status) {
-        401, 403 -> ChatResult.Failure(ChatErrorKind.AUTH, "Please sign in again.")
+        401 -> ChatResult.Failure(ChatErrorKind.AUTH, "Please sign in again.")
+        // A 403 used to be folded in with 401, which was fine while there was one app.
+        // Now the assessment endpoints refuse an account belonging to the other one, and
+        // "please sign in again" would send that person round a loop for ever: the
+        // credentials are right, the account is simply not for this app. Nothing the
+        // client can do fixes it, so the message says what happened instead.
+        403 -> if (body.contains(WRONG_APP)) {
+            ChatResult.Failure(
+                ChatErrorKind.AUTH,
+                "This account was created for the other app, so it cannot run " +
+                    "assessments here. You need an account created in this one.",
+            )
+        } else {
+            ChatResult.Failure(ChatErrorKind.AUTH, "Please sign in again.")
+        }
         // The server could not read what this app sent, which means a bug in this app.
         // Retrying sends exactly the same thing again, so the wording does not promise
         // that it will help — it asks them to report it, which is the only thing that
@@ -352,6 +376,7 @@ class ServerChatService(
         const val ERROR_TRUNCATED = "answer_truncated"
 
         /** The server's error code for the per-account daily allowance. */
+        const val WRONG_APP = "wrong_app"
         const val DAILY_LIMIT = "daily_limit_reached"
         val JSON = "application/json; charset=utf-8".toMediaType()
         val JPEG = "image/jpeg".toMediaType()

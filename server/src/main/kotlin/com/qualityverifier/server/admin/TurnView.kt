@@ -150,7 +150,16 @@ private fun FlowContent.severityChip(defect: Defect, labels: ReportLabels) {
     span("sev ${levelClass(level)}") { +parts.joinToString(" · ") }
 }
 
-private fun levelClass(level: VerdictLevel): String = when (level) {
+/**
+ * The CSS class for a verdict level.
+ *
+ * `internal` rather than private because the stylesheet generates one rule per level from
+ * this same function — see `verdictLevelCss`. Written out rather than derived from
+ * [VerdictLevel.id], which is the wire vocabulary and does not match: SERIOUS is
+ * `serious_concerns` there, and UNKNOWN is the empty string, which would emit a rule for
+ * the class `.lv-`.
+ */
+internal fun levelClass(level: VerdictLevel): String = when (level) {
     VerdictLevel.SOUND -> "lv-sound"
     VerdictLevel.FAIR -> "lv-fair"
     VerdictLevel.SERIOUS -> "lv-serious"

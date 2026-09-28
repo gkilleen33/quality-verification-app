@@ -100,36 +100,59 @@ jobs:
           QV_KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
         run: ./gradlew --no-daemon testDebugUnitTest lintDebug assembleRelease -PrequireReleaseSigning
 
-      - name: Name the APK after the version being built
+      - name: Name the APKs after the versions being built
         id: name
         run: |
+          # Two apps now. The label still comes from Kagua's versionName, because that is
+          # what a tag names; Fundi Bora carries its own versionName in its filename so a
+          # tester can tell two downloads apart.
           version=$(grep -oE 'versionName = "[^"]+"' app/build.gradle.kts | cut -d'"' -f2)
+          fundi_version=$(grep -oE 'versionName = "[^"]+"' fundi/build.gradle.kts | cut -d'"' -f2)
           if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
             label="${GITHUB_REF_NAME}"
           else
             label="${version}-$(git rev-parse --short HEAD)"
           fi
+          short=$(git rev-parse --short HEAD)
+
           built=app/build/outputs/apk/release/app-release.apk
           if [ ! -f "$built" ]; then
-            echo "::error::Expected APK at $built but it is missing"
+            echo "::error::Expected Kagua's APK at $built but it is missing"
             exit 1
           fi
           name="quality-verifier-${label}.apk"
           cp "$built" "$name"
-          echo "apk=$name" >> "$GITHUB_OUTPUT"
-          echo "label=$label" >> "$GITHUB_OUTPUT"
-          ls -lh "$name"
 
-      - name: Confirm the APK carries the upload key, not a debug key
-        run: |
-          APKSIGNER=$(ls "$ANDROID_HOME"/build-tools/*/apksigner | tail -1)
-          certs=$("$APKSIGNER" verify --print-certs "${{ steps.name.outputs.apk }}")
-          echo "$certs"
-          if echo "$certs" | grep -q "CN=Android Debug"; then
-            echo "::error::This APK is debug-signed and will not install over an earlier"
-            echo "::error::build. Check the KEYSTORE_* secrets."
+          # Named and checked with the same care as Kagua's: a second app that publishes
+          # silently unsigned, or not at all, is the failure a second app introduces.
+          fundi_built=fundi/build/outputs/apk/release/fundi-release.apk
+          if [ ! -f "$fundi_built" ]; then
+            echo "::error::Expected Fundi Bora's APK at $fundi_built but it is missing."
+            echo "::error::assembleRelease builds every application module, so this means"
+            echo "::error::the :fundi module did not assemble."
             exit 1
           fi
+          fundi_name="fundi-bora-${fundi_version}-${short}.apk"
+          cp "$fundi_built" "$fundi_name"
+
+          echo "apk=$name" >> "$GITHUB_OUTPUT"
+          echo "fundi_apk=$fundi_name" >> "$GITHUB_OUTPUT"
+          echo "label=$label" >> "$GITHUB_OUTPUT"
+          ls -lh "$name" "$fundi_name"
+
+      - name: Confirm both APKs carry the upload key, not a debug key
+        run: |
+          APKSIGNER=$(ls "$ANDROID_HOME"/build-tools/*/apksigner | tail -1)
+          for apk in "${{ steps.name.outputs.apk }}" "${{ steps.name.outputs.fundi_apk }}"; do
+            echo "--- $apk"
+            certs=$("$APKSIGNER" verify --print-certs "$apk")
+            echo "$certs"
+            if echo "$certs" | grep -q "CN=Android Debug"; then
+              echo "::error::$apk is debug-signed and will not install over an earlier"
+              echo "::error::build. Check the KEYSTORE_* secrets."
+              exit 1
+            fi
+          done
 
       # Artifacts need a GitHub login and arrive zipped, which a phone cannot install.
       # Releases are a plain download, so that is what the phone uses.
@@ -138,7 +161,10 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "${GITHUB_REF_NAME}" "${{ steps.name.outputs.apk }}" kagua-server.jar \
+          gh release create "${GITHUB_REF_NAME}" \
+            "${{ steps.name.outputs.apk }}" \
+            "${{ steps.name.outputs.fundi_apk }}" \
+            kagua-server.jar \
             --title "${GITHUB_REF_NAME}" \
             --notes "Signed release build of ${GITHUB_REF_NAME}. Install on a phone with \"install unknown apps\" allowed for your browser."
 
@@ -149,7 +175,10 @@ jobs:
         run: |
           # Recreate rather than update, so stale APKs never linger on the release.
           gh release delete nightly --yes --cleanup-tag 2>/dev/null || true
-          gh release create nightly "${{ steps.name.outputs.apk }}" kagua-server.jar \
+          gh release create nightly \
+            "${{ steps.name.outputs.apk }}" \
+            "${{ steps.name.outputs.fundi_apk }}" \
+            kagua-server.jar \
             --title "Latest test build (${{ steps.name.outputs.label }})" \
             --prerelease \
             --notes "Unstable build from \`main\`, refreshed on every merge. Signed with the upload key, so it installs over an earlier build without uninstalling."

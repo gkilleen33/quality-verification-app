@@ -12,6 +12,8 @@ import kotlinx.html.code
 import kotlinx.html.div
 import kotlinx.html.form
 import com.qualityverifier.domain.Audience
+import com.qualityverifier.domain.VerdictLevel
+import com.qualityverifier.domain.VerdictSwatches
 import com.qualityverifier.domain.QualityRecord
 import kotlinx.html.option
 import kotlinx.html.select
@@ -70,7 +72,20 @@ private val TIMESTAMP: DateTimeFormatter =
 /** East African time throughout: it is when the assessments actually happened. */
 fun Instant.readable(): String = TIMESTAMP.format(this)
 
-private const val CSS = """
+/**
+ * The four verdict badge rules, generated from the same swatches the phone's theme reads.
+ *
+ * Light scheme only: the portal has no dark mode, and a reviewer is comparing what the
+ * customer saw rather than matching their own screen.
+ */
+private val verdictLevelCss: String =
+    VerdictLevel.entries.joinToString("\n") { level ->
+        val swatch = VerdictSwatches.of(level, dark = false)
+        "  .${levelClass(level)} { background:${swatch.container}; color:${swatch.onContainer}; }"
+    }
+
+/** `internal` so VerdictPaletteTest can assert the generated verdict rules land in it. */
+internal val CSS = """
   :root { --ink:#241a12; --paper:#faf6f1; --line:#e2d6c8; --accent:#7b4b2a; --muted:#6b5b4d;
           --tag-bg:#e8dccb; --tag-fg:#5c4326; }
   * { box-sizing:border-box; }
@@ -123,13 +138,11 @@ private const val CSS = """
   .critique dt { font-weight:600; margin-top:10px; }
   .critique dd { margin:2px 0 0 0; }
   .pager { margin-top:16px; display:flex; gap:12px; }
-  /* An assistant turn, drawn as the handset draws it — see TurnView.kt. The three level
-     colours are copied from VerdictPalette rather than re-picked: a reviewer comparing
-     this page with a phone in their other hand has to see the same verdict. */
-  .lv-sound   { background:#d6e8ce; color:#1f3d14; }
-  .lv-fair    { background:#f7e3b8; color:#4a3305; }
-  .lv-serious { background:#f6d6d2; color:#5b1410; }
-  .lv-unknown { background:#e4dacd; color:#4e4237; }
+  /* An assistant turn, drawn as the handset draws it — see TurnView.kt. The level
+     colours are generated from VerdictSwatches, the same values the phone's theme reads:
+     a reviewer comparing this page with a phone in their other hand has to see the same
+     verdict, and a hand-copied hex is a promise nothing enforces. */
+$verdictLevelCss
   .verdict { display:flex; flex-direction:column; gap:10px; }
   .vcard { border:1px solid var(--line); border-radius:8px; padding:14px 16px; background:#fff; }
   .vcard.plan, .vcard.vquiet { background:#f7f2ea; }

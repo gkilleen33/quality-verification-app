@@ -468,23 +468,29 @@ cases.
 
 ## Architecture
 
-Five Gradle modules. The split is driven by a second app — Fundi Bora, the producer-facing
-half (`docs/fundi-bora.md`) — which runs the same assessment engine pointed inward.
-Anything both apps use lives below `app/`, because a copy is a thing that diverges
+Seven Gradle modules and **two apps**. The split is driven by Fundi Bora, the
+producer-facing half (`docs/fundi-bora.md`), which runs the same assessment engine pointed
+inward. Anything both apps use lives below them, because a copy is a thing that diverges
 silently.
 
 | Module     | What is in it                                                              | Android? |
 | ---------- | -------------------------------------------------------------------------- | -------- |
-| `shared/`  | Item protocols, prompt assembly, the fenced-block parser, wire types, report wording. Used by the phone **and the server**, so the two cannot drift. | no |
+| `shared/`  | Item protocols, prompt assembly, the fenced-block parser, wire types, report wording, verdict swatches. Used by the phones **and the server**, so they cannot drift. | no |
 | `core/`    | Tokens and refresh, the chat client, the Room database, the image store, the sync queue, the location fix. | library |
 | `capture/` | The camera with the shot instruction over the viewfinder, the plan runner, the physical tests and their diagrams. | library |
-| `app/`     | Kagua: the buyer-facing screens, view models and navigation.                 | app |
+| `design/`  | Colour scheme, type scale, verdict badge palette.                            | library |
+| `app/`     | **Kagua**: the buyer-facing screens, view models and navigation.             | app |
+| `fundi/`   | **Fundi Bora**: the producer-facing screens. Scaffolding only so far.        | app |
 | `server/`  | Ktor: the chat proxy, auth, sync and the admin portal.                       | no |
 
 Each module declares the permissions its own code needs — `INTERNET` and the two
 foreground location permissions in `core/`, `CAMERA` in `capture/` — and the manifest
-merger folds them into whichever app depends on it, so a second app cannot ship without
-one and discover it at runtime.
+merger folds them into whichever app depends on it. `fundi/` declares none of its own and
+gets all four, which is the property working as intended: a second app cannot ship without
+a permission its libraries need and discover it at runtime.
+
+Release signing is resolved once, in `gradle/release-signing.gradle.kts`, and applied by
+both app modules. CI builds, signs, verifies and publishes both APKs from one invocation.
 
 Within that, the data layer is deliberately separated from the UI so Phase 2
 (server-backed) was a swap of implementations rather than a rewrite. Four interfaces were

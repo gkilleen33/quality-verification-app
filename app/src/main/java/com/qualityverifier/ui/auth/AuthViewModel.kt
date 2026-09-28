@@ -63,8 +63,11 @@ class AuthViewModel(private val auth: AuthClient) : ViewModel() {
 
     private fun attempt(block: suspend () -> AuthResult) {
         if (_busy.value) return
+        // Set before launching rather than inside the coroutine. The guard was only
+        // working because viewModelScope dispatches immediately; two taps within one
+        // frame both passed it. Found by a test of the identical shape in Fundi Bora.
+        _busy.value = true
         viewModelScope.launch {
-            _busy.value = true
             _error.value = null
             try {
                 when (val result = block()) {

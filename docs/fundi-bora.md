@@ -23,11 +23,13 @@ that literally.
 ## Module shape
 
 ```
-shared/     Fundi.kt (vocabularies), Diagnosis/FixPlan, fb-* parsing, FUNDI_MASTER
+shared/     Fundi.kt (vocabularies), Diagnosis/FixPlan, fb-* parsing, FUNDI_MASTER,
+            VerdictSwatches (read by the phone's theme AND the portal's CSS)
 core/       tokens, chat client, database, images, sync, location — used by both apps
 capture/    the camera, the plan runner, the physical tests — used by both apps
+design/     colour scheme, type scale, verdict palette — used by both apps
 app/        Kagua, buyer-facing
-fundi/      NOT YET — Fundi Bora, producer-facing
+fundi/      Fundi Bora, producer-facing — scaffolding only
 server/     grows — audience parameter, fundi_* routes
 ```
 
@@ -65,9 +67,84 @@ only project dependency and holds no Android types. No resources either — ever
 arrives through `ReportLabels`, because the wording is fetched with the prompts and is not
 a compile-time constant.
 
-`fundi/` is still absent — and is now the only thing missing between here and a producer
-running an assessment. An empty Android module builds a blank APK on every CI run and
-proves nothing; it arrives with the first screen that needs it.
+`design/` **exists** — the colour scheme, the type scale, and the verdict badge palette.
+Fundi Bora needs the last of those the moment it issues a re-assessment verdict, and a
+second copy of a palette is how two apps end up disagreeing about what "serious concerns"
+looks like while both being sure they are right.
+
+The hex itself went one level further down, into `:shared` as `VerdictSwatches`, because
+there is a **third** renderer: the admin portal draws the same verdicts as CSS so a
+reviewer can hold the page beside a handset, and it cannot depend on an Android library.
+The portal used to carry its own copy of the four hex pairs under a comment asking
+somebody to keep them in step by hand; it now generates its rules from the shared values,
+using the same `levelClass` function the markup applies, so a level cannot get a rule
+nothing selects or a class nothing styles. `VerdictPaletteTest` pins that.
+
+`fundi/` **exists, as scaffolding.** A second application module rather than a flavour of
+Kagua: the two share a backend and four libraries and nothing else — separate accounts,
+separate invite codes, separate launcher entries, and since the chat endpoints were split,
+no way for either to reach the other's prompt. A flavour would have made "which app am I"
+a runtime question in code that both ship.
+
+What it draws is a placeholder that says so. The point of the slice was not the screen but
+the chain underneath it: `:core`'s container constructing against Fundi Bora's own
+`BuildConfig`, `:design`'s theme applying, the manifest merging the permissions its
+libraries declare (it declares none and gets all four), and CI signing and publishing a
+second APK. Those are what break when a module is added, and they break at assembly time
+rather than in a screen.
+
+Release signing moved to `gradle/release-signing.gradle.kts` first, so the resolution
+order and the which-piece-is-missing failure message exist once rather than per app.
+
+**Auth and workshop setup exist.** Fundi-specific sign-in and registration screens rather
+than extracted Kagua ones: registration genuinely differs, because the business-or-personal
+question is about a shop lending its handset to walk-in customers and asking a fundi it
+would be asking something nothing reads. What is *not* duplicated is anything that
+matters — `AuthClient` and the token store are `:core`'s, so rotation, single-flight
+refresh and the theft rule have one implementation. What is duplicated is a busy flag.
+
+The three setup screens share one view model, because the profile is **sent whole**: the
+server derives what changed by comparing against what it holds, so three per-screen saves
+would write three partial profiles and record a tool history of a maker acquiring their
+own tools one screen at a time. Re-entering setup loads what the server already has, so
+correcting one tool does not wipe the rest — which would otherwise be silent, since an
+absent tool is deliberately not a disposal.
+
+**Nothing on the tools screen is pre-selected.** Absent means nobody asked; `NONE` means
+they said they have none; only the second lets the coaching work around it. A default
+would have told the model every maker owns nothing.
+
+`FundiProfileClient` lives in `:core` despite that module's only-what-both-apps-need rule,
+because the rule it loses to is stronger: every authenticated client has to refresh
+through the single-flight provider or it can sign somebody out. That retry is now
+`AuthenticatedHttp`, shared with `SyncClient` and tested for the first time.
+
+**The assessment loop and the cards exist.** Home offers the item types and nothing else
+— a maker opening the app is standing over a piece they have just finished, and anything
+between that and the camera is a tap they did not need. Then the opening photograph plus
+the maker's context, the plan, `:capture`'s shot runner and physical tests unchanged, and
+the diagnosis and fix-plan cards.
+
+`AssessViewModel` is a leaner cousin of Kagua's `ChatViewModel` rather than a reuse of it.
+The buyer's version also carries an intake questionnaire, comparisons between two pieces,
+the evaluator questionnaire and sharing, none of which a maker has any use for. What the
+two genuinely share is already shared: the camera and plan runner are `:capture`, storage
+and upload dedup and the retry are `:core`.
+
+`ServerChatService` takes the endpoint as a parameter now, defaulted to Kagua's — the safe
+direction to be wrong in, since the server refuses a fundi account on the buying endpoint
+rather than quietly coaching a buyer. A 403 from an assessment endpoint used to be folded
+in with 401 and said "please sign in again", which under the split endpoints is a loop:
+the credentials are right and the account is simply for the other app. It now says so.
+
+**The cards are the part a carpenter will judge**, and the part issue #41 is waiting on.
+One card per fix horizon rather than three sections in one, because fixing this piece,
+changing the habit and practising are three kinds of advice and run together they read as
+nine things to do now. Findings past the first are listed without causes: a fundi handed
+six habits to change changes none of them.
+
+Still to come: reports, the skill file, certification — and running any of it against a
+real piece.
 
 ## The audience dimension
 
@@ -127,11 +204,21 @@ Not a fork. One parameter, threaded through:
   assessment endpoint your account may use is its own. What it still costs is a confusing
   session — a fundi signed into Kagua can read their reports and start nothing. Refusing
   it outright belongs with the producer app's auth screen.
-- **The daily limit is still not per-audience**, and this is the next thing that will bite.
-  A fundi assessing their own work all morning is a completely different shape of use from
-  a buyer checking one table, and today they share the customer allowance. The code path
-  already distinguishes evaluator from customer, so adding a third is small — but it needs
-  a number, and that is a research decision rather than a guess.
+- **The daily limit is per-audience** — **five customer allowances**, so 100 against the
+  current 20. A fundi works through everything that came off the bench that morning and
+  re-assesses yesterday's pieces after repairing them; the assess / repair / re-assess
+  loop *is* the product, and each turn of it is another assessment. The customer
+  allowance would have stopped them before lunch.
+
+  A multiple rather than a second constant, so the ratio survives the customer number
+  being retuned once there is spend data — and so disabling the quota disables it for
+  both audiences, since zero times five is zero. `KAGUA_FUNDI_DAILY_ASSESSMENT_LIMIT`
+  overrides it outright.
+
+  The endpoint chooses the allowance, exactly as it chooses the prompt. An evaluator gets
+  the *larger* of their audience's allowance and the tester allowance, not the tester one
+  outright — that number exists to raise a customer's, and applied to a fundi it would
+  have halved an evaluator's day.
 
 ### Where the maker's context goes, and why it is not the system prompt
 
@@ -221,4 +308,5 @@ Worth revisiting — it is a product decision, not a technical one, and the mock
 - Cross-app sign-in still succeeds. It no longer affects which prompt anybody gets — see
   the audience section — but it leaves a fundi able to sign into Kagua and find nothing
   they can do.
-- The daily limit is not per-audience yet, and needs a number.
+- ~~The daily limit is not per-audience.~~ Settled 28 September 2026: five customer
+  allowances. See the audience section.

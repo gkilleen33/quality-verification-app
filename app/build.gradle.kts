@@ -1,5 +1,3 @@
-import java.util.Properties
-
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
@@ -10,49 +8,15 @@ plugins {
 // wire types and Room's generated code — and both went to :core with it. Nothing left in
 // this module is annotated.
 
-// Release signing material comes from `keystore.properties` (local, gitignored) or from
-// environment variables (CI). Absent both, the release build falls back to the debug key
-// so a fork can still produce an installable APK without holding the real one.
-//
-// Pass -PrequireReleaseSigning to turn a missing key into a build failure. CI does that
-// when publishing, because a silently debug-signed "release" would refuse to install over
-// a previous build and the reason would be invisible.
-val keystoreProperties = Properties().apply {
-    val file = rootProject.file("keystore.properties")
-    if (file.exists()) file.inputStream().use { load(it) }
-}
+// Release signing, resolved by the script both apps share. It publishes these through
+// `extra` and leaves the signingConfigs block to each app — see the script for why.
+apply(from = rootProject.file("gradle/release-signing.gradle.kts"))
 
-fun signingValue(environmentVariable: String, property: String): String? =
-    (System.getenv(environmentVariable) ?: keystoreProperties.getProperty(property))
-        ?.takeIf { it.isNotBlank() }
-
-val releaseStorePath = signingValue("QV_KEYSTORE_FILE", "storeFile")
-val releaseStorePassword = signingValue("QV_KEYSTORE_PASSWORD", "storePassword")
-// The alias lives inside the keystore and is not sensitive, so it is a project
-// convention rather than a secret. Held as a secret it was worse than useless: GitHub
-// redacts every occurrence of a secret's value in logs, so "upload" became "***"
-// everywhere, including in unrelated step names.
-val defaultKeyAlias = "upload"
-val releaseKeyAlias = signingValue("QV_KEY_ALIAS", "keyAlias") ?: defaultKeyAlias
-val releaseKeyPassword = signingValue("QV_KEY_PASSWORD", "keyPassword")
-
-val releaseKeystore = releaseStorePath?.let(::File)?.takeIf { it.isFile }
-val hasReleaseSigning = releaseKeystore != null &&
-    releaseStorePassword != null && releaseKeyPassword != null
-
-if (providers.gradleProperty("requireReleaseSigning").isPresent && !hasReleaseSigning) {
-    val missing = buildList {
-        if (releaseStorePath == null) add("QV_KEYSTORE_FILE")
-        else if (releaseKeystore == null) add("QV_KEYSTORE_FILE (no file at $releaseStorePath)")
-        if (releaseStorePassword == null) add("QV_KEYSTORE_PASSWORD")
-        if (releaseKeyPassword == null) add("QV_KEY_PASSWORD")
-    }
-    throw GradleException(
-        "Release signing was required but is not configured. Missing: " +
-            missing.joinToString(", ") +
-            ". Set them as environment variables or in keystore.properties."
-    )
-}
+val releaseKeystore = extra["releaseKeystore"] as File?
+val releaseStorePassword = extra["releaseStorePassword"] as String?
+val releaseKeyAlias = extra["releaseKeyAlias"] as String
+val releaseKeyPassword = extra["releaseKeyPassword"] as String?
+val hasReleaseSigning = extra["hasReleaseSigning"] as Boolean
 
 android {
     namespace = "com.qualityverifier"
@@ -135,6 +99,8 @@ android {
 
 dependencies {
     implementation(project(":shared"))
+    // The colour scheme, type scale and verdict palette. Shared with Fundi Bora.
+    implementation(project(":design"))
     // Tokens, the chat client, the database, the image store, the sync queue and the
     // location fix. Shared with Fundi Bora, which is why they are no longer in here.
     implementation(project(":core"))

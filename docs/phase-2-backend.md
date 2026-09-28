@@ -512,6 +512,10 @@ Two properties worth knowing rather than rediscovering:
 5. ~~**Per-user quota.**~~ Built 1 Sep 2026. **20 assessments started per account per
    day**, configurable at runtime via `KAGUA_DAILY_ASSESSMENT_LIMIT`; zero or less disables
    it, and an unparseable value falls back to 20 rather than uncapping spend.
+   Per-audience since 28 Sep 2026: a Fundi Bora account gets **five customer allowances**
+   (100 by default, `KAGUA_FUNDI_DAILY_ASSESSMENT_LIMIT` to override), chosen by the
+   endpoint the turn arrived on. An evaluator gets the larger of their audience's
+   allowance and the evaluator allowance, never the smaller.
 
    - Counted per **calendar day in `Africa/Kampala`** (Uganda and Kenya are both UTC+3), so
      "resets at midnight" is true for the user rather than for UTC.

@@ -1,0 +1,6 @@
+<resources>
+    <!-- The theme's tertiary green rather than Kagua's timber brown. Same family, because
+         the two apps are one project; different enough that somebody with both installed
+         can tell the launcher icons apart without reading the label. -->
+    <color name="ic_launcher_background">#5B6247</color>
+</resources>
