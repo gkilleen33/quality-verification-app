@@ -14,6 +14,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.sp
 import androidx.core.view.WindowCompat
 import com.qualityverifier.domain.VerdictLevel
+import com.qualityverifier.domain.VerdictSwatch
+import com.qualityverifier.domain.VerdictSwatches
 
 private val Timber = Color(0xFF6B4A2F)
 private val TimberLight = Color(0xFF8A6444)
@@ -95,37 +97,26 @@ private val DarkColors = darkColorScheme(
 )
 
 /**
- * Verdict badge colours, one pair per level.
+ * Verdict badge colours, one pair per level, as Compose reads them.
  *
- * Deliberately outside the Material colour scheme: these do not mean "primary" or
- * "error", they mean sound, fair and serious concerns, and a reader has to be able to
- * tell them apart at a glance in daylight without reading the label. Only three, and
- * never used for anything else, so the association stays learnable.
+ * The hex lives in [VerdictSwatches] in `:shared`, not here. The admin portal renders the
+ * same verdicts as CSS so a reviewer can hold this page beside a phone, and it cannot
+ * depend on an Android library — so the values sit where both renderers can reach them
+ * and this file is only the Compose binding. It used to be the other way round, with the
+ * portal carrying a copy of the hex under a comment asking somebody to keep the two in
+ * step by hand.
  */
 data class VerdictColors(val container: Color, val onContainer: Color)
 
-object VerdictPalette {
-    val sound = VerdictColors(Color(0xFFD6E8CE), Color(0xFF1F3D14))
-    val fair = VerdictColors(Color(0xFFF7E3B8), Color(0xFF4A3305))
-    val serious = VerdictColors(Color(0xFFF6D6D2), Color(0xFF5B1410))
-    val unknown = VerdictColors(Color(0xFFE4DACD), Color(0xFF4E4237))
+/** `#RRGGBB` as an opaque Compose colour. */
+private fun String.toColor(): Color =
+    Color(("FF" + removePrefix("#")).toLong(16))
 
-    val soundDark = VerdictColors(Color(0xFF2E4222), Color(0xFFD6E8CE))
-    val fairDark = VerdictColors(Color(0xFF4B3A14), Color(0xFFF7E3B8))
-    val seriousDark = VerdictColors(Color(0xFF5A2320), Color(0xFFF6D6D2))
-    val unknownDark = VerdictColors(Color(0xFF3B322B), Color(0xFFD3C5B4))
-}
+private fun VerdictSwatch.toColors() = VerdictColors(container.toColor(), onContainer.toColor())
 
 @Composable
-fun verdictColors(level: VerdictLevel): VerdictColors {
-    val dark = isSystemInDarkTheme()
-    return when (level) {
-        VerdictLevel.SOUND -> if (dark) VerdictPalette.soundDark else VerdictPalette.sound
-        VerdictLevel.FAIR -> if (dark) VerdictPalette.fairDark else VerdictPalette.fair
-        VerdictLevel.SERIOUS -> if (dark) VerdictPalette.seriousDark else VerdictPalette.serious
-        VerdictLevel.UNKNOWN -> if (dark) VerdictPalette.unknownDark else VerdictPalette.unknown
-    }
-}
+fun verdictColors(level: VerdictLevel): VerdictColors =
+    VerdictSwatches.of(level, dark = isSystemInDarkTheme()).toColors()
 
 /**
  * Type is a step larger than Material defaults throughout. The app is used outdoors,

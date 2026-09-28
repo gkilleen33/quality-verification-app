@@ -22,5 +22,6 @@ rootProject.name = "QualityVerifier"
 include(":shared")
 include(":core")
 include(":capture")
+include(":design")
 include(":app")
 include(":server")

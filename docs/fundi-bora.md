@@ -23,9 +23,11 @@ that literally.
 ## Module shape
 
 ```
-shared/     Fundi.kt (vocabularies), Diagnosis/FixPlan, fb-* parsing, FUNDI_MASTER
+shared/     Fundi.kt (vocabularies), Diagnosis/FixPlan, fb-* parsing, FUNDI_MASTER,
+            VerdictSwatches (read by the phone's theme AND the portal's CSS)
 core/       tokens, chat client, database, images, sync, location — used by both apps
 capture/    the camera, the plan runner, the physical tests — used by both apps
+design/     colour scheme, type scale, verdict palette — used by both apps
 app/        Kagua, buyer-facing
 fundi/      NOT YET — Fundi Bora, producer-facing
 server/     grows — audience parameter, fundi_* routes
@@ -64,6 +66,19 @@ conversation, the database and the server stay in the app that owns them. `:shar
 only project dependency and holds no Android types. No resources either — every string
 arrives through `ReportLabels`, because the wording is fetched with the prompts and is not
 a compile-time constant.
+
+`design/` **exists** — the colour scheme, the type scale, and the verdict badge palette.
+Fundi Bora needs the last of those the moment it issues a re-assessment verdict, and a
+second copy of a palette is how two apps end up disagreeing about what "serious concerns"
+looks like while both being sure they are right.
+
+The hex itself went one level further down, into `:shared` as `VerdictSwatches`, because
+there is a **third** renderer: the admin portal draws the same verdicts as CSS so a
+reviewer can hold the page beside a handset, and it cannot depend on an Android library.
+The portal used to carry its own copy of the four hex pairs under a comment asking
+somebody to keep them in step by hand; it now generates its rules from the shared values,
+using the same `levelClass` function the markup applies, so a level cannot get a rule
+nothing selects or a class nothing styles. `VerdictPaletteTest` pins that.
 
 `fundi/` is still absent — and is now the only thing missing between here and a producer
 running an assessment. An empty Android module builds a blank APK on every CI run and

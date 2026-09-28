@@ -135,6 +135,8 @@ android {
 
 dependencies {
     implementation(project(":shared"))
+    // The colour scheme, type scale and verdict palette. Shared with Fundi Bora.
+    implementation(project(":design"))
     // Tokens, the chat client, the database, the image store, the sync queue and the
     // location fix. Shared with Fundi Bora, which is why they are no longer in here.
     implementation(project(":core"))
