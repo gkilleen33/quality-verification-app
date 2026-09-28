@@ -1,6 +1,7 @@
 package com.qualityverifier.data.sync
 
 import android.util.Log
+import com.qualityverifier.data.auth.AuthenticatedHttp
 import com.qualityverifier.data.auth.TokenProvider
 import com.qualityverifier.data.session.LocalTesterFeedback
 import kotlinx.coroutines.CoroutineDispatcher
@@ -200,25 +201,11 @@ class SyncClient(
      * Returns an unclosed response, so every caller uses `use {}`. Null means there was no
      * token, or the request never completed.
      */
-    private suspend fun authenticated(build: (String) -> Request): Response? {
-        val token = tokens.accessToken() ?: return null
-        val first = execute(build(token)) ?: return null
-        if (first.code != 401) return first
-        first.close()
+    // Token, single-flight refresh and the one retry, in AuthenticatedHttp so that the
+    // Fundi Bora profile client uses the same one rather than a third hand-rolled copy.
+    private val http = AuthenticatedHttp(client, tokens, TAG)
 
-        // Single-flight: if another call already refreshed, this gets the new token
-        // without spending the refresh token again — which the server would read as theft.
-        val refreshed = tokens.refreshAfterUnauthorized(token) ?: return null
-        return execute(build(refreshed))
-    }
-
-    /** Null on a network failure. Anything else is the server's answer, including a 5xx. */
-    private fun execute(request: Request): Response? = try {
-        client.newCall(request).execute()
-    } catch (e: IOException) {
-        Log.i(TAG, "Sync request failed: ${e.javaClass.simpleName}")
-        null
-    }
+    private suspend fun authenticated(build: (String) -> Request): Response? = http.send(build)
 
     private companion object {
         const val TAG = "SyncClient"

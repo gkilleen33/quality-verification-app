@@ -11,6 +11,8 @@ import com.qualityverifier.data.chat.ChatService
 import com.qualityverifier.data.chat.ServerChatService
 import com.qualityverifier.data.db.AppDatabase
 import com.qualityverifier.data.db.ImageFileStore
+import com.qualityverifier.data.fundi.FundiProfileClient
+import com.qualityverifier.data.fundi.FundiProfiles
 import com.qualityverifier.data.location.LocationCapture
 import com.qualityverifier.data.location.LocationPreference
 import com.qualityverifier.data.session.RoomSessionRepository
@@ -139,6 +141,21 @@ class AppContainer(
     val isTester: Boolean get() = tokenStore.isTester()
 
     val account: AccountActions = AccountActions(syncClient)
+
+    /**
+     * The maker's setup answers. Only Fundi Bora constructs a screen that touches it;
+     * Kagua links it and never calls it.
+     *
+     * Held here rather than built by that app so it goes through the same http client and
+     * the same single-flight token provider as everything else. An app that assembled its
+     * own would be one 401 away from spending a rotated refresh token twice.
+     */
+    val fundiProfiles: FundiProfiles = FundiProfileClient(
+        client = httpClient,
+        tokens = tokenProvider,
+        baseUrl = baseUrl,
+        json = json,
+    )
 
     /** Signs out locally. The refresh token stays revocable server-side regardless. */
     fun signOut() = tokenProvider.signOut()

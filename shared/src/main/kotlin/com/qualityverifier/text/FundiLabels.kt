@@ -2,6 +2,7 @@ package com.qualityverifier.text
 
 import com.qualityverifier.domain.FundiGoal
 import com.qualityverifier.domain.ToolKind
+import com.qualityverifier.domain.ToolOwnership
 
 /**
  * Fundi Bora's own wording.
@@ -32,6 +33,26 @@ data class FundiLabels(
     private val borrowedFormat: String,
     val toolNames: Map<ToolKind, String>,
     val goalNames: Map<FundiGoal, String>,
+    // ---- the setup flow. Three screens, in the order the mockup asks them.
+    val setupWorkshopTitle: String,
+    val setupWorkshopBlurb: String,
+    val setupWorksAt: String,
+    val setupYears: String,
+    val setupWorkers: String,
+    val setupMakes: String,
+    val setupPiecesPerMonth: String,
+    val setupTimber: String,
+    val setupToolsTitle: String,
+    val setupToolsBlurb: String,
+    val setupGoalsTitle: String,
+    val setupGoalsBlurb: String,
+    val ownershipNames: Map<ToolOwnership, String>,
+    val setupNext: String,
+    val setupBack: String,
+    val setupFinish: String,
+    val setupSkip: String,
+    val setupSaving: String,
+    val setupFailed: String,
 ) {
     fun worksAt(place: String): String = worksAtFormat.replace("{place}", place)
     fun years(count: Int): String = yearsFormat.replace("{n}", count.toString())
@@ -77,6 +98,36 @@ data class FundiLabels(
                 ToolKind.SANDER to "sander",
                 ToolKind.OTHER to "other tools",
             ),
+            setupWorkshopTitle = "About your workshop",
+            // Every field optional, and the screen says so: a maker who will not say how
+            // many pieces they finish should still reach the coaching.
+            setupWorkshopBlurb = "All of this is optional. It helps the advice fit the " +
+                "work you actually do.",
+            setupWorksAt = "Where you work",
+            setupYears = "Years in the trade",
+            setupWorkers = "People working with you",
+            setupMakes = "What you mostly make",
+            setupPiecesPerMonth = "Pieces a month",
+            setupTimber = "Timber you usually use",
+            setupToolsTitle = "Your tools",
+            // The one screen that is not optional in spirit, and the blurb says why
+            // rather than enforcing it — a fix built around a tool they do not own is
+            // the failure the coaching prompt calls out by name.
+            setupToolsBlurb = "The advice is built around what you have. Tell us what " +
+                "you do not have too — that is how we avoid suggesting it.",
+            setupGoalsTitle = "What you want from this",
+            setupGoalsBlurb = "Pick any that fit.",
+            ownershipNames = mapOf(
+                ToolOwnership.OWNED to "Have it",
+                ToolOwnership.BORROWED to "Can borrow",
+                ToolOwnership.NONE to "Do not have",
+            ),
+            setupNext = "Next",
+            setupBack = "Back",
+            setupFinish = "Finish setup",
+            setupSkip = "Skip for now",
+            setupSaving = "Saving…",
+            setupFailed = "Could not save that. Check your connection and try again.",
             goalNames = mapOf(
                 FundiGoal.PRICE_PER_PIECE to "a better price per piece",
                 FundiGoal.MORE_ORDERS to "more orders",

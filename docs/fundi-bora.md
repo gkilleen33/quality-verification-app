@@ -96,8 +96,30 @@ rather than in a screen.
 Release signing moved to `gradle/release-signing.gradle.kts` first, so the resolution
 order and the which-piece-is-missing failure message exist once rather than per app.
 
-Still to come: auth and workshop setup, then the assessment loop and the diagnosis and
-fix-plan cards.
+**Auth and workshop setup exist.** Fundi-specific sign-in and registration screens rather
+than extracted Kagua ones: registration genuinely differs, because the business-or-personal
+question is about a shop lending its handset to walk-in customers and asking a fundi it
+would be asking something nothing reads. What is *not* duplicated is anything that
+matters — `AuthClient` and the token store are `:core`'s, so rotation, single-flight
+refresh and the theft rule have one implementation. What is duplicated is a busy flag.
+
+The three setup screens share one view model, because the profile is **sent whole**: the
+server derives what changed by comparing against what it holds, so three per-screen saves
+would write three partial profiles and record a tool history of a maker acquiring their
+own tools one screen at a time. Re-entering setup loads what the server already has, so
+correcting one tool does not wipe the rest — which would otherwise be silent, since an
+absent tool is deliberately not a disposal.
+
+**Nothing on the tools screen is pre-selected.** Absent means nobody asked; `NONE` means
+they said they have none; only the second lets the coaching work around it. A default
+would have told the model every maker owns nothing.
+
+`FundiProfileClient` lives in `:core` despite that module's only-what-both-apps-need rule,
+because the rule it loses to is stronger: every authenticated client has to refresh
+through the single-flight provider or it can sign somebody out. That retry is now
+`AuthenticatedHttp`, shared with `SyncClient` and tested for the first time.
+
+Still to come: the assessment loop, and the diagnosis and fix-plan cards.
 
 ## The audience dimension
 
