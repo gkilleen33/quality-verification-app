@@ -25,6 +25,7 @@ import okhttp3.mockwebserver.MockWebServer
 import okhttp3.mockwebserver.RecordedRequest
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -54,7 +55,10 @@ class ServerChatServiceTest {
     /** What startOf() would return. Null by default; set by the tests that care. */
     private var sessionStart: SessionStart? = null
 
-    private fun service(store: TokenStore = FakeStore()): ServerChatService {
+    private fun service(
+        store: TokenStore = FakeStore(),
+        chatPath: String = "v1/chat",
+    ): ServerChatService {
         val client = OkHttpClient.Builder()
             .connectTimeout(2, TimeUnit.SECONDS)
             .readTimeout(2, TimeUnit.SECONDS)
@@ -66,6 +70,7 @@ class ServerChatServiceTest {
             sessionStart = { sessionStart },
             baseUrl = server.url("/").toString(),
             json = Json { ignoreUnknownKeys = true },
+            chatPath = chatPath,
         )
     }
 
@@ -374,6 +379,55 @@ class ServerChatServiceTest {
         val body = server.takeRequest().body.readUtf8()
         assertTrue(body, !body.contains("previous_session_id"))
         assertTrue(body, !body.contains("intake_answers"))
+    }
+
+    // The endpoint is the client's half of choosing a prompt: Kagua's is hard-coded to
+    // the buying prompt and Fundi Bora's to the coaching one. A default here means a
+    // caller that forgets gets Kagua's, which is the safe direction to be wrong in.
+    @Test
+    fun `the turn goes to the endpoint the app was built for`() = runTest {
+        server.enqueue(json("""{"message_id":"m1","text":"ok"}"""))
+
+        service(chatPath = "v1/fundi/chat").send("s1", ItemType.WOODEN_TABLE, history())
+
+        assertEquals("/v1/fundi/chat", server.takeRequest().path)
+    }
+
+    @Test
+    fun `by default the turn goes to Kagua's endpoint`() = runTest {
+        server.enqueue(json("""{"message_id":"m1","text":"ok"}"""))
+
+        service().send("s1", ItemType.WOODEN_TABLE, history())
+
+        assertEquals("/v1/chat", server.takeRequest().path)
+    }
+
+    // A 403 from an assessment endpoint means the account belongs to the other app.
+    // Folded in with 401 it said "please sign in again", which is a loop: the credentials
+    // are right and signing in again changes nothing.
+    @Test
+    fun `an account for the other app is told so, not asked to sign in again`() = runTest {
+        server.enqueue(
+            MockResponse().setResponseCode(403).setBody("""{"error":"wrong_app"}""")
+        )
+
+        val result = service().send("s1", ItemType.WOODEN_TABLE, history())
+
+        val failure = result as ChatResult.Failure
+        assertEquals(ChatErrorKind.AUTH, failure.kind)
+        assertTrue(failure.message, failure.message.contains("other app"))
+        assertFalse(
+            "telling them to sign in again would loop for ever",
+            failure.message.contains("sign in again"),
+        )
+    }
+
+    @Test
+    fun `a 403 without that code still asks them to sign in again`() = runTest {
+        server.enqueue(MockResponse().setResponseCode(403).setBody("{}"))
+
+        val failure = service().send("s1", ItemType.WOODEN_TABLE, history()) as ChatResult.Failure
+        assertTrue(failure.message.contains("sign in again"))
     }
 
     @Test

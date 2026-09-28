@@ -119,7 +119,32 @@ because the rule it loses to is stronger: every authenticated client has to refr
 through the single-flight provider or it can sign somebody out. That retry is now
 `AuthenticatedHttp`, shared with `SyncClient` and tested for the first time.
 
-Still to come: the assessment loop, and the diagnosis and fix-plan cards.
+**The assessment loop and the cards exist.** Home offers the item types and nothing else
+— a maker opening the app is standing over a piece they have just finished, and anything
+between that and the camera is a tap they did not need. Then the opening photograph plus
+the maker's context, the plan, `:capture`'s shot runner and physical tests unchanged, and
+the diagnosis and fix-plan cards.
+
+`AssessViewModel` is a leaner cousin of Kagua's `ChatViewModel` rather than a reuse of it.
+The buyer's version also carries an intake questionnaire, comparisons between two pieces,
+the evaluator questionnaire and sharing, none of which a maker has any use for. What the
+two genuinely share is already shared: the camera and plan runner are `:capture`, storage
+and upload dedup and the retry are `:core`.
+
+`ServerChatService` takes the endpoint as a parameter now, defaulted to Kagua's — the safe
+direction to be wrong in, since the server refuses a fundi account on the buying endpoint
+rather than quietly coaching a buyer. A 403 from an assessment endpoint used to be folded
+in with 401 and said "please sign in again", which under the split endpoints is a loop:
+the credentials are right and the account is simply for the other app. It now says so.
+
+**The cards are the part a carpenter will judge**, and the part issue #41 is waiting on.
+One card per fix horizon rather than three sections in one, because fixing this piece,
+changing the habit and practising are three kinds of advice and run together they read as
+nine things to do now. Findings past the first are listed without causes: a fundi handed
+six habits to change changes none of them.
+
+Still to come: reports, the skill file, certification — and running any of it against a
+real piece.
 
 ## The audience dimension
 

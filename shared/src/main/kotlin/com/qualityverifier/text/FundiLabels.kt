@@ -1,5 +1,6 @@
 package com.qualityverifier.text
 
+import com.qualityverifier.domain.FixHorizon
 import com.qualityverifier.domain.FundiGoal
 import com.qualityverifier.domain.ToolKind
 import com.qualityverifier.domain.ToolOwnership
@@ -53,7 +54,33 @@ data class FundiLabels(
     val setupSkip: String,
     val setupSaving: String,
     val setupFailed: String,
+    // ---- the two cards. The mockup's own words where it has them.
+    val diagnosisHeading: String,
+    /** "Not a grade — a cause". The one line that says what this screen is for. */
+    val diagnosisSubhead: String,
+    val whatHappenedHeading: String,
+    val whereItWentWrongHeading: String,
+    val habitToChangeHeading: String,
+    val alsoFoundHeading: String,
+    val oneCheckHeading: String,
+    val nothingFound: String,
+    val horizonNames: Map<FixHorizon, String>,
+    val horizonBlurbs: Map<FixHorizon, String>,
+    val toolHeading: String,
+    val checkLocally: String,
+    val noCost: String,
+    private val minutesFormat: String,
+    private val costFormat: String,
 ) {
+    fun minutes(n: Int): String = minutesFormat.replace("{n}", n.toString())
+
+    /** Zero is a real answer and worth saying out loud: it is what gets the fix done. */
+    fun cost(kes: Int): String =
+        if (kes <= 0) noCost else costFormat.replace("{n}", kes.toString())
+
+    fun nameOf(horizon: FixHorizon): String = horizonNames.getValue(horizon)
+    fun blurbOf(horizon: FixHorizon): String = horizonBlurbs.getValue(horizon)
+
     fun worksAt(place: String): String = worksAtFormat.replace("{place}", place)
     fun years(count: Int): String = yearsFormat.replace("{n}", count.toString())
     fun workers(count: Int): String = workersFormat.replace("{n}", count.toString())
@@ -128,6 +155,31 @@ data class FundiLabels(
             setupSkip = "Skip for now",
             setupSaving = "Saving…",
             setupFailed = "Could not save that. Check your connection and try again.",
+            diagnosisHeading = "DIAGNOSIS",
+            diagnosisSubhead = "Not a grade — a cause",
+            whatHappenedHeading = "WHAT HAPPENED",
+            whereItWentWrongHeading = "WHERE IT WENT WRONG",
+            // "Habit", never the person. The prompt forbids calling a maker careless,
+            // and this heading is where that would otherwise creep back in.
+            habitToChangeHeading = "THE HABIT TO CHANGE",
+            alsoFoundHeading = "ALSO FOUND",
+            oneCheckHeading = "ONE THING TO CHECK",
+            nothingFound = "Nothing to put right on this one.",
+            horizonNames = mapOf(
+                FixHorizon.FIX_NOW to "FIX NOW",
+                FixHorizon.PREVENT to "PREVENT",
+                FixHorizon.DRILL to "DRILL",
+            ),
+            horizonBlurbs = mapOf(
+                FixHorizon.FIX_NOW to "This piece, today.",
+                FixHorizon.PREVENT to "From the next piece onwards.",
+                FixHorizon.DRILL to "Practice on offcuts.",
+            ),
+            toolHeading = "A TOOL WORTH BUYING",
+            checkLocally = "Prices move. Check with your own supplier.",
+            noCost = "No cost",
+            minutesFormat = "{n} min",
+            costFormat = "KSh {n}",
             goalNames = mapOf(
                 FundiGoal.PRICE_PER_PIECE to "a better price per piece",
                 FundiGoal.MORE_ORDERS to "more orders",

@@ -53,6 +53,16 @@ class AppContainer(
      * the backend still means a release.
      */
     private val baseUrl: String,
+    /**
+     * Which assessment endpoint this app posts to.
+     *
+     * The second thing in this layer that differs between the apps, and for the same
+     * reason as the first: the endpoint chooses the system prompt, so it is part of what
+     * an app *is*. Defaulted to Kagua's, which is the safe direction to be wrong in — a
+     * caller that forgets gets the buying prompt, and the server refuses it outright if
+     * the account is a fundi's rather than quietly coaching a buyer.
+     */
+    private val chatPath: String = "v1/chat",
 ) {
 
     private val appContext = context.applicationContext
@@ -128,6 +138,7 @@ class AppContainer(
         sessionStart = sessionRepository::startOf,
         baseUrl = baseUrl,
         json = json,
+        chatPath = chatPath,
     )
 
     val assessmentSync: AssessmentSync = AssessmentSync(

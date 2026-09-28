@@ -3,7 +3,13 @@ package com.qualityverifier.fundi.ui
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -18,7 +24,11 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
+import androidx.navigation.NavType
 import androidx.navigation.compose.rememberNavController
+import androidx.navigation.navArgument
+import com.qualityverifier.domain.ItemType
+import com.qualityverifier.fundi.ui.assess.AssessScreen
 import com.qualityverifier.fundi.ui.auth.FundiRegisterScreen
 import com.qualityverifier.fundi.ui.auth.FundiSignInScreen
 import com.qualityverifier.fundi.ui.setup.GoalsScreen
@@ -26,6 +36,7 @@ import com.qualityverifier.fundi.ui.setup.SetupViewModel
 import com.qualityverifier.fundi.ui.setup.ToolsScreen
 import com.qualityverifier.fundi.ui.setup.WorkshopScreen
 import com.qualityverifier.text.FundiLabels
+import java.util.UUID
 
 private object Routes {
     const val SIGN_IN = "sign-in"
@@ -34,6 +45,9 @@ private object Routes {
     const val SETUP_TOOLS = "setup/tools"
     const val SETUP_GOALS = "setup/goals"
     const val HOME = "home"
+    const val ASSESS = "assess/{sessionId}/{itemTypeId}"
+
+    fun assess(sessionId: String, itemTypeId: String) = "assess/$sessionId/$itemTypeId"
 }
 
 @Composable
@@ -139,7 +153,34 @@ fun FundiNav() {
             )
         }
 
-        composable(Routes.HOME) { FundiHome() }
+        composable(Routes.HOME) {
+            FundiHome(
+                onAssess = { itemType ->
+                    navController.navigate(
+                        Routes.assess(UUID.randomUUID().toString(), itemType.id),
+                    )
+                },
+            )
+        }
+
+        composable(
+            Routes.ASSESS,
+            arguments = listOf(
+                navArgument("sessionId") { type = NavType.StringType },
+                navArgument("itemTypeId") { type = NavType.StringType },
+            ),
+        ) { entry ->
+            // The id is generated on the phone, so a retry of the same assessment is the
+            // same session server-side rather than a second one billed twice.
+            val sessionId = entry.arguments?.getString("sessionId").orEmpty()
+            val itemType = ItemType.fromId(entry.arguments?.getString("itemTypeId").orEmpty())
+                ?: ItemType.OTHER
+            AssessScreen(
+                sessionId = sessionId,
+                itemType = itemType,
+                onDone = { navController.popBackStack() },
+            )
+        }
     }
 }
 
@@ -165,25 +206,36 @@ private fun sharedSetupViewModel(
 }
 
 /**
- * Where an assessment will start.
+ * Starting an assessment.
  *
- * Still a placeholder: the loop is the next slice. What is real behind it is everything
- * an assessment needs — an account, a workshop profile with a tool list, and a server
- * that hands this account the coaching prompt.
+ * A list of item types and nothing else, deliberately: a maker opening this app is
+ * standing over a piece they have just finished, and anything between that and the
+ * camera is a tap they did not need. Reports, the skill file and certification come
+ * later.
  */
 @Composable
-private fun FundiHome() {
+private fun FundiHome(onAssess: (ItemType) -> Unit) {
     Column(
-        modifier = Modifier.fillMaxSize().padding(32.dp),
-        verticalArrangement = Arrangement.Center,
-        horizontalAlignment = Alignment.CenterHorizontally,
+        modifier = Modifier
+            .fillMaxSize()
+            .verticalScroll(rememberScrollState())
+            .padding(24.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         Text("Fundi Bora", style = MaterialTheme.typography.displaySmall)
         Text(
-            "Setup is saved. Assessments arrive in the next build.",
-            style = MaterialTheme.typography.bodyMedium,
-            textAlign = TextAlign.Center,
-            modifier = Modifier.padding(top = 24.dp),
+            "What have you just finished?",
+            style = MaterialTheme.typography.titleMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
+        Spacer(Modifier.height(8.dp))
+        ItemType.entries.forEach { type ->
+            Button(
+                onClick = { onAssess(type) },
+                modifier = Modifier.fillMaxWidth().height(56.dp),
+            ) {
+                Text(type.homeLabel)
+            }
+        }
     }
 }

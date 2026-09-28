@@ -20,6 +20,12 @@ class FundiBoraApp : Application() {
 
     override fun onCreate() {
         super.onCreate()
-        container = AppContainer(this, BuildConfig.SERVER_BASE_URL)
+        container = AppContainer(
+            context = this,
+            baseUrl = BuildConfig.SERVER_BASE_URL,
+            // Fundi Bora's own endpoint, which is what selects the coaching prompt.
+            // Kagua's app does not know this path exists.
+            chatPath = "v1/fundi/chat",
+        )
     }
 }
