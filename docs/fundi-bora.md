@@ -127,11 +127,21 @@ Not a fork. One parameter, threaded through:
   assessment endpoint your account may use is its own. What it still costs is a confusing
   session — a fundi signed into Kagua can read their reports and start nothing. Refusing
   it outright belongs with the producer app's auth screen.
-- **The daily limit is still not per-audience**, and this is the next thing that will bite.
-  A fundi assessing their own work all morning is a completely different shape of use from
-  a buyer checking one table, and today they share the customer allowance. The code path
-  already distinguishes evaluator from customer, so adding a third is small — but it needs
-  a number, and that is a research decision rather than a guess.
+- **The daily limit is per-audience** — **five customer allowances**, so 100 against the
+  current 20. A fundi works through everything that came off the bench that morning and
+  re-assesses yesterday's pieces after repairing them; the assess / repair / re-assess
+  loop *is* the product, and each turn of it is another assessment. The customer
+  allowance would have stopped them before lunch.
+
+  A multiple rather than a second constant, so the ratio survives the customer number
+  being retuned once there is spend data — and so disabling the quota disables it for
+  both audiences, since zero times five is zero. `KAGUA_FUNDI_DAILY_ASSESSMENT_LIMIT`
+  overrides it outright.
+
+  The endpoint chooses the allowance, exactly as it chooses the prompt. An evaluator gets
+  the *larger* of their audience's allowance and the tester allowance, not the tester one
+  outright — that number exists to raise a customer's, and applied to a fundi it would
+  have halved an evaluator's day.
 
 ### Where the maker's context goes, and why it is not the system prompt
 
@@ -221,4 +231,5 @@ Worth revisiting — it is a product decision, not a technical one, and the mock
 - Cross-app sign-in still succeeds. It no longer affects which prompt anybody gets — see
   the audience section — but it leaves a fundi able to sign into Kagua and find nothing
   they can do.
-- The daily limit is not per-audience yet, and needs a number.
+- ~~The daily limit is not per-audience.~~ Settled 28 September 2026: five customer
+  allowances. See the audience section.

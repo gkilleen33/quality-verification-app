@@ -125,6 +125,46 @@ class ChatRouteTest {
         assertEquals(50, store.sawTesterDailyLimit)
     }
 
+    // The allowance follows the endpoint, like the prompt does. A fundi works through
+    // everything that came off the bench and re-assesses yesterday's repairs, so the
+    // customer number would stop them before lunch.
+    @Test
+    fun `the fundi endpoint sends the fundi allowance, not the customer one`() = testApplication {
+        val store = FakeChatStore()
+        val app = withChat(
+            store,
+            FakeClaude(ClaudeResult.Success("ok", TokenUsage(0, 0, 0, 0), "m")),
+            dailyLimit = 20,
+            fundiLimit = 100,
+            accountAudience = Audience.FUNDI,
+        )
+
+        app.post("/v1/fundi/chat") {
+            auth(); contentType(ContentType.Application.Json)
+            setBody(request())
+        }
+
+        assertEquals(100, store.sawDailyLimit)
+    }
+
+    @Test
+    fun `Kagua's endpoint is unaffected by the fundi allowance`() = testApplication {
+        val store = FakeChatStore()
+        val app = withChat(
+            store,
+            FakeClaude(ClaudeResult.Success("ok", TokenUsage(0, 0, 0, 0), "m")),
+            dailyLimit = 20,
+            fundiLimit = 100,
+        )
+
+        app.post("/v1/chat") {
+            auth(); contentType(ContentType.Application.Json)
+            setBody(request())
+        }
+
+        assertEquals(20, store.sawDailyLimit)
+    }
+
     @Test
     fun `the configured limit is what reaches the store`() = testApplication {
         // Guards the plumbing rather than the policy: a limit that stops at the route and
@@ -171,6 +211,38 @@ class ChatRouteTest {
             20,
             Config.fromEnvironment { if (it == "KAGUA_DAILY_ASSESSMENT_LIMIT") "twenty" else null }
                 .dailyAssessmentLimit,
+        )
+    }
+
+    @Test
+    fun `the fundi limit is five customer allowances`() {
+        // A spend decision, so it is written down here rather than only in a comment.
+        assertEquals(5, Config.FUNDI_LIMIT_MULTIPLE)
+        assertEquals(100, Config.fromEnvironment { null }.fundiDailyAssessmentLimit)
+    }
+
+    @Test
+    fun `the fundi limit follows the customer limit, and can be overridden outright`() {
+        // Derived rather than a hard 100, so retuning the customer number — which will
+        // happen once there is spend data — carries the ratio with it.
+        assertEquals(
+            50,
+            Config.fromEnvironment { if (it == "KAGUA_DAILY_ASSESSMENT_LIMIT") "10" else null }
+                .fundiDailyAssessmentLimit,
+        )
+        // Disabling the quota disables it for both audiences: zero times five is zero.
+        // A fundi allowance of 100 on a server the operator meant to uncap would be a
+        // surprising cap to hit.
+        assertEquals(
+            0,
+            Config.fromEnvironment { if (it == "KAGUA_DAILY_ASSESSMENT_LIMIT") "0" else null }
+                .fundiDailyAssessmentLimit,
+        )
+        assertEquals(
+            30,
+            Config.fromEnvironment {
+                if (it == "KAGUA_FUNDI_DAILY_ASSESSMENT_LIMIT") "30" else null
+            }.fundiDailyAssessmentLimit,
         )
     }
 
@@ -654,6 +726,7 @@ class ChatRouteTest {
         prompts: PromptRepository = RecordingPrompts(),
         dailyLimit: Int = Config.DEFAULT_DAILY_ASSESSMENT_LIMIT,
         testerLimit: Int = Config.DEFAULT_TESTER_DAILY_ASSESSMENT_LIMIT,
+        fundiLimit: Int = Config.DEFAULT_DAILY_ASSESSMENT_LIMIT * Config.FUNDI_LIMIT_MULTIPLE,
         /** Which app the signed-in account belongs to. Kagua unless a test says otherwise. */
         accountAudience: Audience = Audience.BUYER,
     ) = run {
@@ -666,6 +739,7 @@ class ChatRouteTest {
                     store, BlobStore(folder.newFolder()), claude, prompts, NoFeedback,
                     dailyAssessmentLimit = dailyLimit,
                     testerDailyAssessmentLimit = testerLimit,
+                    fundiDailyAssessmentLimit = fundiLimit,
                 ),
             )
         }

@@ -74,7 +74,10 @@ interface ChatStore {
          * Kagua's chat endpoint only ever passes BUYER — and written once, at creation.
          */
         audience: Audience,
-        /** Assessments allowed per day for a customer. Zero or less disables the check. */
+        /**
+         * Assessments allowed per day for this caller's audience, already resolved by the
+         * route. Zero or less disables the check.
+         */
         dailyLimit: Int,
         /** The higher allowance for one of our own evaluators. */
         testerDailyLimit: Int,
@@ -215,7 +218,10 @@ class PostgresChatStore(private val dataSource: DataSource) : ChatStore {
             statement.setString(1, userId)
             statement.executeQuery().use { if (it.next()) it.getBoolean(1) else false }
         }
-        val limit = if (isTester) testerDailyLimit else dailyLimit
+        // The larger of the two, not the tester one outright. The tester allowance exists
+        // to *raise* a customer's, and applying it to a fundi — whose own allowance is
+        // five times a customer's — would quietly cut an evaluator's day in half.
+        val limit = if (isTester) maxOf(testerDailyLimit, dailyLimit) else dailyLimit
 
         if (limit > 0) {
             // Serialise new assessments per user for the rest of this transaction. Without

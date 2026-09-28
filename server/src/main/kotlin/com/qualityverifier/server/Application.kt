@@ -119,6 +119,7 @@ fun main() {
             feedback = PostgresFeedbackStore(database.source),
             dailyAssessmentLimit = config.dailyAssessmentLimit,
             testerDailyAssessmentLimit = config.testerDailyAssessmentLimit,
+            fundiDailyAssessmentLimit = config.fundiDailyAssessmentLimit,
         )
     } else {
         log.warn("Chat is disabled: needs a database and KAGUA_ANTHROPIC_API_KEY.")
@@ -176,8 +177,9 @@ fun main() {
     log.info("Kagua server {} starting on {}:{}", config.version, config.host, config.port)
     if (config.dailyAssessmentLimit > 0) {
         log.info(
-            "Daily assessment limit: {} per account, {} for evaluators",
+            "Daily assessment limit: {} per customer, {} per fundi, {} for evaluators",
             config.dailyAssessmentLimit,
+            config.fundiDailyAssessmentLimit,
             config.testerDailyAssessmentLimit,
         )
     } else {
@@ -249,6 +251,9 @@ class Chat(
     val dailyAssessmentLimit: Int = Config.DEFAULT_DAILY_ASSESSMENT_LIMIT,
     /** The higher allowance for one of our own evaluators. */
     val testerDailyAssessmentLimit: Int = Config.DEFAULT_TESTER_DAILY_ASSESSMENT_LIMIT,
+    /** The higher allowance for a maker assessing their own work. */
+    val fundiDailyAssessmentLimit: Int =
+        Config.DEFAULT_DAILY_ASSESSMENT_LIMIT * Config.FUNDI_LIMIT_MULTIPLE,
 )
 
 @Serializable
@@ -351,6 +356,7 @@ fun Application.module(
             chatRoutes(
                 it.store, auth.store, it.blobs, it.claude, it.prompts,
                 it.dailyAssessmentLimit, it.testerDailyAssessmentLimit,
+                it.fundiDailyAssessmentLimit,
             )
             // Reading assessments back, plus the two account actions. Needs both halves:
             // the chat store for sessions and the auth store for credentials.

@@ -38,6 +38,16 @@ data class Config(
      */
     val testerDailyAssessmentLimit: Int,
     /**
+     * The allowance for a maker assessing their own work in Fundi Bora.
+     *
+     * Five times the customer's, because it is a completely different shape of use. A
+     * buyer checks one table; a fundi works through everything that came off the bench
+     * this morning, and re-assesses yesterday's pieces after repairing them — the
+     * assess / repair / re-assess loop is the product, and each turn of it is another
+     * assessment. The customer allowance would stop them before lunch.
+     */
+    val fundiDailyAssessmentLimit: Int,
+    /**
      * Signs the admin portal's session cookie. Absent means the portal is not mounted.
      *
      * A separate secret from the JWT key on purpose: one is handed to every phone in the
@@ -56,7 +66,19 @@ data class Config(
         /** Fifty. A working day of evaluations, still bounded. */
         const val DEFAULT_TESTER_DAILY_ASSESSMENT_LIMIT = 50
 
+        /**
+         * How many customer allowances a fundi gets. Five, so the default is 100.
+         *
+         * A multiplier rather than a second constant, so the relationship survives the
+         * customer limit being retuned — which it will be, once there is spend data.
+         * Still overridable outright by KAGUA_FUNDI_DAILY_ASSESSMENT_LIMIT.
+         */
+        const val FUNDI_LIMIT_MULTIPLE = 5
+
         fun fromEnvironment(env: (String) -> String? = System::getenv): Config {
+            // Resolved first: the fundi allowance is a multiple of it.
+            val customerLimit = env("KAGUA_DAILY_ASSESSMENT_LIMIT")?.toIntOrNull()
+                ?: DEFAULT_DAILY_ASSESSMENT_LIMIT
             val password = env("KAGUA_DB_PASSWORD")
             return Config(
                 port = env("KAGUA_PORT")?.toIntOrNull() ?: 8080,
@@ -85,10 +107,13 @@ data class Config(
                 // Counted per calendar day rather than as a rolling window, so the answer
                 // to "when can I carry on" is "tomorrow" rather than a timestamp a user
                 // has to work out.
-                dailyAssessmentLimit = env("KAGUA_DAILY_ASSESSMENT_LIMIT")?.toIntOrNull()
-                    ?: DEFAULT_DAILY_ASSESSMENT_LIMIT,
+                dailyAssessmentLimit = customerLimit,
                 testerDailyAssessmentLimit = env("KAGUA_TESTER_DAILY_ASSESSMENT_LIMIT")?.toIntOrNull()
                     ?: DEFAULT_TESTER_DAILY_ASSESSMENT_LIMIT,
+                // Derived from the customer limit rather than a bare 100, so disabling
+                // the limit disables it for both audiences: zero times five is still zero.
+                fundiDailyAssessmentLimit = env("KAGUA_FUNDI_DAILY_ASSESSMENT_LIMIT")?.toIntOrNull()
+                    ?: (customerLimit * FUNDI_LIMIT_MULTIPLE),
                 adminSessionKey = env("KAGUA_ADMIN_SESSION_KEY")?.takeIf { it.isNotBlank() },
             )
         }

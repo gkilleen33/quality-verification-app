@@ -55,10 +55,12 @@ fun Route.chatRoutes(
     blobs: BlobStore,
     claude: ClaudeClient,
     prompts: PromptRepository,
-    /** Assessments one account may start per day. Zero or less means no limit. */
+    /** Assessments a customer may start per day. Zero or less means no limit. */
     dailyAssessmentLimit: Int,
     /** The higher allowance for one of our own evaluators. */
     testerDailyAssessmentLimit: Int,
+    /** The higher allowance for a maker assessing their own work. */
+    fundiDailyAssessmentLimit: Int,
 ) {
     authenticate("jwt") {
 
@@ -115,7 +117,7 @@ fun Route.chatRoutes(
         post("/v1/fundi/chat") {
             assessmentTurn(
                 Audience.FUNDI, store, auth, blobs, claude, prompts,
-                dailyAssessmentLimit, testerDailyAssessmentLimit,
+                fundiDailyAssessmentLimit, testerDailyAssessmentLimit,
             )
         }
     }
@@ -135,6 +137,12 @@ private suspend fun RoutingContext.assessmentTurn(
     blobs: BlobStore,
     claude: ClaudeClient,
     prompts: PromptRepository,
+    /**
+     * The allowance for *this* audience, already chosen by the endpoint above.
+     *
+     * Resolved here rather than inside the store for the same reason the prompt is: the
+     * route knows which app it is, so nothing downstream has to work it out again.
+     */
     dailyAssessmentLimit: Int,
     testerDailyAssessmentLimit: Int,
 ) {
