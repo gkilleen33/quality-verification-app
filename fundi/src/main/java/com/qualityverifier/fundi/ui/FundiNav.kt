@@ -1,26 +1,10 @@
 package com.qualityverifier.fundi.ui
 
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.Button
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
-import androidx.compose.ui.Alignment
-import androidx.compose.ui.Modifier
-import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
@@ -29,6 +13,7 @@ import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import com.qualityverifier.domain.ItemType
 import com.qualityverifier.fundi.ui.assess.AssessScreen
+import com.qualityverifier.fundi.ui.home.HomeScreen
 import com.qualityverifier.fundi.ui.auth.FundiRegisterScreen
 import com.qualityverifier.fundi.ui.auth.FundiSignInScreen
 import com.qualityverifier.fundi.ui.setup.GoalsScreen
@@ -154,8 +139,14 @@ fun FundiNav() {
         }
 
         composable(Routes.HOME) {
-            FundiHome(
-                onAssess = { itemType ->
+            HomeScreen(
+                // Reopening a piece: same session id, so the conversation and its
+                // photographs come back, and a re-assessment continues it rather than
+                // starting a stranger.
+                onOpen = { piece ->
+                    navController.navigate(Routes.assess(piece.id, piece.itemType.id))
+                },
+                onStart = { itemType ->
                     navController.navigate(
                         Routes.assess(UUID.randomUUID().toString(), itemType.id),
                     )
@@ -203,39 +194,4 @@ private fun sharedSetupViewModel(
     val owner = remember(entry) { navController.getBackStackEntry(Routes.SETUP_WORKSHOP) }
     val container = fundiContainer()
     return viewModel(viewModelStoreOwner = owner, factory = SetupViewModel.factory(container))
-}
-
-/**
- * Starting an assessment.
- *
- * A list of item types and nothing else, deliberately: a maker opening this app is
- * standing over a piece they have just finished, and anything between that and the
- * camera is a tap they did not need. Reports, the skill file and certification come
- * later.
- */
-@Composable
-private fun FundiHome(onAssess: (ItemType) -> Unit) {
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .verticalScroll(rememberScrollState())
-            .padding(24.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp),
-    ) {
-        Text("Fundi Bora", style = MaterialTheme.typography.displaySmall)
-        Text(
-            "What have you just finished?",
-            style = MaterialTheme.typography.titleMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-        Spacer(Modifier.height(8.dp))
-        ItemType.entries.forEach { type ->
-            Button(
-                onClick = { onAssess(type) },
-                modifier = Modifier.fillMaxWidth().height(56.dp),
-            ) {
-                Text(type.homeLabel)
-            }
-        }
-    }
 }
