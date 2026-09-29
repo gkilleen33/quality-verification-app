@@ -405,6 +405,8 @@ fun HTML.usersPage(
     notice: String? = null,
     /** The pieces behind each account's two rates. Absent means nothing assessed yet. */
     quality: Map<String, List<QualityRecord.Piece>> = emptyMap(),
+    /** Which app is being shown, or null for both. */
+    audience: Audience? = null,
 ) =
     page("Users", session, "users") {
         subtitle("Everyone with an account, newest first.")
@@ -414,11 +416,13 @@ fun HTML.usersPage(
             +" "
             button(type = ButtonType.submit, classes = "quiet") { +"Search" }
         }
+        audienceFilter("/admin/users", audience, search?.let { "q" to it })
         br()
         table {
             thead {
                 tr {
-                    th { +"Phone" }; th { +"Name" }; th { +"Type" }; th { +"Business" }
+                    th { +"Phone" }; th { +"App" }; th { +"Name" }; th { +"Type" }
+                    th { +"Business" }
                     th { +"Assessments" }; th { +"Quality record" }
                     th { +"Joined" }; th { +"Evaluator" }
                 }
@@ -434,6 +438,7 @@ fun HTML.usersPage(
                             +(user.phone ?: "—")
                             if (user.deleted) span("muted") { +" (deleted)" }
                         }
+                        td { appTag(user.audience) }
                         td { +(user.name ?: "—") }
                         td { +(user.accountType ?: "—") }
                         td { +(user.businessName ?: "—") }
@@ -474,6 +479,7 @@ fun HTML.assessmentsPage(
     offset: Int,
     limit: Int,
     testersOnly: Boolean = false,
+    audience: Audience? = null,
 ) = page("Assessments", session, "assessments") {
     subtitle("Every assessment, newest first. Open one to read the conversation.")
     p {
@@ -487,10 +493,16 @@ fun HTML.assessmentsPage(
             a(href = "/admin/assessments?testers=1") { +"Show evaluators only" }
         }
     }
+    audienceFilter(
+        "/admin/assessments",
+        audience,
+        "testers".takeIf { testersOnly }?.let { it to "1" },
+    )
     table {
         thead {
             tr {
-                th { +"When" }; th { +"Item" }; th { +"Account" }; th { +"Turns" }
+                th { +"When" }; th { +"App" }; th { +"Item" }; th { +"Account" }
+                th { +"Turns" }
                 th { +"Photos" }; th { +"Verdict" }; th { +"Review" }
             }
         }
@@ -498,6 +510,7 @@ fun HTML.assessmentsPage(
             page.items.forEach { row ->
                 tr {
                     td { a(href = "/admin/assessments/${row.id}") { +row.createdAt.readable() } }
+                    td { appTag(row.audience) }
                     td { +row.itemTypeId }
                     td {
                         +(row.userPhone ?: "—")
@@ -672,6 +685,50 @@ private fun AdminSessionRow.locationLine(): String? {
     val point = "%.5f, %.5f".format(lat, lon)
     val accuracy = locationAccuracyM?.let { " (±${it.roundToInt()} m)" }.orEmpty()
     return "Recorded at $point$accuracy"
+}
+
+/**
+ * Which app a row belongs to.
+ *
+ * Kagua is written plain and Fundi Bora is tagged, rather than tagging both. Nearly every
+ * row is Kagua's, and a badge on every line is a badge nobody reads — the point of the
+ * column is that the producer rows stand out.
+ */
+private fun FlowContent.appTag(audience: Audience) {
+    if (audience == Audience.BUYER) +appName(audience) else span("tag") { +appName(audience) }
+}
+
+/**
+ * Links to narrow a list to one app, or back to both.
+ *
+ * Links rather than a form, like the evaluators filter beside it: the state is one value
+ * in the URL, so it stays bookmarkable and survives paging. [keep] carries whatever other
+ * filter the page already has, so choosing an app does not silently clear it.
+ */
+private fun FlowContent.audienceFilter(
+    path: String,
+    selected: Audience?,
+    keep: Pair<String, String>? = null,
+) {
+    fun href(audience: Audience?): String {
+        val query = listOfNotNull(
+            keep?.let { "${it.first}=${it.second}" },
+            audience?.let { "app=${it.id}" },
+        )
+        return path + if (query.isEmpty()) "" else "?" + query.joinToString("&")
+    }
+    p {
+        +"App: "
+        if (selected == null) strongText("Both") else a(href = href(null)) { +"Both" }
+        Audience.entries.forEach { audience ->
+            +" · "
+            if (selected == audience) {
+                strongText(appName(audience))
+            } else {
+                a(href = href(audience)) { +appName(audience) }
+            }
+        }
+    }
 }
 
 /** The app an audience belongs to, as somebody handing out a code would name it. */

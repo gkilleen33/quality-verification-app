@@ -22,6 +22,20 @@ data class FundiLabels(
     val code: String,
     /** Opens the maker's context. Their own words about their own workshop. */
     val contextIntro: String,
+    /**
+     * Which language to answer in, said out loud in the opening turn.
+     *
+     * Stated rather than inferred, which is the lesson Kagua already learned: left to
+     * guesswork the assistant picks one and then will not change it. Fundi Bora skipped
+     * this at first, and the first real assessment came back in Kiswahili to a maker
+     * whose whole context was written in English — the model had nothing to go on but
+     * the fact that furniture makers in Nairobi often speak Kiswahili.
+     *
+     * It follows whichever labels are in use, so it becomes Kiswahili the day Kiswahili
+     * labels exist rather than needing a second change. It is a starting point, not a
+     * cage: the prompt follows the maker if they write in something else.
+     */
+    val contextLanguage: String,
     val contextToolsHave: String,
     val contextToolsNone: String,
     val contextGoal: String,
@@ -99,6 +113,7 @@ data class FundiLabels(
         val ENGLISH = FundiLabels(
             code = "en",
             contextIntro = "About my workshop:",
+            contextLanguage = "Please answer me in English.",
             contextToolsHave = "Tools I have:",
             // Said out loud rather than left to the absence of a mention. The prompt has to
             // be able to tell "they told us they have none" from "nobody asked".

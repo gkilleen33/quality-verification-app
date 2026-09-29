@@ -67,6 +67,15 @@ data class UserRow(
     val assessments: Int,
     val deleted: Boolean,
     val isTester: Boolean,
+    /**
+     * Which app this account is for, fixed at registration by its invite code (`V16`).
+     *
+     * On the row rather than derived, because separating the two apps is the first thing
+     * any analysis has to do: a fundi assessing their own bench all morning and a buyer
+     * checking one table are different populations, and a mean over both is a number
+     * about nothing.
+     */
+    val audience: Audience = Audience.BUYER,
 )
 
 data class AuditRow(
@@ -94,6 +103,14 @@ data class AdminSessionRow(
     val byTester: Boolean = false,
     /** A critique of this assessment exists. */
     val hasTesterFeedback: Boolean = false,
+    /**
+     * Which app this assessment was conducted in (`V14`).
+     *
+     * The session's own, not the account's. They cannot differ today — an account keeps
+     * one audience for life — but the assessment is the research record, and a record
+     * that has to join to a profile to say what it was is a worse record.
+     */
+    val audience: Audience = Audience.BUYER,
     /**
      * Where the assessment was made, when the customer had recording on and a fix
      * arrived. Null is the common case and means "not captured" — never "no shop".
@@ -208,7 +225,13 @@ interface AdminStore {
      */
     suspend fun setTester(userId: String, isTester: Boolean): Boolean
     suspend fun revokeInvite(code: String): Boolean
-    suspend fun users(limit: Int, offset: Int, search: String?): Page<UserRow>
+    suspend fun users(
+        limit: Int,
+        offset: Int,
+        search: String?,
+        /** One app, or null for both. */
+        audience: Audience? = null,
+    ): Page<UserRow>
     suspend fun sessions(
         limit: Int,
         offset: Int,
@@ -216,6 +239,14 @@ interface AdminStore {
         itemTypeId: String?,
         /** True to show only evaluators' assessments, which is how staff runs are excluded. */
         testersOnly: Boolean = false,
+        /**
+         * One app, or null for both.
+         *
+         * Separating them is the first thing any analysis has to do: a fundi working
+         * through a morning's output and a buyer checking one table are different
+         * populations, and a figure averaged over both describes neither.
+         */
+        audience: Audience? = null,
     ): Page<AdminSessionRow>
     /**
      * The pieces behind each account's two quality rates, oldest first.
@@ -622,7 +653,12 @@ class PostgresAdminStore(private val dataSource: DataSource) : AdminStore {
 
     // ------------------------------------------------------------------ curated reads
 
-    override suspend fun users(limit: Int, offset: Int, search: String?): Page<UserRow> = query { connection ->
+    override suspend fun users(
+        limit: Int,
+        offset: Int,
+        search: String?,
+        audience: Audience?,
+    ): Page<UserRow> = query { connection ->
         // Parameterised LIKE rather than string building. This is a text box on a page that
         // can read every conversation in the system; it is the last place to hand-roll SQL.
         connection.prepareStatement(
@@ -630,12 +666,13 @@ class PostgresAdminStore(private val dataSource: DataSource) : AdminStore {
             select u.id::text, u.phone, u.display_name, u.account_type, u.business_name, u.created_at,
                    (select count(*)::int from sessions s where s.user_id = u.id),
                    (u.deleted_at is not null),
-                   u.is_tester
+                   u.is_tester, u.audience
             from users u
             where (?::text is null
                    or u.phone ilike '%' || ? || '%'
                    or u.display_name ilike '%' || ? || '%'
                    or u.business_name ilike '%' || ? || '%')
+              and (?::text is null or u.audience = ?)
             order by u.created_at desc
             limit ? offset ?
             """.trimIndent()
@@ -644,9 +681,11 @@ class PostgresAdminStore(private val dataSource: DataSource) : AdminStore {
             statement.setString(2, search ?: "")
             statement.setString(3, search ?: "")
             statement.setString(4, search ?: "")
+            statement.setString(5, audience?.id)
+            statement.setString(6, audience?.id)
             // One more than asked for, so "is there a next page" needs no count query.
-            statement.setInt(5, limit + 1)
-            statement.setInt(6, offset)
+            statement.setInt(7, limit + 1)
+            statement.setInt(8, offset)
             statement.executeQuery().use { rows ->
                 val out = mutableListOf<UserRow>()
                 while (rows.next()) out += UserRow(
@@ -659,6 +698,7 @@ class PostgresAdminStore(private val dataSource: DataSource) : AdminStore {
                     assessments = rows.getInt(7),
                     deleted = rows.getBoolean(8),
                     isTester = rows.getBoolean(9),
+                    audience = Audience.fromId(rows.getString(10).orEmpty()) ?: Audience.BUYER,
                 )
                 Page(out.take(limit), hasMore = out.size > limit)
             }
@@ -681,6 +721,7 @@ class PostgresAdminStore(private val dataSource: DataSource) : AdminStore {
         userId: String?,
         itemTypeId: String?,
         testersOnly: Boolean,
+        audience: Audience?,
     ): Page<AdminSessionRow> = query { connection ->
         connection.prepareStatement(
             """
@@ -695,11 +736,13 @@ class PostgresAdminStore(private val dataSource: DataSource) : AdminStore {
                    coalesce(u.is_tester, false),
                    -- Whether a critique exists, so the list can say so without a second
                    -- query per row.
-                   exists (select 1 from tester_feedback f where f.session_id = s.id)
+                   exists (select 1 from tester_feedback f where f.session_id = s.id),
+                   s.audience
             from sessions s left join users u on u.id = s.user_id
             where (?::uuid is null or s.user_id = ?::uuid)
               and (?::text is null or s.item_type_id = ?)
               and (not ? or coalesce(u.is_tester, false))
+              and (?::text is null or s.audience = ?)
             order by s.created_at desc
             limit ? offset ?
             """.trimIndent()
@@ -709,8 +752,10 @@ class PostgresAdminStore(private val dataSource: DataSource) : AdminStore {
             statement.setString(3, itemTypeId)
             statement.setString(4, itemTypeId)
             statement.setBoolean(5, testersOnly)
-            statement.setInt(6, limit + 1)
-            statement.setInt(7, offset)
+            statement.setString(6, audience?.id)
+            statement.setString(7, audience?.id)
+            statement.setInt(8, limit + 1)
+            statement.setInt(9, offset)
             statement.executeQuery().use { rows ->
                 val out = mutableListOf<AdminSessionRow>()
                 while (rows.next()) out += AdminSessionRow(
@@ -726,6 +771,7 @@ class PostgresAdminStore(private val dataSource: DataSource) : AdminStore {
                     clientDeleted = rows.getBoolean(10),
                     byTester = rows.getBoolean(11),
                     hasTesterFeedback = rows.getBoolean(12),
+                    audience = Audience.fromId(rows.getString(13).orEmpty()) ?: Audience.BUYER,
                 )
                 Page(out.take(limit), hasMore = out.size > limit)
             }

@@ -286,14 +286,21 @@ fun Route.adminRoutes(
             val session = requireAdmin() ?: return@get
             val offset = call.offset()
             val search = call.request.queryParameters["q"]?.trim()?.takeIf { it.isNotEmpty() }
-            val page = store.users(PAGE_SIZE, offset, search)
+            // Unrecognised means both, not none: a hand-edited URL should widen the view
+            // rather than show an empty page that looks like an account list with nothing
+            // in it.
+            val app = call.app()
+            val page = store.users(PAGE_SIZE, offset, search, app)
             if (search != null) {
                 store.audit(session.adminId, session.email, "search-users", detail = search, ip = call.clientIp())
             }
             // One query for the whole page's accounts, not one per row.
             val quality = store.qualityRecords(page.items.map { it.id })
             call.respondHtml {
-                usersPage(session, page, offset, PAGE_SIZE, search, quality = quality)
+                usersPage(
+                    session, page, offset, PAGE_SIZE, search,
+                    quality = quality, audience = app,
+                )
             }
         }
 
@@ -303,8 +310,11 @@ fun Route.adminRoutes(
             val user = call.request.queryParameters["user"]
             val item = call.request.queryParameters["item"]
             val testersOnly = call.request.queryParameters["testers"] == "1"
-            val page = store.sessions(PAGE_SIZE, offset, user, item, testersOnly)
-            call.respondHtml { assessmentsPage(session, page, offset, PAGE_SIZE, testersOnly) }
+            val app = call.app()
+            val page = store.sessions(PAGE_SIZE, offset, user, item, testersOnly, app)
+            call.respondHtml {
+                assessmentsPage(session, page, offset, PAGE_SIZE, testersOnly, app)
+            }
         }
 
         get("/assessments/{id}") {
@@ -871,6 +881,15 @@ private val inviteRandom = SecureRandom()
  * No vowels, no 0/O or 1/I/L: these are dictated to testers, and a code that turns into a
  * support call has failed at its one job.
  */
+/**
+ * The `app` query parameter, or null for both.
+ *
+ * An unrecognised value widens to both rather than narrowing to none: a hand-edited URL
+ * should not produce an empty list that reads as an account list with nothing in it.
+ */
+private fun io.ktor.server.application.ApplicationCall.app(): Audience? =
+    request.queryParameters["app"]?.let(Audience::fromId)
+
 private fun newInviteCode(): String {
     val alphabet = "BCDFGHJKMNPQRSTVWXYZ23456789"
     return (1..8).map { alphabet[inviteRandom.nextInt(alphabet.length)] }

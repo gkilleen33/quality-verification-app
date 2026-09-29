@@ -273,6 +273,69 @@ class AdminRouteTest {
         }
     }
 
+    // Separating the two apps is the first thing any analysis has to do: a fundi working
+    // through a morning's output and a buyer checking one table are different
+    // populations, and a figure averaged over both describes neither.
+    @Test
+    fun `the users list says which app each account is for`() = testApplication {
+        val app = withAdmin(FakeAdminStore())
+        app.signIn()
+
+        val body = app.get("/admin/users").bodyAsText()
+
+        assertTrue("the producer account is marked", body.contains("Fundi Bora"))
+        assertTrue("and Kagua's is named too", body.contains("Kagua"))
+    }
+
+    @Test
+    fun `the users list can be narrowed to one app`() = testApplication {
+        val store = FakeAdminStore()
+        val app = withAdmin(store)
+        app.signIn()
+
+        app.get("/admin/users?app=fundi")
+
+        assertEquals(Audience.FUNDI, store.sawUsersAudience)
+    }
+
+    @Test
+    fun `the assessments list can be narrowed to one app`() = testApplication {
+        val store = FakeAdminStore()
+        val app = withAdmin(store)
+        app.signIn()
+
+        app.get("/admin/assessments?app=fundi")
+
+        assertEquals(Audience.FUNDI, store.sawSessionsAudience)
+    }
+
+    // A hand-edited URL should widen rather than narrow. Narrowing to nothing produces an
+    // empty page that reads as an account list with no accounts in it.
+    @Test
+    fun `an app nobody has heard of shows both`() = testApplication {
+        val store = FakeAdminStore()
+        val app = withAdmin(store)
+        app.signIn()
+
+        app.get("/admin/users?app=not-an-app")
+
+        assertNull(store.sawUsersAudience)
+    }
+
+    // Choosing an app must not silently drop the filter already applied, or somebody
+    // looking at evaluator runs loses that the moment they click Fundi Bora.
+    @Test
+    fun `the app links keep the evaluators filter`() = testApplication {
+        val app = withAdmin(FakeAdminStore())
+        app.signIn()
+
+        val body = app.get("/admin/assessments?testers=1").bodyAsText()
+
+        // &amp; rather than & — kotlinx.html escapes the attribute, which is correct
+        // HTML and what a browser turns back into a plain ampersand.
+        assertTrue(body, body.contains("/admin/assessments?testers=1&amp;app=fundi"))
+    }
+
     // anonymise_user nulls the phone of a closed account and keeps the row, but UserRow
     // declared it non-null — so the constructor would have thrown the first time anybody
     // closed an account, taking the *whole* page down rather than that one row.
@@ -1383,21 +1446,42 @@ class AdminRouteTest {
         }
 
         override suspend fun revokeInvite(code: String) = true
-        override suspend fun users(limit: Int, offset: Int, search: String?) = Page(
-            listOf(
-                UserRow(
-                    CUSTOMER_ID, "+254700000000", "A Buyer", "individual", null,
-                    Instant.now(), 1, deleted = false, isTester = false,
+        var sawUsersAudience: Audience? = null
+            private set
+
+        override suspend fun users(
+            limit: Int,
+            offset: Int,
+            search: String?,
+            audience: Audience?,
+        ): Page<UserRow> {
+            sawUsersAudience = audience
+            return Page(
+                listOf(
+                    UserRow(
+                        CUSTOMER_ID, "+254700000000", "A Buyer", "individual", null,
+                        Instant.now(), 1, deleted = false, isTester = false,
+                        audience = Audience.BUYER,
+                    ),
+                    // A closed account. anonymise_user nulls the phone, the name and the
+                    // business but keeps the row, so the list has to render one.
+                    UserRow(
+                        DELETED_ID, null, null, null, null,
+                        Instant.now(), 3, deleted = true, isTester = false,
+                        audience = Audience.BUYER,
+                    ),
+                    UserRow(
+                        FUNDI_ID, "+254711111111", "A Maker", "individual", null,
+                        Instant.now(), 5, deleted = false, isTester = false,
+                        audience = Audience.FUNDI,
+                    ),
                 ),
-                // A closed account. anonymise_user nulls the phone, the name and the
-                // business but keeps the row, so the list has to render one.
-                UserRow(
-                    DELETED_ID, null, null, null, null,
-                    Instant.now(), 3, deleted = true, isTester = false,
-                ),
-            ),
-            hasMore = false,
-        )
+                hasMore = false,
+            )
+        }
+
+        var sawSessionsAudience: Audience? = null
+            private set
 
         override suspend fun sessions(
             limit: Int,
@@ -1405,8 +1489,10 @@ class AdminRouteTest {
             userId: String?,
             itemTypeId: String?,
             testersOnly: Boolean,
+            audience: Audience?,
         ): Page<AdminSessionRow> {
             sawTestersOnly = testersOnly
+            sawSessionsAudience = audience
             return Page(listOf(header()), hasMore = false)
         }
 
@@ -1450,6 +1536,8 @@ class AdminRouteTest {
         const val CUSTOMER_ID = "33333333-4444-5555-6666-777777777777"
         /** An account somebody closed. Anonymised, but still a row. */
         const val DELETED_ID = "44444444-5555-6666-7777-888888888888"
+        /** A Fundi Bora account, so the app column has something to distinguish. */
+        const val FUNDI_ID = "55555555-6666-7777-8888-999999999999"
         const val DEVICE_COOKIE_NAME = "kagua_admin_device"
 
         fun assistantTurn(text: String) =

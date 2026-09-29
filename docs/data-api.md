@@ -82,7 +82,19 @@ otherwise be a request for any file in the blob directory.
 - `tester_feedback[].session_id` → `assessments[].id` (one critique per assessment, at most)
 - `messages[].photos[]` → `/photos/{sha}`
 
-## Two things that will bite an analysis if nobody mentions them
+## Three things that will bite an analysis if nobody mentions them
+
+**There are two apps in here.** `audience` is `buyer` for Kagua and `fundi` for Fundi
+Bora, and it is on both users and assessments. Splitting on it is the first thing to do:
+a fundi works through everything that came off the bench that morning and re-assesses
+yesterday's pieces after repairing them, while a buyer checks one table in a shop. A rate
+averaged over both describes neither population. Do not mistake it for `account_type`,
+which says whether a business lets walk-in customers use its handset and is a different
+question entirely.
+
+The assessment's `audience` is the session's own rather than its account's. They cannot
+differ today — an account keeps one audience for life — but the assessment is the record,
+and reading it from the record beats joining to a profile to find out.
 
 **Evaluator runs are in here.** `by_tester` marks an assessment done by one of our own
 evaluators rather than a customer. Including them in a pilot finding overstates how well the

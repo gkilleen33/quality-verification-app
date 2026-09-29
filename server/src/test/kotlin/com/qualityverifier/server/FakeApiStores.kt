@@ -127,6 +127,7 @@ val API_USER = ApiUser(
     createdAt = 1_700_000_000_000,
     assessments = 3,
     deleted = false,
+    audience = "buyer",
 )
 
 val API_ASSESSMENT = ApiAssessment(
@@ -141,6 +142,7 @@ val API_ASSESSMENT = ApiAssessment(
     byTester = false,
     hasTesterFeedback = false,
     deletedByUser = false,
+    audience = "buyer",
 )
 
 /**
@@ -207,9 +209,12 @@ class RecordingAudit : com.qualityverifier.server.admin.AdminStore {
         audience: com.qualityverifier.domain.Audience,
     ) = no()
     override suspend fun revokeInvite(code: String) = no()
-    override suspend fun users(limit: Int, offset: Int, search: String?) = no()
+    override suspend fun users(
+        limit: Int, offset: Int, search: String?, audience: com.qualityverifier.domain.Audience?,
+    ) = no()
     override suspend fun sessions(
         limit: Int, offset: Int, userId: String?, itemTypeId: String?, testersOnly: Boolean,
+        audience: com.qualityverifier.domain.Audience?,
     ) = no()
     override suspend fun sessionHeader(sessionId: String) = no()
     override suspend fun conversation(sessionId: String) = no()

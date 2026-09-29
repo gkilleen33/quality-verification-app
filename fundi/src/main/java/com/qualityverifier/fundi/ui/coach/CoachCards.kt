@@ -22,7 +22,10 @@ import com.qualityverifier.domain.FixPlan
 import com.qualityverifier.domain.FixStage
 import com.qualityverifier.domain.Severity
 import com.qualityverifier.domain.ToolSuggestion
+import com.qualityverifier.domain.Verdict
 import com.qualityverifier.text.FundiLabels
+import com.qualityverifier.text.ReportLabels
+import com.qualityverifier.ui.theme.verdictColors
 
 /**
  * The two cards that make Fundi Bora different from Kagua.
@@ -138,6 +141,69 @@ private fun PrimaryFinding(
             style = MaterialTheme.typography.titleMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
+    }
+}
+
+/**
+ * The verdict on a re-assessment.
+ *
+ * Fundi Bora issues `qv-verdict` when a maker brings back a piece they have repaired —
+ * that block is how the repair gets recorded, and it is what fills the two rates. Without
+ * something drawing it the turn would have rendered as nothing at all: `displayProse` is
+ * deliberately blank for a verdict, on the assumption that a card is showing instead.
+ * Exactly the blank-turn shape of #39, one screen further on.
+ *
+ * Deliberately plainer than Kagua's verdict cards. A buyer is deciding whether to hand
+ * over money and needs the reasoning; a maker wants to know whether the thing they fixed
+ * this morning is right now.
+ */
+@Composable
+fun VerdictCard(
+    verdict: Verdict,
+    labels: ReportLabels,
+    modifier: Modifier = Modifier,
+) {
+    val colours = verdictColors(verdict.level)
+    Card(
+        modifier = modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(containerColor = colours.container),
+    ) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text(
+                // verdictWord, not level: "Sound" overstates a clean result when
+                // something could not be checked, and the maker is the one who will
+                // believe it.
+                labels.verdictWord(verdict).uppercase(),
+                style = MaterialTheme.typography.labelSmall,
+                fontWeight = FontWeight.Bold,
+                letterSpacing = 0.8.sp,
+                color = colours.onContainer,
+            )
+            if (verdict.headline.isNotBlank()) {
+                Text(
+                    verdict.headline,
+                    style = MaterialTheme.typography.titleMedium,
+                    color = colours.onContainer,
+                )
+            }
+            if (verdict.summary.isNotBlank()) {
+                Text(
+                    verdict.summary,
+                    style = MaterialTheme.typography.bodyLarge,
+                    color = colours.onContainer,
+                )
+            }
+            verdict.defects.filter { it.title.isNotBlank() }.forEach { defect ->
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("•", color = colours.onContainer)
+                    Text(
+                        defect.title,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = colours.onContainer,
+                    )
+                }
+            }
+        }
     }
 }
 

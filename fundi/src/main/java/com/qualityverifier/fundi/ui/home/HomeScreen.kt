@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.systemBarsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.Button
@@ -51,7 +52,11 @@ fun HomeScreen(onOpen: (SessionSummary) -> Unit, onStart: (ItemType) -> Unit) {
     var choosing by remember { mutableStateOf(pieces.isEmpty()) }
 
     LazyColumn(
-        Modifier.fillMaxSize().padding(24.dp),
+        // systemBarsPadding, because MainActivity draws edge to edge: without it the
+        // wordmark sits under the notification bar. Applied per screen rather than once
+        // around the NavHost, because :capture keeps its camera preview full-bleed and
+        // pads only its own controls.
+        Modifier.fillMaxSize().systemBarsPadding().padding(24.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         item {

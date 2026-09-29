@@ -30,6 +30,15 @@ data class ApiUser(
     val phone: String?,
     val name: String?,
     @SerialName("account_type") val accountType: String?,
+    /**
+     * Which app this account is for: `buyer` or `fundi`.
+     *
+     * The first thing any analysis has to split on. A fundi working through a morning's
+     * output and a buyer checking one table are different populations, and a figure
+     * averaged over both describes neither. Do not confuse it with `account_type`, which
+     * says whether a business lets walk-in customers use its handset.
+     */
+    val audience: String,
     @SerialName("business_name") val businessName: String?,
     /**
      * Where the business is, captured only if they registered while standing in it.
@@ -67,6 +76,13 @@ data class ApiAssessment(
     @SerialName("by_tester") val byTester: Boolean,
     @SerialName("has_tester_feedback") val hasTesterFeedback: Boolean,
     @SerialName("deleted_by_user") val deletedByUser: Boolean,
+    /**
+     * Which app this assessment was conducted in.
+     *
+     * The session's own rather than the account's: an assessment is the research record,
+     * and a record that has to join to a profile to say what it was is a worse record.
+     */
+    val audience: String,
 )
 
 @Serializable
