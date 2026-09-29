@@ -122,7 +122,10 @@ class AssessViewModelTest {
         advanceUntilIdle()
 
         assertEquals(1, sessions.userTurns.size)
-        assertEquals("", sessions.userTurns.single().text)
+        // Not empty: the language line goes out even with no profile behind it. Coaching
+        // without the tool list is worse advice; coaching in a language the maker cannot
+        // read is none at all.
+        assertEquals("Please answer me in English.", sessions.userTurns.single().text)
     }
 
     @Test

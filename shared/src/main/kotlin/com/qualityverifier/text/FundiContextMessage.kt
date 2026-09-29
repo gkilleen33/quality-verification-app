@@ -28,7 +28,9 @@ import com.qualityverifier.domain.ToolOwnership
  * rather than an empty preamble.
  */
 fun buildFundiContextMessage(profile: FundiProfile, labels: FundiLabels): String {
-    if (!profile.hasAnything) return ""
+    // No early return on an empty profile any more. The language line below is worth
+    // sending on its own: a maker who skipped setup entirely should still be answered in
+    // a language they can read.
 
     val lines = mutableListOf<String>()
 
@@ -70,6 +72,13 @@ fun buildFundiContextMessage(profile: FundiProfile, labels: FundiLabels): String
         val named = profile.goals.sortedBy { it.ordinal }.map(labels::nameOf)
         lines += labels.contextGoal + " " + named.joinToString(", ") + "."
     }
+
+    // Always last, and always present — including when the maker has answered nothing
+    // else, which is why the empty-profile check above no longer decides on its own
+    // whether there is a message to send. The assistant needs a language more than it
+    // needs a tool list: coaching in the wrong one is unreadable, coaching without the
+    // tools is merely worse.
+    lines += labels.contextLanguage
 
     return lines.joinToString("\n")
 }
