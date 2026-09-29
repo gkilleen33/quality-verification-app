@@ -48,6 +48,13 @@ interface SessionRepository {
         itemType: ItemType,
         previousSessionId: String? = null,
         intake: AssessmentContext? = null,
+        /** Fundi Bora's piece. Null for Kagua, which assesses each piece once. */
+        pieceId: String? = null,
+        /**
+         * An intake code to store as-is, for an app whose intake is not Kagua's. Wins
+         * over [intake] when both are given; nothing passes both.
+         */
+        intakeCode: String? = null,
     )
 
     suspend fun sessionExists(sessionId: String): Boolean
@@ -56,6 +63,8 @@ interface SessionRepository {
         sessionId: String,
         text: String,
         attachments: List<Attachment>,
+        /** Written by the app on the user's behalf. See [ChatMessage.composed]. */
+        composed: Boolean = false,
     ): ChatMessage
 
     suspend fun appendAssistantMessage(sessionId: String, text: String): ChatMessage

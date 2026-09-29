@@ -12,6 +12,11 @@ data class ChatMessage(
     val text: String,
     val attachments: List<Attachment> = emptyList(),
     val createdAt: Long = 0L,
+    /**
+     * Written by the app on the user's behalf — an intake turn, a plan submission —
+     * rather than typed. The model reads these in full; a screen may show them compactly.
+     */
+    val composed: Boolean = false,
 )
 
 /**

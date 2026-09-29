@@ -266,6 +266,71 @@ older clients degrade rather than break — asserted against a tag nothing imple
 Only the worst finding carries a cause; the rest are recorded so the piece's defect count
 is right. A fundi handed six habits to change changes none of them.
 
+## The intake, and what an assessment is for
+
+Every assessment starts with two taps before anything reaches the model: a language, then
+a purpose. Nothing is sent until the intake is whole, the rule Kagua keeps.
+
+| New piece | Returning piece |
+|---|---|
+| Evaluate a finished product | Re-evaluate this piece |
+| Diagnose and fix a specific issue *(details)* | Check that an issue was fixed *(pick a finding)* |
+| Learn a skill *(details)* | A new issue came up *(details)* |
+| Something else *(details)* | |
+
+**Only the two evaluations are full assessments**, and only a full assessment issues a
+verdict. That is the whole reason the purpose matters to the record: the two rates are
+counted from verdicts, and a targeted check of one joint that came back clean says nothing
+about the rest of the piece. Recorded as a verdict it would count as a clean piece and
+inflate the number a maker is judged on. The prompt says so, and a test pins both halves.
+
+**Every full assessment issues one, the first as well.** Before this the prompt asked for a
+verdict only on re-assessment, so the first evaluation of every piece recorded nothing and
+"first time clean" had no possible input. `verdict_defect_count` stays NULL for everything
+else, which `QualityRecord` already skips — NULL is not zero, as V15 says.
+
+"Check that an issue was fixed" offers the findings recorded in the piece's earlier
+assessments rather than asking the maker to describe the problem again: they would
+describe it differently, and the check is only meaningful against what was found. The
+finding goes into the opening turn quoted as it was recorded.
+
+The opening photograph follows the purpose — the whole piece, the problem, or the spot where
+the issue was — and is optional only for learning a skill or something else, where there
+may be no piece yet.
+
+## Pieces, and why a re-assessment is a new session
+
+`pieces` and `sessions.piece_id` existed from V14 and nothing wrote to either, so the two
+rates had no data flowing into them. Now:
+
+- A first assessment names its piece with **its own session id**. Nothing extra to mint, and
+  an old session with no piece falls back to itself.
+- A re-assessment is a **new session carrying the same piece id**, never a continuation of
+  the old conversation. Continuing would overwrite the first verdict's defect count with
+  the second — erasing exactly the "first time clean" result the rates are built on — and
+  would resend the whole earlier conversation on every turn.
+- The server creates the piece on first sight and links a session to it **only if the
+  piece belongs to that account**. A piece id is a client-supplied uuid; one account must
+  not be able to append assessments to another maker's record. Verified against the live
+  schema in a rolled-back transaction, including the other-account case.
+
+Home shows one row per piece rather than per assessment, with Open and Re-assess.
+
+**Not done: piece ids do not survive a reinstall.** The sync that rebuilds history from the
+server does not carry `piece_id`, so after a reinstall each earlier assessment reads as its
+own piece and a re-assessment would start a new one. The server's copy is still linked
+correctly; only the handset's grouping is lost. Worth fixing before anybody reinstalls
+mid-pilot.
+
+## What the conversation shows
+
+Turns the app writes for the maker — the intake and a plan submission — are marked
+`composed` and shown as a caption and thumbnails rather than word for word. The model needs
+the tool inventory and the shot-by-shot list; shown verbatim they read as the app printing
+its own prompt. Turns the maker types are ordinary bubbles, and there is now somewhere to
+type them, along with the model's suggested replies as chips — the first build had no way
+to answer the diagnosis's one question at all.
+
 ## Deletion, and the wording it needs
 
 Deleting a fundi's account **hides their record from public view; it does not erase it.**

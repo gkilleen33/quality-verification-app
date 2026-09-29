@@ -30,9 +30,18 @@ private object Routes {
     const val SETUP_TOOLS = "setup/tools"
     const val SETUP_GOALS = "setup/goals"
     const val HOME = "home"
-    const val ASSESS = "assess/{sessionId}/{itemTypeId}"
+    const val ASSESS = "assess/{sessionId}/{itemTypeId}?piece={piece}&returning={returning}"
 
-    fun assess(sessionId: String, itemTypeId: String) = "assess/$sessionId/$itemTypeId"
+    /**
+     * [piece] defaults to the session itself, which is how a first assessment names its
+     * piece. A re-assessment passes the piece it is returning to.
+     */
+    fun assess(
+        sessionId: String,
+        itemTypeId: String,
+        piece: String = sessionId,
+        returning: Boolean = false,
+    ) = "assess/$sessionId/$itemTypeId?piece=$piece&returning=$returning"
 }
 
 @Composable
@@ -140,11 +149,25 @@ fun FundiNav() {
 
         composable(Routes.HOME) {
             HomeScreen(
-                // Reopening a piece: same session id, so the conversation and its
-                // photographs come back, and a re-assessment continues it rather than
-                // starting a stranger.
-                onOpen = { piece ->
-                    navController.navigate(Routes.assess(piece.id, piece.itemType.id))
+                // Reading an assessment again: the same session, so its conversation
+                // and photographs come back exactly as they were.
+                onOpen = { latest ->
+                    navController.navigate(
+                        Routes.assess(latest.id, latest.itemType.id, piece = latest.piece),
+                    )
+                },
+                // A re-assessment is a new session on the same piece — not a
+                // continuation — so its verdict is recorded beside the first rather than
+                // overwriting it, and the earlier conversation is not resent every turn.
+                onReassess = { latest ->
+                    navController.navigate(
+                        Routes.assess(
+                            sessionId = UUID.randomUUID().toString(),
+                            itemTypeId = latest.itemType.id,
+                            piece = latest.piece,
+                            returning = true,
+                        ),
+                    )
                 },
                 onStart = { itemType ->
                     navController.navigate(
@@ -159,6 +182,8 @@ fun FundiNav() {
             arguments = listOf(
                 navArgument("sessionId") { type = NavType.StringType },
                 navArgument("itemTypeId") { type = NavType.StringType },
+                navArgument("piece") { type = NavType.StringType; nullable = true },
+                navArgument("returning") { type = NavType.BoolType; defaultValue = false },
             ),
         ) { entry ->
             // The id is generated on the phone, so a retry of the same assessment is the
@@ -169,6 +194,9 @@ fun FundiNav() {
             AssessScreen(
                 sessionId = sessionId,
                 itemType = itemType,
+                pieceId = entry.arguments?.getString("piece")?.takeIf { it.isNotBlank() }
+                    ?: sessionId,
+                returning = entry.arguments?.getBoolean("returning") ?: false,
                 onDone = { navController.popBackStack() },
             )
         }

@@ -19,6 +19,12 @@ data class ChatRequest(
     @SerialName("previous_session_id") val previousSessionId: String? = null,
     @SerialName("intake_answers") val intakeAnswers: String? = null,
     /**
+     * Fundi Bora's piece. Links a re-assessment to the first assessment of the same
+     * physical piece, which is what the two quality rates walk. Ignored on Kagua's
+     * endpoint, and only honoured for a piece this account owns.
+     */
+    @SerialName("piece_id") val pieceId: String? = null,
+    /**
      * Where the assessment was made, when the customer agreed to record it. Optional and
      * expected to be absent: the setting can be off, and indoors a fix often never
      * arrives at all.

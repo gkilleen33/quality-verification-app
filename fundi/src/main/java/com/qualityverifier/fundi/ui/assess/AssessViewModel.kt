@@ -12,23 +12,29 @@ import com.qualityverifier.data.fundi.FundiProfiles
 import com.qualityverifier.data.fundi.ProfileOutcome
 import com.qualityverifier.data.session.SessionRepository
 import com.qualityverifier.di.AppContainer
+import com.qualityverifier.domain.AssessmentLanguage
 import com.qualityverifier.domain.Attachment
 import com.qualityverifier.domain.ChatMessage
+import com.qualityverifier.domain.FundiIntake
 import com.qualityverifier.domain.FundiProfile
+import com.qualityverifier.domain.FundiPurpose
 import com.qualityverifier.domain.ItemType
 import com.qualityverifier.domain.PlanRun
+import com.qualityverifier.domain.PriorIssue
 import com.qualityverifier.domain.Role
 import com.qualityverifier.text.FundiLabels
 import com.qualityverifier.text.ReportLabels
-import com.qualityverifier.text.buildFundiContextMessage
+import com.qualityverifier.text.buildFundiOpeningMessage
 import com.qualityverifier.text.buildSubmissionText
 import com.qualityverifier.text.parseAssistantContent
+import com.qualityverifier.text.priorIssues
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
@@ -54,6 +60,13 @@ data class AssessError(val message: String)
 class AssessViewModel(
     private val sessionId: String,
     private val itemType: ItemType,
+    /**
+     * The physical piece. A first assessment uses its own session id; a re-assessment
+     * passes the piece it is returning to, so the server links the two.
+     */
+    private val pieceId: String,
+    /** Whether this is a piece coming back, which decides which purposes are offered. */
+    val returning: Boolean,
     private val sessions: SessionRepository,
     private val chat: ChatService,
     private val images: SessionImageStore,
@@ -77,6 +90,66 @@ class AssessViewModel(
     /** Plans already answered, so a sent run is never re-offered. */
     private val fulfilled = mutableSetOf<String>()
 
+    /**
+     * The language chosen at intake, which the capture and verdict wording follow — the
+     * same rule Kagua keeps, so a Kiswahili conversation does not get English headings.
+     * Read back from the stored intake when a finished assessment is reopened.
+     */
+    private val _language = MutableStateFlow(AssessmentLanguage.ENGLISH)
+    val language: StateFlow<AssessmentLanguage> = _language.asStateFlow()
+
+    /** The purpose chosen at intake, for labelling the opening turn once it is sent. */
+    private val _purpose = MutableStateFlow<FundiPurpose?>(null)
+    val purpose: StateFlow<FundiPurpose?> = _purpose.asStateFlow()
+
+    /** Findings from this piece's earlier assessments, offered when checking a fix. */
+    private val _priorIssues = MutableStateFlow<List<PriorIssue>>(emptyList())
+    val priorIssues: StateFlow<List<PriorIssue>> = _priorIssues.asStateFlow()
+
+    /**
+     * Whether this assessment already exists, or null until that is known.
+     *
+     * Asked rather than inferred from the message list, which arrives asynchronously:
+     * inferred, a finished assessment being reopened would flash the intake for a frame
+     * before its conversation loaded, and a tap in that frame would start a second intake
+     * over a finished one.
+     */
+    private val _existing = MutableStateFlow<Boolean?>(null)
+    val existing: StateFlow<Boolean?> = _existing.asStateFlow()
+
+    init {
+        viewModelScope.launch { _existing.value = sessions.sessionExists(sessionId) }
+        viewModelScope.launch {
+            sessions.startOf(sessionId)?.intakeCode?.let(FundiIntake::decode)?.let { (lang, why) ->
+                _language.value = lang
+                _purpose.value = why
+            }
+        }
+        if (returning) loadPriorIssues()
+    }
+
+    /**
+     * Every finding recorded for this piece, newest assessment first.
+     *
+     * Read from this handset's own copies of the earlier conversations. Those are what
+     * the maker read, and they are here with no signal — which is where a fix gets
+     * checked, standing over the piece in the workshop.
+     */
+    private fun loadPriorIssues() {
+        viewModelScope.launch {
+            val earlier = sessions.observeSummaries().first()
+                .filter { it.piece == pieceId && it.id != sessionId }
+                .sortedByDescending { it.updatedAt }
+            val turns = earlier.flatMap { summary ->
+                sessions.messagesOnce(summary.id)
+                    .filter { it.role == Role.ASSISTANT }
+                    .asReversed()
+                    .map { it.text }
+            }
+            _priorIssues.value = priorIssues(turns)
+        }
+    }
+
     fun dismissError() {
         _error.value = null
     }
@@ -85,31 +158,46 @@ class AssessViewModel(
     fun newCaptureFile(): File? = runCatching { images.newImageFile(sessionId) }.getOrNull()
 
     /**
-     * Opens the assessment with a photograph of the whole piece and the maker's context.
+     * Sends the completed intake, and the opening photograph if there is one.
      *
-     * The context is a message rather than a header, so the maker can read what was said
-     * about them — and `prompts/fundi-master.txt` expects it in the opening turn, with
-     * each tool marked owned, borrowed or none.
+     * This is the first request of the assessment. Nothing before it reaches the model:
+     * the language, the purpose and the details are all held here until the maker has
+     * answered every one, so an abandoned intake costs nothing — the same rule Kagua
+     * keeps.
+     *
+     * The turn is marked composed. The model needs the whole of it — purpose, workshop,
+     * every tool marked owned, borrowed or none — but shown word for word it reads as the
+     * app printing its own prompt, which is what the first build did.
      *
      * A profile that will not load does not block the assessment. Coaching that has to
      * guess at the tools is worse coaching, but it is better than refusing to look at a
      * piece somebody is standing over.
      */
-    fun start(photoPath: String) {
-        if (_sending.value) return
+    fun start(intake: FundiIntake, photoPath: String?) {
+        if (_sending.value || !intake.isComplete) return
         _sending.value = true
+        _language.value = intake.language
+        _purpose.value = intake.purpose
         viewModelScope.launch {
             _error.value = null
             try {
                 val profile = (profiles.load() as? ProfileOutcome.Loaded)?.profile
                     ?: FundiProfile()
                 if (!sessions.sessionExists(sessionId)) {
-                    sessions.createSession(sessionId = sessionId, itemType = itemType)
+                    sessions.createSession(
+                        sessionId = sessionId,
+                        itemType = itemType,
+                        pieceId = pieceId,
+                        intakeCode = FundiIntake.encode(intake),
+                    )
                 }
                 sessions.appendUserMessage(
                     sessionId = sessionId,
-                    text = buildFundiContextMessage(profile, FundiLabels.ENGLISH),
-                    attachments = listOf(Attachment(UUID.randomUUID().toString(), photoPath)),
+                    text = buildFundiOpeningMessage(intake, profile, FundiLabels.ENGLISH),
+                    attachments = listOfNotNull(
+                        photoPath?.let { Attachment(UUID.randomUUID().toString(), it) },
+                    ),
+                    composed = true,
                 )
                 deliver()
             } finally {
@@ -125,7 +213,7 @@ class AssessViewModel(
         viewModelScope.launch {
             _error.value = null
             try {
-                sessions.appendUserMessage(sessionId, text, emptyList())
+                sessions.appendUserMessage(sessionId, text.trim(), emptyList())
                 deliver()
             } finally {
                 _sending.value = false
@@ -196,11 +284,14 @@ class AssessViewModel(
                         current.plan,
                         current.shots,
                         current.answers,
-                        ReportLabels.ENGLISH,
+                        ReportLabels.forLanguage(_language.value.code),
                     ),
                     attachments = current.takenPaths.map {
                         Attachment(UUID.randomUUID().toString(), it)
                     },
+                    // A shot-by-shot list of what was photographed and what was skipped.
+                    // The model needs it; the maker has just done it.
+                    composed = true,
                 )
                 // Marked answered before the request, not after. A failed request must
                 // not re-offer a plan whose photographs are already on a stored turn.
@@ -234,11 +325,15 @@ class AssessViewModel(
             container: AppContainer,
             sessionId: String,
             itemType: ItemType,
+            pieceId: String,
+            returning: Boolean,
         ): ViewModelProvider.Factory = viewModelFactory {
             initializer {
                 AssessViewModel(
                     sessionId = sessionId,
                     itemType = itemType,
+                    pieceId = pieceId,
+                    returning = returning,
                     sessions = container.sessionRepository,
                     chat = container.chatService,
                     images = container.images,

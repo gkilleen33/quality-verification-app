@@ -30,6 +30,7 @@ data class SessionSummaryRow(
     val verdictLevelId: String?,
     val verdictLanguage: String?,
     val verdictUnverifiedCount: Int?,
+    val pieceId: String?,
 )
 
 @Dao
@@ -45,6 +46,7 @@ interface SessionDao {
                s.verdictLevelId AS verdictLevelId,
                s.verdictLanguage AS verdictLanguage,
                s.verdictUnverifiedCount AS verdictUnverifiedCount,
+               s.pieceId AS pieceId,
                COUNT(m.id) AS messageCount
         FROM sessions s
         LEFT JOIN messages m ON m.sessionId = s.id

@@ -1,6 +1,5 @@
 package com.qualityverifier.fundi.ui.home
 
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -18,6 +17,7 @@ import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -44,10 +44,24 @@ import java.util.TimeZone
  * else, which is the same screen with the list empty rather than a different one.
  */
 @Composable
-fun HomeScreen(onOpen: (SessionSummary) -> Unit, onStart: (ItemType) -> Unit) {
+fun HomeScreen(
+    /** Read the piece's most recent assessment again. */
+    onOpen: (SessionSummary) -> Unit,
+    /** Start a new assessment of the same piece. */
+    onReassess: (SessionSummary) -> Unit,
+    onStart: (ItemType) -> Unit,
+) {
     val container = fundiContainer()
     val model: PiecesViewModel = viewModel(factory = PiecesViewModel.factory(container))
-    val pieces by model.pieces.collectAsState()
+    val sessions by model.pieces.collectAsState()
+    // One row per physical piece rather than per assessment. A stool assessed on Monday
+    // and re-assessed on Tuesday is one stool, and listing it twice would make the maker
+    // work out which row is the current one.
+    val pieces = remember(sessions) {
+        sessions.groupBy { it.piece }
+            .map { (_, assessments) -> assessments.maxBy { it.updatedAt } to assessments.size }
+            .sortedByDescending { (latest, _) -> latest.updatedAt }
+    }
 
     var choosing by remember { mutableStateOf(pieces.isEmpty()) }
 
@@ -67,7 +81,9 @@ fun HomeScreen(onOpen: (SessionSummary) -> Unit, onStart: (ItemType) -> Unit) {
         if (choosing || pieces.isEmpty()) {
             item {
                 Text(
-                    "What have you just finished?",
+                    // Not "what have you just finished": learning a skill or chasing one
+                    // problem does not start from a finished piece.
+                    "What are you working on?",
                     style = MaterialTheme.typography.titleMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -101,15 +117,27 @@ fun HomeScreen(onOpen: (SessionSummary) -> Unit, onStart: (ItemType) -> Unit) {
                     modifier = Modifier.padding(top = 8.dp),
                 )
             }
-            items(pieces, key = { it.id }) { piece -> PieceRow(piece) { onOpen(piece) } }
+            items(pieces, key = { (latest, _) -> latest.piece }) { (latest, count) ->
+                PieceRow(
+                    latest = latest,
+                    assessments = count,
+                    onOpen = { onOpen(latest) },
+                    onReassess = { onReassess(latest) },
+                )
+            }
         }
     }
 }
 
 @Composable
-private fun PieceRow(piece: SessionSummary, onOpen: () -> Unit) {
+private fun PieceRow(
+    latest: SessionSummary,
+    assessments: Int,
+    onOpen: () -> Unit,
+    onReassess: () -> Unit,
+) {
     Card(
-        Modifier.fillMaxWidth().clickable(onClick = onOpen),
+        Modifier.fillMaxWidth(),
         colors = CardDefaults.cardColors(
             containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
         ),
@@ -119,9 +147,16 @@ private fun PieceRow(piece: SessionSummary, onOpen: () -> Unit) {
                 Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
             ) {
-                Text(piece.itemType.homeLabel, style = MaterialTheme.typography.titleMedium)
+                Text(latest.itemType.homeLabel, style = MaterialTheme.typography.titleMedium)
                 Text(
-                    piece.updatedAt.asDay(),
+                    latest.updatedAt.asDay(),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            if (assessments > 1) {
+                Text(
+                    "$assessments assessments",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -129,18 +164,22 @@ private fun PieceRow(piece: SessionSummary, onOpen: () -> Unit) {
             // An assessment with one turn is one somebody started and did not finish —
             // a phone call mid-plan, usually. Saying so is the difference between a list
             // they trust and a list of things they cannot account for.
-            if (piece.messageCount <= 1) {
+            if (latest.messageCount <= 1) {
                 Text(
                     "Not finished",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.error,
                 )
-            } else if (piece.preview.isNotBlank()) {
+            } else if (latest.preview.isNotBlank()) {
                 Text(
-                    piece.preview.take(120),
+                    latest.preview.take(120),
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                TextButton(onClick = onOpen) { Text("Open") }
+                TextButton(onClick = onReassess) { Text("Re-assess") }
             }
         }
     }

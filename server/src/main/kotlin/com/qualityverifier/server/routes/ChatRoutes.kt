@@ -168,6 +168,16 @@ private suspend fun RoutingContext.assessmentTurn(
                 )
                 return
             }
+            // Checked before it reaches `?::uuid`, where a malformed value would throw and
+            // come back as a 500. It is our own client that sends it, so a bad one is a
+            // bug worth refusing loudly rather than quietly unlinking the piece.
+            if (request.pieceId != null && !isUuid(request.pieceId)) {
+                call.respond(
+                    HttpStatusCode.BadRequest,
+                    ErrorResponse("invalid_request", "piece_id must be a uuid"),
+                )
+                return
+            }
             if (request.blobs.any { !BlobStore.isValidHash(it) }) {
                 call.respond(HttpStatusCode.BadRequest, ErrorResponse("invalid_hash"))
                 return
@@ -202,6 +212,7 @@ private suspend fun RoutingContext.assessmentTurn(
                 audience = audience,
                 dailyLimit = dailyAssessmentLimit,
                 testerDailyLimit = testerDailyAssessmentLimit,
+                pieceId = request.pieceId,
             )
             if (access is SessionAccess.NotYours) {
                 // 404, never 403: telling the difference would let anybody enumerate

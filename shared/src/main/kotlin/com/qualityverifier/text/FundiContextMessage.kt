@@ -24,8 +24,8 @@ import com.qualityverifier.domain.ToolOwnership
  * proposes clamps to somebody who said they own none, which is the single failure the
  * prompt calls out by name.
  *
- * Returns an empty string when there is nothing to say, so the caller appends nothing
- * rather than an empty preamble.
+ * Never empty: the language line is always last and always present, because a maker who
+ * skipped setup should still be answered in a language they can read.
  */
 fun buildFundiContextMessage(profile: FundiProfile, labels: FundiLabels): String {
     // No early return on an empty profile any more. The language line below is worth

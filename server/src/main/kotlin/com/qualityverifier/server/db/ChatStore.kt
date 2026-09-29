@@ -81,6 +81,13 @@ interface ChatStore {
         dailyLimit: Int,
         /** The higher allowance for one of our own evaluators. */
         testerDailyLimit: Int,
+        /**
+         * The physical piece this assessment is of, for Fundi Bora. Linked only if the
+         * piece belongs to this account — a piece id is a client-supplied uuid, and one
+         * account must not be able to attach its assessments to another's piece and
+         * skew that maker's record.
+         */
+        pieceId: String? = null,
     ): SessionAccess
 
     /**
@@ -197,6 +204,7 @@ class PostgresChatStore(private val dataSource: DataSource) : ChatStore {
         audience: Audience,
         dailyLimit: Int,
         testerDailyLimit: Int,
+        pieceId: String?,
     ): SessionAccess = tx { connection ->
         val owner = connection.prepareStatement(
             "select user_id::text from sessions where id = ?::uuid"
@@ -251,12 +259,37 @@ class PostgresChatStore(private val dataSource: DataSource) : ChatStore {
             if (startedToday >= limit) return@tx SessionAccess.DailyLimitReached(limit)
         }
 
+        // The piece first, so the session can point at it. Fundi Bora only: Kagua assesses
+        // each piece once and has no use for the grouping. `on conflict do nothing`
+        // because a re-assessment names a piece that already exists — and deliberately
+        // does not update it, so a second account naming the same id changes nothing.
+        val linkPiece = pieceId != null && audience == Audience.FUNDI
+        if (linkPiece) {
+            connection.prepareStatement(
+                """
+                insert into pieces (id, user_id, item_type_id)
+                values (?::uuid, ?::uuid, ?)
+                on conflict (id) do nothing
+                """.trimIndent()
+            ).use { statement ->
+                statement.setString(1, pieceId)
+                statement.setString(2, userId)
+                statement.setString(3, itemTypeId)
+                statement.executeUpdate()
+            }
+        }
+
         connection.prepareStatement(
             """
             insert into sessions (
                 id, user_id, item_type_id, previous_session_id, intake_answers, prompt_sha,
-                audience
-            ) values (?::uuid, ?::uuid, ?, ?::uuid, ?, ?, ?)
+                audience, piece_id
+            ) values (
+                ?::uuid, ?::uuid, ?, ?::uuid, ?, ?, ?,
+                -- Only this account's own piece. Somebody else's id resolves to null
+                -- rather than linking, so nobody can append to another maker's record.
+                (select p.id from pieces p where p.id = ?::uuid and p.user_id = ?::uuid)
+            )
             on conflict (id) do nothing
             """.trimIndent()
         ).use { statement ->
@@ -268,6 +301,8 @@ class PostgresChatStore(private val dataSource: DataSource) : ChatStore {
             statement.setString(6, promptSha)
             // Written once, here. Nothing updates it afterwards.
             statement.setString(7, audience.id)
+            statement.setString(8, pieceId.takeIf { linkPiece })
+            statement.setString(9, userId)
             statement.executeUpdate()
         }
         SessionAccess.Ok(created = true)

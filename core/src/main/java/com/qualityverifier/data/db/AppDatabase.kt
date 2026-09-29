@@ -14,7 +14,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         PendingTesterFeedbackEntity::class,
         DismissedSessionEntity::class,
     ],
-    version = 9,
+    version = 10,
     exportSchema = true,
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -146,9 +146,26 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        /**
+         * Adds `sessions.pieceId`, for Fundi Bora's re-assessments, and
+         * `messages.composed`, which marks turns the app wrote on the maker's behalf.
+         *
+         * Both are additive and defaulted, so every existing row reads as it did: no
+         * piece, and typed by a person. The default on `composed` has to be spelled here
+         * and in the entity's ColumnInfo alike, or Room's schema check fails at startup.
+         */
+        val MIGRATION_9_10 = object : Migration(9, 10) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE sessions ADD COLUMN pieceId TEXT")
+                db.execSQL(
+                    "ALTER TABLE messages ADD COLUMN composed INTEGER NOT NULL DEFAULT 0"
+                )
+            }
+        }
+
         val MIGRATIONS = arrayOf(
             MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6,
-            MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9,
+            MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10,
         )
     }
 }
