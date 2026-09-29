@@ -593,6 +593,38 @@ class ChatRouteTest {
         assertEquals(piece, store.sawPieceId)
     }
 
+    // The mark has to reach the server, or a phone rebuilding its history gets the turn back
+    // unmarked and shows the app's own prompt text again. See V18.
+    @Test
+    fun `a turn the app wrote is stored as such`() = testApplication {
+        val store = FakeChatStore()
+        val app = withChat(
+            store,
+            FakeClaude(ClaudeResult.Success("ok", TokenUsage(), null)),
+            accountAudience = Audience.FUNDI,
+        )
+
+        app.post("/v1/fundi/chat") {
+            auth()
+            setBody(TextContent(requestJsonWith(",\"composed\":true"), ContentType.Application.Json))
+        }
+
+        assertEquals(true, store.sawComposed)
+    }
+
+    @Test
+    fun `a turn with no mark is stored as typed`() = testApplication {
+        val store = FakeChatStore()
+        val app = withChat(store, FakeClaude(ClaudeResult.Success("ok", TokenUsage(), null)))
+
+        app.post("/v1/chat") {
+            auth()
+            setBody(TextContent(requestJsonWith(""), ContentType.Application.Json))
+        }
+
+        assertEquals(false, store.sawComposed)
+    }
+
     // It would otherwise reach `?::uuid` and throw, which comes back as a 500. Our own
     // client sends it, so a malformed one is a bug to refuse loudly.
     @Test
@@ -886,7 +918,12 @@ class ChatRouteTest {
 
         override suspend fun appendUserTurn(
             sessionId: String, messageId: String, text: String, blobHashes: List<String>,
-        ) = !turnAlreadyStored
+            composed: Boolean,
+        ) = (!turnAlreadyStored).also { sawComposed = composed }
+
+        /** Whether the route marked the stored turn as the app's own. */
+        var sawComposed: Boolean? = null
+            private set
 
         override suspend fun replyAfter(sessionId: String, userMessageId: String) = storedReply
 

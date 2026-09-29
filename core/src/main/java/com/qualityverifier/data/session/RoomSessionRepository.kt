@@ -169,6 +169,10 @@ class RoomSessionRepository(
                 verdictUnverifiedCount = unverifiedCountIn(messages),
                 previousSessionId = session.previousSessionId,
                 intakeAnswers = session.intakeAnswers,
+                // From the server, which is what makes the grouping survive a reinstall:
+                // without it every earlier assessment would read as its own piece and the
+                // next re-assessment would start a new one.
+                pieceId = session.pieceId,
             )
         )
         // Cleared and rewritten rather than merged. The server is authoritative for a
@@ -184,6 +188,10 @@ class RoomSessionRepository(
                     text = message.text,
                     ordinal = message.ordinal,
                     createdAt = message.createdAt,
+                    // Rewritten with the rest of the conversation, which happens in
+                    // ordinary use whenever the server's copy looks newer. Dropped here, the
+                    // intake turn would reappear word for word — see V18.
+                    composed = message.composed,
                 )
             }
         )

@@ -15,6 +15,7 @@ data class SessionSummaryDto(
     @SerialName("verdict_language") val verdictLanguage: String? = null,
     @SerialName("previous_session_id") val previousSessionId: String? = null,
     @SerialName("intake_answers") val intakeAnswers: String? = null,
+    @SerialName("piece_id") val pieceId: String? = null,
 )
 
 @Serializable
@@ -29,6 +30,8 @@ data class MessageDto(
     @SerialName("created_at") val createdAt: Long,
     /** Content hashes, in the order the customer took them. Fetch via GET /v1/blobs. */
     val blobs: List<String> = emptyList(),
+    /** Written by the app on the user's behalf, so a rebuilt history can show it compactly. */
+    val composed: Boolean = false,
 )
 
 @Serializable

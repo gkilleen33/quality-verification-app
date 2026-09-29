@@ -44,7 +44,9 @@ private fun purposeLine(intake: FundiIntake, labels: FundiLabels): String {
     return when (intake.purpose) {
         FundiPurpose.EVALUATE -> labels.saysEvaluate
         FundiPurpose.REEVALUATE -> labels.saysReevaluate
+        FundiPurpose.WORK_IN_PROGRESS -> labels.saysWorkInProgress(details)
         FundiPurpose.DIAGNOSE -> labels.saysDiagnose(details)
+        FundiPurpose.CUSTOMER_RETURN -> labels.saysCustomerReturn(details)
         FundiPurpose.LEARN -> labels.saysLearn(details)
         FundiPurpose.OTHER -> labels.saysOther(details)
         FundiPurpose.NEW_ISSUE -> labels.saysNewIssue(details)

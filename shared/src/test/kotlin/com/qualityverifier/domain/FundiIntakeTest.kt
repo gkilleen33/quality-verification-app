@@ -33,13 +33,16 @@ class FundiIntakeTest {
     fun `a new piece and a returning one are offered different questions`() {
         assertEquals(
             listOf(
-                FundiPurpose.EVALUATE, FundiPurpose.DIAGNOSE,
+                FundiPurpose.EVALUATE, FundiPurpose.WORK_IN_PROGRESS, FundiPurpose.DIAGNOSE,
                 FundiPurpose.LEARN, FundiPurpose.OTHER,
             ),
             FundiPurpose.forNewPiece,
         )
         assertEquals(
-            listOf(FundiPurpose.REEVALUATE, FundiPurpose.VERIFY_FIX, FundiPurpose.NEW_ISSUE),
+            listOf(
+                FundiPurpose.REEVALUATE, FundiPurpose.VERIFY_FIX, FundiPurpose.NEW_ISSUE,
+                FundiPurpose.CUSTOMER_RETURN,
+            ),
             FundiPurpose.forReturningPiece,
         )
     }
@@ -109,6 +112,17 @@ class FundiIntakeTest {
         // only once, or the model has two instructions and a coin to toss.
         assertTrue(text, text.trimEnd().endsWith("Tafadhali nijibu kwa Kiswahili."))
         assertFalse(text, text.contains("Please answer me in English."))
+    }
+
+    // A comeback has to be recorded as one, or the "no pieces coming back" goal a maker
+    // picks at setup has nothing to count.
+    @Test
+    fun `a customer return is stored as its own purpose`() {
+        val code = FundiIntake.encode(
+            FundiIntake(AssessmentLanguage.ENGLISH, FundiPurpose.CUSTOMER_RETURN, details = "leg split")
+        )
+        assertEquals("fundi-en-customer_return", code)
+        assertEquals(FundiPurpose.CUSTOMER_RETURN, FundiIntake.decode(code)?.second)
     }
 
     @Test

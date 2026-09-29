@@ -42,6 +42,12 @@ data class SessionRow(
     val verdictLanguage: String?,
     val previousSessionId: String?,
     val intakeAnswers: String?,
+    /**
+     * Fundi Bora's piece, sent back so a reinstalled phone can regroup its history.
+     * Without it every earlier assessment would read as its own piece, and the next
+     * re-assessment would start a new piece instead of joining the old one.
+     */
+    val pieceId: String? = null,
 )
 
 data class MessageRow(
@@ -51,6 +57,8 @@ data class MessageRow(
     val ordinal: Int,
     val createdAt: Long,
     val blobs: List<String>,
+    /** Written by the app on the user's behalf. See V18. */
+    val composed: Boolean = false,
 )
 
 /**
@@ -108,6 +116,11 @@ interface ChatStore {
         messageId: String,
         text: String,
         blobHashes: List<String>,
+        /**
+         * Written by the app on the user's behalf. Stored so it comes back through sync;
+         * see V18 for why the phone's own copy of the mark is not enough.
+         */
+        composed: Boolean = false,
     ): Boolean
 
     suspend fun replyAfter(sessionId: String, userMessageId: String): StoredReply?
@@ -353,19 +366,22 @@ class PostgresChatStore(private val dataSource: DataSource) : ChatStore {
         messageId: String,
         text: String,
         blobHashes: List<String>,
+        composed: Boolean,
     ): Boolean = tx { connection ->
         val inserted = connection.prepareStatement(
             """
-            insert into messages (id, session_id, role, text, ordinal)
+            insert into messages (id, session_id, role, text, ordinal, composed)
             select ?::uuid, ?::uuid, 'USER', ?,
-                   coalesce(max(ordinal), -1) + 1 from messages where session_id = ?::uuid
+                   coalesce(max(ordinal), -1) + 1, ?
+              from messages where session_id = ?::uuid
             on conflict (id) do nothing
             """.trimIndent()
         ).use { statement ->
             statement.setString(1, messageId)
             statement.setString(2, sessionId)
             statement.setString(3, text)
-            statement.setString(4, sessionId)
+            statement.setBoolean(4, composed)
+            statement.setString(5, sessionId)
             statement.executeUpdate() > 0
         }
         if (!inserted) return@tx false
@@ -555,7 +571,7 @@ class PostgresChatStore(private val dataSource: DataSource) : ChatStore {
                            (extract(epoch from s.updated_at) * 1000)::bigint,
                            s.preview_text, count(m.id)::int,
                            s.verdict_level_id, s.verdict_language,
-                           s.previous_session_id::text, s.intake_answers
+                           s.previous_session_id::text, s.intake_answers, s.piece_id::text
                     from sessions s left join messages m on m.session_id = s.id
                     where s.user_id = ?::uuid and s.client_deleted_at is null
                     group by s.id
@@ -584,7 +600,7 @@ class PostgresChatStore(private val dataSource: DataSource) : ChatStore {
                        (extract(epoch from s.updated_at) * 1000)::bigint,
                        s.preview_text, count(m.id)::int,
                        s.verdict_level_id, s.verdict_language,
-                       s.previous_session_id::text, s.intake_answers
+                       s.previous_session_id::text, s.intake_answers, s.piece_id::text
                 from sessions s left join messages m on m.session_id = s.id
                 where s.id = ?::uuid and s.user_id = ?::uuid and s.client_deleted_at is null
                 group by s.id
@@ -617,7 +633,7 @@ class PostgresChatStore(private val dataSource: DataSource) : ChatStore {
             connection.prepareStatement(
                 """
                 select id::text, role, text, ordinal,
-                       (extract(epoch from created_at) * 1000)::bigint
+                       (extract(epoch from created_at) * 1000)::bigint, composed
                 from messages where session_id = ?::uuid order by ordinal, id
                 """.trimIndent()
             ).use { statement ->
@@ -632,6 +648,7 @@ class PostgresChatStore(private val dataSource: DataSource) : ChatStore {
                             ordinal = rows.getInt(4),
                             createdAt = rows.getLong(5),
                             blobs = blobs[id].orEmpty(),
+                            composed = rows.getBoolean(6),
                         )
                     }
                 }
@@ -690,6 +707,7 @@ class PostgresChatStore(private val dataSource: DataSource) : ChatStore {
         verdictLanguage = getString(8),
         previousSessionId = getString(9),
         intakeAnswers = getString(10),
+        pieceId = getString(11),
     )
 
     private fun touch(connection: Connection, sessionId: String, preview: String) {

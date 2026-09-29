@@ -274,9 +274,21 @@ a purpose. Nothing is sent until the intake is whole, the rule Kagua keeps.
 | New piece | Returning piece |
 |---|---|
 | Evaluate a finished product | Re-evaluate this piece |
-| Diagnose and fix a specific issue *(details)* | Check that an issue was fixed *(pick a finding)* |
-| Learn a skill *(details)* | A new issue came up *(details)* |
+| Check work in progress *(details)* | Check that an issue was fixed *(pick a finding)* |
+| Diagnose and fix a specific issue *(details)* | A new issue came up *(details)* |
+| Learn a skill *(details)* | A customer brought it back *(details)* |
 | Something else *(details)* | |
+
+**Work in progress** is the cheapest moment to catch a mistake — a joint that can be recut
+before glue-up cannot be after — and is not a full assessment: an unfinished piece has no
+verdict, and recording one would count half a stool towards the maker's rates.
+
+**A customer brought it back** is kept apart from "a new issue came up" because it is a
+comeback, and "no pieces coming back for repair" is one of the three goals a maker picks at
+setup. The purpose is stored with the session (`fundi-<lang>-customer_return`), so counting
+comebacks is a query rather than a guess. The prompt asks the model to say plainly when the
+cause was the customer's use rather than the making, so a maker is not pushed to change a
+sound habit to answer a complaint the piece did not earn.
 
 **Only the two evaluations are full assessments**, and only a full assessment issues a
 verdict. That is the whole reason the purpose matters to the record: the two rates are
@@ -316,16 +328,18 @@ rates had no data flowing into them. Now:
 
 Home shows one row per piece rather than per assessment, with Open and Re-assess.
 
-**Not done: piece ids do not survive a reinstall.** The sync that rebuilds history from the
-server does not carry `piece_id`, so after a reinstall each earlier assessment reads as its
-own piece and a re-assessment would start a new one. The server's copy is still linked
-correctly; only the handset's grouping is lost. Worth fixing before anybody reinstalls
-mid-pilot.
+**The grouping survives a reinstall.** The history sync carries `piece_id` on every
+session, so a phone rebuilding its history from the server regroups the pieces exactly and
+the next re-assessment joins the right one.
 
 ## What the conversation shows
 
 Turns the app writes for the maker — the intake and a plan submission — are marked
-`composed` and shown as a caption and thumbnails rather than word for word. The model needs
+`composed` and shown as a caption and thumbnails rather than word for word. The mark is
+stored on the server too (`V18`) and comes back through sync, because the phone's own copy
+does not survive by itself: sync rewrites a conversation whenever the server's copy looks
+newer, which a phone clock a few minutes slow makes happen in ordinary use, and a reinstall
+rebuilds everything. Without it the prompt text would quietly reappear. The model needs
 the tool inventory and the shot-by-shot list; shown verbatim they read as the app printing
 its own prompt. Turns the maker types are ordinary bubbles, and there is now somewhere to
 type them, along with the model's suggested replies as chips — the first build had no way

@@ -92,6 +92,41 @@ class SyncRouteTest {
         assertTrue(body, body.contains("\"ordinal\":0"))
     }
 
+    // What a reinstalled phone rebuilds its history from. Without the piece id every earlier
+    // assessment reads as its own piece and the next re-assessment starts a new one; without
+    // the composed mark the intake turn reappears as the app's own prompt text.
+    @Test
+    fun `an assessment comes back with its piece and which turns the app wrote`() = testApplication {
+        val piece = "c0ffee00-0000-4000-8000-000000000001"
+        val chat = FakeChatStore(
+            detail = row(SESSION).copy(pieceId = piece) to listOf(
+                MessageRow("m1", "USER", "About my workshop...", 0, 1L, emptyList(), composed = true),
+                MessageRow("m2", "ASSISTANT", "Sawa.", 1, 2L, emptyList()),
+                MessageRow("m3", "USER", "It was cut freehand", 2, 3L, emptyList()),
+            )
+        )
+        val app = withSync(chat, FakeAuth())
+
+        val body = app.get("/v1/sessions/$SESSION") { auth(MINE) }.bodyAsText()
+
+        assertTrue(body, body.contains("\"piece_id\":\"$piece\""))
+        assertTrue("the intake turn is marked", body.contains("\"composed\":true"))
+        // And the typed one is not. Counting rather than hunting for "false", because a
+        // default field may legitimately be left out of the encoding.
+        assertEquals(1, Regex("\"composed\":true").findAll(body).count())
+    }
+
+    @Test
+    fun `the session list carries the piece too`() = testApplication {
+        val piece = "c0ffee00-0000-4000-8000-000000000002"
+        val chat = FakeChatStore(sessions = listOf(row(SESSION).copy(pieceId = piece)))
+        val app = withSync(chat, FakeAuth())
+
+        val body = app.get("/v1/sessions") { auth(MINE) }.bodyAsText()
+
+        assertTrue(body, body.contains("\"piece_id\":\"$piece\""))
+    }
+
     @Test
     fun `an id that is not a uuid is a 404, not a 500`() = testApplication {
         // These ids are cast with `?::uuid`, so anything malformed throws inside Postgres
@@ -458,6 +493,7 @@ class SyncRouteTest {
 
         override suspend fun appendUserTurn(
             sessionId: String, messageId: String, text: String, blobHashes: List<String>,
+            composed: Boolean,
         ) = true
 
         override suspend fun replyAfter(sessionId: String, userMessageId: String): StoredReply? = null

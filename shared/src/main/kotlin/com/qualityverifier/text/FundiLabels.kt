@@ -106,7 +106,9 @@ data class FundiLabels(
     // ---- what the opening turn says on the maker's behalf, purpose first.
     val saysEvaluate: String,
     val saysReevaluate: String,
+    private val saysWorkInProgressFormat: String,
     private val saysDiagnoseFormat: String,
+    private val saysCustomerReturnFormat: String,
     private val saysLearnFormat: String,
     private val saysOtherFormat: String,
     private val saysNewIssueFormat: String,
@@ -119,7 +121,9 @@ data class FundiLabels(
     /** A plan submission that carried answers but no photographs. */
     val sentAnswers: String,
 ) {
+    fun saysWorkInProgress(what: String) = saysWorkInProgressFormat.replace("{what}", what)
     fun saysDiagnose(what: String) = saysDiagnoseFormat.replace("{what}", what)
+    fun saysCustomerReturn(what: String) = saysCustomerReturnFormat.replace("{what}", what)
     fun saysLearn(what: String) = saysLearnFormat.replace("{what}", what)
     fun saysOther(what: String) = saysOtherFormat.replace("{what}", what)
     fun saysNewIssue(what: String) = saysNewIssueFormat.replace("{what}", what)
@@ -241,15 +245,19 @@ data class FundiLabels(
             intakeReturningTitle = "What do you want to check on this piece?",
             purposeNames = mapOf(
                 FundiPurpose.EVALUATE to "Evaluate a finished product",
+                FundiPurpose.WORK_IN_PROGRESS to "Check work in progress",
                 FundiPurpose.DIAGNOSE to "Diagnose and fix a specific issue",
                 FundiPurpose.LEARN to "Learn a skill",
                 FundiPurpose.OTHER to "Something else",
                 FundiPurpose.REEVALUATE to "Re-evaluate this piece",
                 FundiPurpose.VERIFY_FIX to "Check that an issue was fixed",
                 FundiPurpose.NEW_ISSUE to "A new issue came up",
+                FundiPurpose.CUSTOMER_RETURN to "A customer brought it back",
             ),
             detailsPrompts = mapOf(
+                FundiPurpose.WORK_IN_PROGRESS to "What stage is it at, and what do you want checked?",
                 FundiPurpose.DIAGNOSE to "What is the problem, and where on the piece?",
+                FundiPurpose.CUSTOMER_RETURN to "What did the customer say was wrong?",
                 FundiPurpose.LEARN to "Which skill do you want to work on?",
                 FundiPurpose.OTHER to "Tell us what you would like help with.",
                 FundiPurpose.NEW_ISSUE to "What has come up, and where on the piece?",
@@ -261,6 +269,8 @@ data class FundiLabels(
             intakeContinue = "Continue",
             photoInstructions = mapOf(
                 FundiPurpose.EVALUATE to "Take one photo of the whole piece.",
+                FundiPurpose.WORK_IN_PROGRESS to "Take one photo of the piece as it is now.",
+                FundiPurpose.CUSTOMER_RETURN to "Take one photo of the problem.",
                 FundiPurpose.REEVALUATE to "Take one photo of the whole piece.",
                 FundiPurpose.DIAGNOSE to "Take one photo of the problem.",
                 FundiPurpose.NEW_ISSUE to "Take one photo of the problem.",
@@ -274,7 +284,11 @@ data class FundiLabels(
             saysEvaluate = "I have finished this piece. Please evaluate it.",
             saysReevaluate = "You have assessed this piece before. Please re-evaluate " +
                 "it from scratch.",
+            saysWorkInProgressFormat = "This piece is not finished yet. Please check it " +
+                "before I go further: {what}",
             saysDiagnoseFormat = "I want to diagnose and fix a specific problem: {what}",
+            saysCustomerReturnFormat = "You have assessed this piece before. A customer " +
+                "brought it back: {what}",
             saysLearnFormat = "I want to learn a skill: {what}",
             saysOtherFormat = "I would like help with something else: {what}",
             saysNewIssueFormat = "You have assessed this piece before. A new problem " +

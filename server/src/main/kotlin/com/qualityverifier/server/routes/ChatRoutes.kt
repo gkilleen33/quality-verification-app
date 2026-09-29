@@ -244,6 +244,7 @@ private suspend fun RoutingContext.assessmentTurn(
                 messageId = request.messageId,
                 text = request.text,
                 blobHashes = request.blobs,
+                composed = request.composed,
             )
             if (!isNewTurn) {
                 // The phone is retrying a turn we already have. If the reply is stored,

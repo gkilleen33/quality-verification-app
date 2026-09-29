@@ -29,6 +29,16 @@ enum class FundiPurpose(
     val photoOptional: Boolean = false,
 ) {
     EVALUATE("evaluate", fullAssessment = true, needsDetails = false, forReassessment = false),
+
+    /**
+     * A piece part way through — a joint dry-fitted before glue-up, a frame before the
+     * top goes on. The cheapest moment to catch a mistake, and not a full assessment:
+     * an unfinished piece has no verdict to give, and recording one would count half a
+     * stool towards the maker's rates.
+     */
+    WORK_IN_PROGRESS(
+        "work_in_progress", fullAssessment = false, needsDetails = true, forReassessment = false,
+    ),
     DIAGNOSE("diagnose", fullAssessment = false, needsDetails = true, forReassessment = false),
     LEARN(
         "learn", fullAssessment = false, needsDetails = true, forReassessment = false,
@@ -47,7 +57,17 @@ enum class FundiPurpose(
      * what was actually found.
      */
     VERIFY_FIX("verify_fix", fullAssessment = false, needsDetails = false, forReassessment = true),
-    NEW_ISSUE("new_issue", fullAssessment = false, needsDetails = true, forReassessment = true);
+    NEW_ISSUE("new_issue", fullAssessment = false, needsDetails = true, forReassessment = true),
+
+    /**
+     * A customer returned the piece. Kept apart from [NEW_ISSUE] because it is a
+     * comeback, and "no pieces coming back for repair" is one of the three goals a maker
+     * picks at setup: counting comebacks needs them recorded as comebacks. The purpose is
+     * stored with the session, so the count is a query rather than a guess.
+     */
+    CUSTOMER_RETURN(
+        "customer_return", fullAssessment = false, needsDetails = true, forReassessment = true,
+    );
 
     companion object {
         fun fromId(id: String): FundiPurpose? = entries.firstOrNull { it.id == id }

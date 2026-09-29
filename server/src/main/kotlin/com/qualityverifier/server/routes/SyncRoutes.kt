@@ -216,6 +216,7 @@ private fun SessionRow.toDto() = SessionSummaryDto(
     verdictLanguage = verdictLanguage,
     previousSessionId = previousSessionId,
     intakeAnswers = intakeAnswers,
+    pieceId = pieceId,
 )
 
 private fun MessageRow.toDto() = MessageDto(
@@ -225,5 +226,6 @@ private fun MessageRow.toDto() = MessageDto(
     ordinal = ordinal,
     createdAt = createdAt,
     blobs = blobs,
+    composed = composed,
 )
 
