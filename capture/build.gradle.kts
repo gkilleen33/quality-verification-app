@@ -63,6 +63,9 @@ dependencies {
     debugImplementation(libs.androidx.ui.tooling)
 
     implementation(libs.androidx.core.ktx)
+    // For the camera permission request. This module declares CAMERA, so it is also the
+    // one that asks for it — see CaptureScreen.
+    implementation(libs.androidx.activity.compose)
     implementation(libs.androidx.lifecycle.runtime.compose)
 
     // In-app capture rather than the system camera intent: the shot instruction has to sit

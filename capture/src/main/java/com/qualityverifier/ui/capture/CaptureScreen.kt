@@ -1,5 +1,9 @@
 package com.qualityverifier.ui.capture
 
+import android.Manifest
+import android.content.pm.PackageManager
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.camera.core.Camera
 import androidx.camera.core.CameraSelector
 import androidx.camera.core.ImageCapture
@@ -104,7 +108,52 @@ fun CaptureScreen(
     var busy by remember { mutableStateOf(false) }
     var bindError by remember { mutableStateOf<String?>(null) }
 
+    /*
+     * The camera permission, asked for here rather than by each app.
+     *
+     * This module declares CAMERA in its manifest, and a declaration is not a grant —
+     * Android requires a runtime request for it. Kagua happened to ask before opening
+     * this screen; Fundi Bora did not, and CameraX bound without complaint and rendered
+     * a black rectangle. No exception, no log line, nothing to alert on: the maker just
+     * could not take a photograph.
+     *
+     * So the module that opens the camera is the module that makes sure it may, for the
+     * same reason it is the module that declares the permission. An app asking first is
+     * harmless — a granted permission re-checked is a no-op.
+     */
+    var granted by remember {
+        mutableStateOf(
+            ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) ==
+                PackageManager.PERMISSION_GRANTED
+        )
+    }
+    var refused by remember { mutableStateOf(false) }
+    val askForCamera = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { allowed ->
+        granted = allowed
+        refused = !allowed
+    }
+
     LaunchedEffect(Unit) {
+        if (!granted) askForCamera.launch(Manifest.permission.CAMERA)
+    }
+
+    // Said plainly rather than left as a black rectangle. English here matches the bind
+    // failure below, which is the existing precedent in this file; both want the copy
+    // review that issue #20 covers.
+    LaunchedEffect(refused) {
+        if (refused) {
+            bindError = "Fundi Bora needs permission to use the camera before it can " +
+                "look at a piece. Allow it when asked, or turn it on in Settings."
+        }
+    }
+
+    // Keyed on the permission, not on Unit: before it is granted there is nothing to
+    // bind to, and binding once at first composition would leave the preview dead even
+    // after the maker says yes.
+    LaunchedEffect(granted) {
+        if (!granted) return@LaunchedEffect
         val future = ProcessCameraProvider.getInstance(context)
         future.addListener(
             {

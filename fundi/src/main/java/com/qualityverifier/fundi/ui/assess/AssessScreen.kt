@@ -66,7 +66,12 @@ fun AssessScreen(sessionId: String, itemType: ItemType, onDone: () -> Unit) {
     // change because the person holding it makes furniture rather than buys it.
     val reportLabels = ReportLabels.ENGLISH
 
+    // Derived from the conversation, not a fresh false. A piece already has an opening
+    // photograph the moment it has any turn at all, so reopening one — to read the fix
+    // plan again, or to re-assess after repairing it — must land on the conversation
+    // rather than on a camera asking for a photo that was taken days ago.
     var opened by remember { mutableStateOf(false) }
+    LaunchedEffect(messages.isNotEmpty()) { if (messages.isNotEmpty()) opened = true }
     var stage by remember { mutableStateOf(Stage.OPENING_PHOTO) }
 
     // A plan is picked up from the conversation rather than from the reply, so it
@@ -77,7 +82,7 @@ fun AssessScreen(sessionId: String, itemType: ItemType, onDone: () -> Unit) {
     LaunchedEffect(run) { if (run != null && stage == Stage.TALKING) stage = Stage.TALKING }
 
     when {
-        !opened || stage == Stage.OPENING_PHOTO -> {
+        !opened && stage == Stage.OPENING_PHOTO -> {
             CaptureScreen(
                 instruction = "Take one photo of the whole piece.",
                 reviewPhotoPath = null,
