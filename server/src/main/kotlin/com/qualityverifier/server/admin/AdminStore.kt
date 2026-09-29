@@ -50,7 +50,16 @@ data class InviteRow(
 
 data class UserRow(
     val id: String,
-    val phone: String,
+    /**
+     * Null once the account has been deleted.
+     *
+     * `anonymise_user` sets it to NULL rather than to a placeholder, because the unique
+     * index on phone is partial and nulls do not collide — so every closed account has
+     * one. Declared non-null, this would have thrown in the constructor the first time
+     * an account was closed and taken the whole page down. Latent rather than hit: the
+     * page was already failing earlier, in qualityRecords, for a different reason.
+     */
+    val phone: String?,
     val name: String?,
     val accountType: String?,
     val businessName: String?,
@@ -728,7 +737,12 @@ class PostgresAdminStore(private val dataSource: DataSource) : AdminStore {
     ): Map<String, List<QualityRecord.Piece>> {
         if (userIds.isEmpty()) return emptyMap()
         return query { connection ->
-            val placeholders = userIds.joinToString(",") { "?" }
+            // Each placeholder cast, not just bound. user_id is uuid and JDBC sends a
+            // string, and Postgres has no uuid = varchar operator — so the bare "?" this
+            // used made the query fail for *any* non-empty list, which is every page view
+            // with at least one account on it. Every other uuid comparison in this file
+            // already casts; this one was written as a list and missed it.
+            val placeholders = userIds.joinToString(",") { "?::uuid" }
             // Ordered by piece then assessment, because both rates depend on sequence:
             // "the first time" is the earliest verdict, and a repair is a later one.
             connection.prepareStatement(

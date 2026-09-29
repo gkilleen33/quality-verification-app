@@ -35,6 +35,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
+import java.io.File
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
@@ -240,6 +241,61 @@ class AdminRouteTest {
         // Three flagged, not ten: the two windows are independent, so the repair
         // denominator counts only the pieces that had something to repair.
         assertTrue(body, body.contains("Of the 3 pieces with a defect flagged, 2 were confirmed repaired."))
+    }
+
+    // The rule behind the bug above, stated once so the next person meets it here rather
+    // than in production. Compile-time: this only builds while every column
+    // anonymise_user sets to NULL is nullable on the row type that reads it.
+    @Test
+    fun `every field a closed account loses is nullable on the row`() {
+        val anonymised = UserRow(
+            id = DELETED_ID,
+            phone = null,
+            name = null,
+            businessName = null,
+            // account_type survives anonymising — it says nothing about who they are.
+            accountType = "individual",
+            createdAt = Instant.now(),
+            assessments = 0,
+            deleted = true,
+            isTester = false,
+        )
+
+        assertNull(anonymised.phone)
+        // And the columns above really are the ones anonymising clears, so this test
+        // cannot quietly start guarding a list that has moved on.
+        val migration = File("db/migrations/V11__anonymise_on_delete.sql").readText()
+        listOf("phone", "display_name", "business_name").forEach { column ->
+            assertTrue(
+                "V11 no longer sets $column to NULL — this test guards the wrong columns",
+                Regex("""\b$column\s*=\s*NULL""").containsMatchIn(migration),
+            )
+        }
+    }
+
+    // anonymise_user nulls the phone of a closed account and keeps the row, but UserRow
+    // declared it non-null — so the constructor would have thrown the first time anybody
+    // closed an account, taking the *whole* page down rather than that one row.
+    //
+    // Found while chasing a different 500 on this page and fixed alongside it; nobody
+    // had hit it yet, because the page was already failing earlier in qualityRecords.
+    // The list is the only place it bites: the assessments page uses a LEFT JOIN and
+    // already treats the phone as nullable.
+    @Test
+    fun `a closed account does not take the users page down with it`() = testApplication {
+        val store = FakeAdminStore()
+        val app = withAdmin(store)
+        app.signIn()
+
+        val response = app.get("/admin/users")
+
+        assertEquals(HttpStatusCode.OK, response.status)
+        val body = response.bodyAsText()
+        assertTrue("the live account is still listed", body.contains("+254700000000"))
+        assertTrue("and the closed one is marked as such", body.contains("(deleted)"))
+        // Its assessments stay reachable. That is the point of anonymising rather than
+        // deleting: the research record outlives the profile.
+        assertTrue(body, body.contains("/admin/assessments?user=$DELETED_ID"))
     }
 
     @Test
@@ -1330,8 +1386,14 @@ class AdminRouteTest {
         override suspend fun users(limit: Int, offset: Int, search: String?) = Page(
             listOf(
                 UserRow(
-                    CUSTOMER_ID, "+256700000000", "A Buyer", "individual", null,
+                    CUSTOMER_ID, "+254700000000", "A Buyer", "individual", null,
                     Instant.now(), 1, deleted = false, isTester = false,
+                ),
+                // A closed account. anonymise_user nulls the phone, the name and the
+                // business but keeps the row, so the list has to render one.
+                UserRow(
+                    DELETED_ID, null, null, null, null,
+                    Instant.now(), 3, deleted = true, isTester = false,
                 ),
             ),
             hasMore = false,
@@ -1386,6 +1448,8 @@ class AdminRouteTest {
 
         /** A customer account, for the evaluator toggle. */
         const val CUSTOMER_ID = "33333333-4444-5555-6666-777777777777"
+        /** An account somebody closed. Anonymised, but still a row. */
+        const val DELETED_ID = "44444444-5555-6666-7777-888888888888"
         const val DEVICE_COOKIE_NAME = "kagua_admin_device"
 
         fun assistantTurn(text: String) =

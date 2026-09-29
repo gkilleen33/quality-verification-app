@@ -427,7 +427,11 @@ fun HTML.usersPage(
                 page.items.forEach { user ->
                     tr {
                         td {
-                            +user.phone
+                            // A deleted account keeps its row and loses its phone, name
+                            // and business — that is what anonymising is. The assessments
+                            // stay, which is the point: the research record outlives the
+                            // profile.
+                            +(user.phone ?: "—")
                             if (user.deleted) span("muted") { +" (deleted)" }
                         }
                         td { +(user.name ?: "—") }
