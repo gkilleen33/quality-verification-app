@@ -63,20 +63,32 @@ class DefaultPromptsInSyncTest {
     }
 
     @Test
-    fun `the re-assessment still issues a verdict, because the rates depend on it`() {
+    fun `every full assessment issues a verdict, because the rates depend on it`() {
         // The two rates a maker is judged on are computed from
-        // sessions.verdict_defect_count, which is filled from a qv-verdict block. A
-        // re-assessment that stops emitting one leaves every repair unrecorded and the
-        // maker's own numbers wrong, with nothing failing.
+        // sessions.verdict_defect_count, which is filled from a qv-verdict block. This used
+        // to require one only on re-assessment — so the *first* evaluation of every piece
+        // recorded nothing, and "first time clean" had no possible input. A full
+        // assessment that stops emitting one leaves the piece unrecorded, with nothing
+        // failing.
         val fundi = DefaultPrompts.FUNDI_MASTER
         assertTrue(
-            "the fundi master no longer asks for a verdict on re-assessment",
-            fundi.contains("issue a qv-verdict block"),
+            "the fundi master no longer asks every full assessment for a verdict",
+            fundi.contains("Every full assessment issues one, the first as well as the re-evaluation"),
         )
         assertTrue(
             "the reason the verdict matters is no longer stated",
-            fundi.contains("leaves the repair unrecorded"),
+            fundi.contains("leaves the piece unrecorded"),
         )
+    }
+
+    // The other half of the same rule. A targeted check that came back clean says nothing
+    // about the rest of the piece; if it issued a verdict it would be counted as a clean
+    // piece and inflate the number a maker is judged on.
+    @Test
+    fun `a targeted check never issues a verdict`() {
+        val fundi = DefaultPrompts.FUNDI_MASTER
+        assertTrue(fundi.contains("Only a full assessment issues one — never a targeted check"))
+        assertTrue(fundi.contains("Do not issue a verdict: a clean result on one joint"))
     }
 
     @Test

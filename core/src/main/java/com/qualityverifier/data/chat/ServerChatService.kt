@@ -34,6 +34,9 @@ private data class ChatBody(
      */
     @SerialName("previous_session_id") val previousSessionId: String? = null,
     @SerialName("intake_answers") val intakeAnswers: String? = null,
+    /** Fundi Bora's piece, so the server can link a re-assessment to the first one. */
+    @SerialName("piece_id") val pieceId: String? = null,
+    val composed: Boolean = false,
     /**
      * Where the assessment was made, when there is one. Same rule as the two above: sent
      * on every turn and applied by the server only if it has none yet, so no turn is the
@@ -145,7 +148,12 @@ class ServerChatService(
                 text = turn.text,
                 blobs = hashes,
                 previousSessionId = start?.previousSessionId,
-                intakeAnswers = start?.intake?.let(::encodeIntake),
+                // The column as stored rather than re-encoded from Kagua's decoded view,
+                // which is null for a Fundi Bora code and would have sent nothing.
+                intakeAnswers = start?.intakeCode ?: start?.intake?.let(::encodeIntake),
+                pieceId = start?.pieceId,
+                // So the server can hand it back through sync — see V18.
+                composed = turn.composed,
                 latitude = start?.location?.latitude,
                 longitude = start?.location?.longitude,
                 accuracyMetres = start?.location?.accuracyMetres,

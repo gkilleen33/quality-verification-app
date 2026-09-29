@@ -573,6 +573,78 @@ class ChatRouteTest {
         assertEquals("nothing was spent", 0, store.usageRows)
     }
 
+    // A re-assessment is a new session naming the same piece. The route's job is to hand
+    // the id down; which piece it may link to is decided in the SQL, against the account.
+    @Test
+    fun `a piece id reaches the store`() = testApplication {
+        val store = FakeChatStore()
+        val app = withChat(
+            store,
+            FakeClaude(ClaudeResult.Success("ok", TokenUsage(), null)),
+            accountAudience = Audience.FUNDI,
+        )
+        val piece = UUID.randomUUID().toString()
+
+        app.post("/v1/fundi/chat") {
+            auth()
+            setBody(TextContent(requestJsonWith(",\"piece_id\":\"$piece\""), ContentType.Application.Json))
+        }
+
+        assertEquals(piece, store.sawPieceId)
+    }
+
+    // The mark has to reach the server, or a phone rebuilding its history gets the turn back
+    // unmarked and shows the app's own prompt text again. See V18.
+    @Test
+    fun `a turn the app wrote is stored as such`() = testApplication {
+        val store = FakeChatStore()
+        val app = withChat(
+            store,
+            FakeClaude(ClaudeResult.Success("ok", TokenUsage(), null)),
+            accountAudience = Audience.FUNDI,
+        )
+
+        app.post("/v1/fundi/chat") {
+            auth()
+            setBody(TextContent(requestJsonWith(",\"composed\":true"), ContentType.Application.Json))
+        }
+
+        assertEquals(true, store.sawComposed)
+    }
+
+    @Test
+    fun `a turn with no mark is stored as typed`() = testApplication {
+        val store = FakeChatStore()
+        val app = withChat(store, FakeClaude(ClaudeResult.Success("ok", TokenUsage(), null)))
+
+        app.post("/v1/chat") {
+            auth()
+            setBody(TextContent(requestJsonWith(""), ContentType.Application.Json))
+        }
+
+        assertEquals(false, store.sawComposed)
+    }
+
+    // It would otherwise reach `?::uuid` and throw, which comes back as a 500. Our own
+    // client sends it, so a malformed one is a bug to refuse loudly.
+    @Test
+    fun `a malformed piece id is refused before anything is spent`() = testApplication {
+        val store = FakeChatStore()
+        val app = withChat(
+            store,
+            FakeClaude(ClaudeResult.Success("ok", TokenUsage(), null)),
+            accountAudience = Audience.FUNDI,
+        )
+
+        val response = app.post("/v1/fundi/chat") {
+            auth()
+            setBody(TextContent(requestJsonWith(",\"piece_id\":\"not-a-uuid\""), ContentType.Application.Json))
+        }
+
+        assertEquals(HttpStatusCode.BadRequest, response.status)
+        assertEquals("nothing was spent", 0, store.usageRows)
+    }
+
     @Test
     fun `a client cannot ask for the other prompt`() = testApplication {
         // Belt and braces now that the endpoint decides. The audience is fixed by the URL
@@ -746,6 +818,12 @@ class ChatRouteTest {
         createClient { install(ClientContentNegotiation) { json() } }
     }
 
+    /** A valid turn as raw JSON, with [extra] spliced in before the closing brace. */
+    private fun requestJsonWith(extra: String) = """
+        {"session_id":"${UUID.randomUUID()}","item_type_id":"wooden-table",
+         "message_id":"${UUID.randomUUID()}","text":"hello","blobs":[]$extra}
+    """.trimIndent()
+
     private class RecordingPrompts : PromptRepository {
         var asked: ItemType? = null
         /** Which master the route asked for. Null when it never got as far as asking. */
@@ -820,12 +898,17 @@ class ChatRouteTest {
             sessionId: String, userId: String, itemTypeId: String,
             previousSessionId: String?, intakeAnswers: String?, promptSha: String?,
             audience: Audience,
-            dailyLimit: Int, testerDailyLimit: Int,
+            dailyLimit: Int, testerDailyLimit: Int, pieceId: String?,
         ) = access.also {
             sawDailyLimit = dailyLimit
             sawTesterDailyLimit = testerDailyLimit
             storedAudience = audience
+            sawPieceId = pieceId
         }
+
+        /** The piece the route handed down. The ownership rule is in the SQL. */
+        var sawPieceId: String? = null
+            private set
 
         /** What the route passed down, so a test can prove the config reaches the store. */
         var sawDailyLimit: Int? = null
@@ -835,7 +918,12 @@ class ChatRouteTest {
 
         override suspend fun appendUserTurn(
             sessionId: String, messageId: String, text: String, blobHashes: List<String>,
-        ) = !turnAlreadyStored
+            composed: Boolean,
+        ) = (!turnAlreadyStored).also { sawComposed = composed }
+
+        /** Whether the route marked the stored turn as the app's own. */
+        var sawComposed: Boolean? = null
+            private set
 
         override suspend fun replyAfter(sessionId: String, userMessageId: String) = storedReply
 

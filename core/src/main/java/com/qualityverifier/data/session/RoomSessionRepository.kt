@@ -45,6 +45,7 @@ class RoomSessionRepository(
                     verdictLevel = row.verdictLevelId?.let(VerdictLevel::fromId),
                     verdictLanguage = row.verdictLanguage,
                     verdictUnverifiedCount = row.verdictUnverifiedCount,
+                    pieceId = row.pieceId,
                 )
             }
         }
@@ -62,6 +63,8 @@ class RoomSessionRepository(
                 previousSessionId = row.previousSessionId,
                 intake = decodeIntake(row.intakeAnswers),
                 location = row.locationFix(),
+                pieceId = row.pieceId,
+                intakeCode = row.intakeAnswers,
             )
         }
 
@@ -85,6 +88,8 @@ class RoomSessionRepository(
         itemType: ItemType,
         previousSessionId: String?,
         intake: AssessmentContext?,
+        pieceId: String?,
+        intakeCode: String?,
     ) {
         val timestamp = now()
         dao.insertSession(
@@ -97,7 +102,8 @@ class RoomSessionRepository(
                 previousSessionId = previousSessionId,
                 // Null when the intake was not finished on the phone, which is exactly
                 // when there is nothing whole to carry into the next piece.
-                intakeAnswers = intake?.let(::encodeIntake),
+                intakeAnswers = intakeCode ?: intake?.let(::encodeIntake),
+                pieceId = pieceId,
             )
         )
     }
@@ -106,8 +112,9 @@ class RoomSessionRepository(
         sessionId: String,
         text: String,
         attachments: List<Attachment>,
+        composed: Boolean,
     ): ChatMessage {
-        val message = insert(sessionId, Role.USER, text, attachments)
+        val message = insert(sessionId, Role.USER, text, attachments, composed)
         val preview = text.ifBlank {
             if (attachments.isEmpty()) "" else "${attachments.size} photo(s)"
         }
@@ -162,6 +169,10 @@ class RoomSessionRepository(
                 verdictUnverifiedCount = unverifiedCountIn(messages),
                 previousSessionId = session.previousSessionId,
                 intakeAnswers = session.intakeAnswers,
+                // From the server, which is what makes the grouping survive a reinstall:
+                // without it every earlier assessment would read as its own piece and the
+                // next re-assessment would start a new one.
+                pieceId = session.pieceId,
             )
         )
         // Cleared and rewritten rather than merged. The server is authoritative for a
@@ -177,6 +188,10 @@ class RoomSessionRepository(
                     text = message.text,
                     ordinal = message.ordinal,
                     createdAt = message.createdAt,
+                    // Rewritten with the rest of the conversation, which happens in
+                    // ordinary use whenever the server's copy looks newer. Dropped here, the
+                    // intake turn would reappear word for word — see V18.
+                    composed = message.composed,
                 )
             }
         )
@@ -248,6 +263,7 @@ class RoomSessionRepository(
         role: Role,
         text: String,
         attachments: List<Attachment>,
+        composed: Boolean = false,
     ): ChatMessage {
         val id = UUID.randomUUID().toString()
         val timestamp = now()
@@ -259,6 +275,7 @@ class RoomSessionRepository(
                 text = text,
                 ordinal = dao.nextOrdinal(sessionId),
                 createdAt = timestamp,
+                composed = composed,
             )
         )
         if (attachments.isNotEmpty()) {
@@ -273,7 +290,7 @@ class RoomSessionRepository(
                 }
             )
         }
-        return ChatMessage(id, role, text, attachments, timestamp)
+        return ChatMessage(id, role, text, attachments, timestamp, composed)
     }
 
     /** All four columns or none, so a half-written row reads as absent rather than as (0, 0). */
@@ -297,6 +314,7 @@ class RoomSessionRepository(
             )
         },
         createdAt = message.createdAt,
+        composed = message.composed,
     )
 
     /**

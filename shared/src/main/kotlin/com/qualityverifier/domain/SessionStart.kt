@@ -24,4 +24,13 @@ data class SessionStart(
      * the fix landed simply carries null, and the next one carries it.
      */
     val location: LocationFix? = null,
+    /** The physical piece, for Fundi Bora. Sent so the server can link the assessments. */
+    val pieceId: String? = null,
+    /**
+     * The intake column as stored, undecoded.
+     *
+     * Kagua's code and Fundi Bora's share it and neither can read the other's, so the
+     * raw value is what travels to the server; [intake] is Kagua's decoded view of it.
+     */
+    val intakeCode: String? = null,
 )

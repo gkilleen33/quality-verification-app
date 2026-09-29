@@ -22,6 +22,7 @@ data class SyncedSession(
     val verdictLanguage: String?,
     val previousSessionId: String?,
     val intakeAnswers: String?,
+    val pieceId: String? = null,
 )
 
 data class SyncedMessage(
@@ -32,4 +33,6 @@ data class SyncedMessage(
     val createdAt: Long,
     /** Local file paths, already written by the sync before this reaches the database. */
     val attachmentPaths: List<String>,
+    /** Written by the app on the user's behalf. Carried so a rebuilt history keeps it. */
+    val composed: Boolean = false,
 )

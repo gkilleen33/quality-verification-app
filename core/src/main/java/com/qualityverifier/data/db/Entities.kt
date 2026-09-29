@@ -1,5 +1,6 @@
 package com.qualityverifier.data.db
 
+import androidx.room.ColumnInfo
 import androidx.room.Entity
 import androidx.room.ForeignKey
 import androidx.room.Index
@@ -67,6 +68,18 @@ data class SessionEntity(
      * there is then no complete set to carry.
      */
     val intakeAnswers: String? = null,
+    /**
+     * The physical piece this assessment is of. Fundi Bora only; null for every Kagua
+     * assessment and for any made before pieces existed.
+     *
+     * A re-assessment is a new session with the same piece id, not a continuation of the
+     * old conversation. Continuing would overwrite the first verdict's defect count with
+     * the second — erasing the "first time clean" result the two rates are built on —
+     * and would resend the whole earlier conversation on every turn. The first
+     * assessment of a piece uses its own session id as the piece id, so there is
+     * nothing extra to mint and an old row with none falls back to itself.
+     */
+    val pieceId: String? = null,
 )
 
 @Entity(
@@ -89,6 +102,16 @@ data class MessageEntity(
     val ordinal: Int,
     val createdAt: Long,
     val serverId: String? = null,
+    /**
+     * Written by the app on the maker's behalf rather than typed by them: the intake
+     * turn and a plan submission.
+     *
+     * Kept so the conversation can show those compactly instead of word for word. The
+     * text is what the model needs — a tool inventory, a shot-by-shot list of what was
+     * photographed — and shown verbatim it reads as the app printing its own prompt.
+     */
+    @ColumnInfo(defaultValue = "0")
+    val composed: Boolean = false,
 )
 
 @Entity(

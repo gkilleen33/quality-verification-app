@@ -307,6 +307,8 @@ class ChatViewModelNextItemTest {
             itemType: ItemType,
             previousSessionId: String?,
             intake: AssessmentContext?,
+            pieceId: String?,
+            intakeCode: String?,
         ) {
             createdFrom = previousSessionId
             createdIntake = intake?.takeIf { it.isComplete }
@@ -317,6 +319,7 @@ class ChatViewModelNextItemTest {
             sessionId: String,
             text: String,
             attachments: List<Attachment>,
+            composed: Boolean,
         ): ChatMessage =
             ChatMessage(UUID.randomUUID().toString(), Role.USER, text, attachments)
                 .also { messages += it }

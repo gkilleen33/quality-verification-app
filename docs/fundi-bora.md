@@ -266,6 +266,85 @@ older clients degrade rather than break — asserted against a tag nothing imple
 Only the worst finding carries a cause; the rest are recorded so the piece's defect count
 is right. A fundi handed six habits to change changes none of them.
 
+## The intake, and what an assessment is for
+
+Every assessment starts with two taps before anything reaches the model: a language, then
+a purpose. Nothing is sent until the intake is whole, the rule Kagua keeps.
+
+| New piece | Returning piece |
+|---|---|
+| Evaluate a finished product | Re-evaluate this piece |
+| Check work in progress *(details)* | Check that an issue was fixed *(pick a finding)* |
+| Diagnose and fix a specific issue *(details)* | A new issue came up *(details)* |
+| Learn a skill *(details)* | A customer brought it back *(details)* |
+| Something else *(details)* | |
+
+**Work in progress** is the cheapest moment to catch a mistake — a joint that can be recut
+before glue-up cannot be after — and is not a full assessment: an unfinished piece has no
+verdict, and recording one would count half a stool towards the maker's rates.
+
+**A customer brought it back** is kept apart from "a new issue came up" because it is a
+comeback, and "no pieces coming back for repair" is one of the three goals a maker picks at
+setup. The purpose is stored with the session (`fundi-<lang>-customer_return`), so counting
+comebacks is a query rather than a guess. The prompt asks the model to say plainly when the
+cause was the customer's use rather than the making, so a maker is not pushed to change a
+sound habit to answer a complaint the piece did not earn.
+
+**Only the two evaluations are full assessments**, and only a full assessment issues a
+verdict. That is the whole reason the purpose matters to the record: the two rates are
+counted from verdicts, and a targeted check of one joint that came back clean says nothing
+about the rest of the piece. Recorded as a verdict it would count as a clean piece and
+inflate the number a maker is judged on. The prompt says so, and a test pins both halves.
+
+**Every full assessment issues one, the first as well.** Before this the prompt asked for a
+verdict only on re-assessment, so the first evaluation of every piece recorded nothing and
+"first time clean" had no possible input. `verdict_defect_count` stays NULL for everything
+else, which `QualityRecord` already skips — NULL is not zero, as V15 says.
+
+"Check that an issue was fixed" offers the findings recorded in the piece's earlier
+assessments rather than asking the maker to describe the problem again: they would
+describe it differently, and the check is only meaningful against what was found. The
+finding goes into the opening turn quoted as it was recorded.
+
+The opening photograph follows the purpose — the whole piece, the problem, or the spot where
+the issue was — and is optional only for learning a skill or something else, where there
+may be no piece yet.
+
+## Pieces, and why a re-assessment is a new session
+
+`pieces` and `sessions.piece_id` existed from V14 and nothing wrote to either, so the two
+rates had no data flowing into them. Now:
+
+- A first assessment names its piece with **its own session id**. Nothing extra to mint, and
+  an old session with no piece falls back to itself.
+- A re-assessment is a **new session carrying the same piece id**, never a continuation of
+  the old conversation. Continuing would overwrite the first verdict's defect count with
+  the second — erasing exactly the "first time clean" result the rates are built on — and
+  would resend the whole earlier conversation on every turn.
+- The server creates the piece on first sight and links a session to it **only if the
+  piece belongs to that account**. A piece id is a client-supplied uuid; one account must
+  not be able to append assessments to another maker's record. Verified against the live
+  schema in a rolled-back transaction, including the other-account case.
+
+Home shows one row per piece rather than per assessment, with Open and Re-assess.
+
+**The grouping survives a reinstall.** The history sync carries `piece_id` on every
+session, so a phone rebuilding its history from the server regroups the pieces exactly and
+the next re-assessment joins the right one.
+
+## What the conversation shows
+
+Turns the app writes for the maker — the intake and a plan submission — are marked
+`composed` and shown as a caption and thumbnails rather than word for word. The mark is
+stored on the server too (`V18`) and comes back through sync, because the phone's own copy
+does not survive by itself: sync rewrites a conversation whenever the server's copy looks
+newer, which a phone clock a few minutes slow makes happen in ordinary use, and a reinstall
+rebuilds everything. Without it the prompt text would quietly reappear. The model needs
+the tool inventory and the shot-by-shot list; shown verbatim they read as the app printing
+its own prompt. Turns the maker types are ordinary bubbles, and there is now somewhere to
+type them, along with the model's suggested replies as chips — the first build had no way
+to answer the diagnosis's one question at all.
+
 ## Deletion, and the wording it needs
 
 Deleting a fundi's account **hides their record from public view; it does not erase it.**

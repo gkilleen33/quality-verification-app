@@ -260,12 +260,15 @@ class TesterReviewTest {
             itemType: ItemType,
             previousSessionId: String?,
             intake: AssessmentContext?,
+            pieceId: String?,
+            intakeCode: String?,
         ) = Unit
 
         override suspend fun appendUserMessage(
             sessionId: String,
             text: String,
             attachments: List<Attachment>,
+            composed: Boolean,
         ) = ChatMessage(UUID.randomUUID().toString(), Role.USER, text, attachments)
             .also { state.value = state.value + it }
 

@@ -2,6 +2,7 @@ package com.qualityverifier.text
 
 import com.qualityverifier.domain.FixHorizon
 import com.qualityverifier.domain.FundiGoal
+import com.qualityverifier.domain.FundiPurpose
 import com.qualityverifier.domain.ToolKind
 import com.qualityverifier.domain.ToolOwnership
 
@@ -85,7 +86,51 @@ data class FundiLabels(
     val noCost: String,
     private val minutesFormat: String,
     private val costFormat: String,
+    // ---- the intake. Asked before anything is sent, so an abandoned one costs nothing.
+    val intakeLanguageTitle: String,
+    val intakePurposeTitle: String,
+    val intakeReturningTitle: String,
+    val purposeNames: Map<FundiPurpose, String>,
+    val detailsPrompts: Map<FundiPurpose, String>,
+    val intakeIssueTitle: String,
+    /** When a verify-fix has no saved finding to pick from and asks for a description. */
+    val intakeNoPriorIssues: String,
+    val intakeContinue: String,
+    val photoInstructions: Map<FundiPurpose, String>,
+    val skipPhoto: String,
+    /**
+     * Shown the moment the intake is sent. The first reply builds a plan from scratch
+     * and takes long enough that silence reads as a hang.
+     */
+    val processing: String,
+    // ---- what the opening turn says on the maker's behalf, purpose first.
+    val saysEvaluate: String,
+    val saysReevaluate: String,
+    private val saysWorkInProgressFormat: String,
+    private val saysDiagnoseFormat: String,
+    private val saysCustomerReturnFormat: String,
+    private val saysLearnFormat: String,
+    private val saysOtherFormat: String,
+    private val saysNewIssueFormat: String,
+    private val saysVerifyFixFormat: String,
+    // ---- the conversation
+    val replyHint: String,
+    val send: String,
+    /** How an app-composed turn is shown in place of its full text. */
+    private val sentPhotosFormat: String,
+    /** A plan submission that carried answers but no photographs. */
+    val sentAnswers: String,
 ) {
+    fun saysWorkInProgress(what: String) = saysWorkInProgressFormat.replace("{what}", what)
+    fun saysDiagnose(what: String) = saysDiagnoseFormat.replace("{what}", what)
+    fun saysCustomerReturn(what: String) = saysCustomerReturnFormat.replace("{what}", what)
+    fun saysLearn(what: String) = saysLearnFormat.replace("{what}", what)
+    fun saysOther(what: String) = saysOtherFormat.replace("{what}", what)
+    fun saysNewIssue(what: String) = saysNewIssueFormat.replace("{what}", what)
+    fun saysVerifyFix(what: String) = saysVerifyFixFormat.replace("{what}", what)
+    fun sentPhotos(n: Int) = sentPhotosFormat.replace("{n}", n.toString())
+    fun nameOf(purpose: FundiPurpose): String = purposeNames.getValue(purpose)
+
     fun minutes(n: Int): String = minutesFormat.replace("{n}", n.toString())
 
     /** Zero is a real answer and worth saying out loud: it is what gets the fix done. */
@@ -195,6 +240,65 @@ data class FundiLabels(
             noCost = "No cost",
             minutesFormat = "{n} min",
             costFormat = "KSh {n}",
+            intakeLanguageTitle = "Which language should we use?",
+            intakePurposeTitle = "What do you want from this assessment?",
+            intakeReturningTitle = "What do you want to check on this piece?",
+            purposeNames = mapOf(
+                FundiPurpose.EVALUATE to "Evaluate a finished product",
+                FundiPurpose.WORK_IN_PROGRESS to "Check work in progress",
+                FundiPurpose.DIAGNOSE to "Diagnose and fix a specific issue",
+                FundiPurpose.LEARN to "Learn a skill",
+                FundiPurpose.OTHER to "Something else",
+                FundiPurpose.REEVALUATE to "Re-evaluate this piece",
+                FundiPurpose.VERIFY_FIX to "Check that an issue was fixed",
+                FundiPurpose.NEW_ISSUE to "A new issue came up",
+                FundiPurpose.CUSTOMER_RETURN to "A customer brought it back",
+            ),
+            detailsPrompts = mapOf(
+                FundiPurpose.WORK_IN_PROGRESS to "What stage is it at, and what do you want checked?",
+                FundiPurpose.DIAGNOSE to "What is the problem, and where on the piece?",
+                FundiPurpose.CUSTOMER_RETURN to "What did the customer say was wrong?",
+                FundiPurpose.LEARN to "Which skill do you want to work on?",
+                FundiPurpose.OTHER to "Tell us what you would like help with.",
+                FundiPurpose.NEW_ISSUE to "What has come up, and where on the piece?",
+                FundiPurpose.VERIFY_FIX to "Which issue did you fix?",
+            ),
+            intakeIssueTitle = "Which issue did you fix?",
+            intakeNoPriorIssues = "No earlier findings were saved for this piece. " +
+                "Describe the issue you fixed.",
+            intakeContinue = "Continue",
+            photoInstructions = mapOf(
+                FundiPurpose.EVALUATE to "Take one photo of the whole piece.",
+                FundiPurpose.WORK_IN_PROGRESS to "Take one photo of the piece as it is now.",
+                FundiPurpose.CUSTOMER_RETURN to "Take one photo of the problem.",
+                FundiPurpose.REEVALUATE to "Take one photo of the whole piece.",
+                FundiPurpose.DIAGNOSE to "Take one photo of the problem.",
+                FundiPurpose.NEW_ISSUE to "Take one photo of the problem.",
+                FundiPurpose.VERIFY_FIX to "Take one photo of where the issue was.",
+                FundiPurpose.LEARN to "Take a photo if it helps, or skip.",
+                FundiPurpose.OTHER to "Take a photo if it helps, or skip.",
+            ),
+            skipPhoto = "Skip the photo",
+            processing = "Processing your information. This may take a little while " +
+                "as it works out a plan.",
+            saysEvaluate = "I have finished this piece. Please evaluate it.",
+            saysReevaluate = "You have assessed this piece before. Please re-evaluate " +
+                "it from scratch.",
+            saysWorkInProgressFormat = "This piece is not finished yet. Please check it " +
+                "before I go further: {what}",
+            saysDiagnoseFormat = "I want to diagnose and fix a specific problem: {what}",
+            saysCustomerReturnFormat = "You have assessed this piece before. A customer " +
+                "brought it back: {what}",
+            saysLearnFormat = "I want to learn a skill: {what}",
+            saysOtherFormat = "I would like help with something else: {what}",
+            saysNewIssueFormat = "You have assessed this piece before. A new problem " +
+                "has come up: {what}",
+            saysVerifyFixFormat = "You have assessed this piece before. I fixed this " +
+                "issue and want to check it is resolved: {what}",
+            replyHint = "Type a reply",
+            send = "Send",
+            sentPhotosFormat = "Sent {n} photos",
+            sentAnswers = "Sent your answers",
             goalNames = mapOf(
                 FundiGoal.PRICE_PER_PIECE to "a better price per piece",
                 FundiGoal.MORE_ORDERS to "more orders",

@@ -122,11 +122,14 @@ class ReportDeleteChoiceTest {
             itemType: ItemType,
             previousSessionId: String?,
             intake: AssessmentContext?,
+            pieceId: String?,
+            intakeCode: String?,
         ) = Unit
         override suspend fun appendUserMessage(
             sessionId: String,
             text: String,
             attachments: List<Attachment>,
+            composed: Boolean,
         ) = ChatMessage(UUID.randomUUID().toString(), Role.USER, text, attachments)
         override suspend fun appendAssistantMessage(sessionId: String, text: String) =
             ChatMessage(UUID.randomUUID().toString(), Role.ASSISTANT, text)

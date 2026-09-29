@@ -12,6 +12,12 @@ import com.qualityverifier.data.session.SyncedMessage
 import com.qualityverifier.data.session.SyncedSession
 import com.qualityverifier.data.session.LocalTesterFeedback
 import com.qualityverifier.domain.Attachment
+import com.qualityverifier.domain.SessionSummary
+import com.qualityverifier.domain.SessionStart
+import com.qualityverifier.domain.PriorIssue
+import com.qualityverifier.domain.FundiPurpose
+import com.qualityverifier.domain.FundiIntake
+import com.qualityverifier.domain.AssessmentLanguage
 import com.qualityverifier.domain.AssessmentContext
 import com.qualityverifier.domain.ChatMessage
 import com.qualityverifier.domain.FundiProfile
@@ -35,6 +41,7 @@ import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -73,9 +80,13 @@ class AssessViewModelTest {
         chat: ChatService = FakeChat(),
         sessions: FakeSessions = FakeSessions(),
         profiles: FundiProfiles = FakeProfiles(),
+        pieceId: String = "s1",
+        returning: Boolean = false,
     ) = AssessViewModel(
         sessionId = "s1",
         itemType = ItemType.WOODEN_TABLE,
+        pieceId = pieceId,
+        returning = returning,
         sessions = sessions,
         chat = chat,
         images = FakeImages(),
@@ -100,7 +111,7 @@ class AssessViewModelTest {
             )
         )
 
-        model(sessions = sessions, profiles = profiles).start("/tmp/whole.jpg")
+        model(sessions = sessions, profiles = profiles).start(FundiIntake(AssessmentLanguage.ENGLISH, FundiPurpose.EVALUATE), "/tmp/whole.jpg")
         advanceUntilIdle()
 
         val opening = sessions.userTurns.single()
@@ -118,14 +129,17 @@ class AssessViewModelTest {
         val sessions = FakeSessions()
 
         model(sessions = sessions, profiles = FakeProfiles(ProfileOutcome.Unavailable))
-            .start("/tmp/whole.jpg")
+            .start(FundiIntake(AssessmentLanguage.ENGLISH, FundiPurpose.EVALUATE), "/tmp/whole.jpg")
         advanceUntilIdle()
 
         assertEquals(1, sessions.userTurns.size)
         // Not empty: the language line goes out even with no profile behind it. Coaching
         // without the tool list is worse advice; coaching in a language the maker cannot
         // read is none at all.
-        assertEquals("Please answer me in English.", sessions.userTurns.single().text)
+        assertTrue(
+            sessions.userTurns.single().text,
+            sessions.userTurns.single().text.trimEnd().endsWith("Please answer me in English."),
+        )
     }
 
     @Test
@@ -207,35 +221,207 @@ class AssessViewModelTest {
         assertTrue(sessions.userTurns.isEmpty())
     }
 
+    // ------------------------------------------------------------------ the intake
+
+    // The rule Kagua keeps and this one must: nothing reaches the model until the intake
+    // is whole. A diagnose with no description is half a question.
+    @Test
+    fun `an incomplete intake sends nothing`() = runTest {
+        val sessions = FakeSessions()
+
+        model(sessions = sessions).start(
+            FundiIntake(AssessmentLanguage.ENGLISH, FundiPurpose.DIAGNOSE),
+            "/tmp/problem.jpg",
+        )
+        advanceUntilIdle()
+
+        assertTrue(sessions.userTurns.isEmpty())
+        assertTrue(sessions.created.isEmpty())
+    }
+
+    @Test
+    fun `the opening turn leads with the purpose and is marked as the app's own`() = runTest {
+        val sessions = FakeSessions()
+
+        model(sessions = sessions).start(
+            FundiIntake(AssessmentLanguage.SWAHILI, FundiPurpose.DIAGNOSE, details = "loose leg"),
+            "/tmp/problem.jpg",
+        )
+        advanceUntilIdle()
+
+        val opening = sessions.userTurns.single()
+        assertTrue(opening.text, opening.text.startsWith("I want to diagnose and fix"))
+        assertTrue(opening.text, opening.text.trimEnd().endsWith("Tafadhali nijibu kwa Kiswahili."))
+        // Shown compactly, not word for word — the first build printed its own prompt.
+        assertTrue("the opening turn is the app's, not the maker's", opening.composed)
+    }
+
+    // A first assessment names its own piece; the stored code is what reopening reads.
+    @Test
+    fun `a new assessment is its own piece, and the intake is stored`() = runTest {
+        val sessions = FakeSessions()
+
+        model(sessions = sessions).start(
+            FundiIntake(AssessmentLanguage.ENGLISH, FundiPurpose.EVALUATE),
+            "/tmp/whole.jpg",
+        )
+        advanceUntilIdle()
+
+        val created = sessions.created.single()
+        assertEquals("s1", created.pieceId)
+        assertEquals("fundi-en-evaluate", created.intakeCode)
+    }
+
+    // Learning a skill may come before anything has been cut.
+    @Test
+    fun `an intake with no photo still sends`() = runTest {
+        val sessions = FakeSessions()
+
+        model(sessions = sessions).start(
+            FundiIntake(AssessmentLanguage.ENGLISH, FundiPurpose.LEARN, details = "dovetails"),
+            photoPath = null,
+        )
+        advanceUntilIdle()
+
+        assertEquals(1, sessions.userTurns.size)
+        assertTrue(sessions.userTurns.single().attachments.isEmpty())
+    }
+
+    // A re-assessment is a new session on the same piece. Its findings to check come from
+    // that piece's earlier assessments — and only that piece's.
+    @Test
+    fun `checking a fix offers the piece's own earlier findings, and nobody else's`() = runTest {
+        val diagnosis = """
+            ```fb-diagnosis
+            {"findings": [{"title": "Gapping joint", "what_happened": "3mm at the back"}]}
+            ```
+        """.trimIndent()
+        val otherPiece = """
+            ```fb-diagnosis
+            {"findings": [{"title": "Cupped top"}]}
+            ```
+        """.trimIndent()
+        val sessions = FakeSessions(
+            earlier = listOf(
+                summary(id = "first", piece = "stool") to listOf(diagnosis),
+                summary(id = "elsewhere", piece = "table") to listOf(otherPiece),
+            ),
+        )
+
+        val model = model(sessions = sessions, pieceId = "stool", returning = true)
+        advanceUntilIdle()
+
+        assertEquals(
+            listOf(PriorIssue("Gapping joint", "3mm at the back")),
+            model.priorIssues.value,
+        )
+    }
+
+    // An assessment made before pieces existed has no piece id, and counts as its own.
+    @Test
+    fun `an old assessment with no piece id is its own piece`() = runTest {
+        val legacy = """
+            ```fb-diagnosis
+            {"findings": [{"title": "Rough edge"}]}
+            ```
+        """.trimIndent()
+        val sessions = FakeSessions(
+            earlier = listOf(summary(id = "legacy", piece = null) to listOf(legacy)),
+        )
+
+        val model = model(sessions = sessions, pieceId = "legacy", returning = true)
+        advanceUntilIdle()
+
+        assertEquals(listOf("Rough edge"), model.priorIssues.value.map { it.title })
+    }
+
+    @Test
+    fun `a plan submission is marked as the app's own`() = runTest {
+        val sessions = FakeSessions()
+        val model = model(sessions = sessions)
+
+        model.offerPlanFrom(ChatMessage("a1", Role.ASSISTANT, plannedReply))
+        model.attachShot(0, "/tmp/shot0.jpg")
+        model.submitRun()
+        advanceUntilIdle()
+
+        assertTrue(sessions.userTurns.single().composed)
+    }
+
+    @Test
+    fun `a reply the maker types is not`() = runTest {
+        val sessions = FakeSessions()
+
+        model(sessions = sessions).send("It was cut freehand")
+        advanceUntilIdle()
+
+        assertFalse(sessions.userTurns.single().composed)
+    }
+
+    private fun summary(id: String, piece: String?) = SessionSummary(
+        id = id,
+        itemType = ItemType.WOODEN_STOOL,
+        createdAt = 0L,
+        updatedAt = 0L,
+        preview = "",
+        messageCount = 2,
+        pieceId = piece,
+    )
+
     // ------------------------------------------------------------------ fakes
 
-    private class Turn(val text: String, val attachments: List<Attachment>)
+    private class Turn(
+        val text: String,
+        val attachments: List<Attachment>,
+        val composed: Boolean,
+    )
+
+    private class Created(val sessionId: String, val pieceId: String?, val intakeCode: String?)
 
     /**
      * Only the handful of methods an assessment touches. The rest of SessionRepository
      * is sync and housekeeping, and a fake that pretended to implement them would invite
      * a test to lean on behaviour nothing here has.
+     *
+     * [earlier] seeds other assessments on the handset, for the re-assessment tests:
+     * each is a summary and the assistant turns its conversation holds.
      */
-    private class FakeSessions : SessionRepository {
+    private class FakeSessions(
+        private val earlier: List<Pair<SessionSummary, List<String>>> = emptyList(),
+    ) : SessionRepository {
         val userTurns = mutableListOf<Turn>()
+        val created = mutableListOf<Created>()
         private val stream = MutableStateFlow<List<ChatMessage>>(emptyList())
 
         override fun observeMessages(sessionId: String): Flow<List<ChatMessage>> = stream
-        override suspend fun messagesOnce(sessionId: String) = stream.value
+        override suspend fun messagesOnce(sessionId: String): List<ChatMessage> =
+            earlier.firstOrNull { it.first.id == sessionId }?.second
+                ?.mapIndexed { i, text -> ChatMessage("$sessionId-$i", Role.ASSISTANT, text) }
+                ?: stream.value
+        override fun observeSummaries(): Flow<List<SessionSummary>> =
+            MutableStateFlow(earlier.map { it.first })
+        override suspend fun startOf(sessionId: String): SessionStart? = null
         override suspend fun createSession(
             sessionId: String,
             itemType: ItemType,
             previousSessionId: String?,
             intake: AssessmentContext?,
-        ) = Unit
+            pieceId: String?,
+            intakeCode: String?,
+        ) {
+            created += Created(sessionId, pieceId, intakeCode)
+        }
         override suspend fun sessionExists(sessionId: String) = false
         override suspend fun appendUserMessage(
             sessionId: String,
             text: String,
             attachments: List<Attachment>,
+            composed: Boolean,
         ): ChatMessage {
-            userTurns += Turn(text, attachments)
-            val message = ChatMessage("u${userTurns.size}", Role.USER, text, attachments)
+            userTurns += Turn(text, attachments, composed)
+            val message = ChatMessage(
+                "u${userTurns.size}", Role.USER, text, attachments, composed = composed,
+            )
             stream.value = stream.value + message
             return message
         }
@@ -247,8 +433,6 @@ class AssessViewModelTest {
 
         private fun no(): Nothing = error("an assessment does not touch this")
 
-        override fun observeSummaries() = no()
-        override suspend fun startOf(sessionId: String) = no()
         override suspend fun recordLocation(sessionId: String, fix: LocationFix) = no()
         override suspend fun deleteMessage(messageId: String) = no()
         override suspend fun deleteSession(sessionId: String) = no()

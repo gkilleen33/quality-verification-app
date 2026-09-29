@@ -29,6 +29,8 @@ data class RemoteSession(
     @SerialName("verdict_language") val verdictLanguage: String? = null,
     @SerialName("previous_session_id") val previousSessionId: String? = null,
     @SerialName("intake_answers") val intakeAnswers: String? = null,
+    /** Fundi Bora's piece, so a reinstalled phone regroups its history correctly. */
+    @SerialName("piece_id") val pieceId: String? = null,
 )
 
 @Serializable
@@ -39,6 +41,7 @@ data class RemoteMessage(
     val ordinal: Int,
     @SerialName("created_at") val createdAt: Long,
     val blobs: List<String> = emptyList(),
+    val composed: Boolean = false,
 )
 
 @Serializable

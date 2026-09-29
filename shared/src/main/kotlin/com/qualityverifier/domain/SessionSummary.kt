@@ -17,7 +17,12 @@ data class SessionSummary(
      * this was stored; the badge treats that as nothing unchecked.
      */
     val verdictUnverifiedCount: Int? = null,
+    /** The physical piece, for Fundi Bora. Null means the session is its own piece. */
+    val pieceId: String? = null,
 ) {
+    /** Which piece this is, falling back to the session itself for rows made before pieces. */
+    val piece: String get() = pieceId ?: id
+
     /** Drives the wording of the badge — see `ReportLabels.verdictWord`. */
     val anythingUnchecked: Boolean get() = (verdictUnverifiedCount ?: 0) > 0
 }

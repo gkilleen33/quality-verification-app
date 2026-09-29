@@ -101,6 +101,7 @@ class AssessmentSync(
                     ordinal = message.ordinal,
                     createdAt = message.createdAt,
                     attachmentPaths = message.blobs.mapNotNull { fetchPhoto(summary.id, it) },
+                    composed = message.composed,
                 )
             }
 
@@ -115,6 +116,7 @@ class AssessmentSync(
                     verdictLanguage = detail.session.verdictLanguage,
                     previousSessionId = detail.session.previousSessionId,
                     intakeAnswers = detail.session.intakeAnswers,
+                    pieceId = detail.session.pieceId,
                 ),
                 messages,
             )

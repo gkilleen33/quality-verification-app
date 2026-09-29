@@ -231,6 +231,8 @@ class ChatViewModelUnansweredTurnTest {
             itemType: ItemType,
             previousSessionId: String?,
             intake: AssessmentContext?,
+            pieceId: String?,
+            intakeCode: String?,
         ) {
             sessionExists = true
         }
@@ -239,6 +241,7 @@ class ChatViewModelUnansweredTurnTest {
             sessionId: String,
             text: String,
             attachments: List<Attachment>,
+            composed: Boolean,
         ): ChatMessage =
             ChatMessage(UUID.randomUUID().toString(), Role.USER, text, attachments)
                 .also { message -> state.value = state.value + message }

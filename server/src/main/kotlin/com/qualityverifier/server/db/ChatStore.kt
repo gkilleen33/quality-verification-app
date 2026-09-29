@@ -42,6 +42,12 @@ data class SessionRow(
     val verdictLanguage: String?,
     val previousSessionId: String?,
     val intakeAnswers: String?,
+    /**
+     * Fundi Bora's piece, sent back so a reinstalled phone can regroup its history.
+     * Without it every earlier assessment would read as its own piece, and the next
+     * re-assessment would start a new piece instead of joining the old one.
+     */
+    val pieceId: String? = null,
 )
 
 data class MessageRow(
@@ -51,6 +57,8 @@ data class MessageRow(
     val ordinal: Int,
     val createdAt: Long,
     val blobs: List<String>,
+    /** Written by the app on the user's behalf. See V18. */
+    val composed: Boolean = false,
 )
 
 /**
@@ -81,6 +89,13 @@ interface ChatStore {
         dailyLimit: Int,
         /** The higher allowance for one of our own evaluators. */
         testerDailyLimit: Int,
+        /**
+         * The physical piece this assessment is of, for Fundi Bora. Linked only if the
+         * piece belongs to this account — a piece id is a client-supplied uuid, and one
+         * account must not be able to attach its assessments to another's piece and
+         * skew that maker's record.
+         */
+        pieceId: String? = null,
     ): SessionAccess
 
     /**
@@ -101,6 +116,11 @@ interface ChatStore {
         messageId: String,
         text: String,
         blobHashes: List<String>,
+        /**
+         * Written by the app on the user's behalf. Stored so it comes back through sync;
+         * see V18 for why the phone's own copy of the mark is not enough.
+         */
+        composed: Boolean = false,
     ): Boolean
 
     suspend fun replyAfter(sessionId: String, userMessageId: String): StoredReply?
@@ -197,6 +217,7 @@ class PostgresChatStore(private val dataSource: DataSource) : ChatStore {
         audience: Audience,
         dailyLimit: Int,
         testerDailyLimit: Int,
+        pieceId: String?,
     ): SessionAccess = tx { connection ->
         val owner = connection.prepareStatement(
             "select user_id::text from sessions where id = ?::uuid"
@@ -251,12 +272,37 @@ class PostgresChatStore(private val dataSource: DataSource) : ChatStore {
             if (startedToday >= limit) return@tx SessionAccess.DailyLimitReached(limit)
         }
 
+        // The piece first, so the session can point at it. Fundi Bora only: Kagua assesses
+        // each piece once and has no use for the grouping. `on conflict do nothing`
+        // because a re-assessment names a piece that already exists — and deliberately
+        // does not update it, so a second account naming the same id changes nothing.
+        val linkPiece = pieceId != null && audience == Audience.FUNDI
+        if (linkPiece) {
+            connection.prepareStatement(
+                """
+                insert into pieces (id, user_id, item_type_id)
+                values (?::uuid, ?::uuid, ?)
+                on conflict (id) do nothing
+                """.trimIndent()
+            ).use { statement ->
+                statement.setString(1, pieceId)
+                statement.setString(2, userId)
+                statement.setString(3, itemTypeId)
+                statement.executeUpdate()
+            }
+        }
+
         connection.prepareStatement(
             """
             insert into sessions (
                 id, user_id, item_type_id, previous_session_id, intake_answers, prompt_sha,
-                audience
-            ) values (?::uuid, ?::uuid, ?, ?::uuid, ?, ?, ?)
+                audience, piece_id
+            ) values (
+                ?::uuid, ?::uuid, ?, ?::uuid, ?, ?, ?,
+                -- Only this account's own piece. Somebody else's id resolves to null
+                -- rather than linking, so nobody can append to another maker's record.
+                (select p.id from pieces p where p.id = ?::uuid and p.user_id = ?::uuid)
+            )
             on conflict (id) do nothing
             """.trimIndent()
         ).use { statement ->
@@ -268,6 +314,8 @@ class PostgresChatStore(private val dataSource: DataSource) : ChatStore {
             statement.setString(6, promptSha)
             // Written once, here. Nothing updates it afterwards.
             statement.setString(7, audience.id)
+            statement.setString(8, pieceId.takeIf { linkPiece })
+            statement.setString(9, userId)
             statement.executeUpdate()
         }
         SessionAccess.Ok(created = true)
@@ -318,19 +366,22 @@ class PostgresChatStore(private val dataSource: DataSource) : ChatStore {
         messageId: String,
         text: String,
         blobHashes: List<String>,
+        composed: Boolean,
     ): Boolean = tx { connection ->
         val inserted = connection.prepareStatement(
             """
-            insert into messages (id, session_id, role, text, ordinal)
+            insert into messages (id, session_id, role, text, ordinal, composed)
             select ?::uuid, ?::uuid, 'USER', ?,
-                   coalesce(max(ordinal), -1) + 1 from messages where session_id = ?::uuid
+                   coalesce(max(ordinal), -1) + 1, ?
+              from messages where session_id = ?::uuid
             on conflict (id) do nothing
             """.trimIndent()
         ).use { statement ->
             statement.setString(1, messageId)
             statement.setString(2, sessionId)
             statement.setString(3, text)
-            statement.setString(4, sessionId)
+            statement.setBoolean(4, composed)
+            statement.setString(5, sessionId)
             statement.executeUpdate() > 0
         }
         if (!inserted) return@tx false
@@ -520,7 +571,7 @@ class PostgresChatStore(private val dataSource: DataSource) : ChatStore {
                            (extract(epoch from s.updated_at) * 1000)::bigint,
                            s.preview_text, count(m.id)::int,
                            s.verdict_level_id, s.verdict_language,
-                           s.previous_session_id::text, s.intake_answers
+                           s.previous_session_id::text, s.intake_answers, s.piece_id::text
                     from sessions s left join messages m on m.session_id = s.id
                     where s.user_id = ?::uuid and s.client_deleted_at is null
                     group by s.id
@@ -549,7 +600,7 @@ class PostgresChatStore(private val dataSource: DataSource) : ChatStore {
                        (extract(epoch from s.updated_at) * 1000)::bigint,
                        s.preview_text, count(m.id)::int,
                        s.verdict_level_id, s.verdict_language,
-                       s.previous_session_id::text, s.intake_answers
+                       s.previous_session_id::text, s.intake_answers, s.piece_id::text
                 from sessions s left join messages m on m.session_id = s.id
                 where s.id = ?::uuid and s.user_id = ?::uuid and s.client_deleted_at is null
                 group by s.id
@@ -582,7 +633,7 @@ class PostgresChatStore(private val dataSource: DataSource) : ChatStore {
             connection.prepareStatement(
                 """
                 select id::text, role, text, ordinal,
-                       (extract(epoch from created_at) * 1000)::bigint
+                       (extract(epoch from created_at) * 1000)::bigint, composed
                 from messages where session_id = ?::uuid order by ordinal, id
                 """.trimIndent()
             ).use { statement ->
@@ -597,6 +648,7 @@ class PostgresChatStore(private val dataSource: DataSource) : ChatStore {
                             ordinal = rows.getInt(4),
                             createdAt = rows.getLong(5),
                             blobs = blobs[id].orEmpty(),
+                            composed = rows.getBoolean(6),
                         )
                     }
                 }
@@ -655,6 +707,7 @@ class PostgresChatStore(private val dataSource: DataSource) : ChatStore {
         verdictLanguage = getString(8),
         previousSessionId = getString(9),
         intakeAnswers = getString(10),
+        pieceId = getString(11),
     )
 
     private fun touch(connection: Connection, sessionId: String, preview: String) {
