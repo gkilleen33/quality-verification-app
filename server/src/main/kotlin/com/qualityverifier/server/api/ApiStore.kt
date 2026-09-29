@@ -50,7 +50,7 @@ class PostgresApiStore(private val dataSource: DataSource) : ApiStore {
                    u.business_location_accuracy_m, u.is_tester,
                    (extract(epoch from u.created_at) * 1000)::bigint,
                    (select count(*)::int from sessions s where s.user_id = u.id),
-                   (u.deleted_at is not null)
+                   (u.deleted_at is not null), u.audience
               from users u
              order by u.created_at
              limit ? offset ?
@@ -75,6 +75,7 @@ class PostgresApiStore(private val dataSource: DataSource) : ApiStore {
                     createdAt = rows.getLong(10),
                     assessments = rows.getInt(11),
                     deleted = rows.getBoolean(12),
+                    audience = rows.getString(13),
                 )
                 out
             }
@@ -217,6 +218,7 @@ class PostgresApiStore(private val dataSource: DataSource) : ApiStore {
         byTester = getBoolean(9),
         hasTesterFeedback = getBoolean(10),
         deletedByUser = getBoolean(11),
+        audience = getString(12),
     )
 
     private fun ResultSet.toFeedback() = ApiTesterFeedback(
@@ -252,7 +254,8 @@ class PostgresApiStore(private val dataSource: DataSource) : ApiStore {
                    s.verdict_level_id,
                    coalesce(u.is_tester, false),
                    exists (select 1 from tester_feedback f where f.session_id = s.id),
-                   (s.client_deleted_at is not null)
+                   (s.client_deleted_at is not null),
+                   s.audience
         """
     }
 }
