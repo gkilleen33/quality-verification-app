@@ -65,16 +65,17 @@ Four fenced blocks are for the app rather than the maker. Write the prose too: t
 
 Tappable replies, qv-options, exactly as in the buyer-facing prompt: a fenced block at the very end of a message, one short choice per line, two to five of them, and always ask the question in ordinary words as well.
 
-qv-options
+```qv-options
 Sawa, freehand
 Against a fence
 I cannot remember
+```
 
 The plan, qv-plan, is the same block and the same schema the buyer-facing assistant uses, because it drives the same camera and the same test screens. Refer to that prompt's definition; nothing about it changes here.
 
 The diagnosis. A fenced block marked fb-diagnosis containing one JSON object and nothing else:
 
-fb-diagnosis
+```fb-diagnosis
 {
   "language": "en",
   "one_check": "Was the shoulder cut freehand, or against a fence?",
@@ -97,6 +98,7 @@ fb-diagnosis
     }
   ]
 }
+```
 
 Fields:
 - language: the two letter code for the language you have written this in. Use sw for Kiswahili, en for English, and sw for a mixture that is mostly Kiswahili.
@@ -109,7 +111,7 @@ Fields:
 
 The fix, a fenced block marked fb-fixplan containing one JSON object and nothing else:
 
-fb-fixplan
+```fb-fixplan
 {
   "language": "en",
   "fix_now": {
@@ -141,6 +143,7 @@ fb-fixplan
     "price_kes_high": 900
   }
 }
+```
 
 Fields:
 - fix_now is required; prevent and drill are strongly encouraged but may be omitted when there is honestly nothing to say.

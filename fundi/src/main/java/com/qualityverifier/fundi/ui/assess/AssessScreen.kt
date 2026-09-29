@@ -5,6 +5,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.systemBarsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.CircularProgressIndicator
@@ -26,6 +27,7 @@ import com.qualityverifier.domain.ItemType
 import com.qualityverifier.domain.Role
 import com.qualityverifier.fundi.ui.coach.DiagnosisCard
 import com.qualityverifier.fundi.ui.coach.FixPlanCard
+import com.qualityverifier.fundi.ui.coach.VerdictCard
 import com.qualityverifier.fundi.ui.fundiContainer
 import com.qualityverifier.text.FundiLabels
 import com.qualityverifier.text.ReportLabels
@@ -176,7 +178,7 @@ private fun Conversation(
     onRetakeShot: (Int) -> Unit,
     onChangeAnswer: (Int) -> Unit,
 ) {
-    Column(Modifier.fillMaxSize()) {
+    Column(Modifier.fillMaxSize().systemBarsPadding()) {
         LazyColumn(
             Modifier.weight(1f).padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
@@ -194,6 +196,10 @@ private fun Conversation(
                             style = MaterialTheme.typography.bodyLarge,
                         )
                     }
+                    // A verdict means a re-assessment: the maker brought back a piece
+                    // they had repaired. Drawn before the coaching cards because it is
+                    // the answer they came for.
+                    content.verdict?.let { VerdictCard(it, reportLabels) }
                     content.diagnosis?.let {
                         DiagnosisCard(it, labels, reportLabels::severity)
                     }

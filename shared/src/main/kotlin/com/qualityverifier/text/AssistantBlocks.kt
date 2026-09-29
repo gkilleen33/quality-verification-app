@@ -101,7 +101,14 @@ private val json = Json {
  * what a truncated response looks like — is treated as running to the end of the text.
  */
 fun parseAssistantContent(text: String): AssistantContent {
-    if (!text.contains(FENCE)) return AssistantContent(prose = text)
+    // The fast path for ordinary prose, which is most turns. It used to test only for a
+    // backtick — which skipped the very case the unfenced handling below exists for, so
+    // a reply with a bare tag and no fence anywhere went straight out as prose with the
+    // JSON in it. A tag is cheap to look for and a turn carrying one is not the common
+    // case, so this costs nothing on the path it protects.
+    if (!text.contains(FENCE) && JSON_TAGS.none { text.contains(it) }) {
+        return AssistantContent(prose = text)
+    }
 
     val prose = StringBuilder()
     var options = emptyList<String>()
@@ -115,6 +122,28 @@ fun parseAssistantContent(text: String): AssistantContent {
     while (i < lines.size) {
         val tag = fenceTagAt(lines[i])
         if (tag == null) {
+            // An unfenced block. The model is asked for ```fb-diagnosis and sometimes
+            // writes a bare `fb-diagnosis` line with the JSON under it — which happened
+            // in the wild the first time Fundi Bora ran, because that prompt's examples
+            // were written without their fences. Left unhandled it is the worst possible
+            // outcome: the raw JSON lands in the prose and a maker reads it.
+            //
+            // Prompts are data and can change without a release, so the fence is a
+            // convention this parser should survive losing. Tight conditions, so ordinary
+            // prose cannot trip it: the line has to be exactly a tag we know, and the
+            // next non-blank line has to open an object.
+            val unfenced = unfencedBlockAt(lines, i)
+            if (unfenced != null) {
+                val body = lines.subList(i + 1, unfenced.endExclusive).joinToString("\n")
+                when (unfenced.tag) {
+                    PLAN_TAG -> plan = parsePlan(body)
+                    DIAGNOSIS_TAG -> diagnosis = decode<Diagnosis>(body)
+                    FIX_PLAN_TAG -> fixPlan = decode<FixPlan>(body)
+                    VERDICT_TAG -> verdict = parseVerdict(body)
+                }
+                i = unfenced.endExclusive
+                continue
+            }
             prose.appendLine(lines[i])
             i++
             continue
@@ -180,6 +209,42 @@ fun parseAssistantContent(text: String): AssistantContent {
         diagnosis = diagnosis?.takeIf { it.isRenderable },
         fixPlan = fixPlan?.takeIf { it.isRunnable },
     )
+}
+
+/** Where an unfenced block ends, and which tag opened it. */
+private class Unfenced(val tag: String, val endExclusive: Int)
+
+/** The tags whose body is a single JSON object, so an unfenced one can be found by braces. */
+private val JSON_TAGS = setOf(PLAN_TAG, VERDICT_TAG, DIAGNOSIS_TAG, FIX_PLAN_TAG)
+
+/**
+ * A block written without its fence: a bare tag line, then one JSON object.
+ *
+ * `qv-options` is deliberately not recognised here. Its body is a list of short phrases
+ * rather than an object, so there is no reliable end marker without a fence — and an
+ * unfenced options list degrades into readable prose, which is a perfectly good outcome.
+ */
+private fun unfencedBlockAt(lines: List<String>, start: Int): Unfenced? {
+    val tag = lines[start].trim().lowercase()
+    if (tag !in JSON_TAGS) return null
+
+    var j = start + 1
+    while (j < lines.size && lines[j].isBlank()) j++
+    if (j >= lines.size || !lines[j].trimStart().startsWith("{")) return null
+
+    // Counted rather than parsed. A brace inside a string would throw this off, which is
+    // why the fenced path stays the one the prompt asks for — but the alternative here is
+    // showing somebody raw JSON, and a block that ends in the wrong place still gets
+    // dropped by the decoder rather than printed.
+    var depth = 0
+    while (j < lines.size) {
+        depth += lines[j].count { it == '{' } - lines[j].count { it == '}' }
+        j++
+        if (depth <= 0) return Unfenced(tag, j)
+    }
+    // Unterminated, which is what a truncated reply looks like. Treated as running to the
+    // end, the same as an unterminated fence.
+    return Unfenced(tag, lines.size)
 }
 
 /** The info string of a fence line, or null if this is not a fence line. */
