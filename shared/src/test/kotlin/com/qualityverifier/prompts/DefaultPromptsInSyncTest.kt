@@ -92,26 +92,20 @@ class DefaultPromptsInSyncTest {
     }
 
     @Test
-    fun `the fundi master does not price the finished piece`() {
-        // Costs a maker can check are allowed: what a fix needs in materials, what a tool
-        // costs, roughly how long work takes. What the piece is worth is not — we have no
-        // price data for their market, and a number invented here becomes a number they
-        // quote to a customer. The mockup shows a price uplift; this is the one place the
-        // implementation deliberately declines to follow it.
+    fun `the fundi master puts a price on nothing`() {
+        // Not the finished piece, not a repair, not a tool. We have no price data for
+        // their market, their suppliers or their customers, and a number invented here
+        // becomes one a maker plans around or quotes to somebody. Repair costs and tool
+        // price ranges were both allowed at first and both dropped once a real
+        // assessment produced them.
         val fundi = DefaultPrompts.FUNDI_MASTER
-        assertTrue(
-            "the ban on pricing the piece is gone",
-            fundi.contains("Do not put a figure on what the finished piece is worth"),
-        )
-        assertTrue(
-            "the prompt no longer says why",
-            fundi.contains("We have no price data"),
-        )
-        // Tool prices are permitted, and only as a range.
-        assertTrue(
-            "tool prices are no longer required to be a range",
-            fundi.contains("Give a price range and never a single figure"),
-        )
+        assertTrue(fundi.contains("Do not put a figure on what the finished piece is worth"))
+        assertTrue(fundi.contains("Never estimate what a repair costs"))
+        assertTrue(fundi.contains("Never put a price on anything"))
+        // And no example teaches the model a price field to fill in.
+        listOf("cost_kes", "price_kes", "KSh").forEach { field ->
+            assertFalse("the prompt still shows $field", fundi.contains(field))
+        }
     }
 
     @Test
@@ -529,5 +523,26 @@ class DefaultPromptsInSyncTest {
                 "Missing prompts/items/${itemType.id}.txt for ${itemType.name}"
             }
         }
+    }
+
+    // The fundi master once said the plan and the verdict used "the same schema the
+    // buyer-facing assistant uses — refer to that prompt's definition". The model never
+    // sees that prompt: the server sends the fundi master and the item protocol, nothing
+    // else. So it guessed, and the first real plan came back with no shot titles and tests
+    // with no answer options, which left the maker only the app's own "not sure" and
+    // "cannot do this" buttons. Every block the app parses has to be defined in full here.
+    @Test
+    fun `the fundi master defines every block it asks for, itself`() {
+        val fundi = DefaultPrompts.FUNDI_MASTER
+        listOf("qv-plan", "fb-diagnosis", "fb-fixplan", "qv-verdict", "qv-options").forEach { tag ->
+            assertTrue("no fenced example of $tag", fundi.contains("```$tag"))
+        }
+        // The fields whose absence produced the reported symptoms.
+        listOf("\"title\"", "\"note\"", "\"instruction\"", "\"options\"", "\"verdict\"")
+            .forEach { field -> assertTrue("the schema no longer shows $field", fundi.contains(field)) }
+        assertFalse(
+            "the fundi master points at a prompt the model never receives",
+            fundi.contains("buyer-facing") || fundi.contains("that prompt"),
+        )
     }
 }

@@ -17,12 +17,18 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Button
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -113,6 +119,24 @@ fun PhysicalTestsScreen(
 
             Spacer(Modifier.height(20.dp))
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                // A test with no options would otherwise offer only the two ways out below,
+                // which is exactly what a maker hit when a plan arrived without them. Words
+                // are slower than a button, but they are an answer.
+                if (test.options.isEmpty()) {
+                    var typed by rememberSaveable(test) { mutableStateOf("") }
+                    OutlinedTextField(
+                        value = typed,
+                        onValueChange = { typed = it },
+                        label = { Text(labels.describeResult) },
+                        modifier = Modifier.fillMaxWidth(),
+                        minLines = 2,
+                    )
+                    Button(
+                        onClick = { onAnswer(typed.trim()) },
+                        enabled = typed.isNotBlank(),
+                        modifier = Modifier.fillMaxWidth(),
+                    ) { Text(labels.sendAnswer) }
+                }
                 test.options.forEach { option ->
                     OutlinedButton(
                         onClick = { onAnswer(option.label) },

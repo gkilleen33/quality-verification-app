@@ -583,7 +583,7 @@ Measured on a live three-turn conversation (`input` is the uncached remainder on
 
 A photo is about 2,450 tokens and is resent on every later turn, so on a full 12-turn
 walkthrough with six photos this is roughly a **70% cut in input cost** (~$0.55 → ~$0.16
-per session at standard Sonnet 5 rates).
+per session at standard Sonnet 5 rates, measured before the move to Sonnet 5.5).
 
 **On the TTL choice:** the 5-minute default is strictly cheaper when turns arrive quickly
 (1.25× writes vs 2×, same 0.1× reads) — over the three turns above it would have cost
@@ -594,7 +594,7 @@ photograph — tipping a table, finding help with a sofa — at least one gap pe
 exceeding five minutes is near-certain. If real usage turns out to be fast-paced, drop the
 `ttl` field in `CacheControl.ONE_HOUR` and the default applies.
 
-Minimum cacheable prefix on `claude-sonnet-5` is **1024 tokens**. Measured system prompts
+Minimum cacheable prefix on `claude-sonnet-5-5` is **512 tokens** (it was 1,024 on `claude-sonnet-5`). Measured system prompts
 (`count_tokens`), smallest first:
 
 | Item | Tokens |
@@ -606,8 +606,8 @@ Minimum cacheable prefix on `claude-sonnet-5` is **1024 tokens**. Measured syste
 | upholstered-chair | 2,467 |
 | upholstered-sofa | 2,812 |
 
-All six clear the minimum with room to spare, the table prompt by 1.6×. Shortening
-`master.txt` by more than about a third would start to put the smaller item types at risk
+All six clear the minimum with room to spare, the table prompt by 3×. Shortening
+`master.txt` by more than about two thirds would start to put the smaller item types at risk
 of silently not caching.
 
 ## Images

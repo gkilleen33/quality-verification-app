@@ -1,7 +1,9 @@
 package com.qualityverifier.domain
 
+import kotlinx.serialization.ExperimentalSerializationApi
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.JsonNames
 
 /**
  * Everything the assistant wants collected, issued in one go.
@@ -45,6 +47,7 @@ data class PlannedShot(
     val instruction: String = "",
 )
 
+@OptIn(ExperimentalSerializationApi::class)
 @Serializable
 data class PlannedTest(
     val title: String = "",
@@ -57,6 +60,11 @@ data class PlannedTest(
      * prompts that name them do not.
      */
     val diagram: String = "",
+    /**
+     * Also read as `choices`: a fundi plan once arrived written that way, from a model
+     * that had to guess the schema, and every test in it came out unanswerable.
+     */
+    @JsonNames("choices")
     val options: List<TestOption> = emptyList(),
 ) {
     val diagramKind: TestDiagram? get() = TestDiagram.fromId(diagram)

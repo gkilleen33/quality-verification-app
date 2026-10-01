@@ -29,7 +29,7 @@ object AnthropicRequest {
 
     const val MESSAGES_URL = "https://api.anthropic.com/v1/messages"
     const val VERSION = "2023-06-01"
-    const val MODEL = "claude-sonnet-5"
+    const val MODEL = "claude-sonnet-5-5"
     /**
      * The output ceiling, and it has to be generous.
      *

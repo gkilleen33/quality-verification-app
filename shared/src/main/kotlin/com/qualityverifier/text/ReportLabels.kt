@@ -65,6 +65,13 @@ data class ReportLabels(
      * been unsure is not the same as never having tried, and neither is a failure.
      */
     val notSure: String,
+    /**
+     * For a test that came with no answer buttons. The prompt says every test has
+     * options, but a plan that leaves them out should still be answerable in words
+     * rather than only with "not sure".
+     */
+    val describeResult: String,
+    val sendAnswer: String,
     val inThisInspection: String,
     // The local intake, before anything is sent.
     val intakeUpholsteryQuestion: String,
@@ -273,6 +280,8 @@ data class ReportLabels(
             notDone = "not done",
             cannotDoThis = "I can't do this one",
             notSure = "I'm not sure",
+            describeResult = "Say what you found",
+            sendAnswer = "Send",
             inThisInspection = "In this inspection",
             intakeUpholsteryQuestion = "Does this chair have cushioning, or is it bare wood?",
             intakeUpholsteryYes = "It has cushioning or fabric",
@@ -383,6 +392,8 @@ data class ReportLabels(
             notDone = "haikufanyika",
             cannotDoThis = "Siwezi kufanya hili",
             notSure = "Sina uhakika",
+            describeResult = "Eleza ulichoona",
+            sendAnswer = "Tuma",
             inThisInspection = "Katika ukaguzi huu",
             intakeUpholsteryQuestion = "Kiti hiki kina sponji, au ni mbao tupu?",
             intakeUpholsteryYes = "Kina sponji au kitambaa",
