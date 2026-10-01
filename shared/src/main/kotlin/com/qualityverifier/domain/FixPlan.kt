@@ -64,14 +64,10 @@ data class FixStage(
     val summary: String = "",
     /** An honest estimate. Null when the assistant would be guessing. */
     val minutes: Int? = null,
-    /**
-     * Materials only, in shillings, and very often zero.
-     *
-     * Zero is a real and common answer — a shim from an offcut and glue already on the
-     * bench — and it is worth showing rather than hiding, because "this costs you
-     * nothing" is the sentence that gets the fix done.
-     */
-    @SerialName("cost_kes") val costKes: Int? = null,
+    // No cost field, deliberately. We have no price data for their suppliers, and an
+    // invented figure becomes one a maker plans around. A stored reply from before this
+    // that still carries cost_kes parses fine — unknown keys are ignored — and is simply
+    // never shown.
     /**
      * The instructions, in order, one action each.
      *
@@ -87,30 +83,20 @@ data class FixStage(
 }
 
 /**
- * A tool to buy, with a range rather than a figure.
+ * A tool worth buying, when its absence is what caused the defect. Named, never priced.
  *
- * A range because we do not know their supplier and prices move; the prompt also requires
- * a note to check locally. A single number here becomes a number a fundi walks into a
- * hardware shop expecting.
+ * It used to carry a price range. Dropped: we have no data on what tools cost where a
+ * maker buys them, and a number on this card is one somebody walks into a hardware shop
+ * expecting. A stored reply that still carries the price fields parses — they are ignored —
+ * and nothing shows them.
  */
 @Serializable
 data class ToolSuggestion(
     /** Matches [ToolKind]; unrecognised values render without a kind rather than failing. */
     val kind: String = "",
     val name: String = "",
-    @SerialName("price_kes_low") val priceLow: Int? = null,
-    @SerialName("price_kes_high") val priceHigh: Int? = null,
 ) {
     val toolKind: ToolKind? get() = ToolKind.fromId(kind)
 
     val isRenderable: Boolean get() = name.isNotBlank() || toolKind != null
-
-    /** "KSh 600–900", or null when no usable range came back. */
-    val priceRange: String?
-        get() {
-            val low = priceLow ?: return null
-            val high = priceHigh ?: return null
-            if (low <= 0 || high < low) return null
-            return "KSh $low–$high"
-        }
 }

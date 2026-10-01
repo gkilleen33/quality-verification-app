@@ -246,8 +246,9 @@ fun FixPlanCard(
 @Composable
 private fun StageCost(stage: FixStage, labels: FundiLabels) {
     val parts = listOfNotNull(
+        // Time only. No cost: we have no price data, and an invented figure is one a
+        // maker plans around.
         stage.minutes?.takeIf { it > 0 }?.let(labels::minutes),
-        stage.costKes?.let(labels::cost),
     )
     if (parts.isEmpty()) return
     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -287,17 +288,6 @@ private fun ToolCard(tool: ToolSuggestion, labels: FundiLabels) {
                 tool.name.ifBlank { tool.toolKind?.let(labels::nameOf).orEmpty() },
                 style = MaterialTheme.typography.titleMedium,
             )
-            // A range or nothing. priceRange returns null unless both ends came back and
-            // make sense, because a single figure is a number somebody walks into a
-            // hardware shop expecting.
-            tool.priceRange?.let { range ->
-                Text(range, style = MaterialTheme.typography.bodyLarge)
-                Text(
-                    labels.checkLocally,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
         }
     }
 }

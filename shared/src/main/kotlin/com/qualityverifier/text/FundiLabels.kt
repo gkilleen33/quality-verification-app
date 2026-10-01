@@ -82,10 +82,7 @@ data class FundiLabels(
     val horizonNames: Map<FixHorizon, String>,
     val horizonBlurbs: Map<FixHorizon, String>,
     val toolHeading: String,
-    val checkLocally: String,
-    val noCost: String,
     private val minutesFormat: String,
-    private val costFormat: String,
     // ---- the intake. Asked before anything is sent, so an abandoned one costs nothing.
     val intakeLanguageTitle: String,
     val intakePurposeTitle: String,
@@ -133,9 +130,6 @@ data class FundiLabels(
 
     fun minutes(n: Int): String = minutesFormat.replace("{n}", n.toString())
 
-    /** Zero is a real answer and worth saying out loud: it is what gets the fix done. */
-    fun cost(kes: Int): String =
-        if (kes <= 0) noCost else costFormat.replace("{n}", kes.toString())
 
     fun nameOf(horizon: FixHorizon): String = horizonNames.getValue(horizon)
     fun blurbOf(horizon: FixHorizon): String = horizonBlurbs.getValue(horizon)
@@ -236,10 +230,7 @@ data class FundiLabels(
                 FixHorizon.DRILL to "Practice on offcuts.",
             ),
             toolHeading = "A TOOL WORTH BUYING",
-            checkLocally = "Prices move. Check with your own supplier.",
-            noCost = "No cost",
             minutesFormat = "{n} min",
-            costFormat = "KSh {n}",
             intakeLanguageTitle = "Which language should we use?",
             intakePurposeTitle = "What do you want from this assessment?",
             intakeReturningTitle = "What do you want to check on this piece?",

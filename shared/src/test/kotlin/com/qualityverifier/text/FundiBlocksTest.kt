@@ -233,34 +233,32 @@ class FundiBlocksTest {
 
         assertEquals(3, plan.stages.size)
         assertEquals(40, plan.fixNow!!.minutes)
-        // Zero is a real answer and worth keeping: "this costs you nothing" is the
-        // sentence that gets the fix done.
-        assertEquals(0, plan.fixNow!!.costKes)
         assertEquals(4, plan.fixNow!!.steps.size)
         assertTrue(plan.prevent!!.summary.contains("all the way round"))
         assertEquals(10, plan.drill!!.minutes)
     }
 
     @Test
-    fun `a tool suggestion keeps its range rather than a single figure`() {
+    fun `a tool suggestion is named`() {
         val tool = parseAssistantContent(fixPlanTurn).fixPlan!!.toolToBuy!!
         assertEquals(ToolKind.MARKING_GAUGE, tool.toolKind)
-        assertEquals("KSh 600–900", tool.priceRange)
     }
 
+    // Prices were dropped: we have no data on what repairs or tools cost where a maker
+    // buys. A reply stored before that still carries them, and has to keep loading — an
+    // unknown field is ignored rather than failing the whole fix plan.
     @Test
-    fun `a half-written price range is no range at all`() {
-        // A fundi walks into a hardware shop with whatever number this produces, so a
-        // nonsensical one has to read as absent.
-        val cases = listOf(
-            """{"fix_now":{"steps":["a"]},"tool_to_buy":{"name":"Gauge","price_kes_low":600}}""",
-            """{"fix_now":{"steps":["a"]},"tool_to_buy":{"name":"Gauge","price_kes_low":900,"price_kes_high":600}}""",
-            """{"fix_now":{"steps":["a"]},"tool_to_buy":{"name":"Gauge","price_kes_low":0,"price_kes_high":900}}""",
-        )
-        cases.forEach { body ->
-            val plan = parseAssistantContent("```fb-fixplan\n$body\n```").fixPlan
-            assertNull("range should be absent for $body", plan!!.toolToBuy!!.priceRange)
-        }
+    fun `a stored reply that still carries prices parses, and keeps none of them`() {
+        val body = """
+            {"fix_now": {"summary": "Re-glue it", "cost_kes": 0, "steps": ["a"]},
+             "tool_to_buy": {"name": "Gauge", "price_kes_low": 600, "price_kes_high": 900}}
+        """.trimIndent()
+
+        val plan = parseAssistantContent("```fb-fixplan\n$body\n```").fixPlan
+
+        assertNotNull("old prices must not break the plan", plan)
+        assertEquals("Re-glue it", plan!!.fixNow!!.summary)
+        assertEquals("Gauge", plan.toolToBuy!!.name)
     }
 
     @Test
@@ -346,5 +344,22 @@ class FundiBlocksTest {
         val content = parseAssistantContent(turn)
         assertTrue(content.prose.contains("fb-quote"))
         assertTrue(content.prose.contains("5800"))
+    }
+
+    @Test
+    fun `a plan whose tests call their answers choices still has buttons`() {
+        // The shape a fundi plan actually arrived in, from a model guessing the schema.
+        val turn = """
+            Here is what I need.
+
+            ```qv-plan
+            {"photos": [{"title": "Top joint", "instruction": "Photograph where the top meets the band."}],
+             "tests": [{"title": "Press the top", "instruction": "Press down on each edge.",
+                        "choices": [{"label": "It stays still"}, {"label": "It moves"}]}]}
+            ```
+        """.trimIndent()
+
+        val test = parseAssistantContent(turn).plan!!.tests.single()
+        assertEquals(listOf("It stays still", "It moves"), test.options.map { it.label })
     }
 }

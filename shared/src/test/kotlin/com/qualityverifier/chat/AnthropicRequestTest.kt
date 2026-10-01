@@ -203,7 +203,7 @@ class AnthropicRequestTest {
     @Test
     fun `the model and token ceiling are fixed in one place`() {
         val request = build(listOf(ChatMessage("1", Role.USER, "hi")))
-        assertEquals("claude-sonnet-5", request.model)
+        assertEquals("claude-sonnet-5-5", request.model)
         assertEquals(16_000, request.maxTokens)
     }
 
