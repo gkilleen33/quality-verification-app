@@ -23,6 +23,11 @@ fun buildFundiOpeningMessage(
     intake: FundiIntake,
     profile: FundiProfile,
     labels: FundiLabels,
+    /**
+     * From [previousRecord], for a piece that has been assessed before. Only sent with a
+     * returning purpose: a new piece has no record, whatever the handset holds.
+     */
+    previous: String? = null,
 ): String {
     val purpose = purposeLine(intake, labels)
     val context = buildFundiContextMessage(profile, labels)
@@ -34,7 +39,8 @@ fun buildFundiOpeningMessage(
         .joinToString("\n")
         .trim()
     val language = ReportLabels.forLanguage(intake.language.code).intakeSaysUseLanguage
-    return listOf(purpose, context, language)
+    val record = previous?.takeIf { intake.purpose.forReassessment }.orEmpty()
+    return listOf(purpose, record, context, language)
         .filter { it.isNotBlank() }
         .joinToString("\n\n")
 }
@@ -92,4 +98,47 @@ fun priorIssues(assistantTurnsNewestFirst: List<String>): List<PriorIssue> {
         }
     }
     return out
+}
+
+/**
+ * What the model found the last time this piece was assessed, written out for the next.
+ *
+ * Each assessment is a conversation of its own, so a re-evaluation used to begin knowing
+ * nothing about the last one — the earlier conversation is far too long to send, nine
+ * photographs and all. The verdict and the diagnosis are the record of it, already in
+ * the model's own words, so they are what is carried: a few hundred tokens instead of
+ * tens of thousands. The newest of each, because a later block in a conversation
+ * corrects an earlier one.
+ *
+ * [assistantTurnsNewestFirst] is that one earlier assessment's assistant turns. Null when
+ * there is nothing in them worth carrying.
+ */
+fun previousRecord(assistantTurnsNewestFirst: List<String>, labels: FundiLabels): String? {
+    val parsed = assistantTurnsNewestFirst.map(::parseAssistantContent)
+    val verdict = parsed.firstNotNullOfOrNull { it.verdict?.takeIf { v -> v.isRenderable } }
+    val diagnosis = parsed.firstNotNullOfOrNull { it.diagnosis?.takeIf { d -> d.findings.isNotEmpty() } }
+    if (verdict == null && diagnosis == null) return null
+
+    val lines = mutableListOf(labels.previousRecordIntro)
+    verdict?.let { v ->
+        lines += "${labels.previousVerdict}: ${v.levelId}" + v.headline.takeIf { it.isNotBlank() }?.let { " — $it" }.orEmpty()
+        v.defects.filter { it.title.isNotBlank() }.forEach { d ->
+            lines += "- ${d.title} (${d.severityId})" + d.whatISee.takeIf { it.isNotBlank() }?.let { ": $it" }.orEmpty()
+        }
+        if (v.unverified.isNotEmpty()) {
+            lines += "${labels.previousUnchecked}: ${v.unverified.joinToString("; ")}"
+        }
+    }
+    diagnosis?.let { d ->
+        lines += "${labels.previousDiagnosis}:"
+        d.findings.filter { it.title.isNotBlank() }.forEach { f ->
+            val parts = listOfNotNull(
+                f.whatHappened.takeIf { it.isNotBlank() },
+                f.manufacturingCause.takeIf { it.isNotBlank() }?.let { "${labels.previousCause}: $it" },
+                f.rootHabit.takeIf { it.isNotBlank() }?.let { "${labels.previousHabit}: $it" },
+            )
+            lines += "- ${f.title} (${f.severityId})" + if (parts.isEmpty()) "" else ": " + parts.joinToString(" ")
+        }
+    }
+    return lines.joinToString("\n")
 }

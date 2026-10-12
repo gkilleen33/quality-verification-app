@@ -443,6 +443,7 @@ class SyncRouteTest {
             systemPrompt: String,
             history: List<com.qualityverifier.domain.ChatMessage>,
             imageBytes: (com.qualityverifier.domain.Attachment) -> ByteArray?,
+            photos: com.qualityverifier.server.chat.PhotoShelf?,
         ) = error("no sync route should reach the model")
     }
 
@@ -451,6 +452,7 @@ class SyncRouteTest {
             itemType: com.qualityverifier.domain.ItemType,
             audience: com.qualityverifier.domain.Audience,
         ) = error("no sync route should need a prompt")
+        override suspend fun compactionPrompt() = "WRITE YOUR NOTES"
         override suspend fun clearCache() = Unit
     }
 
@@ -505,8 +507,11 @@ class SyncRouteTest {
 
         override suspend fun recordUsage(
             userId: String, sessionId: String?, model: String?, usage: TokenUsage?,
-            httpStatus: Int?, latencyMillis: Long, errorKind: String?,
+            httpStatus: Int?, latencyMillis: Long, errorKind: String?, callKind: String,
         ) = Unit
+
+        override suspend fun saveDigest(sessionId: String, digest: com.qualityverifier.server.db.Digest) = Unit
+        override suspend fun digests(sessionId: String) = emptyList<com.qualityverifier.server.db.Digest>()
 
         override suspend fun sessionsFor(userId: String): List<SessionRow> {
             askedFor = userId

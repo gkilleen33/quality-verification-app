@@ -6,6 +6,7 @@ import com.qualityverifier.data.chat.dto.ContentBlock
 import com.qualityverifier.data.chat.dto.ImageSource
 import com.qualityverifier.data.chat.dto.MessagesRequest
 import com.qualityverifier.data.chat.dto.SystemBlock
+import com.qualityverifier.data.chat.dto.ToolDefinition
 import com.qualityverifier.domain.Attachment
 import com.qualityverifier.domain.ChatMessage
 import com.qualityverifier.domain.Role
@@ -84,9 +85,17 @@ object AnthropicRequest {
         encodeBase64: (ByteArray) -> String,
         model: String = MODEL,
         maxTokens: Int = MAX_TOKENS,
+        tools: List<ToolDefinition>? = null,
+        /**
+         * Exchanges after the stored conversation that are never stored themselves — a
+         * tool call and its result, within one turn. Appended as they are, after the
+         * history, and the rolling breakpoint moves onto the last of them.
+         */
+        trailing: List<ApiMessage> = emptyList(),
     ): MessagesRequest = MessagesRequest(
         model = model,
         maxTokens = maxTokens,
+        tools = tools,
         // Two breakpoints, well inside the limit of four. The system prompt is identical
         // for every conversation about this item type; the message prefix grows by one
         // exchange per turn, and a walkthrough is a dozen turns carrying several photos,
@@ -97,6 +106,7 @@ object AnthropicRequest {
         messages = history
             .toApiMessages(imageBytes, encodeBase64)
             .withOpeningTurn()
+            .plus(trailing)
             .withCacheBreakpointOnLastBlock(),
     )
 
@@ -161,6 +171,8 @@ object AnthropicRequest {
         marked[marked.lastIndex] = when (val block = marked.last()) {
             is ContentBlock.Text -> block.copy(cacheControl = CacheControl.ONE_HOUR)
             is ContentBlock.Image -> block.copy(cacheControl = CacheControl.ONE_HOUR)
+            is ContentBlock.ToolUse -> block.copy(cacheControl = CacheControl.ONE_HOUR)
+            is ContentBlock.ToolResult -> block.copy(cacheControl = CacheControl.ONE_HOUR)
         }
         return dropLast(1) + last.copy(content = marked)
     }

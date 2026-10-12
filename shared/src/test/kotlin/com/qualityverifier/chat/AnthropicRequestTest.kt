@@ -55,6 +55,8 @@ class AnthropicRequestTest {
             when (block) {
                 is ContentBlock.Text -> block.cacheControl != null
                 is ContentBlock.Image -> block.cacheControl != null
+                is ContentBlock.ToolUse -> block.cacheControl != null
+                is ContentBlock.ToolResult -> block.cacheControl != null
             }
         }
         assertEquals("a rolling breakpoint means exactly one", 1, marked.size)
@@ -94,6 +96,8 @@ class AnthropicRequestTest {
                     when (block) {
                         is ContentBlock.Text -> "text:" + block.text
                         is ContentBlock.Image -> "image:" + block.source.data
+                        is ContentBlock.ToolUse -> "tool_use:" + block.id
+                        is ContentBlock.ToolResult -> "tool_result:" + block.toolUseId
                     }
                 }
             }

@@ -49,6 +49,10 @@ class GitHubPromptRepository(
         assembleSystemPrompt(master, item)
     }
 
+    override suspend fun compactionPrompt(): String = withContext(io) {
+        load(COMPACT_PATH, blankIsValid = false) { DefaultPrompts.COMPACT }
+    }
+
     override suspend fun clearCache() = withContext(io) { cache.clear() }
 
     private fun load(
@@ -92,6 +96,7 @@ class GitHubPromptRepository(
     companion object {
         const val MASTER_PATH = "master.txt"
         const val FUNDI_MASTER_PATH = "fundi-master.txt"
+        const val COMPACT_PATH = "compact.txt"
 
         fun masterPathFor(audience: Audience): String = when (audience) {
             Audience.BUYER -> MASTER_PATH

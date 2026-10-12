@@ -110,6 +110,16 @@ data class FundiLabels(
     private val saysOtherFormat: String,
     private val saysNewIssueFormat: String,
     private val saysVerifyFixFormat: String,
+    /**
+     * Heads the record of the last assessment on a returning piece. The model has no
+     * other memory of it: each assessment is its own conversation.
+     */
+    val previousRecordIntro: String,
+    val previousVerdict: String,
+    val previousDiagnosis: String,
+    val previousCause: String,
+    val previousHabit: String,
+    val previousUnchecked: String,
     // ---- the conversation
     val replyHint: String,
     val send: String,
@@ -286,6 +296,13 @@ data class FundiLabels(
                 "has come up: {what}",
             saysVerifyFixFormat = "You have assessed this piece before. I fixed this " +
                 "issue and want to check it is resolved: {what}",
+            previousRecordIntro = "What you recorded the last time you assessed this piece. " +
+                "It is for comparison: judge the piece from what you are shown now.",
+            previousVerdict = "Verdict",
+            previousDiagnosis = "Diagnosis",
+            previousCause = "Cause",
+            previousHabit = "Habit",
+            previousUnchecked = "Could not be checked",
             replyHint = "Type a reply",
             send = "Send",
             sentPhotosFormat = "Sent {n} photos",

@@ -2,6 +2,7 @@ package com.qualityverifier.data.chat.dto
 
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.JsonObject
 
 @Serializable
 data class MessagesRequest(
@@ -14,6 +15,20 @@ data class MessagesRequest(
      */
     val system: List<SystemBlock>,
     val messages: List<ApiMessage>,
+    /**
+     * Null, and therefore absent from the JSON, on every request that offers no tool.
+     * Tools render ahead of the system prompt, so a request that sometimes carried one
+     * and sometimes did not would split the cache — which is why it is only ever offered
+     * to a conversation that has been compacted, and then on every turn of it.
+     */
+    val tools: List<ToolDefinition>? = null,
+)
+
+@Serializable
+data class ToolDefinition(
+    val name: String,
+    val description: String,
+    @SerialName("input_schema") val inputSchema: JsonObject,
 )
 
 @Serializable
@@ -66,6 +81,25 @@ sealed class ContentBlock {
         val source: ImageSource,
         @SerialName("cache_control") val cacheControl: CacheControl? = null,
     ) : ContentBlock()
+
+    /** The model asking for a tool, echoed back exactly as it arrived. */
+    @Serializable
+    @SerialName("tool_use")
+    data class ToolUse(
+        val id: String,
+        val name: String,
+        val input: JsonObject,
+        @SerialName("cache_control") val cacheControl: CacheControl? = null,
+    ) : ContentBlock()
+
+    @Serializable
+    @SerialName("tool_result")
+    data class ToolResult(
+        @SerialName("tool_use_id") val toolUseId: String,
+        val content: List<ContentBlock>,
+        @SerialName("is_error") val isError: Boolean? = null,
+        @SerialName("cache_control") val cacheControl: CacheControl? = null,
+    ) : ContentBlock()
 }
 
 @Serializable
@@ -83,6 +117,10 @@ data class ImageSource(
 data class ResponseBlock(
     val type: String,
     val text: String? = null,
+    /** The three a tool_use block carries. */
+    val id: String? = null,
+    val name: String? = null,
+    val input: JsonObject? = null,
 )
 
 @Serializable
