@@ -127,19 +127,23 @@ class DefaultPromptsInSyncTest {
     }
 
     @Test
-    fun `the diagnosis is a cause and only the worst finding is coached`() {
+    fun `every finding carries its cause, and only the worst gets a fix plan`() {
+        // Issue #41: causes were once given for the worst finding only. That decided for
+        // the maker what to work on; they can choose to take one at a time themselves.
         val fundi = DefaultPrompts.FUNDI_MASTER
         assertTrue(
             "the prompt no longer distinguishes a cause from a grade",
             fundi.contains("THE DIAGNOSIS IS A CAUSE, NOT A GRADE"),
         )
         assertTrue(
-            "the prompt no longer coaches only the first finding",
-            fundi.contains("coach only the first one"),
+            "every finding must carry all three",
+            fundi.contains("give every one of them all three"),
         )
+        assertFalse("the old one-cause rule is back", fundi.contains("coach only the first one"))
+        assertFalse(fundi.contains("Only the first carries what_happened"))
         assertTrue(
-            "the reason is gone: six things to change means none get changed",
-            fundi.contains("changes none of them"),
+            "the fix plan is still for one finding at a time",
+            fundi.contains("The fix plan is for the first finding only"),
         )
         assertTrue(
             "the one-question limit is gone",

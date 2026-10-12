@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -67,31 +68,17 @@ fun DiagnosisCard(
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
 
-            val primary = diagnosis.primary
-            if (primary == null) {
+            if (diagnosis.findings.isEmpty()) {
                 // A clean piece is an outcome, not an empty state. Saying nothing here
                 // would read as the app having failed rather than the work being right.
                 Text(labels.nothingFound, style = MaterialTheme.typography.titleMedium)
-            } else {
-                PrimaryFinding(primary, labels, severityName)
             }
 
-            // Recorded but not coached. Listed so the piece's record is complete and the
-            // maker is not surprised later, but without causes: a fundi handed six habits
-            // to change changes none of them.
-            val alsoFound = diagnosis.findings.drop(1).filter { it.title.isNotBlank() }
-            if (alsoFound.isNotEmpty()) {
-                Label(labels.alsoFoundHeading)
-                alsoFound.forEach { finding ->
-                    Row(
-                        Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    ) {
-                        Text("•", style = MaterialTheme.typography.bodyMedium)
-                        Text(finding.title, style = MaterialTheme.typography.bodyMedium)
-                        SeverityTag(finding.severity, severityName)
-                    }
-                }
+            // Every finding with its whole chain, worst first (issue #41). The maker
+            // chooses what to work on; the fix plan below is for the first.
+            diagnosis.findings.filter { it.title.isNotBlank() }.forEachIndexed { index, finding ->
+                if (index > 0) HorizontalDivider(Modifier.padding(vertical = 4.dp))
+                FindingDetail(finding, labels, severityName)
             }
 
             if (diagnosis.awaitingCheck) {
@@ -103,7 +90,7 @@ fun DiagnosisCard(
 }
 
 @Composable
-private fun PrimaryFinding(
+private fun FindingDetail(
     finding: Finding,
     labels: FundiLabels,
     severityName: (Severity) -> String,

@@ -68,6 +68,7 @@ import com.qualityverifier.text.AssistantContent
 import com.qualityverifier.ui.capture.CaptureScreen
 import com.qualityverifier.ui.capture.captureInstruction
 import com.qualityverifier.ui.plan.InspectingScreen
+import com.qualityverifier.ui.plan.WorkingText
 import com.qualityverifier.ui.plan.PhysicalTestsScreen
 import com.qualityverifier.ui.tester.TesterReviewPrompt
 import com.qualityverifier.ui.tester.TesterReviewScreen
@@ -452,18 +453,19 @@ fun ChatScreen(
                 ) {
                     CircularProgressIndicator(Modifier.size(20.dp))
                     Spacer(Modifier.width(12.dp))
-                    Text(
-                        // Three waits, and the longest of them is the one straight after
-                        // the intake, where the assistant is working out what to ask for.
-                        // Saying so — and saying it will take a moment — is the difference
-                        // between a customer waiting and a customer deciding the app hung.
-                        // A wait with a reply already on screen is a follow-up question,
-                        // which is quick and needs no apology.
-                        when {
-                            messages.isEmpty() -> "Starting the check…"
-                            messages.none { it.role == Role.ASSISTANT } ->
-                                "Preparing the evaluation. This may take a moment."
-                            else -> "Looking at the furniture…"
+                    // Two waits. The long one is straight after the intake, where the
+                    // assistant is working out what to ask for; a wait with a reply
+                    // already on screen is a follow-up. Either way the line keeps moving,
+                    // which is the difference between a customer waiting and a customer
+                    // deciding the app hung. Every phrase is true for the whole wait.
+                    val waitLabels = rememberReportLabels(
+                        shareable?.second?.language ?: run?.plan?.language,
+                    )
+                    WorkingText(
+                        if (messages.none { it.role == Role.ASSISTANT }) {
+                            waitLabels.workingPlan
+                        } else {
+                            waitLabels.workingReply
                         },
                         style = MaterialTheme.typography.bodyMedium,
                     )

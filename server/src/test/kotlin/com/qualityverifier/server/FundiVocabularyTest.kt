@@ -47,6 +47,9 @@ class FundiVocabularyTest {
      */
     private val toolHistory: String by lazy { read("V17__fundi_tool_history.sql") }
 
+    /** Replaces the three ownership CHECKs to add "unknown". */
+    private val toolNotKnown: String by lazy { read("V20__tool_not_known.sql") }
+
     private fun assertAllAllowed(
         what: String,
         ids: List<String>,
@@ -74,7 +77,10 @@ class FundiVocabularyTest {
 
     @Test
     fun `every ownership state is allowed by the constraint`() {
-        assertAllAllowed("ownership", ToolOwnership.entries.map { it.id })
+        assertAllAllowed(
+            "ownership", ToolOwnership.entries.map { it.id },
+            sql = toolNotKnown, where = "V20",
+        )
     }
 
     @Test
@@ -101,7 +107,7 @@ class FundiVocabularyTest {
         )
         assertAllAllowed(
             "ownership", ToolOwnership.entries.map { it.id },
-            sql = toolHistory, where = "V17",
+            sql = toolNotKnown, where = "V20",
         )
     }
 

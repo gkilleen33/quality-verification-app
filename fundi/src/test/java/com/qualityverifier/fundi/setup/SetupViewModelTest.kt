@@ -4,6 +4,7 @@ import com.qualityverifier.data.fundi.FundiProfiles
 import com.qualityverifier.data.fundi.ProfileOutcome
 import com.qualityverifier.domain.FundiGoal
 import com.qualityverifier.domain.FundiProfile
+import com.qualityverifier.domain.LocationFix
 import com.qualityverifier.domain.OwnedTool
 import com.qualityverifier.domain.ToolKind
 import com.qualityverifier.domain.ToolOwnership
@@ -59,6 +60,80 @@ class SetupViewModelTest {
             sent = profile
             return succeeds
         }
+
+        val locations = mutableListOf<LocationFix>()
+        override suspend fun saveWorkshopLocation(fix: LocationFix): Boolean {
+            locations += fix
+            return true
+        }
+    }
+
+    private val shopFix = LocationFix(-1.2833, 36.8333, 15.0, capturedAt = 0L)
+
+    @Test
+    fun `nothing is located until they say they are at the shop and agree`() = runTest {
+        var asked = 0
+        val model = SetupViewModel(FakeProfiles()) { asked++; shopFix }
+
+        model.locateShop()
+        model.answerAtShop(true)
+        model.locateShop()
+        advanceUntilIdle()
+        assertEquals("no fix without consent", 0, asked)
+
+        model.answerConsent(true)
+        model.locateShop()
+        advanceUntilIdle()
+        assertEquals(1, asked)
+        assertEquals(shopFix, model.shop.value.fix)
+    }
+
+    @Test
+    fun `a recorded shop point is sent once with the profile`() = runTest {
+        val profiles = FakeProfiles()
+        val model = SetupViewModel(profiles) { shopFix }
+        model.answerAtShop(true)
+        model.answerConsent(true)
+        model.locateShop()
+        advanceUntilIdle()
+
+        model.save()
+        advanceUntilIdle()
+        model.save()
+        advanceUntilIdle()
+
+        assertEquals(listOf(shopFix), profiles.locations)
+    }
+
+    @Test
+    fun `saying no afterwards forgets the point`() = runTest {
+        val profiles = FakeProfiles()
+        val model = SetupViewModel(profiles) { shopFix }
+        model.answerAtShop(true)
+        model.answerConsent(true)
+        model.locateShop()
+        advanceUntilIdle()
+
+        model.answerAtShop(false)
+        model.save()
+        advanceUntilIdle()
+
+        assertNull(model.shop.value.fix)
+        assertTrue(profiles.locations.isEmpty())
+    }
+
+    @Test
+    fun `a refused permission or no fix says why`() = runTest {
+        val model = SetupViewModel(FakeProfiles()) { null }
+        model.answerAtShop(true)
+        model.answerConsent(true)
+
+        model.onPermission(false)
+        assertEquals(SetupViewModel.ShopLocation.Problem.NO_PERMISSION, model.shop.value.problem)
+
+        model.onPermission(true)
+        advanceUntilIdle()
+        assertEquals(SetupViewModel.ShopLocation.Problem.NO_FIX, model.shop.value.problem)
     }
 
     @Test

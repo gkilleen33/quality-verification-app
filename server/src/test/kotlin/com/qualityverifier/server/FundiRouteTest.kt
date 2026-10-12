@@ -84,6 +84,50 @@ class FundiRouteTest {
     // The two apps have entirely independent accounts. A buyer here is a client bug, and
     // the workshop row it would write is one nothing will ever read.
     @Test
+    fun `a fundi at their shop can record its location`() = testApplication {
+        val store = FakeFundiStore()
+        val app = withFundi(store, audience = Audience.FUNDI)
+
+        val response = app.put("/v1/fundi/workshop-location") {
+            auth(FUNDI)
+            contentType(ContentType.Application.Json)
+            setBody("""{"latitude":-1.2833,"longitude":36.8333,"accuracy_m":18.5}""")
+        }
+
+        assertEquals(HttpStatusCode.NoContent, response.status)
+        assertEquals(Triple(-1.2833, 36.8333, 18.5), store.locations[FUNDI])
+    }
+
+    @Test
+    fun `a location that cannot be right is refused`() = testApplication {
+        val store = FakeFundiStore()
+        val app = withFundi(store, audience = Audience.FUNDI)
+        listOf(
+            """{"latitude":91,"longitude":36.8,"accuracy_m":10}""",
+            """{"latitude":-1.2,"longitude":36.8,"accuracy_m":0}""",
+            """{"latitude":-1.2,"longitude":36.8,"accuracy_m":90000}""",
+        ).forEach { body ->
+            val response = app.put("/v1/fundi/workshop-location") {
+                auth(FUNDI); contentType(ContentType.Application.Json); setBody(body)
+            }
+            assertEquals(body, HttpStatusCode.BadRequest, response.status)
+        }
+        assertTrue(store.locations.isEmpty())
+    }
+
+    @Test
+    fun `a Kagua account cannot record a workshop location`() = testApplication {
+        val store = FakeFundiStore()
+        val app = withFundi(store, audience = Audience.BUYER)
+        val response = app.put("/v1/fundi/workshop-location") {
+            auth(FUNDI); contentType(ContentType.Application.Json)
+            setBody("""{"latitude":-1.2,"longitude":36.8,"accuracy_m":10}""")
+        }
+        assertEquals(HttpStatusCode.Forbidden, response.status)
+        assertTrue(store.locations.isEmpty())
+    }
+
+    @Test
     fun `a Kagua account is refused`() = testApplication {
         val store = FakeFundiStore()
         val app = withFundi(store, audience = Audience.BUYER)
@@ -275,6 +319,13 @@ class FundiRouteTest {
         }
 
         override suspend fun toolHistory(userId: String) = history[userId].orEmpty()
+
+        val locations = mutableMapOf<String, Triple<Double, Double, Double>>()
+        override suspend fun saveWorkshopLocation(
+            userId: String, latitude: Double, longitude: Double, accuracyMetres: Double,
+        ) {
+            locations[userId] = Triple(latitude, longitude, accuracyMetres)
+        }
     }
 
     private class FakeAuth(private val audience: Audience) : AuthStore {

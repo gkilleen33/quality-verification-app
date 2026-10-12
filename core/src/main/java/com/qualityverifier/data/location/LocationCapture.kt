@@ -76,6 +76,21 @@ class LocationCapture(
      */
     override suspend fun capture(): LocationFix? {
         if (!preference.recordAtStart) return null
+        return fix(WINDOW_MILLIS)
+    }
+
+    /**
+     * One fix, now, for somebody who has just agreed to it on screen — the maker
+     * recording where their shop is.
+     *
+     * Ignores [LocationPreference]: that setting is about assessments recording where they
+     * were made, and this is a separate question asked and answered in the moment. Still
+     * needs the permission. A shorter window than [capture], because here somebody is
+     * watching a spinner.
+     */
+    suspend fun captureNow(): LocationFix? = fix(ON_REQUEST_WINDOW_MILLIS)
+
+    private suspend fun fix(windowMillis: Long): LocationFix? {
         if (!hasPermission()) return null
         val manager = manager() ?: return null
 
@@ -87,7 +102,7 @@ class LocationCapture(
 
         // Returns as soon as something good enough arrives; otherwise keeps whatever the
         // window produced, which may be the seed or nothing.
-        withTimeoutOrNull(WINDOW_MILLIS) { listenForFix(manager, providers, best) }
+        withTimeoutOrNull(windowMillis) { listenForFix(manager, providers, best) }
 
         val fix = best.get() ?: return null
         return fix.toDomain().takeIf { it.isUsable }
@@ -230,6 +245,9 @@ class LocationCapture(
          * arrives at all, which is what the seed and the null return are for.
          */
         const val WINDOW_MILLIS = 90_000L
+
+        /** For [captureNow]: long enough for GPS outdoors, short enough to sit through. */
+        const val ON_REQUEST_WINDOW_MILLIS = 30_000L
 
         /** Stop early at this accuracy: enough to place a shop front. */
         const val GOOD_ENOUGH_METRES = 25f

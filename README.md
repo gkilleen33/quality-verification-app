@@ -446,6 +446,13 @@ whether the model has looked at the joints yet. Ticking those off on a timer wou
 theatre, and inventing certainty is the thing this product cannot do anywhere — including
 in a progress indicator.
 
+What it does do is keep the line under the spinner moving. A single fixed sentence reads as
+a hang after twenty seconds, so every wait — the first plan, an inspection, a follow-up —
+cycles through a short list of phrases (`WorkingText`, lists in `ReportLabels`). The rule
+that keeps this honest: every phrase is an activity that is true for the *whole* wait
+("Checking the images" while a request with images is outstanding), never a stage the app
+claims to have reached.
+
 ## Capture
 
 Photos are taken in-app with CameraX rather than by handing off to the system camera,

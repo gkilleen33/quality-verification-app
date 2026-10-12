@@ -31,11 +31,15 @@ data class FundiProfile(
 ) {
     /** Tools they can use on this piece. Borrowed counts; see [ToolOwnership]. */
     val available: List<OwnedTool>
-        get() = tools.filter { it.ownership != ToolOwnership.NONE }
+        get() = tools.filter { it.ownership == ToolOwnership.OWNED || it.ownership == ToolOwnership.BORROWED }
 
     /** Tools they told us they do not have, which is what the fix plan works around. */
     val missing: List<ToolKind>
         get() = tools.filter { it.ownership == ToolOwnership.NONE }.map { it.kind }
+
+    /** Tools they said they do not know. Not available either; see [ToolOwnership.UNKNOWN]. */
+    val unfamiliar: List<ToolKind>
+        get() = tools.filter { it.ownership == ToolOwnership.UNKNOWN }.map { it.kind }
 
     /**
      * True when there is anything worth telling the assistant.

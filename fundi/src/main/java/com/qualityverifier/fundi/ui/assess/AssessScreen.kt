@@ -52,6 +52,7 @@ import com.qualityverifier.text.markdownToPlainText
 import com.qualityverifier.text.parseAssistantContent
 import com.qualityverifier.ui.capture.CaptureScreen
 import com.qualityverifier.ui.plan.InspectingScreen
+import com.qualityverifier.ui.plan.WorkingText
 import com.qualityverifier.ui.plan.PhysicalTestsScreen
 import com.qualityverifier.ui.plan.PlanActionBar
 import com.qualityverifier.ui.plan.PlanCard
@@ -278,13 +279,21 @@ private fun Conversation(
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 LinearProgressIndicator(Modifier.fillMaxWidth())
-                Text(
-                    // The first reply builds a plan from nothing and is the long wait,
-                    // so it says so. Later turns are shorter and say less.
-                    if (awaitingFirstReply) labels.processing else reportLabels.stageExamining,
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                // A line that keeps moving, so a long wait does not read as a hang. Every
+                // phrase is true for the whole wait — see WorkingText.
+                WorkingText(
+                    if (awaitingFirstReply) reportLabels.workingPlan else reportLabels.workingReply,
+                    style = MaterialTheme.typography.bodyLarge,
                 )
+                // The first reply builds a plan from nothing and is the long wait, so it
+                // still says so underneath.
+                if (awaitingFirstReply) {
+                    Text(
+                        labels.processing,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
             }
 
             run != null -> PlanActionBar(

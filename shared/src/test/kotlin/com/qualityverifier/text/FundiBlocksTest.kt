@@ -100,15 +100,30 @@ class FundiBlocksTest {
     }
 
     @Test
-    fun `only the first finding is coached, and the rest are still recorded`() {
-        // A fundi handed six habits to change changes none of them. The others exist so
-        // the piece's record is complete, which is what the two rates are computed from.
+    fun `an older diagnosis with a cause on the first finding only still parses`() {
+        // Causes used to be given for the worst finding alone (see #41). Stored replies
+        // in that shape must still read: the rest are titles, and nothing is invented.
         val diagnosis = parseAssistantContent(diagnosisTurn).diagnosis!!
 
         assertEquals(2, diagnosis.defectCount)
         assertTrue(diagnosis.findings[0].isCoached)
-        assertFalse("the second finding must not carry a habit", diagnosis.findings[1].isCoached)
+        assertFalse(diagnosis.findings[1].isCoached)
         assertEquals("Two saw marks left on the apron", diagnosis.findings[1].title)
+    }
+
+    @Test
+    fun `every finding can carry its own cause and habit`() {
+        val turn = """
+            ```fb-diagnosis
+            {"findings":[
+              {"title":"Gap","severity":"moderate","manufacturing_cause":"Cut at an angle.","root_habit":"Marked on one face."},
+              {"title":"Saw marks","severity":"cosmetic","dimension":"finishing","manufacturing_cause":"Not planed.","root_habit":"Faces not checked."}]}
+            ```
+        """.trimIndent()
+        val findings = parseAssistantContent(turn).diagnosis!!.findings
+        assertTrue(findings.all { it.isCoached })
+        assertEquals("Not planed.", findings[1].manufacturingCause)
+        assertEquals("finishing", findings[1].dimension)
     }
 
     @Test

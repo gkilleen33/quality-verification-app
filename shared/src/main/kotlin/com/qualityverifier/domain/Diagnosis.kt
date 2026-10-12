@@ -22,10 +22,7 @@ data class Diagnosis(
      * the same one. Blank means fall back to the device language.
      */
     val language: String = "",
-    /**
-     * Everything found, worst first — so the piece's record is complete even though only
-     * the first is coached.
-     */
+    /** Everything found, worst first, each with its cause and habit. */
     val findings: List<Finding> = emptyList(),
     /**
      * The one question whose answer would change the cause, or blank.
@@ -36,7 +33,7 @@ data class Diagnosis(
      */
     @SerialName("one_check") val oneCheck: String = "",
 ) {
-    /** The finding being coached. The prompt orders them worst first. */
+    /** The worst finding, which the fix plan is for. The prompt orders them worst first. */
     val primary: Finding? get() = findings.firstOrNull()
 
     /**
@@ -58,11 +55,15 @@ data class Diagnosis(
 }
 
 /**
- * One defect, and — for the first one only — what caused it.
+ * One defect and what caused it.
  *
- * The three cause fields are deliberately absent from the rest. A fundi handed six habits
- * to change changes none of them, so the prompt coaches the worst finding and merely
- * records the others.
+ * Every finding carries its cause and habit (issue #41). They used to be given for the
+ * worst one only, on the theory that six habits to change means none get changed — but
+ * that decided for the maker what to work on. The fix plan still covers one finding at a
+ * time; the cause of every one is theirs to read.
+ *
+ * Older diagnoses have the cause fields on the first finding only, so all three stay
+ * optional and each is drawn only when present.
  */
 @Serializable
 data class Finding(
@@ -71,7 +72,7 @@ data class Finding(
     @SerialName("severity") val severityId: String = "",
     /**
      * Which skill this belongs to, so it can be tracked across months. Matches
-     * [SkillDimension]; blank on the findings that are only recorded.
+     * [SkillDimension]. Blank on older diagnoses, which gave it for the first finding only.
      */
     val dimension: String = "",
     /** The observable fact. What a photograph shows, in plain words. */
@@ -121,7 +122,7 @@ data class Finding(
             ).takeIf { it.isMeaningful }
         }
 
-    /** Whether this is the coached finding rather than one merely recorded. */
+    /** Whether this carries any of the cause chain. Older diagnoses: the first finding only. */
     val isCoached: Boolean
         get() = whatHappened.isNotBlank() ||
             manufacturingCause.isNotBlank() ||

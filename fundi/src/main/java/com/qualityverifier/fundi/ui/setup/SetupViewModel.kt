@@ -10,6 +10,7 @@ import com.qualityverifier.data.fundi.ProfileOutcome
 import com.qualityverifier.di.AppContainer
 import com.qualityverifier.domain.FundiGoal
 import com.qualityverifier.domain.FundiProfile
+import com.qualityverifier.domain.LocationFix
 import com.qualityverifier.domain.OwnedTool
 import com.qualityverifier.domain.ToolKind
 import com.qualityverifier.domain.ToolOwnership
@@ -27,7 +28,72 @@ import kotlinx.coroutines.launch
  * it holds. Three separate saves would write three partial profiles and record a tool
  * history of the maker apparently acquiring their own tools one screen at a time.
  */
-class SetupViewModel(private val profiles: FundiProfiles) : ViewModel() {
+class SetupViewModel(
+    private val profiles: FundiProfiles,
+    /** One GPS fix, now — `LocationCapture.captureNow`. Null when none arrived. */
+    private val locate: suspend () -> LocationFix? = { null },
+) : ViewModel() {
+
+    /**
+     * The shop's GPS point: two questions, then a fix.
+     *
+     * "Are you at your shop?" comes first because a point taken anywhere else is a point
+     * in the wrong place, recorded as accurate. Only a yes leads to the second question,
+     * whether we may record it — its own consent, separate from anything else in setup.
+     */
+    data class ShopLocation(
+        val atShop: Boolean? = null,
+        val consent: Boolean? = null,
+        val locating: Boolean = false,
+        val fix: LocationFix? = null,
+        val problem: Problem? = null,
+    ) {
+        enum class Problem { NO_PERMISSION, NO_FIX }
+    }
+
+    private val _shop = MutableStateFlow(ShopLocation())
+    val shop: StateFlow<ShopLocation> = _shop.asStateFlow()
+
+    /** Whether the fix in [shop] has reached the server, so a retried save does not send it twice. */
+    private var shopFixSent = false
+
+    fun answerAtShop(atShop: Boolean) {
+        // A no forgets any point already taken: it was taken on the understanding they
+        // were at the shop.
+        _shop.value = if (atShop) _shop.value.copy(atShop = true) else ShopLocation(atShop = false)
+    }
+
+    fun answerConsent(consent: Boolean) {
+        _shop.value = if (consent) {
+            _shop.value.copy(consent = true, problem = null)
+        } else {
+            ShopLocation(atShop = _shop.value.atShop, consent = false)
+        }
+    }
+
+    /** Called once Android has answered the permission prompt. */
+    fun onPermission(granted: Boolean) {
+        if (!granted) {
+            _shop.value = _shop.value.copy(problem = ShopLocation.Problem.NO_PERMISSION)
+            return
+        }
+        locateShop()
+    }
+
+    fun locateShop() {
+        val current = _shop.value
+        if (current.locating || current.atShop != true || current.consent != true) return
+        _shop.value = current.copy(locating = true, problem = null)
+        viewModelScope.launch {
+            val fix = runCatching { locate() }.getOrNull()?.takeIf { it.isUsable }
+            shopFixSent = false
+            _shop.value = _shop.value.copy(
+                locating = false,
+                fix = fix,
+                problem = if (fix == null) ShopLocation.Problem.NO_FIX else null,
+            )
+        }
+    }
 
     private val _workshop = MutableStateFlow(Workshop())
     val workshop: StateFlow<Workshop> = _workshop.asStateFlow()
@@ -102,7 +168,16 @@ class SetupViewModel(private val profiles: FundiProfiles) : ViewModel() {
                     tools = _tools.value.map { (kind, ownership) -> OwnedTool(kind, ownership) },
                     goals = _goals.value,
                 )
-                if (profiles.save(profile)) _saved.value = true else _failed.value = true
+                val profileSaved = profiles.save(profile)
+                // Only with both answers still yes: a fix kept after a later "no" would be
+                // recorded against the maker's wishes.
+                val fix = _shop.value.fix?.takeIf { _shop.value.atShop == true && _shop.value.consent == true }
+                val locationSaved = when {
+                    !profileSaved -> false
+                    fix == null || shopFixSent -> true
+                    else -> profiles.saveWorkshopLocation(fix).also { shopFixSent = it }
+                }
+                if (profileSaved && locationSaved) _saved.value = true else _failed.value = true
             } finally {
                 _busy.value = false
             }
@@ -111,7 +186,9 @@ class SetupViewModel(private val profiles: FundiProfiles) : ViewModel() {
 
     companion object {
         fun factory(container: AppContainer): ViewModelProvider.Factory = viewModelFactory {
-            initializer { SetupViewModel(container.fundiProfiles) }
+            initializer {
+                SetupViewModel(container.fundiProfiles, container.locationCapture::captureNow)
+            }
         }
     }
 }

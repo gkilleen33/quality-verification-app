@@ -55,6 +55,24 @@ class FundiContextMessageTest {
         )
     }
 
+    @Test
+    fun `a tool they do not know is its own list, and not available`() {
+        val profile = FundiProfile(
+            tools = listOf(
+                OwnedTool(ToolKind.CHISELS, ToolOwnership.OWNED),
+                OwnedTool(ToolKind.CLAMPS, ToolOwnership.NONE),
+                OwnedTool(ToolKind.MARKING_GAUGE, ToolOwnership.UNKNOWN),
+            ),
+        )
+
+        assertEquals(
+            "Tools I have: chisels.\nTools I do not have: clamps.\n" +
+                "Tools I do not know: marking gauge.\n" + language,
+            message(profile),
+        )
+        assertTrue(profile.available.none { it.kind == ToolKind.MARKING_GAUGE })
+    }
+
     // A tool nobody asked about is a different thing from a tool they said they lack, and
     // the message must not blur them: an unasked tool appears in neither list.
     @Test
