@@ -6,6 +6,8 @@ import com.qualityverifier.domain.ItemType
 import com.qualityverifier.server.blobs.BlobStore
 import com.qualityverifier.server.chat.ClaudeClient
 import com.qualityverifier.server.chat.ClaudeResult
+import com.qualityverifier.server.chat.Compaction
+import com.qualityverifier.server.chat.Compactor
 import com.qualityverifier.server.chat.UpstreamError
 import com.qualityverifier.server.db.AuthStore
 import com.qualityverifier.server.db.ChatStore
@@ -61,6 +63,8 @@ fun Route.chatRoutes(
     testerDailyAssessmentLimit: Int,
     /** The higher allowance for a maker assessing their own work. */
     fundiDailyAssessmentLimit: Int,
+    /** Writes each assessment's notes once it has been given. See [Compactor]. */
+    compactor: Compactor = Compactor(store, claude, prompts, blobs),
 ) {
     authenticate("jwt") {
 
@@ -107,7 +111,7 @@ fun Route.chatRoutes(
         // Kagua. Hard-coded to the buying prompt; there is no branch here to get wrong.
         post("/v1/chat") {
             assessmentTurn(
-                Audience.BUYER, store, auth, blobs, claude, prompts,
+                Audience.BUYER, store, auth, blobs, claude, prompts, compactor,
                 dailyAssessmentLimit, testerDailyAssessmentLimit,
             )
         }
@@ -116,7 +120,7 @@ fun Route.chatRoutes(
         // prompt, and an endpoint Kagua's app does not know exists.
         post("/v1/fundi/chat") {
             assessmentTurn(
-                Audience.FUNDI, store, auth, blobs, claude, prompts,
+                Audience.FUNDI, store, auth, blobs, claude, prompts, compactor,
                 fundiDailyAssessmentLimit, testerDailyAssessmentLimit,
             )
         }
@@ -137,6 +141,7 @@ private suspend fun RoutingContext.assessmentTurn(
     blobs: BlobStore,
     claude: ClaudeClient,
     prompts: PromptRepository,
+    compactor: Compactor,
     /**
      * The allowance for *this* audience, already chosen by the endpoint above.
      *
@@ -257,12 +262,17 @@ private suspend fun RoutingContext.assessmentTurn(
                 }
             }
 
+            // Notes still being written for the last reply are worth waiting for: they are
+            // what makes this turn short. Usually already done — they start the moment the
+            // verdict is stored, and somebody has to read it before they can ask about it.
+            compactor.awaitPending(request.sessionId)
             val history = store.history(request.sessionId) { sha -> blobs.pathFor(sha).absolutePath }
+            val view = Compaction.forModel(history, store.digests(request.sessionId))
 
             val startedAt = System.currentTimeMillis()
-            val result = claude.send(systemPrompt, history) { attachment ->
+            val result = claude.send(systemPrompt, view.messages, { attachment ->
                 blobs.read(java.io.File(attachment.path).nameWithoutExtension)
-            }
+            }, view.photos)
             val elapsed = System.currentTimeMillis() - startedAt
 
             when (result) {
@@ -286,6 +296,11 @@ private suspend fun RoutingContext.assessmentTurn(
                         userId, request.sessionId, result.model, result.usage,
                         httpStatus = 200, latencyMillis = elapsed, errorKind = null,
                     )
+                    // After the reply is stored and before it is returned, so the notes are
+                    // already being written while the phone is still drawing the verdict.
+                    if (Compaction.worthCompacting(parsed.verdict != null, parsed.diagnosis != null, history)) {
+                        compactor.schedule(userId, request.sessionId, systemPrompt, messageId)
+                    }
                     call.respond(ChatResponse(messageId, result.text))
                 }
 

@@ -454,6 +454,37 @@ class ChatRouteTest {
     }
 
     @Test
+    fun `a verdict starts the notes, and the next turn carries them instead of the photos`() = testApplication {
+        val store = FakeChatStore(
+            storedHistory = listOf(
+                ChatMessage("u1", Role.USER, "I am buying this.", listOf(Attachment("p1", "/blobs/abc.jpg"))),
+                // The id the fake hands back for the stored reply, so the notes cover it.
+                ChatMessage("assistant-1", Role.ASSISTANT, "```qv-verdict\n{}\n```"),
+                ChatMessage("u2", Role.USER, "Will it get worse?"),
+            ),
+        )
+        val reply = "```qv-verdict\n{\"verdict\":\"fair\",\"headline\":\"Sound\",\"defects\":[]}\n```"
+        val claude = FakeClaude(ClaudeResult.Success(reply, TokenUsage(), null))
+        val app = withChat(store, claude)
+
+        app.post("/v1/chat") { auth(); contentType(ContentType.Application.Json); setBody(request()) }
+
+        // Written in the background, after the reply went back.
+        val deadline = System.currentTimeMillis() + 5_000
+        while (store.savedDigests.isEmpty() && System.currentTimeMillis() < deadline) Thread.sleep(20)
+        val digest = store.savedDigests.single()
+        assertEquals("assistant-1", digest.messageId)
+        assertEquals(1, digest.photoCount)
+        assertEquals("billed as a digest, not as a customer's turn", 1, store.digestUsageRows)
+        assertTrue("the request for notes lists the photos", claude.lastHistoryText.contains("- Photo 1:"))
+
+        app.post("/v1/chat") { auth(); contentType(ContentType.Application.Json); setBody(request()) }
+
+        assertTrue(claude.lastHistoryText.startsWith(com.qualityverifier.server.chat.Compaction.NOTES_HEADER))
+        assertTrue("the photographs are offered as a tool", claude.lastPhotos?.size == 1)
+    }
+
+    @Test
     fun `a cut-off answer is not stored and says so`() = testApplication {
         // The bug this exists for: a reply that hit max_tokens looked like a success, its
         // fenced block never closed, the block was dropped as unparseable, and the
@@ -835,6 +866,7 @@ class ChatRouteTest {
             askedAudience = audience
             return "PROMPT FOR ${itemType.id}"
         }
+        override suspend fun compactionPrompt() = "WRITE YOUR NOTES"
         override suspend fun clearCache() = Unit
     }
 
@@ -842,6 +874,9 @@ class ChatRouteTest {
         var calls = 0
             private set
         var lastSystemPrompt: String? = null
+            private set
+
+        var lastPhotos: com.qualityverifier.server.chat.PhotoShelf? = null
             private set
 
         /** Everything the model was told, flattened, so a test can assert an absence. */
@@ -852,10 +887,12 @@ class ChatRouteTest {
             systemPrompt: String,
             history: List<ChatMessage>,
             imageBytes: (Attachment) -> ByteArray?,
+            photos: com.qualityverifier.server.chat.PhotoShelf?,
         ): ClaudeResult {
             calls++
             lastSystemPrompt = systemPrompt
             lastHistoryText = history.joinToString("\n") { it.text }
+            lastPhotos = photos
             return result
         }
     }
@@ -864,7 +901,11 @@ class ChatRouteTest {
         private val access: SessionAccess = SessionAccess.Ok(created = true),
         private val turnAlreadyStored: Boolean = false,
         private val storedReply: StoredReply? = null,
+        private val storedHistory: List<ChatMessage> = listOf(ChatMessage("m", Role.USER, "I am buying this.")),
     ) : ChatStore {
+        val savedDigests = java.util.concurrent.CopyOnWriteArrayList<com.qualityverifier.server.db.Digest>()
+        var digestUsageRows = 0
+            private set
         /** What the route passed to ensureSession. Fixed by the endpoint, not resolved. */
         var storedAudience: Audience? = null
             private set
@@ -927,8 +968,7 @@ class ChatRouteTest {
 
         override suspend fun replyAfter(sessionId: String, userMessageId: String) = storedReply
 
-        override suspend fun history(sessionId: String, blobPath: (String) -> String) =
-            listOf(ChatMessage("m", Role.USER, "I am buying this."))
+        override suspend fun history(sessionId: String, blobPath: (String) -> String) = storedHistory
 
         override suspend fun appendAssistantTurn(
             sessionId: String, text: String, preview: String,
@@ -944,10 +984,15 @@ class ChatRouteTest {
 
         override suspend fun recordUsage(
             userId: String, sessionId: String?, model: String?, usage: TokenUsage?,
-            httpStatus: Int?, latencyMillis: Long, errorKind: String?,
+            httpStatus: Int?, latencyMillis: Long, errorKind: String?, callKind: String,
         ) {
-            usageRows++
+            if (callKind == "digest") digestUsageRows++ else usageRows++
         }
+
+        override suspend fun saveDigest(sessionId: String, digest: com.qualityverifier.server.db.Digest) {
+            savedDigests += digest
+        }
+        override suspend fun digests(sessionId: String) = savedDigests.reversed()
 
         override suspend fun sessionsFor(userId: String) = emptyList<com.qualityverifier.server.db.SessionRow>()
         override suspend fun sessionDetail(userId: String, sessionId: String) = null

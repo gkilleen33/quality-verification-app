@@ -24,6 +24,13 @@ interface PromptRepository {
         audience: Audience = Audience.BUYER,
     ): String
 
+    /**
+     * The instruction for writing an assessment's notes once it has been given — see
+     * `prompts/compact.txt`. One file for both audiences: what to keep from a
+     * conversation does not depend on who was in it.
+     */
+    suspend fun compactionPrompt(): String
+
     /** Drop cached copies so the next read re-fetches. */
     suspend fun clearCache()
 }

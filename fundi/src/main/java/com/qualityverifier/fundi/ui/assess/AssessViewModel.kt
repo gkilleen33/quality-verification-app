@@ -27,6 +27,7 @@ import com.qualityverifier.text.ReportLabels
 import com.qualityverifier.text.buildFundiOpeningMessage
 import com.qualityverifier.text.buildSubmissionText
 import com.qualityverifier.text.parseAssistantContent
+import com.qualityverifier.text.previousRecord
 import com.qualityverifier.text.priorIssues
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
@@ -103,6 +104,9 @@ class AssessViewModel(
     val purpose: StateFlow<FundiPurpose?> = _purpose.asStateFlow()
 
     /** Findings from this piece's earlier assessments, offered when checking a fix. */
+    /** What the last assessment of this piece found, for the opening turn. See [previousRecord]. */
+    private var lastRecord: String? = null
+
     private val _priorIssues = MutableStateFlow<List<PriorIssue>>(emptyList())
     val priorIssues: StateFlow<List<PriorIssue>> = _priorIssues.asStateFlow()
 
@@ -140,13 +144,16 @@ class AssessViewModel(
             val earlier = sessions.observeSummaries().first()
                 .filter { it.piece == pieceId && it.id != sessionId }
                 .sortedByDescending { it.updatedAt }
-            val turns = earlier.flatMap { summary ->
+            val turnsBySession = earlier.map { summary ->
                 sessions.messagesOnce(summary.id)
                     .filter { it.role == Role.ASSISTANT }
                     .asReversed()
                     .map { it.text }
             }
-            _priorIssues.value = priorIssues(turns)
+            _priorIssues.value = priorIssues(turnsBySession.flatten())
+            // The most recent assessment that recorded anything, rather than simply the
+            // most recent: a check that was abandoned before its verdict says nothing.
+            lastRecord = turnsBySession.firstNotNullOfOrNull { previousRecord(it, FundiLabels.ENGLISH) }
         }
     }
 
@@ -193,7 +200,7 @@ class AssessViewModel(
                 }
                 sessions.appendUserMessage(
                     sessionId = sessionId,
-                    text = buildFundiOpeningMessage(intake, profile, FundiLabels.ENGLISH),
+                    text = buildFundiOpeningMessage(intake, profile, FundiLabels.ENGLISH, lastRecord),
                     attachments = listOfNotNull(
                         photoPath?.let { Attachment(UUID.randomUUID().toString(), it) },
                     ),

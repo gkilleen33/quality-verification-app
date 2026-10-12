@@ -40,6 +40,7 @@ def read(path):
 
 master = read(PROMPTS / "master.txt")
 fundi_master = read(PROMPTS / "fundi-master.txt")
+compact = read(PROMPTS / "compact.txt")
 
 items = []
 for path in sorted((PROMPTS / "items").glob("*.txt")):
@@ -85,6 +86,15 @@ object DefaultPrompts {{
 {fundi_master}
 """.trimIndent()
 
+    /**
+     * What the model is asked to write once an assessment has been given, so that later
+     * turns can carry its notes instead of every photograph. Followed by the photo list,
+     * which the server writes from the conversation.
+     */
+    val COMPACT: String = """
+{compact}
+""".trimIndent()
+
     /** Keyed by [ItemType.id]. Items with an empty prompt file are simply absent. */
     private val ITEMS: Map<String, String> = mapOf(
 {entries}
@@ -95,5 +105,5 @@ object DefaultPrompts {{
 ''')
 print(
     f"wrote {OUT.relative_to(ROOT)}: master={len(master)} chars, "
-    f"fundi={len(fundi_master)} chars, items={[s for s, _ in items]}"
+    f"fundi={len(fundi_master)} chars, compact={len(compact)} chars, items={[s for s, _ in items]}"
 )

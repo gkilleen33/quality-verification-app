@@ -2,6 +2,7 @@ package com.qualityverifier.domain
 
 import com.qualityverifier.text.FundiLabels
 import com.qualityverifier.text.buildFundiOpeningMessage
+import com.qualityverifier.text.previousRecord
 import com.qualityverifier.text.priorIssues
 import com.qualityverifier.text.decodeIntake
 import org.junit.Assert.assertEquals
@@ -164,5 +165,67 @@ class FundiIntakeTest {
     @Test
     fun `a conversation with no findings offers nothing to pick`() {
         assertTrue(priorIssues(listOf("Just some advice.")).isEmpty())
+    }
+
+    private val lastAssessment = listOf(
+        // Newest first, as the view model hands them over.
+        """
+            Re-checked.
+
+            ```qv-verdict
+            {"verdict":"fair","headline":"Sound but one gap","defects":[
+              {"title":"Gap at the back left joint","severity":"moderate","what_i_see":"A 3mm gap at the top."}],
+             "unverified":["Whether the top is level"]}
+            ```
+        """.trimIndent(),
+        """
+            ```qv-verdict
+            {"verdict":"poor","headline":"Older verdict","defects":[]}
+            ```
+        """.trimIndent(),
+    )
+
+    @Test
+    fun `the record of the last assessment carries its newest verdict`() {
+        val record = previousRecord(lastAssessment, FundiLabels.ENGLISH)!!
+        assertTrue(record.startsWith(FundiLabels.ENGLISH.previousRecordIntro))
+        assertTrue(record.contains("Verdict: fair — Sound but one gap"))
+        assertTrue(record.contains("- Gap at the back left joint (moderate): A 3mm gap at the top."))
+        assertTrue(record.contains("Could not be checked: Whether the top is level"))
+        assertFalse("a later verdict corrects an earlier one", record.contains("Older verdict"))
+    }
+
+    @Test
+    fun `the record carries every cause in a diagnosis`() {
+        val turn = """
+            ```fb-diagnosis
+            {"findings":[
+              {"title":"Gap","severity":"moderate","what_happened":"A gap.","manufacturing_cause":"Cut at an angle.","root_habit":"Marked on one face only."},
+              {"title":"Saw marks","severity":"cosmetic","what_happened":"Two marks.","manufacturing_cause":"Not planed after sawing."}]}
+            ```
+        """.trimIndent()
+        val record = previousRecord(listOf(turn), FundiLabels.ENGLISH)!!
+        assertTrue(record.contains("- Gap (moderate): A gap. Cause: Cut at an angle. Habit: Marked on one face only."))
+        assertTrue(record.contains("- Saw marks (cosmetic): Two marks. Cause: Not planed after sawing."))
+    }
+
+    @Test
+    fun `an assessment that recorded nothing has no record`() {
+        assertNull(previousRecord(listOf("Just a plan, no verdict yet."), FundiLabels.ENGLISH))
+    }
+
+    @Test
+    fun `only a returning piece is sent the record`() {
+        val record = previousRecord(lastAssessment, FundiLabels.ENGLISH)
+        val again = buildFundiOpeningMessage(
+            FundiIntake(AssessmentLanguage.ENGLISH, FundiPurpose.REEVALUATE),
+            FundiProfile(), FundiLabels.ENGLISH, record,
+        )
+        assertTrue(again.contains("Sound but one gap"))
+        val fresh = buildFundiOpeningMessage(
+            FundiIntake(AssessmentLanguage.ENGLISH, FundiPurpose.EVALUATE),
+            FundiProfile(), FundiLabels.ENGLISH, record,
+        )
+        assertFalse(fresh.contains("Sound but one gap"))
     }
 }

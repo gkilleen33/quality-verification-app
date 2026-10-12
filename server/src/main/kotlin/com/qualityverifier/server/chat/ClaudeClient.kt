@@ -1,7 +1,10 @@
 package com.qualityverifier.server.chat
 
 import com.qualityverifier.data.chat.AnthropicRequest
+import com.qualityverifier.data.chat.dto.ApiMessage
+import com.qualityverifier.data.chat.dto.ContentBlock
 import com.qualityverifier.data.chat.dto.ErrorEnvelope
+import com.qualityverifier.data.chat.dto.ImageSource
 import com.qualityverifier.data.chat.dto.MessagesResponse
 import com.qualityverifier.domain.Attachment
 import com.qualityverifier.domain.ChatMessage
@@ -22,7 +25,15 @@ data class TokenUsage(
     val outputTokens: Int = 0,
     val cacheCreationTokens: Int = 0,
     val cacheReadTokens: Int = 0,
-)
+) {
+    /** A turn that looked at photographs is several requests, billed as their sum. */
+    operator fun plus(other: TokenUsage) = TokenUsage(
+        inputTokens + other.inputTokens,
+        outputTokens + other.outputTokens,
+        cacheCreationTokens + other.cacheCreationTokens,
+        cacheReadTokens + other.cacheReadTokens,
+    )
+}
 
 enum class UpstreamError {
     /** Our key was rejected. Nothing the customer can do; page somebody. */
@@ -66,10 +77,15 @@ sealed interface ClaudeResult {
  * AppContainer on the phone.
  */
 interface ClaudeClient {
+    /**
+     * @param photos offered to a compacted conversation, whose photographs are no longer
+     *   in [history], so the model can look at them again. Null offers no tool at all.
+     */
     suspend fun send(
         systemPrompt: String,
         history: List<ChatMessage>,
         imageBytes: (Attachment) -> ByteArray?,
+        photos: PhotoShelf? = null,
     ): ClaudeResult
 }
 
@@ -86,6 +102,7 @@ class AnthropicClient(
         systemPrompt: String,
         history: List<ChatMessage>,
         imageBytes: (Attachment) -> ByteArray?,
+        photos: PhotoShelf?,
     ): ClaudeResult = withContext(Dispatchers.IO) {
         val key = apiKey()
         if (key.isNullOrBlank()) {
@@ -94,30 +111,125 @@ class AnthropicClient(
             log.error("No Anthropic API key available; check /kagua/anthropic/api-key")
             return@withContext ClaudeResult.Failure(UpstreamError.AUTH, "No API key configured")
         }
+        val encode: (ByteArray) -> String = { Base64.getEncoder().encodeToString(it) }
 
-        val payload = AnthropicRequest.build(
-            systemPrompt = systemPrompt,
-            history = history,
-            imageBytes = imageBytes,
-            encodeBase64 = { Base64.getEncoder().encodeToString(it) },
-        )
-        val body = AnthropicRequest.json.encodeToString(payload)
-
-        var attempt = 0
+        // One request, unless the model asks to look at photographs, in which case the
+        // lookup and its answer are appended and the request goes again. Never stored:
+        // the turn that is kept is the final answer, so the next turn does not carry the
+        // photographs this one looked at.
+        var trailing = emptyList<ApiMessage>()
+        var usage = TokenUsage()
+        var lookups = 0
         while (true) {
-            val result = attemptSend(key, body)
-            val retryable = result is ClaudeResult.Failure && when (result.error) {
-                UpstreamError.RATE_LIMIT, UpstreamError.OVERLOADED, UpstreamError.SERVER -> true
-                else -> false
+            val payload = AnthropicRequest.build(
+                systemPrompt = systemPrompt,
+                history = history,
+                imageBytes = imageBytes,
+                encodeBase64 = encode,
+                tools = photos?.let { listOf(PhotoShelf.TOOL) },
+                trailing = trailing,
+            )
+            val step = sendWithRetry(key, AnthropicRequest.json.encodeToString(payload))
+            val response = when (step) {
+                is Step.Failed -> return@withContext step.failure.withUsage(usage)
+                is Step.Replied -> step
             }
-            if (!retryable || attempt >= MAX_RETRIES) return@withContext result
-            attempt++
-            delay(RETRY_DELAY_MILLIS * attempt)
+            usage += response.usage
+            val toolCalls = response.decoded.content.filter { it.type == TOOL_USE }
+            if (photos == null || response.decoded.stopReason != STOP_TOOL_USE || toolCalls.isEmpty()) {
+                return@withContext finish(response.decoded, usage)
+            }
+            // It was told there are no more and asked anyway. Whatever text it wrote is
+            // the answer; with none, the turn fails rather than looping on our bill.
+            if (lookups > MAX_LOOKUPS) return@withContext finish(response.decoded, usage)
+
+            lookups++
+            log.info("Model asked to look again at photos ({} of {} lookups)", lookups, MAX_LOOKUPS)
+            trailing = trailing + listOf(
+                ApiMessage(AnthropicRequest.ROLE_ASSISTANT, response.decoded.content.toBlocks()),
+                ApiMessage(
+                    AnthropicRequest.ROLE_USER,
+                    toolCalls.map { call -> answer(call, photos, lookups, imageBytes, encode) },
+                ),
+            )
         }
         @Suppress("UNREACHABLE_CODE") error("unreachable")
     }
 
-    private fun attemptSend(key: String, body: String): ClaudeResult {
+    private sealed interface Step {
+        data class Replied(val decoded: MessagesResponse, val usage: TokenUsage) : Step
+        data class Failed(val failure: ClaudeResult.Failure) : Step
+    }
+
+    private suspend fun sendWithRetry(key: String, body: String): Step {
+        var attempt = 0
+        while (true) {
+            val step = attemptSend(key, body)
+            val retryable = step is Step.Failed && when (step.failure.error) {
+                UpstreamError.RATE_LIMIT, UpstreamError.OVERLOADED, UpstreamError.SERVER -> true
+                else -> false
+            }
+            if (!retryable || attempt >= MAX_RETRIES) return step
+            attempt++
+            delay(RETRY_DELAY_MILLIS * attempt)
+        }
+    }
+
+    /** The assistant's turn, replayed exactly: tool_use ids must match their results. */
+    private fun List<com.qualityverifier.data.chat.dto.ResponseBlock>.toBlocks(): List<ContentBlock> =
+        mapNotNull { block ->
+            when (block.type) {
+                "text" -> block.text?.takeIf { it.isNotBlank() }?.let { ContentBlock.Text(it) }
+                TOOL_USE -> ContentBlock.ToolUse(
+                    id = block.id.orEmpty(),
+                    name = block.name.orEmpty(),
+                    input = block.input ?: kotlinx.serialization.json.JsonObject(emptyMap()),
+                )
+                else -> null
+            }
+        }
+
+    private fun answer(
+        call: com.qualityverifier.data.chat.dto.ResponseBlock,
+        photos: PhotoShelf,
+        lookups: Int,
+        imageBytes: (Attachment) -> ByteArray?,
+        encode: (ByteArray) -> String,
+    ): ContentBlock.ToolResult {
+        val id = call.id.orEmpty()
+        // Past the limit, told so rather than refused at the API: the conversation stays
+        // well-formed and the model answers from what it has already seen.
+        if (lookups > MAX_LOOKUPS) {
+            return ContentBlock.ToolResult(
+                id, listOf(ContentBlock.Text("No more photos this turn. Answer from what you have.")),
+                isError = true,
+            )
+        }
+        if (call.name != PhotoShelf.TOOL_NAME) {
+            return ContentBlock.ToolResult(
+                id, listOf(ContentBlock.Text("There is no tool called ${call.name}.")), isError = true,
+            )
+        }
+        val lookup = photos.resolve(call.input ?: kotlinx.serialization.json.JsonObject(emptyMap()))
+        val blocks = buildList {
+            lookup.found.forEach { (number, attachment) ->
+                val bytes = imageBytes(attachment) ?: run {
+                    add(ContentBlock.Text("Photo $number could not be read."))
+                    return@forEach
+                }
+                add(ContentBlock.Text("Photo $number"))
+                add(ContentBlock.Image(ImageSource(mediaType = attachment.mimeType, data = encode(bytes))))
+            }
+            lookup.problem?.let { add(ContentBlock.Text(it)) }
+        }
+        return ContentBlock.ToolResult(
+            id,
+            blocks.ifEmpty { listOf(ContentBlock.Text("Nothing to show.")) },
+            isError = if (lookup.found.isEmpty()) true else null,
+        )
+    }
+
+    private fun attemptSend(key: String, body: String): Step {
         val request = Request.Builder()
             .url(baseUrl)
             .addHeader("x-api-key", key)
@@ -128,19 +240,19 @@ class AnthropicClient(
         return try {
             client.newCall(request).execute().use { response ->
                 val text = response.body?.string().orEmpty()
-                if (response.isSuccessful) parseSuccess(text) else failureFor(response.code, text)
+                if (response.isSuccessful) decode(text) else Step.Failed(failureFor(response.code, text))
             }
         } catch (e: IOException) {
             log.warn("Upstream request failed", e)
-            ClaudeResult.Failure(UpstreamError.NETWORK, "Could not reach the assistant")
+            Step.Failed(ClaudeResult.Failure(UpstreamError.NETWORK, "Could not reach the assistant"))
         }
     }
 
-    private fun parseSuccess(body: String): ClaudeResult {
+    private fun decode(body: String): Step {
         val decoded = runCatching { AnthropicRequest.json.decodeFromString<MessagesResponse>(body) }
             .getOrElse { e ->
                 log.error("Could not decode a 200 response", e)
-                return ClaudeResult.Failure(UpstreamError.UNKNOWN, "Unreadable response")
+                return Step.Failed(ClaudeResult.Failure(UpstreamError.UNKNOWN, "Unreadable response"))
             }
 
         val usage = decoded.usage?.let {
@@ -158,7 +270,10 @@ class AnthropicClient(
             usage.inputTokens, usage.cacheCreationTokens,
             usage.cacheReadTokens, usage.outputTokens, decoded.stopReason,
         )
+        return Step.Replied(decoded, usage)
+    }
 
+    private fun finish(decoded: MessagesResponse, usage: TokenUsage): ClaudeResult {
         val text = decoded.content.filter { it.type == "text" }
             .mapNotNull { it.text }
             .joinToString("\n")
@@ -188,7 +303,7 @@ class AnthropicClient(
         return ClaudeResult.Success(text, usage, decoded.model)
     }
 
-    private fun failureFor(status: Int, body: String): ClaudeResult {
+    private fun failureFor(status: Int, body: String): ClaudeResult.Failure {
         val apiMessage = runCatching {
             AnthropicRequest.json.decodeFromString<ErrorEnvelope>(body).error?.message
         }.getOrNull()
@@ -214,9 +329,17 @@ class AnthropicClient(
     private companion object {
         /** The API's own word for "I ran out of room". */
         const val STOP_MAX_TOKENS = "max_tokens"
+        const val STOP_TOOL_USE = "tool_use"
+        const val TOOL_USE = "tool_use"
+
+        /** Two looks per turn is a closer look; more would be re-reading the assessment. */
+        const val MAX_LOOKUPS = 2
 
         val JSON = "application/json; charset=utf-8".toMediaType()
         const val MAX_RETRIES = 1
         const val RETRY_DELAY_MILLIS = 1500L
     }
 }
+
+private fun ClaudeResult.Failure.withUsage(earlier: TokenUsage): ClaudeResult.Failure =
+    if (earlier == TokenUsage()) this else copy(usage = (usage ?: TokenUsage()) + earlier)

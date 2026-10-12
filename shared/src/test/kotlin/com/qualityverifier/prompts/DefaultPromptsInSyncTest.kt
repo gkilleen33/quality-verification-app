@@ -52,6 +52,24 @@ class DefaultPromptsInSyncTest {
     }
 
     @Test
+    fun `compiled-in compaction prompt matches its prompt file`() {
+        val onDisk = promptFile("compact.txt").readText().trimEnd('\n')
+        assertEquals("DefaultPrompts.COMPACT is stale - regenerate it", onDisk, DefaultPrompts.COMPACT)
+    }
+
+    @Test
+    fun `both masters keep a follow-up short and know how to look again`() {
+        // Follow-ups were slow because nearly every one re-issued the whole verdict.
+        for (master in listOf(DefaultPrompts.MASTER, DefaultPrompts.FUNDI_MASTER)) {
+            assertTrue(master.contains("One to three sentences is the usual answer"))
+            assertTrue(master.contains("only when the answer changes it"))
+            assertTrue(master.contains("view_photos"))
+        }
+        // The tool name the server offers is the one the prompts use.
+        assertTrue(DefaultPrompts.COMPACT.contains("view_photos"))
+    }
+
+    @Test
     fun `the fundi master defines every block the app parses`() {
         // Renaming a fence tag in the prompt without renaming it in AssistantBlocks
         // silently stops the cards from ever appearing, with no error anywhere.

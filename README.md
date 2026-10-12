@@ -610,6 +610,24 @@ All six clear the minimum with room to spare, the table prompt by 3×. Shortenin
 `master.txt` by more than about two thirds would start to put the smaller item types at risk
 of silently not caching.
 
+### After the verdict: notes instead of photographs
+
+Every turn used to re-send the whole conversation, so a question asked after the verdict
+carried eight or nine photographs it almost never needed. Now, the moment a reply with a
+verdict or a diagnosis is stored, the server asks the model for its own notes on the
+assessment — photo by photo, test by test, and the reasoning behind each finding
+(`prompts/compact.txt`). That request reuses the turn's cached prefix, so it costs a cache
+read plus the notes themselves, and it runs in the background while the customer reads the
+verdict. A question that arrives first waits for it.
+
+From then on a turn carries the notes, the reply they cover (verbatim, so a verdict can be
+corrected from exactly what it said) and anything since. The photographs stay one tool call
+away: the model can call `view_photos` with the numbers its notes use, and the server
+attaches those images to that one request only. Notes live in `conversation_digests` (V19);
+the conversation itself is never changed. Both masters also tell the model to answer a
+follow-up in a few sentences and to re-issue a verdict only when the answer changes it —
+re-writing the whole verdict was most of what made follow-ups slow.
+
 ## Images
 
 Photos are stored as files under `filesDir/images/<sessionId>/`, not as database blobs.

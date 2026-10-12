@@ -30,6 +30,9 @@ sealed interface SessionAccess {
 /** A turn already dealt with, so a retry returns the stored reply instead of paying twice. */
 data class StoredReply(val messageId: String, val text: String)
 
+/** An assessment's notes, covering the conversation up to and including [messageId]. */
+data class Digest(val messageId: String, val text: String, val photoCount: Int)
+
 /** A session as the phone needs it back — enough to rebuild the reports list. */
 data class SessionRow(
     val id: String,
@@ -151,7 +154,14 @@ interface ChatStore {
         httpStatus: Int?,
         latencyMillis: Long,
         errorKind: String?,
+        /** "turn" or "digest" — see V19. */
+        callKind: String = "turn",
     )
+
+    suspend fun saveDigest(sessionId: String, digest: Digest)
+
+    /** Every set of notes this session has, newest first. */
+    suspend fun digests(sessionId: String): List<Digest>
 
     /** Everything this user has that they have not deleted. */
     suspend fun sessionsFor(userId: String): List<SessionRow>
@@ -533,14 +543,16 @@ class PostgresChatStore(private val dataSource: DataSource) : ChatStore {
         httpStatus: Int?,
         latencyMillis: Long,
         errorKind: String?,
+        callKind: String,
     ) = withContext(Dispatchers.IO) {
         dataSource.connection.use { connection ->
             connection.prepareStatement(
                 """
                 insert into usage_events (
                     user_id, session_id, model, input_tokens, output_tokens,
-                    cache_read_tokens, cache_creation_tokens, http_status, latency_ms, error_kind
-                ) values (?::uuid, ?::uuid, ?, ?, ?, ?, ?, ?, ?, ?)
+                    cache_read_tokens, cache_creation_tokens, http_status, latency_ms, error_kind,
+                    call_kind
+                ) values (?::uuid, ?::uuid, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """.trimIndent()
             ).use { statement ->
                 statement.setString(1, userId)
@@ -554,9 +566,50 @@ class PostgresChatStore(private val dataSource: DataSource) : ChatStore {
                 else statement.setInt(8, httpStatus)
                 statement.setInt(9, latencyMillis.toInt())
                 statement.setString(10, errorKind)
+                statement.setString(11, callKind)
                 statement.executeUpdate()
             }
             Unit
+        }
+    }
+
+    override suspend fun saveDigest(sessionId: String, digest: Digest) = withContext(Dispatchers.IO) {
+        dataSource.connection.use { connection ->
+            // Idempotent: writing notes twice for the same reply keeps the first. Both
+            // would be readings of the same conversation, and the first may already have
+            // been used by a turn.
+            connection.prepareStatement(
+                """
+                insert into conversation_digests (message_id, session_id, text, photo_count)
+                values (?::uuid, ?::uuid, ?, ?)
+                on conflict (message_id) do nothing
+                """.trimIndent()
+            ).use { statement ->
+                statement.setString(1, digest.messageId)
+                statement.setString(2, sessionId)
+                statement.setString(3, digest.text)
+                statement.setInt(4, digest.photoCount)
+                statement.executeUpdate()
+            }
+            Unit
+        }
+    }
+
+    override suspend fun digests(sessionId: String): List<Digest> = withContext(Dispatchers.IO) {
+        dataSource.connection.use { connection ->
+            connection.prepareStatement(
+                """
+                select message_id::text, text, photo_count from conversation_digests
+                where session_id = ?::uuid order by created_at desc
+                """.trimIndent()
+            ).use { statement ->
+                statement.setString(1, sessionId)
+                statement.executeQuery().use { rows ->
+                    buildList {
+                        while (rows.next()) add(Digest(rows.getString(1), rows.getString(2), rows.getInt(3)))
+                    }
+                }
+            }
         }
     }
 
