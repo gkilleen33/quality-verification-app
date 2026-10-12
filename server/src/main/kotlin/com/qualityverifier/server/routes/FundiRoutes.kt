@@ -62,6 +62,28 @@ fun Route.fundiRoutes(store: FundiStore, auth: AuthStore) {
             )
             call.respond(HttpStatusCode.OK, profile.toDto())
         }
+
+        // The shop's GPS point, sent only when the maker said they were at the shop and
+        // agreed to it being recorded. Its own endpoint because it is its own consent.
+        put("/v1/fundi/workshop-location") {
+            val userId = call.principal<JWTPrincipal>()?.subject
+                ?: return@put call.respond(
+                    HttpStatusCode.Unauthorized, ErrorResponse("invalid_token"),
+                )
+            if (!call.requireFundi(auth, userId)) return@put
+
+            val fix = call.receive<WorkshopLocationDto>()
+            if (!fix.isPlausible) {
+                call.respond(
+                    HttpStatusCode.BadRequest,
+                    ErrorResponse("invalid_location", "latitude, longitude and accuracy_m out of range"),
+                )
+                return@put
+            }
+            store.saveWorkshopLocation(userId, fix.latitude, fix.longitude, fix.accuracyMetres)
+            log.info("Workshop location saved for {} (±{} m)", userId, fix.accuracyMetres.toInt())
+            call.respond(HttpStatusCode.NoContent)
+        }
     }
 }
 

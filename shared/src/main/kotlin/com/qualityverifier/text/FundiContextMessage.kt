@@ -68,6 +68,14 @@ fun buildFundiContextMessage(profile: FundiProfile, labels: FundiLabels): String
             missing.map(labels::nameOf).joinToString(", ") + "."
     }
 
+    // Their own heading, not folded into the tools they lack: a fix that names one of
+    // these has to say what it is.
+    val unfamiliar = profile.unfamiliar.sortedBy { it.ordinal }
+    if (unfamiliar.isNotEmpty()) {
+        lines += labels.contextToolsUnknown + " " +
+            unfamiliar.map(labels::nameOf).joinToString(", ") + "."
+    }
+
     if (profile.goals.isNotEmpty()) {
         val named = profile.goals.sortedBy { it.ordinal }.map(labels::nameOf)
         lines += labels.contextGoal + " " + named.joinToString(", ") + "."

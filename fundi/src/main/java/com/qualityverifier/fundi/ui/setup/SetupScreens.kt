@@ -1,7 +1,13 @@
 package com.qualityverifier.fundi.ui.setup
 
+import android.Manifest
+import android.content.pm.PackageManager
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -9,7 +15,9 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.systemBarsPadding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
@@ -21,7 +29,9 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
@@ -30,6 +40,9 @@ import com.qualityverifier.domain.ToolKind
 import com.qualityverifier.domain.ToolOwnership
 import com.qualityverifier.domain.Workshop
 import com.qualityverifier.text.FundiLabels
+import com.qualityverifier.ui.plan.WorkingText
+import androidx.core.content.ContextCompat
+import kotlin.math.roundToInt
 
 /**
  * The three setup screens, in the order the mockup asks them: workshop, tools, goals.
@@ -47,6 +60,11 @@ fun WorkshopScreen(
     onChange: ((Workshop) -> Workshop) -> Unit,
     onNext: () -> Unit,
     onSkip: () -> Unit,
+    shop: SetupViewModel.ShopLocation = SetupViewModel.ShopLocation(),
+    onAtShop: (Boolean) -> Unit = {},
+    onConsent: (Boolean) -> Unit = {},
+    onLocate: () -> Unit = {},
+    onPermission: (Boolean) -> Unit = {},
 ) = SetupScaffold(
     title = labels.setupWorkshopTitle,
     blurb = labels.setupWorkshopBlurb,
@@ -87,8 +105,110 @@ fun WorkshopScreen(
     CountField(labels.setupPiecesPerMonth, workshop.piecesPerMonth) { v ->
         onChange { it.copy(piecesPerMonth = v) }
     }
+    ShopLocationSection(labels, shop, onAtShop, onConsent, onLocate, onPermission)
 }
 
+/**
+ * Where the shop is: "are you there?", then "may we record it?", then one fix.
+ *
+ * Asked in that order and never the other way round. A point taken while the maker is at
+ * home would be stored as their shop, with an accuracy figure that makes it look right.
+ * And the permission prompt only appears after they have said yes on our screen, so
+ * Android's dialog is never the first they hear of it.
+ */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun ShopLocationSection(
+    labels: FundiLabels,
+    shop: SetupViewModel.ShopLocation,
+    onAtShop: (Boolean) -> Unit,
+    onConsent: (Boolean) -> Unit,
+    onLocate: () -> Unit,
+    onPermission: (Boolean) -> Unit,
+) {
+    val context = LocalContext.current
+    val request = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions(),
+    ) { results -> onPermission(results.values.any { it }) }
+
+    fun startLocating() {
+        val granted = listOf(
+            Manifest.permission.ACCESS_FINE_LOCATION,
+            Manifest.permission.ACCESS_COARSE_LOCATION,
+        ).any { ContextCompat.checkSelfPermission(context, it) == PackageManager.PERMISSION_GRANTED }
+        if (granted) {
+            onLocate()
+        } else {
+            request.launch(
+                arrayOf(
+                    Manifest.permission.ACCESS_FINE_LOCATION,
+                    Manifest.permission.ACCESS_COARSE_LOCATION,
+                ),
+            )
+        }
+    }
+
+    Spacer(Modifier.height(8.dp))
+    Text(labels.setupAtShopQuestion, style = MaterialTheme.typography.titleSmall)
+    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        FilterChip(
+            selected = shop.atShop == true,
+            onClick = { onAtShop(true) },
+            label = { Text(labels.setupAtShopYes) },
+        )
+        FilterChip(
+            selected = shop.atShop == false,
+            onClick = { onAtShop(false) },
+            label = { Text(labels.setupAtShopNo) },
+        )
+    }
+    if (shop.atShop != true) return
+
+    Text(labels.setupGpsQuestion, style = MaterialTheme.typography.bodyMedium)
+    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        FilterChip(
+            selected = shop.consent == true,
+            onClick = {
+                onConsent(true)
+                startLocating()
+            },
+            label = { Text(labels.setupGpsYes) },
+        )
+        FilterChip(
+            selected = shop.consent == false,
+            onClick = { onConsent(false) },
+            label = { Text(labels.setupGpsNo) },
+        )
+    }
+    if (shop.consent != true) return
+
+    when {
+        shop.locating -> Row(verticalAlignment = Alignment.CenterVertically) {
+            CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
+            Spacer(Modifier.width(10.dp))
+            WorkingText(listOf(labels.setupLocating), style = MaterialTheme.typography.bodyMedium)
+        }
+        shop.fix != null -> Text(
+            labels.setupLocated(shop.fix.accuracyMetres.roundToInt()),
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.primary,
+        )
+        shop.problem != null -> {
+            Text(
+                if (shop.problem == SetupViewModel.ShopLocation.Problem.NO_PERMISSION) {
+                    labels.setupLocateNoPermission
+                } else {
+                    labels.setupLocateFailed
+                },
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.error,
+            )
+            TextButton(onClick = { startLocating() }) { Text(labels.setupLocateRetry) }
+        }
+    }
+}
+
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun ToolsScreen(
     labels: FundiLabels,
@@ -110,7 +230,9 @@ fun ToolsScreen(
     ToolKind.entries.filter { it != ToolKind.OTHER }.forEach { kind ->
         Column(Modifier.fillMaxWidth().padding(top = 4.dp)) {
             Text(labels.nameOf(kind), style = MaterialTheme.typography.bodyLarge)
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            // Wraps: four answers, one of them a whole phrase, do not fit one line on a
+            // small phone.
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 ToolOwnership.entries.forEach { ownership ->
                     FilterChip(
                         // Nothing is selected until they choose. An unanswered tool must

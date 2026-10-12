@@ -39,6 +39,7 @@ data class FundiLabels(
     val contextLanguage: String,
     val contextToolsHave: String,
     val contextToolsNone: String,
+    val contextToolsUnknown: String,
     val contextGoal: String,
     private val worksAtFormat: String,
     private val yearsFormat: String,
@@ -53,6 +54,18 @@ data class FundiLabels(
     val setupWorkshopTitle: String,
     val setupWorkshopBlurb: String,
     val setupWorksAt: String,
+    // ---- the shop's GPS point: at the shop first, then consent, then the fix
+    val setupAtShopQuestion: String,
+    val setupAtShopYes: String,
+    val setupAtShopNo: String,
+    val setupGpsQuestion: String,
+    val setupGpsYes: String,
+    val setupGpsNo: String,
+    val setupLocating: String,
+    private val setupLocatedFormat: String,
+    val setupLocateFailed: String,
+    val setupLocateNoPermission: String,
+    val setupLocateRetry: String,
     val setupYears: String,
     val setupWorkers: String,
     val setupMakes: String,
@@ -76,7 +89,6 @@ data class FundiLabels(
     val whatHappenedHeading: String,
     val whereItWentWrongHeading: String,
     val habitToChangeHeading: String,
-    val alsoFoundHeading: String,
     val oneCheckHeading: String,
     val nothingFound: String,
     val horizonNames: Map<FixHorizon, String>,
@@ -136,6 +148,7 @@ data class FundiLabels(
     fun saysNewIssue(what: String) = saysNewIssueFormat.replace("{what}", what)
     fun saysVerifyFix(what: String) = saysVerifyFixFormat.replace("{what}", what)
     fun sentPhotos(n: Int) = sentPhotosFormat.replace("{n}", n.toString())
+    fun setupLocated(metres: Int) = setupLocatedFormat.replace("{m}", metres.toString())
     fun nameOf(purpose: FundiPurpose): String = purposeNames.getValue(purpose)
 
     fun minutes(n: Int): String = minutesFormat.replace("{n}", n.toString())
@@ -167,6 +180,7 @@ data class FundiLabels(
             // Said out loud rather than left to the absence of a mention. The prompt has to
             // be able to tell "they told us they have none" from "nobody asked".
             contextToolsNone = "Tools I do not have:",
+            contextToolsUnknown = "Tools I do not know:",
             contextGoal = "What I want from this:",
             worksAtFormat = "I work at {place}.",
             yearsFormat = "I have been in the trade {n} years.",
@@ -195,6 +209,21 @@ data class FundiLabels(
             setupWorkshopBlurb = "All of this is optional. It helps the advice fit the " +
                 "work you actually do.",
             setupWorksAt = "Where you work",
+            setupAtShopQuestion = "Are you at your shop right now?",
+            setupAtShopYes = "Yes, I'm at my shop",
+            setupAtShopNo = "No",
+            setupGpsQuestion = "Can we record a GPS point for your shop? It helps us " +
+                "understand where shops work and link you to opportunities near you. " +
+                "We record this one point, now, and nothing else.",
+            setupGpsYes = "Yes, record it",
+            setupGpsNo = "No thanks",
+            setupLocating = "Finding your location",
+            setupLocatedFormat = "Recorded, accurate to about {m} m",
+            setupLocateFailed = "Could not find your location. Try again near a door " +
+                "or window, or carry on without it.",
+            setupLocateNoPermission = "Location access is off for Fundi Bora, so nothing " +
+                "was recorded.",
+            setupLocateRetry = "Try again",
             setupYears = "Years in the trade",
             setupWorkers = "People working with you",
             setupMakes = "What you mostly make",
@@ -212,6 +241,7 @@ data class FundiLabels(
                 ToolOwnership.OWNED to "Have it",
                 ToolOwnership.BORROWED to "Can borrow",
                 ToolOwnership.NONE to "Do not have",
+                ToolOwnership.UNKNOWN to "Don't know what this tool is",
             ),
             setupNext = "Next",
             setupBack = "Back",
@@ -226,7 +256,6 @@ data class FundiLabels(
             // "Habit", never the person. The prompt forbids calling a maker careless,
             // and this heading is where that would otherwise creep back in.
             habitToChangeHeading = "THE HABIT TO CHANGE",
-            alsoFoundHeading = "ALSO FOUND",
             oneCheckHeading = "ONE THING TO CHECK",
             nothingFound = "Nothing to put right on this one.",
             horizonNames = mapOf(

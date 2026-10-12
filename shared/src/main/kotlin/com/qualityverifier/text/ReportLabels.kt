@@ -73,6 +73,15 @@ data class ReportLabels(
     val describeResult: String,
     val sendAnswer: String,
     val inThisInspection: String,
+    /**
+     * What the waiting line cycles through — see `WorkingText`. Activities, never stages:
+     * each has to be true for every moment of the wait it is shown during.
+     */
+    val workingPlan: List<String>,
+    /** While the photos and test answers from a plan are being assessed. */
+    val workingInspect: List<String>,
+    /** While a follow-up is being answered. */
+    val workingReply: List<String>,
     // The local intake, before anything is sent.
     val intakeUpholsteryQuestion: String,
     val intakeUpholsteryYes: String,
@@ -283,6 +292,28 @@ data class ReportLabels(
             describeResult = "Say what you found",
             sendAnswer = "Send",
             inThisInspection = "In this inspection",
+            workingPlan = listOf(
+                "Reading your answers",
+                "Analysing your furniture",
+                "Working out what to check",
+                "Forming a plan",
+                "Double-checking",
+            ),
+            workingInspect = listOf(
+                "Checking the images",
+                "Analysing your furniture",
+                "Looking closely at the details",
+                "Weighing what it sees",
+                "Double-checking",
+                "Writing it up",
+            ),
+            workingReply = listOf(
+                "Reading your message",
+                "Thinking it through",
+                "Checking the details",
+                "Double-checking",
+                "Writing a reply",
+            ),
             intakeUpholsteryQuestion = "Does this chair have cushioning, or is it bare wood?",
             intakeUpholsteryYes = "It has cushioning or fabric",
             intakeUpholsteryNo = "Bare wood, no padding",
@@ -395,6 +426,28 @@ data class ReportLabels(
             describeResult = "Eleza ulichoona",
             sendAnswer = "Tuma",
             inThisInspection = "Katika ukaguzi huu",
+            workingPlan = listOf(
+                "Inasoma majibu yako",
+                "Inachambua samani yako",
+                "Inapanga cha kukagua",
+                "Inaunda mpango",
+                "Inahakiki tena",
+            ),
+            workingInspect = listOf(
+                "Inaangalia picha",
+                "Inachambua samani yako",
+                "Inaangalia maelezo kwa makini",
+                "Inapima inachokiona",
+                "Inahakiki tena",
+                "Inaandika matokeo",
+            ),
+            workingReply = listOf(
+                "Inasoma ujumbe wako",
+                "Inafikiria kwa makini",
+                "Inakagua maelezo",
+                "Inahakiki tena",
+                "Inaandika jibu",
+            ),
             intakeUpholsteryQuestion = "Kiti hiki kina sponji, au ni mbao tupu?",
             intakeUpholsteryYes = "Kina sponji au kitambaa",
             intakeUpholsteryNo = "Mbao tupu, hakuna sponji",

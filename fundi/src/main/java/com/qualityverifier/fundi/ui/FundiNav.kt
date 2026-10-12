@@ -93,10 +93,16 @@ fun FundiNav() {
             // than replaces. Once per entry into the flow.
             LaunchedEffect(Unit) { model.loadExisting() }
             val workshop by model.workshop.collectAsState()
+            val shop by model.shop.collectAsState()
             WorkshopScreen(
                 labels = labels,
                 workshop = workshop,
                 onChange = { model.updateWorkshop(it) },
+                shop = shop,
+                onAtShop = model::answerAtShop,
+                onConsent = model::answerConsent,
+                onLocate = model::locateShop,
+                onPermission = model::onPermission,
                 onNext = { navController.navigate(Routes.SETUP_TOOLS) },
                 // Skipping lands on home with no profile at all. The coaching then runs
                 // tool-blind, which is worse advice but not broken advice, and setup can

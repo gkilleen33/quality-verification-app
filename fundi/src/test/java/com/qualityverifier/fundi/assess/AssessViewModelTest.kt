@@ -468,6 +468,7 @@ class AssessViewModelTest {
     ) : FundiProfiles {
         override suspend fun load() = outcome
         override suspend fun save(profile: FundiProfile) = true
+        override suspend fun saveWorkshopLocation(fix: com.qualityverifier.domain.LocationFix) = true
     }
 
     private class FakeImages : SessionImageStore {

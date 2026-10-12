@@ -47,6 +47,14 @@ interface FundiStore {
 
     /** A maker's tool transitions, newest first. For the record rather than the coaching. */
     suspend fun toolHistory(userId: String): List<RecordedToolChange>
+
+    /**
+     * The one GPS point of the maker's shop, taken with their consent while they stood in
+     * it. Written to the same three columns as a Kagua business's sign-up point
+     * (`users.business_location`, V2), which account deletion already clears (V11).
+     * A later point replaces an earlier one: a shop that moved is at its new address.
+     */
+    suspend fun saveWorkshopLocation(userId: String, latitude: Double, longitude: Double, accuracyMetres: Double)
 }
 
 /** A stored [ToolChange], with when it was recorded. */
@@ -205,6 +213,31 @@ class PostgresFundiStore(private val dataSource: DataSource) : FundiStore {
             }
             statement.executeBatch()
         }
+    }
+
+    override suspend fun saveWorkshopLocation(
+        userId: String,
+        latitude: Double,
+        longitude: Double,
+        accuracyMetres: Double,
+    ): Unit = tx { connection ->
+        connection.prepareStatement(
+            """
+            update users set
+                business_location = ST_SetSRID(ST_MakePoint(?, ?), 4326)::geography,
+                business_location_accuracy_m = ?,
+                business_location_at = now()
+            where id = ?::uuid
+            """.trimIndent()
+        ).use { statement ->
+            // Longitude first: ST_MakePoint takes x then y.
+            statement.setDouble(1, longitude)
+            statement.setDouble(2, latitude)
+            statement.setDouble(3, accuracyMetres)
+            statement.setString(4, userId)
+            statement.executeUpdate()
+        }
+        Unit
     }
 
     override suspend fun toolHistory(userId: String): List<RecordedToolChange> = tx { connection ->

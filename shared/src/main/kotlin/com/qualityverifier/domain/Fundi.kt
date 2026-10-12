@@ -66,16 +66,22 @@ enum class ToolKind(val id: String) {
 }
 
 /**
- * Three states, not two.
+ * Four states, not two.
  *
  * "Borrowed" is its own answer because it changes the advice rather than the inventory: a
  * borrowed circular saw is available for this piece and possibly not for the next one, so
  * a habit built around it is a habit that will break.
+ *
+ * "Unknown" — they do not know what the tool is — is its own answer for the same kind of
+ * reason, and was added in V20. It is not available, like [NONE], but it says something
+ * [NONE] does not: a fix that names it has to explain it, and the move from unknown to
+ * owned is the plainest evidence of learning the record can hold.
  */
 enum class ToolOwnership(val id: String) {
     OWNED("owned"),
     BORROWED("borrowed"),
-    NONE("none");
+    NONE("none"),
+    UNKNOWN("unknown");
 
     companion object {
         fun fromId(id: String): ToolOwnership? =

@@ -5,6 +5,7 @@ import com.qualityverifier.data.auth.AuthenticatedHttp
 import com.qualityverifier.data.auth.TokenProvider
 import com.qualityverifier.domain.FundiGoal
 import com.qualityverifier.domain.FundiProfile
+import com.qualityverifier.domain.LocationFix
 import com.qualityverifier.domain.OwnedTool
 import com.qualityverifier.domain.ToolKind
 import com.qualityverifier.domain.ToolOwnership
@@ -56,6 +57,12 @@ interface FundiProfiles {
      * record half a history.
      */
     suspend fun save(profile: FundiProfile): Boolean
+
+    /**
+     * The shop's one GPS point, sent only after the maker said they were at the shop and
+     * agreed to it. False means it did not land.
+     */
+    suspend fun saveWorkshopLocation(fix: LocationFix): Boolean
 }
 
 /**
@@ -109,14 +116,33 @@ class FundiProfileClient(
         response.use { it.isSuccessful }
     }
 
+    override suspend fun saveWorkshopLocation(fix: LocationFix): Boolean = withContext(io) {
+        val body = json.encodeToString(
+            WorkshopLocationDto(fix.latitude, fix.longitude, fix.accuracyMetres),
+        ).toRequestBody("application/json; charset=utf-8".toMediaType())
+        val response = http.send { token ->
+            Request.Builder().url(baseUrl + LOCATION_PATH)
+                .addHeader("Authorization", "Bearer $token").put(body).build()
+        } ?: return@withContext false
+        response.use { it.isSuccessful }
+    }
+
     private companion object {
         const val TAG = "FundiProfileClient"
         const val PATH = "v1/fundi/profile"
+        const val LOCATION_PATH = "v1/fundi/workshop-location"
     }
 }
 
 // The wire shape, mirroring the server's FundiDto. Ids rather than enum names, because
 // those are the strings the database CHECKs and the prompt use.
+
+@Serializable
+private data class WorkshopLocationDto(
+    val latitude: Double,
+    val longitude: Double,
+    @SerialName("accuracy_m") val accuracyMetres: Double,
+)
 
 @Serializable
 private data class ProfileDto(

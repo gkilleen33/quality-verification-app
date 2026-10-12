@@ -46,6 +46,10 @@ import java.util.Locale
  * So the ticks here are the steps the app really completed — the photos it prepared, the
  * answers it recorded — and what is genuinely in progress gets a spinner. The list of
  * what is being examined is the plan's own items, stated rather than pretended to track.
+ *
+ * The spinner's line cycles (`WorkingText`), because one fixed sentence under a spinner
+ * reads as a hang after twenty seconds. The phrases are activities that are true for the
+ * whole wait, not stages it claims to have reached.
  */
 @Composable
 fun InspectingScreen(
@@ -94,7 +98,7 @@ fun InspectingScreen(
         // answers are already recorded.
         StageRow(labels.stagePreparing, done = true)
         StageRow(labels.stageSending, done = true)
-        StageRow(labels.stageExamining, done = false)
+        StageRow(labels.stageExamining, done = false, working = labels.workingInspect)
 
         if (run.plan.photos.isNotEmpty() || run.plan.tests.isNotEmpty()) {
             Spacer(Modifier.height(24.dp))
@@ -119,7 +123,7 @@ fun InspectingScreen(
 }
 
 @Composable
-private fun StageRow(label: String, done: Boolean) {
+private fun StageRow(label: String, done: Boolean, working: List<String>? = null) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -146,18 +150,31 @@ private fun StageRow(label: String, done: Boolean) {
             CircularProgressIndicator(Modifier.size(22.dp), strokeWidth = 2.dp)
         }
         Spacer(Modifier.size(12.dp))
-        Text(
-            label,
-            style = MaterialTheme.typography.bodyLarge,
-            // Takes the width left over so a long stage label wraps instead of pushing
-            // its own spinner off the edge.
-            modifier = Modifier.weight(1f),
-            color = if (done) {
-                MaterialTheme.colorScheme.onSurfaceVariant
-            } else {
-                MaterialTheme.colorScheme.onSurface
-            },
-        )
+        // Takes the width left over so a long stage label wraps instead of pushing its
+        // own spinner off the edge.
+        Column(Modifier.weight(1f)) {
+            if (working != null) {
+                WorkingText(
+                    working,
+                    style = MaterialTheme.typography.bodyLarge,
+                    color = MaterialTheme.colorScheme.onSurface,
+                )
+                Spacer(Modifier.height(4.dp))
+            }
+            Text(
+                label,
+                style = if (working != null) {
+                    MaterialTheme.typography.bodyMedium
+                } else {
+                    MaterialTheme.typography.bodyLarge
+                },
+                color = if (done || working != null) {
+                    MaterialTheme.colorScheme.onSurfaceVariant
+                } else {
+                    MaterialTheme.colorScheme.onSurface
+                },
+            )
+        }
     }
 }
 

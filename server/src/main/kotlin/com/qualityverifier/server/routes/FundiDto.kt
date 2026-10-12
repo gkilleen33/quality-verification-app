@@ -91,3 +91,22 @@ fun FundiProfile.toDto(): FundiProfileDto = FundiProfileDto(
     tools = tools.map { ToolDto(it.kind.id, it.ownership.id, it.dayRateKes) },
     goals = goals.map { it.id },
 )
+
+/** One fix of the maker's shop. All three, always: a point without its accuracy is a false precision. */
+@Serializable
+data class WorkshopLocationDto(
+    val latitude: Double,
+    val longitude: Double,
+    @SerialName("accuracy_m") val accuracyMetres: Double,
+) {
+    /** On the planet, and with an accuracy that means something. */
+    val isPlausible: Boolean
+        get() = latitude in -90.0..90.0 && longitude in -180.0..180.0 &&
+            accuracyMetres > 0 && accuracyMetres <= MAX_ACCURACY_METRES
+
+    companion object {
+        /** Past this it no longer says which trading centre, which is what the point is for. */
+        const val MAX_ACCURACY_METRES = 5_000.0
+    }
+}
+
