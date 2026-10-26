@@ -39,7 +39,8 @@ fun Route.authRoutes(store: AuthStore, accessTokens: AccessTokens) {
     route("/v1/auth") {
 
         post("/register") {
-            val request = call.receive<RegisterRequest>()
+            // Normalised before validation, so 0712… is checked as the +254712… it becomes.
+            val request = call.receive<RegisterRequest>().let { it.copy(phone = normalisePhone(it.phone)) }
             request.validate()?.let { problem ->
                 call.respond(HttpStatusCode.BadRequest, ErrorResponse("invalid_request", problem))
                 return@post
@@ -48,7 +49,7 @@ fun Route.authRoutes(store: AuthStore, accessTokens: AccessTokens) {
             val outcome = store.register(
                 Registration(
                     inviteCode = request.inviteCode.trim(),
-                    phone = request.phone.trim(),
+                    phone = request.phone,
                     passwordHash = Passwords.hash(request.password),
                     displayName = request.name.trim(),
                     accountType = request.accountType,
@@ -91,13 +92,15 @@ fun Route.authRoutes(store: AuthStore, accessTokens: AccessTokens) {
         }
 
         post("/sign-in") {
-            val request = call.receive<SignInRequest>()
+            // The same normalisation as register and V21, or a number stored in its
+            // rewritten form would never match what the person types.
+            val request = call.receive<SignInRequest>().let { it.copy(phone = normalisePhone(it.phone)) }
             request.validate()?.let { problem ->
                 call.respond(HttpStatusCode.BadRequest, ErrorResponse("invalid_request", problem))
                 return@post
             }
 
-            val credentials = store.credentialsForPhone(request.phone.trim())
+            val credentials = store.credentialsForPhone(request.phone)
 
             // No account for that number: burn the same work a real verification costs
             // before answering. Otherwise "no such account" returns in microseconds and a

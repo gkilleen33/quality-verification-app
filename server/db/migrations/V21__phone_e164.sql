@@ -9,8 +9,10 @@
 -- leading + (AuthDto.validatePhone), but that still lets through the commonest slip: Kagua
 -- prefills +254, the person types their number as they say it, 0712…, and the account is
 -- stored as +2540712…, which no listed number will ever equal. V5 left normalisation to
--- the client "for now"; this is the database half of ending that, and the server half
--- (libphonenumber at registration and sign-in) follows separately.
+-- the client "for now"; this is the database half of ending that. The server half,
+-- normalisePhone at register and sign-in, ships in the same change and must be deployed
+-- straight after this is applied: until then the old server would answer a +2540…
+-- registration with a 500, and anyone rewritten here could not sign in with the old form.
 --
 -- The rewrite only touches numbers that change, and keeps what they were in
 -- phone_as_entered, so the backfill can be reversed with one UPDATE. That column is a phone
@@ -22,25 +24,34 @@
 
 BEGIN;
 
+-- First, so its lock on users is taken before the numbers are read: a registration
+-- committing between the read and the rewrite would otherwise escape both.
+ALTER TABLE users ADD COLUMN phone_as_entered text;
+
 -- What each number becomes. Spaces, hyphens, dots and brackets go first; then the four
 -- ways a Kenyan number arrives in the wrong shape. Anything else is left as it is: it
 -- either already matches the CHECK below or the migration fails on it, which is the
--- right outcome for a number nobody can read.
+-- right outcome for a number nobody can read. normalisePhone in AuthDto.kt applies the
+-- same rules to what people type at register and sign-in; the two must stay identical.
 CREATE TEMPORARY TABLE v21_phones ON COMMIT DROP AS
 SELECT id,
        phone AS before,
-       CASE
-           WHEN stripped ~ '^00[1-9]'          THEN '+' || substr(stripped, 3)    -- 00254…
-           WHEN stripped ~ '^0[0-9]{9}$'       THEN '+254' || substr(stripped, 2) -- 0712…
-           WHEN stripped ~ '^254[0-9]{9}$'     THEN '+' || stripped               -- 254712…
-           WHEN stripped ~ '^\+2540[0-9]{9}$'  THEN '+254' || substr(stripped, 6) -- +2540712…
-           ELSE stripped
-       END AS after
+       -- +2540712… second, so it also catches 002540712… after the first step.
+       regexp_replace(international, '^\+2540([0-9]{9})$', '+254\1') AS after
 FROM (
-    SELECT id, phone, regexp_replace(phone, '[[:space:]().-]', '', 'g') AS stripped
-    FROM users
-    WHERE phone IS NOT NULL
-) s;
+    SELECT id, phone,
+           CASE
+               WHEN stripped ~ '^00[1-9][0-9]*$' THEN '+' || substr(stripped, 3)    -- 00254…
+               WHEN stripped ~ '^0[0-9]{9}$'     THEN '+254' || substr(stripped, 2) -- 0712…
+               WHEN stripped ~ '^254[0-9]{9}$'   THEN '+' || stripped               -- 254712…
+               ELSE stripped
+           END AS international
+    FROM (
+        SELECT id, phone, regexp_replace(phone, '[[:space:]().-]', '', 'g') AS stripped
+        FROM users
+        WHERE phone IS NOT NULL
+    ) s
+) n;
 
 DO $$
 DECLARE
@@ -54,8 +65,6 @@ BEGIN
 END;
 $$;
 
-ALTER TABLE users ADD COLUMN phone_as_entered text;
-
 UPDATE users u
 SET phone_as_entered = p.before,
     phone            = p.after
@@ -64,7 +73,7 @@ WHERE u.id = p.id AND p.before <> p.after;
 
 ALTER TABLE users
     ADD CONSTRAINT users_phone_is_e164
-        CHECK (phone IS NULL OR phone ~ '^\+[1-9][0-9]{7,14}$');
+        CHECK (phone IS NULL OR (phone ~ '^\+[1-9][0-9]{7,14}$' AND phone !~ '^\+2540'));
 
 -- As V13, plus phone_as_entered. Replaced whole because Postgres has no way to amend a
 -- function body.

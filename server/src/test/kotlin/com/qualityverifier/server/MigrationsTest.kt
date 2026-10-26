@@ -69,7 +69,11 @@ class MigrationsTest {
         // phone_as_entered was the first) and is missing from it would survive deletion,
         // which is the one thing V11 promises cannot happen.
         val phoneColumns = files
-            .flatMap { Regex("""ADD COLUMN\s+(\w*phone\w*)""").findAll(it.readText()).toList() }
+            // IF NOT EXISTS too: half the migrations since V13 add columns that way.
+            .flatMap {
+                Regex("""(?i)ADD COLUMN\s+(?:IF NOT EXISTS\s+)?(\w*phone\w*)""")
+                    .findAll(it.readText()).toList()
+            }
             .map { it.groupValues[1] }
             .toSet()
         assertTrue("expected at least users.phone, found none", "phone" in phoneColumns)

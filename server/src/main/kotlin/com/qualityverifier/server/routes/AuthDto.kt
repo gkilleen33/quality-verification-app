@@ -107,6 +107,32 @@ fun validatePhone(phone: String): String? = when {
     else -> null
 }
 
+/**
+ * The number in the one form it is stored in, applied to whatever arrives at register and
+ * at sign-in, before validation and before any lookup.
+ *
+ * Mirrors V21__phone_e164.sql rule for rule: the migration rewrote the stored numbers this
+ * way, so a person who registered as +2540712… and types that again must land on the row
+ * now holding +254712…. Change one and the other has to change with it.
+ *
+ * The "two accounts for one person" risk validatePhone guards against comes from guessing
+ * differently on different paths. Guessing Kenya for a leading 0 is safe here only because
+ * both paths run this same function, and the study is in Kenya. libphonenumber is the
+ * general answer once numbers from elsewhere matter.
+ */
+fun normalisePhone(raw: String): String {
+    val stripped = raw.replace(Regex("""[\s().-]"""), "")
+    val international = when {
+        stripped.matches(Regex("""00[1-9]\d*""")) -> "+" + stripped.substring(2)
+        stripped.matches(Regex("""0\d{9}""")) -> "+254" + stripped.substring(1)
+        stripped.matches(Regex("""254\d{9}""")) -> "+$stripped"
+        else -> stripped
+    }
+    // The prefilled +254 followed by the number as people say it, 0712…: second, so it
+    // also catches 002540712… once the first step has made it +2540712….
+    return Regex("""^\+2540(\d{9})$""").replace(international) { "+254" + it.groupValues[1] }
+}
+
 fun SignInRequest.validate(): String? = when {
     phone.isBlank() -> "phone is required"
     password.isBlank() -> "password is required"
