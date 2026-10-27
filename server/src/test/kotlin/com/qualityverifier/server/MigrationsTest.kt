@@ -63,6 +63,33 @@ class MigrationsTest {
     }
 
     @Test
+    fun `anonymise_user clears every phone column`() {
+        // anonymise_user is redefined whole each time it changes, so the latest definition is
+        // the one that runs. A column added later that holds a number (V21's
+        // phone_as_entered was the first) and is missing from it would survive deletion,
+        // which is the one thing V11 promises cannot happen.
+        val phoneColumns = files
+            // IF NOT EXISTS too: half the migrations since V13 add columns that way.
+            .flatMap {
+                Regex("""(?i)ADD COLUMN\s+(?:IF NOT EXISTS\s+)?(\w*phone\w*)""")
+                    .findAll(it.readText()).toList()
+            }
+            .map { it.groupValues[1] }
+            .toSet()
+        assertTrue("expected at least users.phone, found none", "phone" in phoneColumns)
+
+        val latest = files.last { it.readText().contains("FUNCTION anonymise_user") }
+        val body = latest.readText().substringAfter("FUNCTION anonymise_user")
+        phoneColumns.forEach { column ->
+            assertTrue(
+                "${latest.name} defines anonymise_user without clearing $column, so a deleted " +
+                    "account keeps that number",
+                Regex("""\b$column\s*=\s*NULL""").containsMatchIn(body),
+            )
+        }
+    }
+
+    @Test
     fun `versions are sequential with no gaps or repeats`() {
         // A gap usually means a file was renamed and the old version is still recorded in
         // schema_migrations on a deployed box, which makes the two disagree silently.

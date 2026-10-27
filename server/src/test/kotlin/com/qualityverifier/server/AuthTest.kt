@@ -11,6 +11,7 @@ import com.qualityverifier.server.db.StoredRefresh
 import com.qualityverifier.server.db.UserRow
 import com.qualityverifier.server.routes.RegisterRequest
 import com.qualityverifier.server.routes.SignInRequest
+import com.qualityverifier.server.routes.normalisePhone
 import com.qualityverifier.server.routes.validate
 import com.qualityverifier.server.routes.validatePhone
 import io.ktor.client.request.get
@@ -305,6 +306,55 @@ class AuthTest {
     }
 
     @Test
+    fun `every way a Kenyan number is typed becomes the one stored form`() {
+        // The same rules as V21, which rewrote the stored numbers. If these drift apart, a
+        // rewritten account stops matching what its owner types.
+        listOf(
+            "+254712345678", "0712345678", "0712 345 678", "254712345678",
+            "00254712345678", "+2540712345678", "+254 (0)712-345-678", "002540712345678",
+        ).forEach { assertEquals(it, "+254712345678", normalisePhone(it)) }
+        assertEquals("+254110123456", normalisePhone("0110 123 456"))
+        // Numbers from elsewhere keep their country code; only separators go.
+        assertEquals("+256700123456", normalisePhone("+256 (700) 123-456"))
+        assertEquals("+16175550100", normalisePhone("+1 617 555 0100"))
+        // Something that is not a number is passed through for validatePhone to refuse.
+        assertEquals("07123", normalisePhone("07123"))
+        assertEquals(
+            "phone must be in international format, starting with +",
+            validatePhone(normalisePhone("07123")),
+        )
+    }
+
+    @Test
+    fun `a number typed with the trunk zero signs in to the account stored without it`() =
+        testApplication {
+            // An account V21 rewrote from +2540712… to +254712…, signed into the old way.
+            val store = FakeAuthStore().apply { seedAccount("+254712345678", PASSWORD) }
+            val app = withAuth(store)
+
+            val response = app.post("/v1/auth/sign-in") {
+                contentType(ContentType.Application.Json)
+                setBody(SignInRequest(phone = "+2540712345678", password = PASSWORD))
+            }
+
+            assertEquals(HttpStatusCode.OK, response.status)
+        }
+
+    @Test
+    fun `registration stores the normalised number`() = testApplication {
+        val store = FakeAuthStore()
+        val app = withAuth(store)
+
+        val response = app.post("/v1/auth/register") {
+            contentType(ContentType.Application.Json)
+            setBody(valid().copy(phone = "0712 345 678"))
+        }
+
+        assertEquals(HttpStatusCode.Created, response.status)
+        assertEquals(listOf("+254712345678"), store.registeredPhones)
+    }
+
+    @Test
     fun `signing in with the right password issues tokens and clears the counter`() = testApplication {
         val store = FakeAuthStore().apply { seedAccount("+256700123456", PASSWORD) }
         val app = withAuth(store)
@@ -449,6 +499,7 @@ class AuthTest {
         val failures = mutableListOf<String>()
         val passwordChanges = mutableListOf<String>()
         val accountsDeleted = mutableListOf<String>()
+        val registeredPhones = mutableListOf<String>()
 
         fun seedAccount(
             phone: String,
@@ -480,10 +531,13 @@ class AuthTest {
             return token
         }
 
-        override suspend fun register(registration: Registration): RegisterOutcome = when {
-            phoneTaken -> RegisterOutcome.PhoneTaken
-            !inviteUsable -> RegisterOutcome.InviteUnusable
-            else -> RegisterOutcome.Created("user-1")
+        override suspend fun register(registration: Registration): RegisterOutcome {
+            registeredPhones += registration.phone
+            return when {
+                phoneTaken -> RegisterOutcome.PhoneTaken
+                !inviteUsable -> RegisterOutcome.InviteUnusable
+                else -> RegisterOutcome.Created("user-1")
+            }
         }
 
         override suspend fun credentialsForPhone(phone: String) = credentials[phone]
