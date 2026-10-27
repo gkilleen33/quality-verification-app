@@ -26,8 +26,8 @@ android {
         applicationId = "com.qualityverifier"
         minSdk = 24
         targetSdk = 36
-        versionCode = 1
-        versionName = "0.1.0"
+        versionCode = 2
+        versionName = "0.2.0"
 
         // The one value that points the app at its backend. Compiled in, so changing it
         // means a release — which is why it is worth picking a hostname you will keep.
