@@ -8,10 +8,10 @@ import com.qualityverifier.data.session.SyncedMessage
 import com.qualityverifier.data.session.SyncedSession
 import com.qualityverifier.data.workers.ServerWorker
 import com.qualityverifier.data.workers.WorkerRepository
-import com.qualityverifier.domain.WorkPart
-import com.qualityverifier.domain.WorkerSlot
 import com.qualityverifier.domain.ItemType
 import com.qualityverifier.domain.Role
+import com.qualityverifier.domain.WorkPart
+import com.qualityverifier.domain.WorkerSlot
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -90,15 +90,20 @@ class AssessmentSync(
         // The roster before any session that names it, so the server never meets a
         // worker id it has no row for.
         var rosterWrites = 0
+        var rosterAllSent = true
         if (rosterEnabled) for (change in workers.unsynced()) {
             if (client.upsertWorker(change.id, change.name, change.archived)) {
                 workers.markSynced(change)
                 rosterWrites++
+            } else {
+                rosterAllSent = false
             }
         }
-        if (rosterEnabled) for (sessionId in workers.pendingSessions()) {
-            if (client.replaceSessionWorkers(sessionId, workers.workersOf(sessionId))) {
-                workers.clearPending(sessionId)
+        // Only once every worker is there: a set naming a worker the server has not got
+        // would be refused for good, and the edit lost. Left pending, it goes next time.
+        if (rosterEnabled && rosterAllSent) for (pending in workers.pendingSessions()) {
+            if (client.replaceSessionWorkers(pending.sessionId, workers.workersOf(pending.sessionId))) {
+                workers.clearPending(pending)
                 rosterWrites++
             }
         }

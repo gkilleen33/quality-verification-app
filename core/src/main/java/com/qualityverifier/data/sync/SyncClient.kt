@@ -260,7 +260,11 @@ class SyncClient(
         } ?: false
     }
 
-    /** Replaces who worked on a session. The same retry rule as [upsertWorker]. */
+    /**
+     * Replaces who worked on a session. The same retry rule as [upsertWorker], except a
+     * 404, which here means the session has not reached the server yet (its opening turn
+     * is still to go) and is worth retrying.
+     */
     suspend fun replaceSessionWorkers(sessionId: String, workers: List<WorkerSlot>): Boolean =
         withContext(io) {
             val body = json.encodeToString(
@@ -272,6 +276,7 @@ class SyncClient(
             }?.use { response ->
                 when {
                     response.isSuccessful -> true
+                    response.code == 404 -> false
                     response.code in 400..499 -> {
                         Log.w(TAG, "Server refused a session's workers (${response.code}); dropping them")
                         true

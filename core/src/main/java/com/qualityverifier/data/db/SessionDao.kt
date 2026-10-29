@@ -250,11 +250,28 @@ interface SessionDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun addPendingSessionWorkers(pending: PendingSessionWorkersEntity)
 
-    @Query("SELECT sessionId FROM pending_session_workers ORDER BY requestedAt")
-    suspend fun pendingSessionWorkers(): List<String>
+    @Query("SELECT * FROM pending_session_workers ORDER BY requestedAt")
+    suspend fun pendingSessionWorkers(): List<PendingSessionWorkersEntity>
 
-    @Query("DELETE FROM pending_session_workers WHERE sessionId = :sessionId")
-    suspend fun clearPendingSessionWorkers(sessionId: String)
+    @Query("SELECT COUNT(*) FROM pending_session_workers WHERE sessionId = :sessionId")
+    suspend fun countPendingSessionWorkers(sessionId: String): Int
+
+    /** Guarded on `requestedAt`, so an edit made while the send was in flight stays pending. */
+    @Query("DELETE FROM pending_session_workers WHERE sessionId = :sessionId AND requestedAt = :asOf")
+    suspend fun clearPendingSessionWorkers(sessionId: String, asOf: Long)
+
+    /** An edit from the card: the new set and the record that it is unsent, in one transaction. */
+    @Transaction
+    suspend fun editSessionWorkers(sessionId: String, rows: List<SessionWorkerEntity>, pending: PendingSessionWorkersEntity) {
+        replaceSessionWorkers(sessionId, rows)
+        addPendingSessionWorkers(pending)
+    }
+
+    /** The server's set, unless an edit is pending: checked and written in one transaction. */
+    @Transaction
+    suspend fun applySessionWorkersUnlessPending(sessionId: String, rows: List<SessionWorkerEntity>) {
+        if (countPendingSessionWorkers(sessionId) == 0) replaceSessionWorkers(sessionId, rows)
+    }
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun addDismissed(dismissed: DismissedSessionEntity)

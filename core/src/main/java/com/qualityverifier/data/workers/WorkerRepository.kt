@@ -57,10 +57,11 @@ interface WorkerRepository {
     /** Records the first set with the session, already as good as sent: the turn carries it. */
     suspend fun recordWorkersOf(sessionId: String, workers: List<WorkerSlot>)
 
-    /** Sessions whose worker set the server has not been told about. */
-    suspend fun pendingSessions(): List<String>
+    /** Sessions whose worker set the server has not been told about, oldest first. */
+    suspend fun pendingSessions(): List<PendingSessionSet>
 
-    suspend fun clearPending(sessionId: String)
+    /** Clears the record, unless the set was edited again after [pending] was read. */
+    suspend fun clearPending(pending: PendingSessionSet)
 
     /** The server's set for a session, applied unless this phone holds an unsent edit. */
     suspend fun applySynced(sessionId: String, workers: List<WorkerSlot>)
@@ -71,6 +72,9 @@ data class WorkerChange(val id: String, val name: String, val archived: Boolean,
 
 /** A roster row as the server sends it. */
 data class ServerWorker(val id: String, val name: String?, val archivedAt: Long?)
+
+/** A session whose worker set is unsent. [asOf] is the phone's clock at the edit. */
+data class PendingSessionSet(val sessionId: String, val asOf: Long)
 
 class RoomWorkerRepository(
     private val dao: SessionDao,
@@ -92,14 +96,18 @@ class RoomWorkerRepository(
 
     override suspend fun rename(workerId: String, name: String) {
         val existing = dao.findWorker(workerId) ?: return
-        dao.upsertWorker(existing.copy(name = name.trim(), updatedAt = now(), syncedAt = null))
+        dao.upsertWorker(existing.copy(name = name.trim(), updatedAt = later(existing), syncedAt = null))
     }
 
     override suspend fun archive(workerId: String) {
         val existing = dao.findWorker(workerId) ?: return
         if (existing.archivedAt != null) return
-        dao.upsertWorker(existing.copy(archivedAt = now(), updatedAt = now(), syncedAt = null))
+        val at = later(existing)
+        dao.upsertWorker(existing.copy(archivedAt = at, updatedAt = at, syncedAt = null))
     }
+
+    /** Strictly after the last write, so the sync's `updatedAt` guard can tell two edits apart. */
+    private fun later(existing: WorkerEntity): Long = maxOf(now(), existing.updatedAt + 1)
 
     override suspend fun unsynced(): List<WorkerChange> =
         dao.unsyncedWorkers().map {
@@ -126,22 +134,25 @@ class RoomWorkerRepository(
         dao.sessionWorkers(sessionId).map { it.toSlot() }
 
     override suspend fun setWorkersOf(sessionId: String, workers: List<WorkerSlot>) {
-        dao.replaceSessionWorkers(sessionId, workers.map { it.toEntity(sessionId) })
-        dao.addPendingSessionWorkers(PendingSessionWorkersEntity(sessionId, now()))
+        dao.editSessionWorkers(
+            sessionId,
+            workers.map { it.toEntity(sessionId) },
+            PendingSessionWorkersEntity(sessionId, now()),
+        )
     }
 
     override suspend fun recordWorkersOf(sessionId: String, workers: List<WorkerSlot>) {
         dao.replaceSessionWorkers(sessionId, workers.map { it.toEntity(sessionId) })
     }
 
-    override suspend fun pendingSessions(): List<String> = dao.pendingSessionWorkers()
+    override suspend fun pendingSessions(): List<PendingSessionSet> =
+        dao.pendingSessionWorkers().map { PendingSessionSet(it.sessionId, it.requestedAt) }
 
-    override suspend fun clearPending(sessionId: String) = dao.clearPendingSessionWorkers(sessionId)
+    override suspend fun clearPending(pending: PendingSessionSet) =
+        dao.clearPendingSessionWorkers(pending.sessionId, pending.asOf)
 
-    override suspend fun applySynced(sessionId: String, workers: List<WorkerSlot>) {
-        if (sessionId in dao.pendingSessionWorkers()) return
-        dao.replaceSessionWorkers(sessionId, workers.map { it.toEntity(sessionId) })
-    }
+    override suspend fun applySynced(sessionId: String, workers: List<WorkerSlot>) =
+        dao.applySessionWorkersUnlessPending(sessionId, workers.map { it.toEntity(sessionId) })
 
     private fun SessionWorkerEntity.toSlot() =
         WorkerSlot(workerId = workerId, part = part?.let(WorkPart::fromId))
