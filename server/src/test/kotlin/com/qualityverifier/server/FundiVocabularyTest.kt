@@ -8,6 +8,7 @@ import com.qualityverifier.domain.SkillDimension
 import com.qualityverifier.domain.ToolChangeReason
 import com.qualityverifier.domain.ToolKind
 import com.qualityverifier.domain.ToolOwnership
+import com.qualityverifier.domain.WorkPart
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.File
@@ -50,6 +51,9 @@ class FundiVocabularyTest {
     /** Replaces the three ownership CHECKs to add "unknown". */
     private val toolNotKnown: String by lazy { read("V20__tool_not_known.sql") }
 
+    /** The roster, and the parts of a piece a worker can be named on. */
+    private val workers: String by lazy { read("V23__workers.sql") }
+
     private fun assertAllAllowed(
         what: String,
         ids: List<String>,
@@ -80,6 +84,14 @@ class FundiVocabularyTest {
         assertAllAllowed(
             "ownership", ToolOwnership.entries.map { it.id },
             sql = toolNotKnown, where = "V20",
+        )
+    }
+
+    @Test
+    fun `every work part is allowed by the constraint`() {
+        assertAllAllowed(
+            "work part", WorkPart.entries.map { it.id },
+            sql = workers, where = "V23",
         )
     }
 

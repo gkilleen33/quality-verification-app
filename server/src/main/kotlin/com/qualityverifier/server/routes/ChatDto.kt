@@ -1,5 +1,7 @@
 package com.qualityverifier.server.routes
 
+import com.qualityverifier.domain.WorkPart
+import com.qualityverifier.domain.WorkerSlot
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 
@@ -31,6 +33,12 @@ data class ChatRequest(
      * old name cannot undo one.
      */
     @SerialName("piece_label") val pieceLabel: String? = null,
+    /**
+     * Who worked on the piece, from the roster, each on an optional part. Stored with
+     * the session when it is created and ignored afterwards; an edit goes through
+     * PUT /v1/sessions/{id}/workers.
+     */
+    val workers: List<WorkerSlotDto> = emptyList(),
     /**
      * This turn was written by the app on the user's behalf — an intake, a plan
      * submission — rather than typed. Stored, and handed back through sync, so a phone
@@ -87,6 +95,42 @@ data class SessionLocation(
     val longitude: Double,
     val accuracyMetres: Double,
 )
+
+/** One "Who worked on this?" answer as the phone sends it. No id means the manager. */
+@Serializable
+data class WorkerSlotDto(
+    val id: String? = null,
+    val name: String? = null,
+    val part: String? = null,
+) {
+    /**
+     * Why this slot cannot be stored, or null. Checked at the route so a bad slot is a
+     * 400 rather than a constraint violation inside the transaction that creates the
+     * session.
+     */
+    val problem: String?
+        get() = when {
+            id != null && !isUuid(id) -> "workers[].id must be a uuid"
+            id == null && name != null -> "workers[].name needs an id"
+            name != null && WorkerNames.length(name.trim()) !in 1..WorkerNames.MAX_LENGTH ->
+                "workers[].name must be 1 to ${WorkerNames.MAX_LENGTH} characters"
+            part != null && WorkPart.fromId(part) == null -> "workers[].part is not a known part"
+            else -> null
+        }
+
+    fun toDomain() = WorkerSlot(
+        workerId = id,
+        name = name?.trim(),
+        part = part?.let(WorkPart::fromId),
+    )
+}
+
+/** The bound on a worker's name, as V23's `workers_name_length` counts it. */
+object WorkerNames {
+    const val MAX_LENGTH = 60
+
+    fun length(name: String): Int = name.codePointCount(0, name.length)
+}
 
 @Serializable
 data class ChatResponse(

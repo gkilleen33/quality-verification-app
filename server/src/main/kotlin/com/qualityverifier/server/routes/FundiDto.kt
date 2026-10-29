@@ -92,6 +92,24 @@ fun FundiProfile.toDto(): FundiProfileDto = FundiProfileDto(
     goals = goals.map { it.id },
 )
 
+/** One worker on the roster, as the phone reads it back. Archived ones are included. */
+@Serializable
+data class WorkerDto(
+    val id: String,
+    val name: String? = null,
+    @SerialName("archived_at") val archivedAt: Long? = null,
+)
+
+@Serializable
+data class WorkerListDto(val workers: List<WorkerDto>)
+
+/** The body of PUT /v1/fundi/workers/{id}. Archiving is sticky: false never revives. */
+@Serializable
+data class WorkerUpsertDto(
+    val name: String? = null,
+    val archived: Boolean = false,
+)
+
 /** The body of PUT /v1/fundi/pieces/{id}. A blank or absent label clears the name. */
 @Serializable
 data class PieceLabelDto(val label: String? = null)

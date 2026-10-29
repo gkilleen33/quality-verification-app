@@ -15,6 +15,9 @@ import com.qualityverifier.server.db.RegisterOutcome
 import com.qualityverifier.server.db.Registration
 import com.qualityverifier.server.db.SessionAccess
 import com.qualityverifier.server.db.SessionRow
+import com.qualityverifier.server.db.SessionWorker
+import com.qualityverifier.domain.WorkPart
+import com.qualityverifier.domain.WorkerSlot
 import com.qualityverifier.server.db.StoredReply
 import com.qualityverifier.server.db.StoredRefresh
 import com.qualityverifier.server.db.UserRow
@@ -25,6 +28,7 @@ import com.qualityverifier.server.db.TesterFeedback
 import io.ktor.client.request.get
 import io.ktor.client.request.header
 import io.ktor.client.request.post
+import io.ktor.client.request.put
 import io.ktor.client.request.setBody
 import io.ktor.client.statement.bodyAsText
 import io.ktor.http.ContentType
@@ -147,6 +151,62 @@ class SyncRouteTest {
 
         val detail = app.get("/v1/sessions/$SESSION") { auth(MINE) }.bodyAsText()
         assertTrue(detail, detail.contains("\"piece_label\":\"Dining table for the hotel\""))
+    }
+
+    // The roster links go down with the session, so a reinstalled phone can show who did
+    // what. Names do not: those come from GET /v1/fundi/workers.
+    @Test
+    fun `the session list carries who worked on it, by id and part`() = testApplication {
+        val kamau = "c0ffee00-0000-4000-8000-000000000004"
+        val chat = FakeChatStore(
+            sessions = listOf(
+                row(SESSION).copy(workers = listOf(SessionWorker(kamau, "joinery"), SessionWorker(null, null))),
+            ),
+        )
+        val app = withSync(chat, FakeAuth())
+
+        val body = app.get("/v1/sessions") { auth(MINE) }.bodyAsText()
+
+        assertTrue(body, body.contains("\"worker_id\":\"$kamau\""))
+        assertTrue(body, body.contains("\"part\":\"joinery\""))
+        assertTrue("no name travels on a session", !body.contains("Kamau"))
+    }
+
+    @Test
+    fun `who worked on a session can be replaced by its owner`() = testApplication {
+        val chat = FakeChatStore()
+        val app = withSync(chat, FakeAuth())
+        val kamau = "c0ffee00-0000-4000-8000-000000000005"
+
+        val response = app.put("/v1/sessions/$SESSION/workers") {
+            auth(MINE); contentType(ContentType.Application.Json)
+            setBody("""{"workers":[{"id":"$kamau","name":"Kamau","part":"upholstery"},{}]}""")
+        }
+
+        assertEquals(HttpStatusCode.NoContent, response.status)
+        assertEquals(
+            listOf(WorkerSlot(kamau, "Kamau", WorkPart.UPHOLSTERY), WorkerSlot(null, null, null)),
+            chat.replaced[SESSION],
+        )
+    }
+
+    @Test
+    fun `replacing workers on somebody else's session, or with a bad part, is refused`() = testApplication {
+        val chat = FakeChatStore(deleteSucceeds = false)
+        val app = withSync(chat, FakeAuth())
+
+        val stranger = app.put("/v1/sessions/$SESSION/workers") {
+            auth(MINE); contentType(ContentType.Application.Json)
+            setBody("""{"workers":[{}]}""")
+        }
+        assertEquals(HttpStatusCode.NotFound, stranger.status)
+
+        val badPart = app.put("/v1/sessions/$SESSION/workers") {
+            auth(MINE); contentType(ContentType.Application.Json)
+            setBody("""{"workers":[{"part":"legs"}]}""")
+        }
+        assertEquals(HttpStatusCode.BadRequest, badPart.status)
+        assertTrue(chat.replaced.isEmpty())
     }
 
     @Test
@@ -513,12 +573,23 @@ class SyncRouteTest {
             previousSessionId: String?, intakeAnswers: String?, promptSha: String?,
             audience: Audience,
             dailyLimit: Int, testerDailyLimit: Int, pieceId: String?, pieceLabel: String?,
+            workers: List<WorkerSlot>,
         ) = SessionAccess.Ok(created = true)
 
         override suspend fun appendUserTurn(
             sessionId: String, messageId: String, text: String, blobHashes: List<String>,
             composed: Boolean,
         ) = true
+
+        /** What the last replacement carried, by session; null when refused. */
+        val replaced = mutableMapOf<String, List<WorkerSlot>>()
+        override suspend fun replaceSessionWorkers(
+            userId: String, sessionId: String, workers: List<WorkerSlot>,
+        ): Boolean {
+            if (!deleteSucceeds) return false
+            replaced[sessionId] = workers
+            return true
+        }
 
         override suspend fun replyAfter(sessionId: String, userMessageId: String): StoredReply? = null
         override suspend fun history(sessionId: String, blobPath: (String) -> String) = emptyList<com.qualityverifier.domain.ChatMessage>()
