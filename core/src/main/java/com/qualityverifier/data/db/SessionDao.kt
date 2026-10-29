@@ -166,6 +166,21 @@ interface SessionDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsertPiece(piece: PieceEntity)
 
+    /** A row for a piece the phone has never seen; a no-op when one exists. */
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
+    suspend fun insertPieceIfAbsent(piece: PieceEntity)
+
+    /**
+     * The server's name, applied only where the phone holds no unsent rename. One
+     * statement rather than a read and a write, so a rename made in between cannot be
+     * overwritten.
+     */
+    @Query(
+        "UPDATE pieces SET label = :label, labelSyncedAt = :syncedAt " +
+            "WHERE id = :pieceId AND labelSyncedAt IS NOT NULL"
+    )
+    suspend fun applySyncedLabel(pieceId: String, label: String?, syncedAt: Long)
+
     @Query("SELECT * FROM pieces WHERE id = :pieceId")
     suspend fun findPiece(pieceId: String): PieceEntity?
 

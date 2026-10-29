@@ -112,7 +112,7 @@ class AssessViewModelTest {
     }
 
     @Test
-    fun `a skipped name is stored as none, and the intake prefills the existing one`() = runTest {
+    fun `a skipped name passes no name, and the intake prefills the existing one`() = runTest {
         val sessions = FakeSessions().apply { existingLabel = "Old stool" }
         val model = model(sessions = sessions, pieceId = "p1", returning = true)
         advanceUntilIdle()

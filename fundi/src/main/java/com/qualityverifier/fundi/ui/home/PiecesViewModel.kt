@@ -5,11 +5,11 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
-import kotlinx.coroutines.launch
 import com.qualityverifier.data.session.SessionRepository
 import com.qualityverifier.di.AppContainer
 import com.qualityverifier.domain.SessionSummary
 import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.stateIn
 
@@ -37,7 +37,7 @@ class PiecesViewModel(private val sessions: SessionRepository) : ViewModel() {
      * above re-emits from the database, so nothing here has to update it.
      */
     fun rename(pieceId: String, label: String?) {
-        viewModelScope.launch { sessions.setPieceLabel(pieceId, label?.trim()?.ifEmpty { null }) }
+        viewModelScope.launch { sessions.setPieceLabel(pieceId, label) }
     }
 
     companion object {

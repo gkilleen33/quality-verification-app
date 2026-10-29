@@ -27,13 +27,11 @@ import androidx.compose.ui.unit.dp
 import com.qualityverifier.domain.AssessmentLanguage
 import com.qualityverifier.domain.FundiIntake
 import com.qualityverifier.domain.FundiPurpose
+import com.qualityverifier.domain.PieceNames
 import com.qualityverifier.domain.PriorIssue
 import com.qualityverifier.text.FundiLabels
 
 private enum class Step { NAME, LANGUAGE, PURPOSE, DETAILS }
-
-/** Matches the server's `pieces_label_length` (V22), counted as Postgres counts. */
-private const val NAME_LIMIT = 80
 
 /**
  * The questions asked before anything is sent.
@@ -60,7 +58,9 @@ fun IntakeFlow(
     onCancel: () -> Unit,
 ) {
     var step by remember { mutableStateOf(Step.NAME) }
-    var name by remember { mutableStateOf(initialName.orEmpty()) }
+    // Keyed on the name, which loads a moment after this first composes: without the
+    // key a returning piece's name would arrive too late to prefill the field.
+    var name by remember(initialName) { mutableStateOf(initialName.orEmpty()) }
     var language by remember { mutableStateOf<AssessmentLanguage?>(null) }
     var purpose by remember { mutableStateOf<FundiPurpose?>(null) }
     var details by remember { mutableStateOf("") }
@@ -79,7 +79,7 @@ fun IntakeFlow(
                     value = name,
                     // Bounded here as the server bounds it, so a name is never refused
                     // later for being too long.
-                    onValueChange = { if (it.codePointCount(0, it.length) <= NAME_LIMIT) name = it },
+                    onValueChange = { if (PieceNames.fits(it)) name = it },
                     placeholder = { Text(labels.intakeNameHint) },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth(),

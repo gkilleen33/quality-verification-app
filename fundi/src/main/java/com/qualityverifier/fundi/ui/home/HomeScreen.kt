@@ -30,6 +30,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.qualityverifier.domain.ItemType
+import com.qualityverifier.domain.PieceNames
 import com.qualityverifier.domain.SessionSummary
 import com.qualityverifier.fundi.ui.fundiContainer
 import java.text.SimpleDateFormat
@@ -147,7 +148,8 @@ private fun PieceRow(
             current = latest.pieceLabel,
             onRename = { label ->
                 renaming = false
-                onRename(label)
+                // Saved unchanged, nothing is written and nothing is sent.
+                if (label != latest.pieceLabel) onRename(label)
             },
             onDismiss = { renaming = false },
         )
@@ -225,7 +227,7 @@ private fun RenameDialog(
             OutlinedTextField(
                 value = name,
                 // The same bound as the intake and the server (V22).
-                onValueChange = { if (it.codePointCount(0, it.length) <= 80) name = it },
+                onValueChange = { if (PieceNames.fits(it)) name = it },
                 singleLine = true,
                 modifier = Modifier.fillMaxWidth(),
             )

@@ -98,16 +98,18 @@ class RoomSessionRepository(
     ) {
         val timestamp = now()
         if (pieceId != null) {
-            val piece = dao.findPiece(pieceId)
             when {
-                // A new piece. The opening turn carries the name, so it is already as
-                // good as sent; nothing waits for the next sync.
-                piece == null -> dao.upsertPiece(
+                // A new piece: its first assessment uses its own id as the piece id. The
+                // opening turn carries the name, so it is already as good as sent. Decided
+                // from the ids, not from the row: a piece from before Room 11 has no row
+                // and is still not new, and the server would ignore a label sent for it.
+                pieceId == sessionId -> dao.upsertPiece(
                     PieceEntity(pieceId, pieceLabel, labelUpdatedAt = timestamp, labelSyncedAt = timestamp)
                 )
-                // A returning piece renamed at the intake. The server ignores a label on
-                // a piece it already has, so this one goes by the rename route.
-                piece.label != pieceLabel -> setPieceLabel(pieceId, pieceLabel)
+                // A returning piece given a different name at the intake. Null means the
+                // maker skipped the question, never "clear it": clearing is the card's job.
+                pieceLabel != null && dao.findPiece(pieceId)?.label != pieceLabel ->
+                    setPieceLabel(pieceId, pieceLabel)
             }
         }
         dao.insertSession(
@@ -194,18 +196,12 @@ class RoomSessionRepository(
             )
         )
         session.pieceId?.let { pieceId ->
-            val local = dao.findPiece(pieceId)
             // The server's name wins unless this phone holds a rename it has not sent.
-            if (local == null || local.labelSyncedAt != null) {
-                dao.upsertPiece(
-                    PieceEntity(
-                        id = pieceId,
-                        label = session.pieceLabel,
-                        labelUpdatedAt = local?.labelUpdatedAt,
-                        labelSyncedAt = now(),
-                    )
-                )
-            }
+            // Two statements that each decide for themselves, so a rename made between
+            // them is kept rather than overwritten.
+            val syncedAt = now()
+            dao.insertPieceIfAbsent(PieceEntity(pieceId, session.pieceLabel, labelSyncedAt = syncedAt))
+            dao.applySyncedLabel(pieceId, session.pieceLabel, syncedAt)
         }
         // Cleared and rewritten rather than merged. The server is authoritative for a
         // synced assessment, and merging two orderings of the same conversation is a
