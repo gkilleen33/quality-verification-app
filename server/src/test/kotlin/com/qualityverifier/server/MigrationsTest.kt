@@ -89,6 +89,97 @@ class MigrationsTest {
         }
     }
 
+    /**
+     * Every column that holds something personal and is not a phone number, by name.
+     * The phone test above finds its columns by pattern; these have no pattern, so each
+     * PR that adds one adds it here, and a later rewrite of anonymise_user that forgets
+     * it fails here rather than on a deleted account.
+     */
+    private val personalColumns = listOf(
+        "users" to "display_name",
+        "users" to "business_name",
+        "users" to "business_location",
+        "sessions" to "location",
+        // V22: the maker's name for a piece, often the customer's name.
+        "pieces" to "label",
+    )
+
+    @Test
+    fun `anonymise_user clears every named personal column`() {
+        val latest = files.last { it.readText().contains("FUNCTION anonymise_user") }
+        val body = latest.readText().substringAfter("FUNCTION anonymise_user")
+            // Comments out, so a WHERE in one cannot end a SET list early.
+            .lines().joinToString("\n") { it.substringBefore("--") }
+        personalColumns.forEach { (table, column) ->
+            // An UPDATE on that table whose SET list, up to its WHERE, nulls the column.
+            val statements = Regex("""(?is)UPDATE\s+$table\s+SET\b(.*?)\bWHERE\b""")
+                .findAll(body).map { it.groupValues[1] }.toList()
+            assertTrue(
+                "${latest.name} defines anonymise_user without an UPDATE on $table",
+                statements.isNotEmpty(),
+            )
+            assertTrue(
+                "${latest.name} defines anonymise_user without clearing $table.$column",
+                statements.any { Regex("""\b$column\s*=\s*NULL""").containsMatchIn(it) },
+            )
+        }
+    }
+
+    /**
+     * Each redefinition of anonymise_user keeps everything the one before it did.
+     *
+     * The function is replaced whole every time it changes, so the only way to lose a
+     * clause is to retype the body and miss one. Compared as assignments rather than as
+     * statements, so a definition may add a column to an existing UPDATE, as V21 added
+     * phone_as_entered to the users statement.
+     */
+    @Test
+    fun `anonymise_user keeps every clause of the previous definition`() {
+        val definitions = files
+            .filter { it.readText().contains("FUNCTION anonymise_user") }
+            .map { it.name to clausesOf(it.readText().substringAfter("FUNCTION anonymise_user")) }
+        assertTrue("expected V11, V13, V21 and V22 at least", definitions.size >= 4)
+        definitions.zipWithNext().forEach { (earlier, later) ->
+            val lost = earlier.second - later.second
+            assertTrue(
+                "${later.first} drops these clauses that ${earlier.first} had: $lost",
+                lost.isEmpty(),
+            )
+        }
+    }
+
+    /** Every (table, column, value, where) of each UPDATE, and every DELETE whole. */
+    private fun clausesOf(body: String): Set<String> {
+        val text = body.lines().joinToString(" ") { it.substringBefore("--") }
+            .replace(Regex("""\s+"""), " ")
+        val updates = Regex("""(?i)UPDATE (\w+) SET (.*?) WHERE (.*?);""").findAll(text).flatMap { m ->
+            val (table, assignments, where) = m.destructured
+            splitAssignments(assignments).map { assignment ->
+                val (column, value) = assignment.split("=", limit = 2).map { it.trim() }
+                "$table.$column = $value where ${where.trim()}"
+            }.asSequence()
+        }
+        val deletes = Regex("""(?i)DELETE FROM .*?;""").findAll(text).map { it.value.trim() }
+        return (updates + deletes).toSet()
+    }
+
+    /** Splits a SET list on the commas between assignments, not those inside a call. */
+    private fun splitAssignments(list: String): List<String> {
+        val out = mutableListOf<String>()
+        var depth = 0
+        val current = StringBuilder()
+        list.forEach { c ->
+            when {
+                c == '(' -> { depth++; current.append(c) }
+                c == ')' -> { depth--; current.append(c) }
+                c == ',' && depth == 0 -> { out += current.toString(); current.clear() }
+                else -> current.append(c)
+            }
+        }
+        if (current.isNotBlank()) out += current.toString()
+        return out
+    }
+
     @Test
     fun `versions are sequential with no gaps or repeats`() {
         // A gap usually means a file was renamed and the old version is still recorded in

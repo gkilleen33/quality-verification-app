@@ -25,6 +25,13 @@ data class ChatRequest(
      */
     @SerialName("piece_id") val pieceId: String? = null,
     /**
+     * What the maker calls the piece, given at the start of its first assessment.
+     * Stored with the piece when the piece is created and ignored afterwards: a
+     * rename goes through PUT /v1/fundi/pieces/{id}, so a later turn repeating an
+     * old name cannot undo one.
+     */
+    @SerialName("piece_label") val pieceLabel: String? = null,
+    /**
      * This turn was written by the app on the user's behalf — an intake, a plan
      * submission — rather than typed. Stored, and handed back through sync, so a phone
      * that rebuilds its history can still show it compactly. See V18.

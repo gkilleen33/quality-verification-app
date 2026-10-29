@@ -16,6 +16,7 @@ data class SessionSummaryDto(
     @SerialName("previous_session_id") val previousSessionId: String? = null,
     @SerialName("intake_answers") val intakeAnswers: String? = null,
     @SerialName("piece_id") val pieceId: String? = null,
+    @SerialName("piece_label") val pieceLabel: String? = null,
 )
 
 @Serializable

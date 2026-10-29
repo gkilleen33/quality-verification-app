@@ -92,6 +92,10 @@ fun FundiProfile.toDto(): FundiProfileDto = FundiProfileDto(
     goals = goals.map { it.id },
 )
 
+/** The body of PUT /v1/fundi/pieces/{id}. A blank or absent label clears the name. */
+@Serializable
+data class PieceLabelDto(val label: String? = null)
+
 /** One fix of the maker's shop. All three, always: a point without its accuracy is a false precision. */
 @Serializable
 data class WorkshopLocationDto(

@@ -127,6 +127,87 @@ class FundiRouteTest {
         assertTrue(store.locations.isEmpty())
     }
 
+    // The name is the maker's own words for the piece, so it is free text with one bound,
+    // which the server holds as well as the phone (V22).
+    @Test
+    fun `a fundi can name and rename their piece`() = testApplication {
+        val store = FakeFundiStore().apply { pieces[PIECE] = null }
+        val app = withFundi(store, audience = Audience.FUNDI)
+
+        val named = app.put("/v1/fundi/pieces/$PIECE") {
+            auth(FUNDI); contentType(ContentType.Application.Json)
+            setBody("""{"label":"  Kiti cha Wanjirũ  "}""")
+        }
+        assertEquals(HttpStatusCode.NoContent, named.status)
+        assertEquals("Kiti cha Wanjirũ", store.pieces[PIECE])
+
+        // Blank clears. The card shows the item type again.
+        val cleared = app.put("/v1/fundi/pieces/$PIECE") {
+            auth(FUNDI); contentType(ContentType.Application.Json)
+            setBody("""{"label":"   "}""")
+        }
+        assertEquals(HttpStatusCode.NoContent, cleared.status)
+        assertNull(store.pieces[PIECE])
+    }
+
+    @Test
+    fun `a label over the bound is refused before the store`() = testApplication {
+        val store = FakeFundiStore().apply { pieces[PIECE] = "old name" }
+        val app = withFundi(store, audience = Audience.FUNDI)
+
+        val response = app.put("/v1/fundi/pieces/$PIECE") {
+            auth(FUNDI); contentType(ContentType.Application.Json)
+            setBody("""{"label":"${"x".repeat(81)}"}""")
+        }
+
+        assertEquals(HttpStatusCode.BadRequest, response.status)
+        assertTrue(response.bodyAsText().contains("label_too_long"))
+        assertEquals("old name", store.pieces[PIECE])
+
+        // Exactly the bound is fine. Counted in characters, as Postgres counts them.
+        val atBound = app.put("/v1/fundi/pieces/$PIECE") {
+            auth(FUNDI); contentType(ContentType.Application.Json)
+            setBody("""{"label":"${"ũ".repeat(80)}"}""")
+        }
+        assertEquals(HttpStatusCode.NoContent, atBound.status)
+    }
+
+    // 404 for a stranger's piece and for a malformed id alike: a piece id is a
+    // client-made uuid, and a different answer would say which ids exist.
+    @Test
+    fun `another account's piece and a malformed id are both 404`() = testApplication {
+        val store = FakeFundiStore()
+        val app = withFundi(store, audience = Audience.FUNDI)
+
+        val stranger = app.put("/v1/fundi/pieces/$PIECE") {
+            auth(FUNDI); contentType(ContentType.Application.Json)
+            setBody("""{"label":"Mine now"}""")
+        }
+        assertEquals(HttpStatusCode.NotFound, stranger.status)
+        assertTrue(stranger.bodyAsText().contains("no_such_piece"))
+
+        val malformed = app.put("/v1/fundi/pieces/not-a-uuid") {
+            auth(FUNDI); contentType(ContentType.Application.Json)
+            setBody("""{"label":"Mine now"}""")
+        }
+        assertEquals(HttpStatusCode.NotFound, malformed.status)
+        assertTrue(store.pieces.isEmpty())
+    }
+
+    @Test
+    fun `a Kagua account cannot name a piece`() = testApplication {
+        val store = FakeFundiStore().apply { pieces[PIECE] = null }
+        val app = withFundi(store, audience = Audience.BUYER)
+
+        val response = app.put("/v1/fundi/pieces/$PIECE") {
+            auth(FUNDI); contentType(ContentType.Application.Json)
+            setBody("""{"label":"Stool"}""")
+        }
+
+        assertEquals(HttpStatusCode.Forbidden, response.status)
+        assertNull(store.pieces[PIECE])
+    }
+
     @Test
     fun `a Kagua account is refused`() = testApplication {
         val store = FakeFundiStore()
@@ -320,6 +401,14 @@ class FundiRouteTest {
 
         override suspend fun toolHistory(userId: String) = history[userId].orEmpty()
 
+        /** Pieces this fake owns, by id, with their current name. */
+        val pieces = mutableMapOf<String, String?>()
+        override suspend fun renamePiece(userId: String, pieceId: String, label: String?): Boolean {
+            if (pieceId !in pieces) return false
+            pieces[pieceId] = label
+            return true
+        }
+
         val locations = mutableMapOf<String, Triple<Double, Double, Double>>()
         override suspend fun saveWorkshopLocation(
             userId: String, latitude: Double, longitude: Double, accuracyMetres: Double,
@@ -352,5 +441,6 @@ class FundiRouteTest {
     private companion object {
         const val KEY = "a-signing-key-long-enough-to-be-real"
         const val FUNDI = "11111111-2222-3333-4444-555555555555"
+        const val PIECE = "c0ffee00-0000-4000-8000-00000000001a"
     }
 }

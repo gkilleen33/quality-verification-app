@@ -217,6 +217,7 @@ private fun SessionRow.toDto() = SessionSummaryDto(
     previousSessionId = previousSessionId,
     intakeAnswers = intakeAnswers,
     pieceId = pieceId,
+    pieceLabel = pieceLabel,
 )
 
 private fun MessageRow.toDto() = MessageDto(

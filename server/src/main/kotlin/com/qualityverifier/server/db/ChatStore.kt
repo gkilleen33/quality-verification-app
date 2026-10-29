@@ -51,6 +51,8 @@ data class SessionRow(
      * re-assessment would start a new piece instead of joining the old one.
      */
     val pieceId: String? = null,
+    /** What the maker calls the piece. Null until they name it. */
+    val pieceLabel: String? = null,
 )
 
 data class MessageRow(
@@ -99,6 +101,12 @@ interface ChatStore {
          * skew that maker's record.
          */
         pieceId: String? = null,
+        /**
+         * The piece's name, written only when this turn creates the piece. Blank or
+         * over the V22 bound is stored as no name rather than refused: the name is
+         * optional data on a turn somebody is about to spend minutes on.
+         */
+        pieceLabel: String? = null,
     ): SessionAccess
 
     /**
@@ -228,6 +236,7 @@ class PostgresChatStore(private val dataSource: DataSource) : ChatStore {
         dailyLimit: Int,
         testerDailyLimit: Int,
         pieceId: String?,
+        pieceLabel: String?,
     ): SessionAccess = tx { connection ->
         val owner = connection.prepareStatement(
             "select user_id::text from sessions where id = ?::uuid"
@@ -290,14 +299,15 @@ class PostgresChatStore(private val dataSource: DataSource) : ChatStore {
         if (linkPiece) {
             connection.prepareStatement(
                 """
-                insert into pieces (id, user_id, item_type_id)
-                values (?::uuid, ?::uuid, ?)
+                insert into pieces (id, user_id, item_type_id, label)
+                values (?::uuid, ?::uuid, ?, ?)
                 on conflict (id) do nothing
                 """.trimIndent()
             ).use { statement ->
                 statement.setString(1, pieceId)
                 statement.setString(2, userId)
                 statement.setString(3, itemTypeId)
+                statement.setString(4, PieceLabels.normalise(pieceLabel))
                 statement.executeUpdate()
             }
         }
@@ -624,10 +634,12 @@ class PostgresChatStore(private val dataSource: DataSource) : ChatStore {
                            (extract(epoch from s.updated_at) * 1000)::bigint,
                            s.preview_text, count(m.id)::int,
                            s.verdict_level_id, s.verdict_language,
-                           s.previous_session_id::text, s.intake_answers, s.piece_id::text
+                           s.previous_session_id::text, s.intake_answers, s.piece_id::text,
+                           p.label
                     from sessions s left join messages m on m.session_id = s.id
+                    left join pieces p on p.id = s.piece_id
                     where s.user_id = ?::uuid and s.client_deleted_at is null
-                    group by s.id
+                    group by s.id, p.label
                     order by s.updated_at desc
                     """.trimIndent()
                 ).use { statement ->
@@ -653,10 +665,12 @@ class PostgresChatStore(private val dataSource: DataSource) : ChatStore {
                        (extract(epoch from s.updated_at) * 1000)::bigint,
                        s.preview_text, count(m.id)::int,
                        s.verdict_level_id, s.verdict_language,
-                       s.previous_session_id::text, s.intake_answers, s.piece_id::text
+                       s.previous_session_id::text, s.intake_answers, s.piece_id::text,
+                       p.label
                 from sessions s left join messages m on m.session_id = s.id
+                left join pieces p on p.id = s.piece_id
                 where s.id = ?::uuid and s.user_id = ?::uuid and s.client_deleted_at is null
-                group by s.id
+                group by s.id, p.label
                 """.trimIndent()
             ).use { statement ->
                 statement.setString(1, sessionId)
@@ -761,6 +775,7 @@ class PostgresChatStore(private val dataSource: DataSource) : ChatStore {
         previousSessionId = getString(9),
         intakeAnswers = getString(10),
         pieceId = getString(11),
+        pieceLabel = getString(12),
     )
 
     private fun touch(connection: Connection, sessionId: String, preview: String) {
