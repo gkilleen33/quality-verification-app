@@ -10,6 +10,8 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.systemBarsPadding
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -161,7 +163,7 @@ private fun PieceRow(
     /** Who is recorded on the latest assessment, read when the edit opens. */
     loadWorkers: suspend () -> List<WorkerSlot>,
     onSetWorkers: (List<WorkerSlot>) -> Unit,
-    onAddWorker: (String) -> Unit,
+    onAddWorker: (String, (Worker) -> Unit) -> Unit,
 ) {
     var renaming by remember { mutableStateOf(false) }
     var editingWorkers by remember { mutableStateOf(false) }
@@ -253,7 +255,7 @@ private fun WorkersDialog(
     roster: List<Worker>,
     load: suspend () -> List<WorkerSlot>,
     onSave: (List<WorkerSlot>) -> Unit,
-    onAddWorker: (String) -> Unit,
+    onAddWorker: (String, (Worker) -> Unit) -> Unit,
     onDismiss: () -> Unit,
 ) {
     var slots by remember { mutableStateOf<List<WorkerSlot>?>(null) }
@@ -263,12 +265,16 @@ private fun WorkersDialog(
         onDismissRequest = onDismiss,
         title = { Text("Who worked on this?") },
         text = {
-            WorkerPicker(
-                roster = roster,
-                slots = current,
-                onChange = { slots = it },
-                onAddWorker = onAddWorker,
-            )
+            // Scrolls: several people with six part chips each outgrow a small phone,
+            // and the buttons below must stay reachable.
+            Column(Modifier.verticalScroll(rememberScrollState())) {
+                WorkerPicker(
+                    roster = roster,
+                    slots = current,
+                    onChange = { slots = it },
+                    onAddWorker = onAddWorker,
+                )
+            }
         },
         confirmButton = { TextButton(onClick = { onSave(current) }) { Text("Save") } },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },

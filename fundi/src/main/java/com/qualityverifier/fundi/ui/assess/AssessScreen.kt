@@ -38,11 +38,11 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import coil.compose.AsyncImage
 import com.qualityverifier.domain.ChatMessage
 import com.qualityverifier.domain.FundiIntake
-import com.qualityverifier.domain.WorkerSlot
 import com.qualityverifier.domain.FundiPurpose
 import com.qualityverifier.domain.ItemType
 import com.qualityverifier.domain.PlanRun
 import com.qualityverifier.domain.Role
+import com.qualityverifier.domain.WorkerSlot
 import com.qualityverifier.fundi.ui.coach.DiagnosisCard
 import com.qualityverifier.fundi.ui.coach.FixPlanCard
 import com.qualityverifier.fundi.ui.coach.VerdictCard

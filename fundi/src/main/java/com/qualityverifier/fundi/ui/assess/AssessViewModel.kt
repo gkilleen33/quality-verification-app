@@ -188,6 +188,11 @@ class AssessViewModel(
     /** Destination for the next shot. The camera screen writes straight into it. */
     fun newCaptureFile(): File? = runCatching { images.newImageFile(sessionId) }.getOrNull()
 
+    /** A person added inside the picker. On the roster at once; the server hears with the turn. */
+    fun addWorker(name: String, onAdded: (Worker) -> Unit) {
+        viewModelScope.launch { onAdded(workers.add(name)) }
+    }
+
     /**
      * Sends the completed intake, and the opening photograph if there is one.
      *
@@ -208,11 +213,6 @@ class AssessViewModel(
      * skipped it. The repository decides whether that names a new piece or renames an
      * old one.
      */
-    /** A person added inside the picker. On the roster at once; the server hears with the turn. */
-    fun addWorker(name: String) {
-        viewModelScope.launch { workers.add(name) }
-    }
-
     fun start(
         intake: FundiIntake,
         photoPath: String?,

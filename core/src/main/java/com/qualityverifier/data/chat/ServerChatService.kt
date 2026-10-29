@@ -38,8 +38,12 @@ private data class ChatBody(
     @SerialName("piece_id") val pieceId: String? = null,
     /** What the maker calls it. Kept by the server only when this turn creates the piece. */
     @SerialName("piece_label") val pieceLabel: String? = null,
-    /** Who worked on it. Kept by the server only when this turn creates the session. */
-    val workers: List<WorkerSlotBody> = emptyList(),
+    /**
+     * Who worked on it. Kept by the server only when this turn creates the session.
+     * Null, not empty, when nobody was named: the server refuses unknown fields, so an
+     * APK must not send this to a server that predates it, and Kagua never names anyone.
+     */
+    val workers: List<WorkerSlotBody>? = null,
     val composed: Boolean = false,
     /**
      * Where the assessment was made, when there is one. Same rule as the two above: sent
@@ -165,7 +169,8 @@ class ServerChatService(
                 intakeAnswers = start?.intakeCode ?: start?.intake?.let(::encodeIntake),
                 pieceId = start?.pieceId,
                 pieceLabel = start?.pieceLabel,
-                workers = start?.workers.orEmpty().map { WorkerSlotBody(it.workerId, it.name, it.part?.id) },
+                workers = start?.workers?.takeIf { it.isNotEmpty() }
+                    ?.map { WorkerSlotBody(it.workerId, it.name, it.part?.id) },
                 // So the server can hand it back through sync — see V18.
                 composed = turn.composed,
                 latitude = start?.location?.latitude,

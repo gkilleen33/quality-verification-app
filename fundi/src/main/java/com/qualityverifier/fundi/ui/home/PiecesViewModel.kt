@@ -52,8 +52,8 @@ class PiecesViewModel(
         }
     }
 
-    fun addWorker(name: String) {
-        viewModelScope.launch { workers.add(name) }
+    fun addWorker(name: String, onAdded: (Worker) -> Unit) {
+        viewModelScope.launch { onAdded(workers.add(name)) }
     }
 
     val pieces: StateFlow<List<SessionSummary>> =

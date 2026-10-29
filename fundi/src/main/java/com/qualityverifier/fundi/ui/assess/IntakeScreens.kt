@@ -59,7 +59,7 @@ fun IntakeFlow(
     roster: List<Worker>,
     /** Who worked on the piece last time, as the starting answer. Empty on a new piece. */
     initialWorkers: List<WorkerSlot>,
-    onAddWorker: (String) -> Unit,
+    onAddWorker: (String, (Worker) -> Unit) -> Unit,
     /** The answers, the piece's name or null when skipped, and who worked on it. */
     onComplete: (FundiIntake, String?, List<WorkerSlot>) -> Unit,
     onCancel: () -> Unit,

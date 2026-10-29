@@ -42,8 +42,8 @@ fun WorkerPicker(
     roster: List<Worker>,
     slots: List<WorkerSlot>,
     onChange: (List<WorkerSlot>) -> Unit,
-    /** Adds a person to the roster from inside the picker; the caller returns the new worker. */
-    onAddWorker: (String) -> Unit,
+    /** Adds a person to the roster from inside the picker and hands back the new worker. */
+    onAddWorker: (String, (Worker) -> Unit) -> Unit,
 ) {
     val chosen = slots.map { it.workerId }.toSet()
     // The manager is a worker with no id; the roster is everybody else, archived left out.
@@ -97,7 +97,10 @@ fun WorkerPicker(
             }
         }
 
-        AddWorkerRow(onAddWorker)
+        // Added and chosen in one go: the person was named because they worked on this.
+        AddWorkerRow { name ->
+            onAddWorker(name) { worker -> onChange(slots + WorkerSlot(worker.id, worker.name)) }
+        }
     }
 }
 
