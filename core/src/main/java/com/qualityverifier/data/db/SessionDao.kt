@@ -16,6 +16,9 @@ data class MessageWithAttachments(
     val attachments: List<AttachmentEntity>,
 )
 
+/** One "who worked on this" row with the person's current name, for the opening turn. */
+data class SessionWorkerSlotRow(val workerId: String?, val name: String?, val part: String?)
+
 /** Just enough to decide whether a synced assessment is newer than the local copy. */
 data class SessionStamp(val id: String, val updatedAt: Long)
 
@@ -233,6 +236,15 @@ interface SessionDao {
 
     @Query("SELECT * FROM session_workers WHERE sessionId = :sessionId ORDER BY id")
     suspend fun sessionWorkers(sessionId: String): List<SessionWorkerEntity>
+
+    @Query(
+        """
+        SELECT sw.workerId AS workerId, w.name AS name, sw.part AS part
+        FROM session_workers sw LEFT JOIN workers w ON w.id = sw.workerId
+        WHERE sw.sessionId = :sessionId ORDER BY sw.id
+        """
+    )
+    suspend fun sessionWorkerSlots(sessionId: String): List<SessionWorkerSlotRow>
 
     @Query("DELETE FROM session_workers WHERE sessionId = :sessionId")
     suspend fun deleteSessionWorkers(sessionId: String)

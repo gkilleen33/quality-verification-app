@@ -17,6 +17,8 @@ import com.qualityverifier.domain.Ownership
 import com.qualityverifier.domain.Role
 import com.qualityverifier.domain.SessionStart
 import com.qualityverifier.domain.Usage
+import com.qualityverifier.domain.WorkPart
+import com.qualityverifier.domain.WorkerSlot
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.Json
 import okhttp3.OkHttpClient
@@ -109,6 +111,25 @@ class ServerChatServiceTest {
         val body = server.takeRequest().body.readUtf8()
         assertTrue(body, body.contains("\"piece_id\":\"c0ffee00-0000-4000-8000-000000000001\""))
         assertTrue(body, body.contains("\"piece_label\":\"Kiti cha Wanjirũ\""))
+    }
+
+    // Who worked on it goes with the opening turn, names included, so a worker added in
+    // the picker reaches the server before the roster sync has run.
+    @Test
+    fun `who worked on it travels with the turn, the manager as no id`() = runTest {
+        server.enqueue(json("""{"message_id":"m1","text":"thanks"}"""))
+        sessionStart = SessionStart(
+            ItemType.WOODEN_STOOL, null, null,
+            workers = listOf(
+                WorkerSlot("c0ffee00-0000-4000-8000-000000000002", "Kamau", WorkPart.JOINERY),
+                WorkerSlot(null),
+            ),
+        )
+
+        service().send("s1", ItemType.WOODEN_STOOL, history())
+
+        val body = server.takeRequest().body.readUtf8()
+        assertTrue(body, body.contains("\"workers\":[{\"id\":\"c0ffee00-0000-4000-8000-000000000002\",\"name\":\"Kamau\",\"part\":\"joinery\"},{}]"))
     }
 
     @Test

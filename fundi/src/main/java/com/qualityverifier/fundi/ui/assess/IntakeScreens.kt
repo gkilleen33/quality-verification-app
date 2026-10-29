@@ -29,9 +29,11 @@ import com.qualityverifier.domain.FundiIntake
 import com.qualityverifier.domain.FundiPurpose
 import com.qualityverifier.domain.PieceNames
 import com.qualityverifier.domain.PriorIssue
+import com.qualityverifier.domain.Worker
+import com.qualityverifier.domain.WorkerSlot
 import com.qualityverifier.text.FundiLabels
 
-private enum class Step { NAME, LANGUAGE, PURPOSE, DETAILS }
+private enum class Step { NAME, WORKERS, LANGUAGE, PURPOSE, DETAILS }
 
 /**
  * The questions asked before anything is sent.
@@ -53,20 +55,27 @@ fun IntakeFlow(
     priorIssues: List<PriorIssue>,
     /** What the piece is already called, prefilled so a returning piece keeps its name. */
     initialName: String?,
-    /** The answers, and the piece's name or null when skipped. */
-    onComplete: (FundiIntake, String?) -> Unit,
+    /** The roster, for "Who worked on this?". */
+    roster: List<Worker>,
+    /** Who worked on the piece last time, as the starting answer. Empty on a new piece. */
+    initialWorkers: List<WorkerSlot>,
+    onAddWorker: (String, (Worker) -> Unit) -> Unit,
+    /** The answers, the piece's name or null when skipped, and who worked on it. */
+    onComplete: (FundiIntake, String?, List<WorkerSlot>) -> Unit,
     onCancel: () -> Unit,
 ) {
     var step by remember { mutableStateOf(Step.NAME) }
     // Keyed on the name, which loads a moment after this first composes: without the
     // key a returning piece's name would arrive too late to prefill the field.
     var name by remember(initialName) { mutableStateOf(initialName.orEmpty()) }
+    // Keyed for the same reason as the name: the previous set loads a moment later.
+    var workedOn by remember(initialWorkers) { mutableStateOf(initialWorkers) }
     var language by remember { mutableStateOf<AssessmentLanguage?>(null) }
     var purpose by remember { mutableStateOf<FundiPurpose?>(null) }
     var details by remember { mutableStateOf("") }
 
     fun finish(intake: FundiIntake) {
-        if (intake.isComplete) onComplete(intake, name.trim().ifEmpty { null })
+        if (intake.isComplete) onComplete(intake, name.trim().ifEmpty { null }, workedOn)
     }
 
     IntakeColumn {
@@ -85,7 +94,7 @@ fun IntakeFlow(
                     modifier = Modifier.fillMaxWidth(),
                 )
                 Button(
-                    onClick = { step = Step.LANGUAGE },
+                    onClick = { step = Step.WORKERS },
                     enabled = name.isNotBlank(),
                     modifier = Modifier.fillMaxWidth().height(56.dp),
                 ) { Text(labels.intakeContinue) }
@@ -93,9 +102,31 @@ fun IntakeFlow(
                 // unnamed by a maker who did not want to type. Clearing is the card's job.
                 Secondary(labels.intakeNameSkip) {
                     name = initialName.orEmpty()
-                    step = Step.LANGUAGE
+                    step = Step.WORKERS
                 }
                 Secondary(labels.setupBack, onCancel)
+            }
+
+            // Who worked on it, while the manager is standing over the piece and knows.
+            // A report on one part of the piece later names these people.
+            Step.WORKERS -> {
+                Title("Who worked on this?")
+                WorkerPicker(
+                    roster = roster,
+                    slots = workedOn,
+                    onChange = { workedOn = it },
+                    onAddWorker = onAddWorker,
+                )
+                Button(
+                    onClick = { step = Step.LANGUAGE },
+                    modifier = Modifier.fillMaxWidth().height(56.dp),
+                ) { Text(labels.intakeContinue) }
+                // Skip records nobody, which reads as "not said" rather than "nobody".
+                Secondary(labels.intakeNameSkip) {
+                    workedOn = emptyList()
+                    step = Step.LANGUAGE
+                }
+                Secondary(labels.setupBack) { step = Step.NAME }
             }
 
             Step.LANGUAGE -> {
@@ -108,7 +139,7 @@ fun IntakeFlow(
                         step = Step.PURPOSE
                     }
                 }
-                Secondary(labels.setupBack) { step = Step.NAME }
+                Secondary(labels.setupBack) { step = Step.WORKERS }
             }
 
             Step.PURPOSE -> {
