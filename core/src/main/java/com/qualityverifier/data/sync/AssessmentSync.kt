@@ -6,6 +6,10 @@ import com.qualityverifier.data.auth.TokenStore
 import com.qualityverifier.data.session.SessionRepository
 import com.qualityverifier.data.session.SyncedMessage
 import com.qualityverifier.data.session.SyncedSession
+import com.qualityverifier.data.workers.ServerWorker
+import com.qualityverifier.data.workers.WorkerRepository
+import com.qualityverifier.domain.WorkPart
+import com.qualityverifier.domain.WorkerSlot
 import com.qualityverifier.domain.ItemType
 import com.qualityverifier.domain.Role
 import kotlinx.coroutines.CoroutineDispatcher
@@ -30,6 +34,13 @@ class AssessmentSync(
     private val images: SessionImageStore,
     /** Holds the cached evaluator flag, refreshed on every run. */
     private val tokens: TokenStore,
+    /** The roster, pushed before the pull and merged after it. */
+    private val workers: WorkerRepository,
+    /**
+     * Whether this app has a roster at all. Kagua does not: its account would get a 403
+     * from the roster route on every sync, which is a request with no answer worth paying for.
+     */
+    private val rosterEnabled: Boolean,
     private val io: CoroutineDispatcher = Dispatchers.IO,
 ) {
 
@@ -41,6 +52,8 @@ class AssessmentSync(
         val reviews: Int = 0,
         /** Piece names that reached the server, or will never be taken. */
         val names: Int = 0,
+        /** Roster writes and session worker sets that reached the server. */
+        val rosterWrites: Int = 0,
     )
 
     /**
@@ -74,13 +87,36 @@ class AssessmentSync(
             }
         }
 
+        // The roster before any session that names it, so the server never meets a
+        // worker id it has no row for.
+        var rosterWrites = 0
+        if (rosterEnabled) for (change in workers.unsynced()) {
+            if (client.upsertWorker(change.id, change.name, change.archived)) {
+                workers.markSynced(change)
+                rosterWrites++
+            }
+        }
+        if (rosterEnabled) for (sessionId in workers.pendingSessions()) {
+            if (client.replaceSessionWorkers(sessionId, workers.workersOf(sessionId))) {
+                workers.clearPending(sessionId)
+                rosterWrites++
+            }
+        }
+
         // Refreshed here so a promotion in the portal reaches the phone without a
         // re-install. Null means the server was unreachable, in which case the cached
         // answer is better than assuming either way.
         client.isTester()?.let(tokens::setTester)
 
+        // The roster comes down before the sessions that refer to it.
+        if (rosterEnabled) client.workers()?.let { roster ->
+            workers.mergeFromServer(roster.map { ServerWorker(it.id, it.name, it.archivedAt) })
+        }
+
         val remote = client.sessions()
-            ?: return@withContext Result(0, deletes, reachedServer = false, reviews = reviews, names = names)
+            ?: return@withContext Result(
+                0, deletes, reachedServer = false, reviews = reviews, names = names, rosterWrites = rosterWrites,
+            )
 
         val known = sessions.knownSessions()
         // Reports the customer dropped from this phone while choosing to leave our copy
@@ -133,9 +169,13 @@ class AssessmentSync(
                 ),
                 messages,
             )
+            if (rosterEnabled) workers.applySynced(
+                detail.session.id,
+                detail.session.workers.map { WorkerSlot(it.workerId, part = it.part?.let(WorkPart::fromId)) },
+            )
             fetched++
         }
-        Result(fetched, deletes, reachedServer = true, reviews = reviews, names = names)
+        Result(fetched, deletes, reachedServer = true, reviews = reviews, names = names, rosterWrites = rosterWrites)
     }
 
     /**

@@ -53,6 +53,8 @@ fun HomeScreen(
     /** Start a new assessment of the same piece. */
     onReassess: (SessionSummary) -> Unit,
     onStart: (ItemType) -> Unit,
+    /** The roster screen. */
+    onWorkers: () -> Unit,
 ) {
     val container = fundiContainer()
     val model: PiecesViewModel = viewModel(factory = PiecesViewModel.factory(container))
@@ -113,12 +115,17 @@ fun HomeScreen(
                 ) { Text("Assess a new piece") }
             }
             item {
-                Text(
-                    "My pieces",
-                    style = MaterialTheme.typography.titleMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(top = 8.dp),
-                )
+                Row(
+                    Modifier.fillMaxWidth().padding(top = 8.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                ) {
+                    Text(
+                        "My pieces",
+                        style = MaterialTheme.typography.titleMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    TextButton(onClick = onWorkers) { Text("My workers") }
+                }
             }
             items(pieces, key = { (latest, _) -> latest.piece }) { (latest, count) ->
                 PieceRow(

@@ -104,6 +104,48 @@ data class PieceEntity(
     val labelSyncedAt: Long? = null,
 )
 
+/**
+ * A person on the manager's roster.
+ *
+ * Ids are made on the phone, as session and piece ids are, so the picker works offline
+ * and an opening turn can name a worker the server has never seen. [syncedAt] null means
+ * the server has not been told the current name or archive state; the next sync sends
+ * it before the pull, so the pull cannot overwrite it.
+ */
+@Entity(tableName = "workers")
+data class WorkerEntity(
+    @PrimaryKey val id: String,
+    /** Nullable only because the server clears it on account deletion. */
+    val name: String? = null,
+    val archivedAt: Long? = null,
+    /** The phone's own clock, for ordering its own writes; never sent. */
+    val updatedAt: Long,
+    val syncedAt: Long? = null,
+)
+
+/**
+ * Who worked on which part of a piece, on one assessment. A null [workerId] is the
+ * manager; a null [part], the whole piece. Rows for a session are replaced as a set.
+ */
+@Entity(tableName = "session_workers", indices = [Index("sessionId")])
+data class SessionWorkerEntity(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val sessionId: String,
+    val workerId: String? = null,
+    val part: String? = null,
+)
+
+/**
+ * A session whose worker set the server has not been told about. The same shape as
+ * [PendingRemoteDeleteEntity], for the same reason: the edit is made in the workshop,
+ * and the record that the server still needs telling has to survive being offline.
+ */
+@Entity(tableName = "pending_session_workers")
+data class PendingSessionWorkersEntity(
+    @PrimaryKey val sessionId: String,
+    val requestedAt: Long,
+)
+
 @Entity(
     tableName = "messages",
     foreignKeys = [

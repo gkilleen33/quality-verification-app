@@ -198,6 +198,64 @@ interface SessionDao {
     )
     suspend fun markPieceSynced(pieceId: String, asOf: Long?, syncedAt: Long)
 
+    // ---- the roster
+
+    @Query("SELECT * FROM workers ORDER BY updatedAt")
+    fun observeWorkers(): Flow<List<WorkerEntity>>
+
+    @Query("SELECT * FROM workers WHERE id = :workerId")
+    suspend fun findWorker(workerId: String): WorkerEntity?
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsertWorker(worker: WorkerEntity)
+
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
+    suspend fun insertWorkerIfAbsent(worker: WorkerEntity)
+
+    @Query("SELECT * FROM workers WHERE syncedAt IS NULL ORDER BY updatedAt")
+    suspend fun unsyncedWorkers(): List<WorkerEntity>
+
+    /** Guarded on `updatedAt`, so an edit made while the send was in flight stays unsent. */
+    @Query("UPDATE workers SET syncedAt = :syncedAt WHERE id = :workerId AND updatedAt = :asOf")
+    suspend fun markWorkerSynced(workerId: String, asOf: Long, syncedAt: Long)
+
+    /**
+     * The server's name and archive state, applied only where nothing is unsent. Archive
+     * is sticky in both directions, so neither side can revive a worker the other let go.
+     */
+    @Query(
+        "UPDATE workers SET name = :name, archivedAt = COALESCE(archivedAt, :archivedAt), " +
+            "syncedAt = :syncedAt WHERE id = :workerId AND syncedAt IS NOT NULL"
+    )
+    suspend fun applySyncedWorker(workerId: String, name: String?, archivedAt: Long?, syncedAt: Long)
+
+    // ---- who worked on a session
+
+    @Query("SELECT * FROM session_workers WHERE sessionId = :sessionId ORDER BY id")
+    suspend fun sessionWorkers(sessionId: String): List<SessionWorkerEntity>
+
+    @Query("DELETE FROM session_workers WHERE sessionId = :sessionId")
+    suspend fun deleteSessionWorkers(sessionId: String)
+
+    @Insert
+    suspend fun insertSessionWorkers(rows: List<SessionWorkerEntity>)
+
+    /** The set for a session, replaced whole: merging two sets of the same answer is nobody's job. */
+    @Transaction
+    suspend fun replaceSessionWorkers(sessionId: String, rows: List<SessionWorkerEntity>) {
+        deleteSessionWorkers(sessionId)
+        if (rows.isNotEmpty()) insertSessionWorkers(rows)
+    }
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun addPendingSessionWorkers(pending: PendingSessionWorkersEntity)
+
+    @Query("SELECT sessionId FROM pending_session_workers ORDER BY requestedAt")
+    suspend fun pendingSessionWorkers(): List<String>
+
+    @Query("DELETE FROM pending_session_workers WHERE sessionId = :sessionId")
+    suspend fun clearPendingSessionWorkers(sessionId: String)
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun addDismissed(dismissed: DismissedSessionEntity)
 
