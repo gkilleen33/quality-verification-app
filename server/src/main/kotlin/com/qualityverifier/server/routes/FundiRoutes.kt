@@ -114,7 +114,7 @@ fun Route.fundiRoutes(store: FundiStore, auth: AuthStore) {
 
             val body = call.receive<WorkerUpsertDto>()
             val name = body.name?.trim().orEmpty()
-            if (WorkerNames.length(name) !in 1..WorkerNames.MAX_LENGTH || '\u0000' in name) {
+            if (!WorkerNames.valid(name)) {
                 call.respond(
                     HttpStatusCode.BadRequest,
                     ErrorResponse("invalid_request", "name must be 1 to ${WorkerNames.MAX_LENGTH} characters"),

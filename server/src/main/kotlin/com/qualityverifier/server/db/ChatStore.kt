@@ -370,13 +370,18 @@ class PostgresChatStore(private val dataSource: DataSource) : ChatStore {
         sessionId: String,
         workers: List<WorkerSlot>,
     ): Boolean = tx { connection ->
+        // Also bumps updated_at, so a second phone on the account sees the edit at its
+        // next pull, which skips sessions no newer than its own copy.
         val theirs = connection.prepareStatement(
-            "select 1 from sessions where id = ?::uuid and user_id = ?::uuid and audience = ?"
+            """
+            update sessions set updated_at = now()
+            where id = ?::uuid and user_id = ?::uuid and audience = ? and client_deleted_at is null
+            """.trimIndent()
         ).use { statement ->
             statement.setString(1, sessionId)
             statement.setString(2, userId)
             statement.setString(3, Audience.FUNDI.id)
-            statement.executeQuery().use { it.next() }
+            statement.executeUpdate() > 0
         }
         if (!theirs) return@tx false
         connection.prepareStatement("delete from session_workers where session_id = ?::uuid").use {
@@ -386,6 +391,12 @@ class PostgresChatStore(private val dataSource: DataSource) : ChatStore {
         writeSessionWorkers(connection, userId, sessionId, workers)
         true
     }
+
+    private fun workerExists(connection: Connection, workerId: String): Boolean =
+        connection.prepareStatement("select 1 from workers where id = ?::uuid").use { statement ->
+            statement.setString(1, workerId)
+            statement.executeQuery().use { it.next() }
+        }
 
     /**
      * Links each slot to the session. A worker the server has never seen is created from
@@ -402,6 +413,14 @@ class PostgresChatStore(private val dataSource: DataSource) : ChatStore {
         for (slot in workers) {
             val workerId = slot.workerId
             if (workerId != null) {
+                // An id the server has never seen needs its name, or the roster would hold
+                // a nameless row until the phone's own write repaired it. The phone sends
+                // the name with any worker added inside the picker, so this is a client bug.
+                val name = slot.name?.takeIf { it.isNotBlank() }
+                if (name == null && !workerExists(connection, workerId)) {
+                    log.warn("Session {} named unknown worker {} with no name; dropped", sessionId, workerId)
+                    continue
+                }
                 connection.prepareStatement(
                     """
                     insert into workers (id, user_id, name) values (?::uuid, ?::uuid, ?)
@@ -410,7 +429,7 @@ class PostgresChatStore(private val dataSource: DataSource) : ChatStore {
                 ).use { statement ->
                     statement.setString(1, workerId)
                     statement.setString(2, userId)
-                    statement.setString(3, slot.name?.takeIf { it.isNotBlank() })
+                    statement.setString(3, name)
                     statement.executeUpdate()
                 }
                 val owner = connection.prepareStatement(

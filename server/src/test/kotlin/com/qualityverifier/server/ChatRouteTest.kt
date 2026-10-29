@@ -701,6 +701,18 @@ class ChatRouteTest {
         }
         assertEquals(HttpStatusCode.BadRequest, badId.status)
         assertTrue(badId.bodyAsText().contains("uuid"))
+
+        // A NUL cannot be stored in Postgres text, so it is refused here, not thrown there.
+        val nul = app.post("/v1/fundi/chat") {
+            auth()
+            setBody(
+                TextContent(
+                    requestJsonWith(",\"workers\":[{\"id\":\"${UUID.randomUUID()}\",\"name\":\"a\\u0000b\"}]"),
+                    ContentType.Application.Json,
+                ),
+            )
+        }
+        assertEquals(HttpStatusCode.BadRequest, nul.status)
         assertTrue(store.sawWorkers.isEmpty())
     }
 

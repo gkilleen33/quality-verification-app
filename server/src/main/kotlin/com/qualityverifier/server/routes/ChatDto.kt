@@ -112,7 +112,7 @@ data class WorkerSlotDto(
         get() = when {
             id != null && !isUuid(id) -> "workers[].id must be a uuid"
             id == null && name != null -> "workers[].name needs an id"
-            name != null && WorkerNames.length(name.trim()) !in 1..WorkerNames.MAX_LENGTH ->
+            name != null && !WorkerNames.valid(name.trim()) ->
                 "workers[].name must be 1 to ${WorkerNames.MAX_LENGTH} characters"
             part != null && WorkPart.fromId(part) == null -> "workers[].part is not a known part"
             else -> null
@@ -130,6 +130,9 @@ object WorkerNames {
     const val MAX_LENGTH = 60
 
     fun length(name: String): Int = name.codePointCount(0, name.length)
+
+    /** Within the bound, and storable: Postgres text refuses a NUL. */
+    fun valid(name: String): Boolean = length(name) in 1..MAX_LENGTH && '\u0000' !in name
 }
 
 @Serializable
