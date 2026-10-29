@@ -30,7 +30,10 @@ import com.qualityverifier.domain.FundiPurpose
 import com.qualityverifier.domain.PriorIssue
 import com.qualityverifier.text.FundiLabels
 
-private enum class Step { LANGUAGE, PURPOSE, DETAILS }
+private enum class Step { NAME, LANGUAGE, PURPOSE, DETAILS }
+
+/** Matches the server's `pieces_label_length` (V22), counted as Postgres counts. */
+private const val NAME_LIMIT = 80
 
 /**
  * The questions asked before anything is sent.
@@ -50,20 +53,51 @@ fun IntakeFlow(
     returning: Boolean,
     /** Findings from the piece's earlier assessments, offered when checking a fix. */
     priorIssues: List<PriorIssue>,
-    onComplete: (FundiIntake) -> Unit,
+    /** What the piece is already called, prefilled so a returning piece keeps its name. */
+    initialName: String?,
+    /** The answers, and the piece's name or null when skipped. */
+    onComplete: (FundiIntake, String?) -> Unit,
     onCancel: () -> Unit,
 ) {
-    var step by remember { mutableStateOf(Step.LANGUAGE) }
+    var step by remember { mutableStateOf(Step.NAME) }
+    var name by remember { mutableStateOf(initialName.orEmpty()) }
     var language by remember { mutableStateOf<AssessmentLanguage?>(null) }
     var purpose by remember { mutableStateOf<FundiPurpose?>(null) }
     var details by remember { mutableStateOf("") }
 
     fun finish(intake: FundiIntake) {
-        if (intake.isComplete) onComplete(intake)
+        if (intake.isComplete) onComplete(intake, name.trim().ifEmpty { null })
     }
 
     IntakeColumn {
         when (step) {
+            // The name comes first because it is the one answer that outlives this
+            // assessment: the card shows it, and every later report prints it.
+            Step.NAME -> {
+                Title(labels.intakeNameTitle)
+                OutlinedTextField(
+                    value = name,
+                    // Bounded here as the server bounds it, so a name is never refused
+                    // later for being too long.
+                    onValueChange = { if (it.codePointCount(0, it.length) <= NAME_LIMIT) name = it },
+                    placeholder = { Text(labels.intakeNameHint) },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                Button(
+                    onClick = { step = Step.LANGUAGE },
+                    enabled = name.isNotBlank(),
+                    modifier = Modifier.fillMaxWidth().height(56.dp),
+                ) { Text(labels.intakeContinue) }
+                // Skip keeps whatever the piece was called: a returning piece is not
+                // unnamed by a maker who did not want to type. Clearing is the card's job.
+                Secondary(labels.intakeNameSkip) {
+                    name = initialName.orEmpty()
+                    step = Step.LANGUAGE
+                }
+                Secondary(labels.setupBack, onCancel)
+            }
+
             Step.LANGUAGE -> {
                 Title(labels.intakeLanguageTitle)
                 AssessmentLanguage.entries.forEach { choice ->
@@ -74,7 +108,7 @@ fun IntakeFlow(
                         step = Step.PURPOSE
                     }
                 }
-                Secondary(labels.setupBack, onCancel)
+                Secondary(labels.setupBack) { step = Step.NAME }
             }
 
             Step.PURPOSE -> {

@@ -6,6 +6,7 @@ import com.qualityverifier.data.db.MessageEntity
 import com.qualityverifier.data.db.DismissedSessionEntity
 import com.qualityverifier.data.db.MessageWithAttachments
 import com.qualityverifier.data.db.PendingTesterFeedbackEntity
+import com.qualityverifier.data.db.PieceEntity
 import com.qualityverifier.data.db.SessionDao
 import com.qualityverifier.data.db.SessionEntity
 import com.qualityverifier.domain.AssessmentContext
@@ -46,6 +47,7 @@ class RoomSessionRepository(
                     verdictLanguage = row.verdictLanguage,
                     verdictUnverifiedCount = row.verdictUnverifiedCount,
                     pieceId = row.pieceId,
+                    pieceLabel = row.pieceLabel,
                 )
             }
         }
@@ -64,6 +66,8 @@ class RoomSessionRepository(
                 intake = decodeIntake(row.intakeAnswers),
                 location = row.locationFix(),
                 pieceId = row.pieceId,
+                // Read from the piece each time, so a rename reaches the next turn.
+                pieceLabel = dao.findPiece(row.pieceId ?: row.id)?.label,
                 intakeCode = row.intakeAnswers,
             )
         }
@@ -90,8 +94,22 @@ class RoomSessionRepository(
         intake: AssessmentContext?,
         pieceId: String?,
         intakeCode: String?,
+        pieceLabel: String?,
     ) {
         val timestamp = now()
+        if (pieceId != null) {
+            val piece = dao.findPiece(pieceId)
+            when {
+                // A new piece. The opening turn carries the name, so it is already as
+                // good as sent; nothing waits for the next sync.
+                piece == null -> dao.upsertPiece(
+                    PieceEntity(pieceId, pieceLabel, labelUpdatedAt = timestamp, labelSyncedAt = timestamp)
+                )
+                // A returning piece renamed at the intake. The server ignores a label on
+                // a piece it already has, so this one goes by the rename route.
+                piece.label != pieceLabel -> setPieceLabel(pieceId, pieceLabel)
+            }
+        }
         dao.insertSession(
             SessionEntity(
                 id = sessionId,
@@ -175,6 +193,20 @@ class RoomSessionRepository(
                 pieceId = session.pieceId,
             )
         )
+        session.pieceId?.let { pieceId ->
+            val local = dao.findPiece(pieceId)
+            // The server's name wins unless this phone holds a rename it has not sent.
+            if (local == null || local.labelSyncedAt != null) {
+                dao.upsertPiece(
+                    PieceEntity(
+                        id = pieceId,
+                        label = session.pieceLabel,
+                        labelUpdatedAt = local?.labelUpdatedAt,
+                        labelSyncedAt = now(),
+                    )
+                )
+            }
+        }
         // Cleared and rewritten rather than merged. The server is authoritative for a
         // synced assessment, and merging two orderings of the same conversation is a
         // problem nobody needs to have.
@@ -257,6 +289,20 @@ class RoomSessionRepository(
 
     override suspend fun clearPendingRemoteDelete(sessionId: String) =
         dao.clearPendingDelete(sessionId)
+
+    override suspend fun pieceLabel(pieceId: String): String? = dao.findPiece(pieceId)?.label
+
+    override suspend fun setPieceLabel(pieceId: String, label: String?) {
+        dao.upsertPiece(
+            PieceEntity(id = pieceId, label = label, labelUpdatedAt = now(), labelSyncedAt = null)
+        )
+    }
+
+    override suspend fun unsyncedPieceLabels(): List<PieceLabelChange> =
+        dao.unsyncedPieces().map { PieceLabelChange(it.id, it.label, it.labelUpdatedAt) }
+
+    override suspend fun markPieceLabelSynced(change: PieceLabelChange) =
+        dao.markPieceSynced(change.pieceId, change.asOf, now())
 
     private suspend fun insert(
         sessionId: String,

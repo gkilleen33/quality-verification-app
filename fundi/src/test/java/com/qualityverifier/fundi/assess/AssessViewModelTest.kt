@@ -11,6 +11,7 @@ import com.qualityverifier.data.session.SessionRepository
 import com.qualityverifier.data.session.SyncedMessage
 import com.qualityverifier.data.session.SyncedSession
 import com.qualityverifier.data.session.LocalTesterFeedback
+import com.qualityverifier.data.session.PieceLabelChange
 import com.qualityverifier.domain.Attachment
 import com.qualityverifier.domain.SessionSummary
 import com.qualityverifier.domain.SessionStart
@@ -93,6 +94,36 @@ class AssessViewModelTest {
         profiles = profiles,
         io = dispatcher,
     )
+
+    // The name goes with the session row at creation, so the repository can decide
+    // whether it names a new piece or renames an old one.
+    @Test
+    fun `the piece's name is stored with the session`() = runTest {
+        val sessions = FakeSessions()
+
+        model(sessions = sessions).start(
+            FundiIntake(AssessmentLanguage.ENGLISH, FundiPurpose.EVALUATE),
+            "/tmp/whole.jpg",
+            pieceLabel = "Kiti cha Wanjirũ",
+        )
+        advanceUntilIdle()
+
+        assertEquals("Kiti cha Wanjirũ", sessions.created.single().pieceLabel)
+    }
+
+    @Test
+    fun `a skipped name is stored as none, and the intake prefills the existing one`() = runTest {
+        val sessions = FakeSessions().apply { existingLabel = "Old stool" }
+        val model = model(sessions = sessions, pieceId = "p1", returning = true)
+        advanceUntilIdle()
+
+        assertEquals("Old stool", model.pieceLabel.value)
+
+        model.start(FundiIntake(AssessmentLanguage.ENGLISH, FundiPurpose.REEVALUATE), "/tmp/whole.jpg")
+        advanceUntilIdle()
+
+        assertNull(sessions.created.single().pieceLabel)
+    }
 
     // The tool list is the whole argument for collecting a profile. If it does not reach
     // the opening turn, the coaching is guessing and issue #41 cannot be answered.
@@ -376,7 +407,12 @@ class AssessViewModelTest {
         val composed: Boolean,
     )
 
-    private class Created(val sessionId: String, val pieceId: String?, val intakeCode: String?)
+    private class Created(
+        val sessionId: String,
+        val pieceId: String?,
+        val intakeCode: String?,
+        val pieceLabel: String?,
+    )
 
     /**
      * Only the handful of methods an assessment touches. The rest of SessionRepository
@@ -408,9 +444,17 @@ class AssessViewModelTest {
             intake: AssessmentContext?,
             pieceId: String?,
             intakeCode: String?,
+            pieceLabel: String?,
         ) {
-            created += Created(sessionId, pieceId, intakeCode)
+            created += Created(sessionId, pieceId, intakeCode, pieceLabel)
         }
+
+        /** The name this piece already has, for the prefilled intake. */
+        var existingLabel: String? = null
+        override suspend fun pieceLabel(pieceId: String): String? = existingLabel
+        override suspend fun setPieceLabel(pieceId: String, label: String?) = no()
+        override suspend fun unsyncedPieceLabels() = no()
+        override suspend fun markPieceLabelSynced(change: PieceLabelChange) = no()
         override suspend fun sessionExists(sessionId: String) = false
         override suspend fun appendUserMessage(
             sessionId: String,

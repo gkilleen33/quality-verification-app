@@ -31,6 +31,8 @@ data class SessionSummaryRow(
     val verdictLanguage: String?,
     val verdictUnverifiedCount: Int?,
     val pieceId: String?,
+    /** From `pieces`, joined on the piece the session belongs to. */
+    val pieceLabel: String?,
 )
 
 @Dao
@@ -47,9 +49,11 @@ interface SessionDao {
                s.verdictLanguage AS verdictLanguage,
                s.verdictUnverifiedCount AS verdictUnverifiedCount,
                s.pieceId AS pieceId,
+               p.label AS pieceLabel,
                COUNT(m.id) AS messageCount
         FROM sessions s
         LEFT JOIN messages m ON m.sessionId = s.id
+        LEFT JOIN pieces p ON p.id = COALESCE(s.pieceId, s.id)
         GROUP BY s.id
         ORDER BY s.updatedAt DESC
         """
@@ -158,6 +162,26 @@ interface SessionDao {
 
     @Query("DELETE FROM pending_tester_feedback WHERE sessionId = :sessionId")
     suspend fun clearTesterFeedback(sessionId: String)
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsertPiece(piece: PieceEntity)
+
+    @Query("SELECT * FROM pieces WHERE id = :pieceId")
+    suspend fun findPiece(pieceId: String): PieceEntity?
+
+    /** Names the server has not been told yet, oldest first. */
+    @Query("SELECT * FROM pieces WHERE labelSyncedAt IS NULL ORDER BY labelUpdatedAt")
+    suspend fun unsyncedPieces(): List<PieceEntity>
+
+    /**
+     * Marks the name sent, unless it changed again while the send was in flight: the
+     * guard on `labelUpdatedAt` leaves a newer rename unsent for the next sync.
+     */
+    @Query(
+        "UPDATE pieces SET labelSyncedAt = :syncedAt WHERE id = :pieceId " +
+            "AND (labelUpdatedAt = :asOf OR (:asOf IS NULL AND labelUpdatedAt IS NULL))"
+    )
+    suspend fun markPieceSynced(pieceId: String, asOf: Long?, syncedAt: Long)
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun addDismissed(dismissed: DismissedSessionEntity)

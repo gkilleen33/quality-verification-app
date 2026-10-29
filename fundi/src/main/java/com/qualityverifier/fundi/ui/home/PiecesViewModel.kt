@@ -5,6 +5,7 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
+import kotlinx.coroutines.launch
 import com.qualityverifier.data.session.SessionRepository
 import com.qualityverifier.di.AppContainer
 import com.qualityverifier.domain.SessionSummary
@@ -23,11 +24,21 @@ import kotlinx.coroutines.flow.stateIn
  * Read from the local database, so it works with no signal: the assessments are on the
  * handset and the server copy is the backup, not the source.
  */
-class PiecesViewModel(sessions: SessionRepository) : ViewModel() {
+class PiecesViewModel(private val sessions: SessionRepository) : ViewModel() {
 
     val pieces: StateFlow<List<SessionSummary>> =
         sessions.observeSummaries()
             .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    /**
+     * Renames a piece from its card, or clears the name with null.
+     *
+     * Written locally and shown at once; the server hears on the next sync. The list
+     * above re-emits from the database, so nothing here has to update it.
+     */
+    fun rename(pieceId: String, label: String?) {
+        viewModelScope.launch { sessions.setPieceLabel(pieceId, label?.trim()?.ifEmpty { null }) }
+    }
 
     companion object {
         fun factory(container: AppContainer): ViewModelProvider.Factory = viewModelFactory {

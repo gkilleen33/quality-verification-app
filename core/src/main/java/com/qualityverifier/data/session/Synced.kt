@@ -23,6 +23,7 @@ data class SyncedSession(
     val previousSessionId: String?,
     val intakeAnswers: String?,
     val pieceId: String? = null,
+    val pieceLabel: String? = null,
 )
 
 data class SyncedMessage(

@@ -11,11 +11,13 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.systemBarsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -123,6 +125,7 @@ fun HomeScreen(
                     assessments = count,
                     onOpen = { onOpen(latest) },
                     onReassess = { onReassess(latest) },
+                    onRename = { label -> model.rename(latest.piece, label) },
                 )
             }
         }
@@ -135,7 +138,20 @@ private fun PieceRow(
     assessments: Int,
     onOpen: () -> Unit,
     onReassess: () -> Unit,
+    /** A new name for the piece, or null to clear it. */
+    onRename: (String?) -> Unit,
 ) {
+    var renaming by remember { mutableStateOf(false) }
+    if (renaming) {
+        RenameDialog(
+            current = latest.pieceLabel,
+            onRename = { label ->
+                renaming = false
+                onRename(label)
+            },
+            onDismiss = { renaming = false },
+        )
+    }
     Card(
         Modifier.fillMaxWidth(),
         colors = CardDefaults.cardColors(
@@ -147,7 +163,12 @@ private fun PieceRow(
                 Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
             ) {
-                Text(latest.itemType.homeLabel, style = MaterialTheme.typography.titleMedium)
+                // The maker's own name for it, else the kind of thing it is.
+                Text(
+                    latest.pieceLabel ?: latest.itemType.homeLabel,
+                    style = MaterialTheme.typography.titleMedium,
+                    modifier = Modifier.weight(1f, fill = false),
+                )
                 Text(
                     latest.updatedAt.asDay(),
                     style = MaterialTheme.typography.bodySmall,
@@ -180,9 +201,40 @@ private fun PieceRow(
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 TextButton(onClick = onOpen) { Text("Open") }
                 TextButton(onClick = onReassess) { Text("Re-assess") }
+                TextButton(onClick = { renaming = true }) { Text("Rename") }
             }
         }
     }
+}
+
+/**
+ * One field and two buttons. Saving a blank clears the name, so the card goes back to
+ * the item type; there is no separate "remove" to explain.
+ */
+@Composable
+private fun RenameDialog(
+    current: String?,
+    onRename: (String?) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    var name by remember { mutableStateOf(current.orEmpty()) }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("What do you call this piece?") },
+        text = {
+            OutlinedTextField(
+                value = name,
+                // The same bound as the intake and the server (V22).
+                onValueChange = { if (it.codePointCount(0, it.length) <= 80) name = it },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth(),
+            )
+        },
+        confirmButton = {
+            TextButton(onClick = { onRename(name.trim().ifEmpty { null }) }) { Text("Save") }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
+    )
 }
 
 /** Nairobi, like every other date in this project. */

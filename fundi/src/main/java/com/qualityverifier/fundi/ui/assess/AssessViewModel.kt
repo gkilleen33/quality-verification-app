@@ -110,6 +110,10 @@ class AssessViewModel(
     private val _priorIssues = MutableStateFlow<List<PriorIssue>>(emptyList())
     val priorIssues: StateFlow<List<PriorIssue>> = _priorIssues.asStateFlow()
 
+    /** What the piece is called so far, prefilled into the intake. Null until named. */
+    private val _pieceLabel = MutableStateFlow<String?>(null)
+    val pieceLabel: StateFlow<String?> = _pieceLabel.asStateFlow()
+
     /**
      * Whether this assessment already exists, or null until that is known.
      *
@@ -129,6 +133,7 @@ class AssessViewModel(
                 _purpose.value = why
             }
         }
+        viewModelScope.launch { _pieceLabel.value = sessions.pieceLabel(pieceId) }
         if (returning) loadPriorIssues()
     }
 
@@ -179,8 +184,12 @@ class AssessViewModel(
      * A profile that will not load does not block the assessment. Coaching that has to
      * guess at the tools is worse coaching, but it is better than refusing to look at a
      * piece somebody is standing over.
+     *
+     * [pieceLabel] is what the maker called the piece at the intake, or null when they
+     * skipped it. The repository decides whether that names a new piece or renames an
+     * old one.
      */
-    fun start(intake: FundiIntake, photoPath: String?) {
+    fun start(intake: FundiIntake, photoPath: String?, pieceLabel: String? = null) {
         if (_sending.value || !intake.isComplete) return
         _sending.value = true
         _language.value = intake.language
@@ -196,7 +205,9 @@ class AssessViewModel(
                         itemType = itemType,
                         pieceId = pieceId,
                         intakeCode = FundiIntake.encode(intake),
+                        pieceLabel = pieceLabel,
                     )
+                    _pieceLabel.value = pieceLabel
                 }
                 sessions.appendUserMessage(
                     sessionId = sessionId,

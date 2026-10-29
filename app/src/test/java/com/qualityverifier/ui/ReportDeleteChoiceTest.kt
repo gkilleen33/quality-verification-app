@@ -101,6 +101,15 @@ class ReportDeleteChoiceTest {
 
         override suspend fun dismissLocally(sessionId: String) { dismissed += sessionId }
         override suspend fun dismissedSessions(): Set<String> = dismissed
+
+        // Pieces are Fundi Bora's; Kagua never names one.
+        override suspend fun pieceLabel(pieceId: String): String? = null
+        override suspend fun setPieceLabel(pieceId: String, label: String?) = Unit
+        override suspend fun unsyncedPieceLabels() =
+            emptyList<com.qualityverifier.data.session.PieceLabelChange>()
+        override suspend fun markPieceLabelSynced(
+            change: com.qualityverifier.data.session.PieceLabelChange,
+        ) = Unit
         override suspend fun recordPendingRemoteDelete(sessionId: String) {
             pendingDeletes += sessionId
         }
@@ -124,6 +133,7 @@ class ReportDeleteChoiceTest {
             intake: AssessmentContext?,
             pieceId: String?,
             intakeCode: String?,
+            pieceLabel: String?,
         ) = Unit
         override suspend fun appendUserMessage(
             sessionId: String,
