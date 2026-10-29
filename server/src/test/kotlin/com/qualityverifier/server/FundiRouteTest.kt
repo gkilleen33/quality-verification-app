@@ -170,6 +170,14 @@ class FundiRouteTest {
             setBody("""{"label":"${"ũ".repeat(80)}"}""")
         }
         assertEquals(HttpStatusCode.NoContent, atBound.status)
+
+        // A NUL cannot be stored in Postgres text, so it is refused here, not thrown there.
+        val nul = app.put("/v1/fundi/pieces/$PIECE") {
+            auth(FUNDI); contentType(ContentType.Application.Json)
+            setBody("""{"label":"a\u0000b"}""")
+        }
+        assertEquals(HttpStatusCode.BadRequest, nul.status)
+        assertTrue(nul.bodyAsText().contains("label_invalid"))
     }
 
     // 404 for a stranger's piece and for a malformed id alike: a piece id is a

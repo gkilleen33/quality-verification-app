@@ -73,9 +73,16 @@ object PieceLabels {
 
     fun length(label: String): Int = label.codePointCount(0, label.length)
 
-    /** Trimmed; null when blank or too long, so the row is never refused over a name. */
+    /**
+     * Trimmed; null when blank, or when it holds a NUL, which Postgres text cannot store
+     * and would otherwise fail the whole statement with error 22021.
+     */
+    fun clean(label: String?): String? =
+        label?.trim()?.takeIf { it.isNotEmpty() && '\u0000' !in it }
+
+    /** [clean], and null when too long, so the row is never refused over a name. */
     fun normalise(label: String?): String? =
-        label?.trim()?.takeIf { it.isNotEmpty() && length(it) <= MAX_LENGTH }
+        clean(label)?.takeIf { length(it) <= MAX_LENGTH }
 }
 
 /** A stored [ToolChange], with when it was recorded. */

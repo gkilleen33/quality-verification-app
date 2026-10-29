@@ -100,7 +100,13 @@ fun Route.fundiRoutes(store: FundiStore, auth: AuthStore) {
             val pieceId = call.parameters["id"]?.takeIf(::isUuid)
                 ?: return@put call.respond(HttpStatusCode.NotFound, ErrorResponse("no_such_piece"))
 
-            val label = call.receive<PieceLabelDto>().label?.trim()?.takeIf { it.isNotEmpty() }
+            val raw = call.receive<PieceLabelDto>().label
+            val label = PieceLabels.clean(raw)
+            if (label == null && !raw.isNullOrBlank()) {
+                // Not blank, yet nothing usable: a NUL, which Postgres text refuses.
+                call.respond(HttpStatusCode.BadRequest, ErrorResponse("label_invalid"))
+                return@put
+            }
             if (label != null && PieceLabels.length(label) > PieceLabels.MAX_LENGTH) {
                 call.respond(
                     HttpStatusCode.BadRequest,
