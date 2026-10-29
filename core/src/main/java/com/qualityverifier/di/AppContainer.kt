@@ -20,6 +20,8 @@ import com.qualityverifier.data.session.SessionRepository
 import com.qualityverifier.data.sync.AccountActions
 import com.qualityverifier.data.sync.AssessmentSync
 import com.qualityverifier.data.sync.SyncClient
+import com.qualityverifier.data.workers.RoomWorkerRepository
+import com.qualityverifier.data.workers.WorkerRepository
 import kotlinx.serialization.json.Json
 import okhttp3.OkHttpClient
 import java.util.concurrent.TimeUnit
@@ -141,11 +143,18 @@ class AppContainer(
         chatPath = chatPath,
     )
 
+    /** The manager's roster. Fundi Bora's; Kagua links it and never writes to it. */
+    val workerRepository: WorkerRepository = RoomWorkerRepository(database.sessionDao())
+
     val assessmentSync: AssessmentSync = AssessmentSync(
         client = syncClient,
         sessions = sessionRepository,
         images = images,
         tokens = tokenStore,
+        workers = workerRepository,
+        // The endpoint is what an app *is* (see chatPath), so it also says whether the
+        // app has a roster.
+        rosterEnabled = chatPath.startsWith("v1/fundi"),
     )
 
     /** True when this account is one of our evaluators. Read from the cached profile. */

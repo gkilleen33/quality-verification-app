@@ -25,7 +25,8 @@ class SyncContractTest {
                      "created_at": 1, "updated_at": 2, "preview": "p", "message_count": 2,
                      "intake_answers": "fundi-en-evaluate",
                      "piece_id": "c0ffee00-0000-4000-8000-000000000001",
-                     "piece_label": "Dining table for the hotel"},
+                     "piece_label": "Dining table for the hotel",
+                     "workers": [{"worker_id": "c0ffee00-0000-4000-8000-000000000004", "part": "joinery"}, {}]},
          "messages": [
            {"id": "m1", "role": "USER", "text": "About my workshop", "ordinal": 0,
             "created_at": 1, "blobs": [], "composed": true},
@@ -46,6 +47,17 @@ class SyncContractTest {
         val detail = json.decodeFromString<RemoteSessionDetail>(body)
 
         assertEquals("Dining table for the hotel", detail.session.pieceLabel)
+    }
+
+    @Test
+    fun `who worked on it comes back by id and part, with the manager as no id`() {
+        val detail = json.decodeFromString<RemoteSessionDetail>(body)
+
+        assertEquals(2, detail.session.workers.size)
+        assertEquals("c0ffee00-0000-4000-8000-000000000004", detail.session.workers[0].workerId)
+        assertEquals("joinery", detail.session.workers[0].part)
+        assertNull(detail.session.workers[1].workerId)
+        assertNull(detail.session.workers[1].part)
     }
 
     @Test

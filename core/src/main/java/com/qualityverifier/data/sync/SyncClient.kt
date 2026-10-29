@@ -4,6 +4,7 @@ import android.util.Log
 import com.qualityverifier.data.auth.AuthenticatedHttp
 import com.qualityverifier.data.auth.TokenProvider
 import com.qualityverifier.data.session.LocalTesterFeedback
+import com.qualityverifier.domain.WorkerSlot
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -33,7 +34,38 @@ data class RemoteSession(
     @SerialName("piece_id") val pieceId: String? = null,
     /** What the maker calls the piece, so a reinstall shows the name again. */
     @SerialName("piece_label") val pieceLabel: String? = null,
+    /** Who worked on it, by roster id and part. Names come from [SyncClient.workers]. */
+    val workers: List<RemoteSessionWorker> = emptyList(),
 )
+
+@Serializable
+data class RemoteSessionWorker(
+    @SerialName("worker_id") val workerId: String? = null,
+    val part: String? = null,
+)
+
+@Serializable
+data class RemoteWorker(
+    val id: String,
+    val name: String? = null,
+    @SerialName("archived_at") val archivedAt: Long? = null,
+)
+
+@Serializable
+private data class WorkerListBody(val workers: List<RemoteWorker> = emptyList())
+
+@Serializable
+private data class WorkerUpsertBody(val name: String, val archived: Boolean)
+
+@Serializable
+private data class WorkerSlotBody(
+    val id: String? = null,
+    val name: String? = null,
+    val part: String? = null,
+)
+
+@Serializable
+private data class SessionWorkersBody(val workers: List<WorkerSlotBody>)
 
 @Serializable
 data class RemoteMessage(
@@ -193,6 +225,66 @@ class SyncClient(
             }
         } ?: false
     }
+
+    /** The roster as the server holds it, archived included. Null when it could not be fetched. */
+    suspend fun workers(): List<RemoteWorker>? = withContext(io) {
+        authenticated { token ->
+            Request.Builder().url(baseUrl + "v1/fundi/workers")
+                .addHeader("Authorization", "Bearer $token").get().build()
+        }?.use { response ->
+            if (!response.isSuccessful) return@use null
+            runCatching {
+                json.decodeFromString<WorkerListBody>(response.body?.string().orEmpty()).workers
+            }.getOrNull()
+        }
+    }
+
+    /**
+     * Adds, renames or archives a worker on the server. True when it has it, or will
+     * never take it (any 4xx); false for a transport failure or a 5xx, which retries.
+     */
+    suspend fun upsertWorker(workerId: String, name: String, archived: Boolean): Boolean = withContext(io) {
+        val body = json.encodeToString(WorkerUpsertBody(name, archived)).toRequestBody(JSON)
+        authenticated { token ->
+            Request.Builder().url(baseUrl + "v1/fundi/workers/" + workerId)
+                .addHeader("Authorization", "Bearer $token").put(body).build()
+        }?.use { response ->
+            when {
+                response.isSuccessful -> true
+                response.code in 400..499 -> {
+                    Log.w(TAG, "Server refused a worker (${response.code}); dropping it")
+                    true
+                }
+                else -> false
+            }
+        } ?: false
+    }
+
+    /**
+     * Replaces who worked on a session. The same retry rule as [upsertWorker], except a
+     * 404, which here means the session has not reached the server yet (its opening turn
+     * is still to go) and is worth retrying.
+     */
+    suspend fun replaceSessionWorkers(sessionId: String, workers: List<WorkerSlot>): Boolean =
+        withContext(io) {
+            val body = json.encodeToString(
+                SessionWorkersBody(workers.map { WorkerSlotBody(it.workerId, it.name, it.part?.id) }),
+            ).toRequestBody(JSON)
+            authenticated { token ->
+                Request.Builder().url(baseUrl + "v1/sessions/" + sessionId + "/workers")
+                    .addHeader("Authorization", "Bearer $token").put(body).build()
+            }?.use { response ->
+                when {
+                    response.isSuccessful -> true
+                    response.code == 404 -> false
+                    response.code in 400..499 -> {
+                        Log.w(TAG, "Server refused a session's workers (${response.code}); dropping them")
+                        true
+                    }
+                    else -> false
+                }
+            } ?: false
+        }
 
     /** Whether this account is one of our evaluators. Null when the server was unreachable. */
     suspend fun isTester(): Boolean? = withContext(io) {
