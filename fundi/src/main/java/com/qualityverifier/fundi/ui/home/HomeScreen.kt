@@ -21,6 +21,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -32,6 +33,9 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.qualityverifier.domain.ItemType
 import com.qualityverifier.domain.PieceNames
 import com.qualityverifier.domain.SessionSummary
+import com.qualityverifier.domain.Worker
+import com.qualityverifier.domain.WorkerSlot
+import com.qualityverifier.fundi.ui.assess.WorkerPicker
 import com.qualityverifier.fundi.ui.fundiContainer
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -59,6 +63,7 @@ fun HomeScreen(
     val container = fundiContainer()
     val model: PiecesViewModel = viewModel(factory = PiecesViewModel.factory(container))
     val sessions by model.pieces.collectAsState()
+    val roster by model.roster.collectAsState()
     // One row per physical piece rather than per assessment. A stool assessed on Monday
     // and re-assessed on Tuesday is one stool, and listing it twice would make the maker
     // work out which row is the current one.
@@ -134,6 +139,10 @@ fun HomeScreen(
                     onOpen = { onOpen(latest) },
                     onReassess = { onReassess(latest) },
                     onRename = { label -> model.rename(latest.piece, label) },
+                    roster = roster,
+                    loadWorkers = { model.workersOf(latest.id) },
+                    onSetWorkers = { people -> model.setWorkers(latest.id, people) },
+                    onAddWorker = model::addWorker,
                 )
             }
         }
@@ -148,8 +157,26 @@ private fun PieceRow(
     onReassess: () -> Unit,
     /** A new name for the piece, or null to clear it. */
     onRename: (String?) -> Unit,
+    roster: List<Worker>,
+    /** Who is recorded on the latest assessment, read when the edit opens. */
+    loadWorkers: suspend () -> List<WorkerSlot>,
+    onSetWorkers: (List<WorkerSlot>) -> Unit,
+    onAddWorker: (String) -> Unit,
 ) {
     var renaming by remember { mutableStateOf(false) }
+    var editingWorkers by remember { mutableStateOf(false) }
+    if (editingWorkers) {
+        WorkersDialog(
+            roster = roster,
+            load = loadWorkers,
+            onSave = { people ->
+                editingWorkers = false
+                onSetWorkers(people)
+            },
+            onAddWorker = onAddWorker,
+            onDismiss = { editingWorkers = false },
+        )
+    }
     if (renaming) {
         RenameDialog(
             current = latest.pieceLabel,
@@ -211,9 +238,41 @@ private fun PieceRow(
                 TextButton(onClick = onOpen) { Text("Open") }
                 TextButton(onClick = onReassess) { Text("Re-assess") }
                 TextButton(onClick = { renaming = true }) { Text("Rename") }
+                TextButton(onClick = { editingWorkers = true }) { Text("Workers") }
             }
         }
     }
+}
+
+/**
+ * "Who worked on this?" for the piece's latest assessment, edited after the fact. The
+ * same picker as the intake; the set is replaced whole on save.
+ */
+@Composable
+private fun WorkersDialog(
+    roster: List<Worker>,
+    load: suspend () -> List<WorkerSlot>,
+    onSave: (List<WorkerSlot>) -> Unit,
+    onAddWorker: (String) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    var slots by remember { mutableStateOf<List<WorkerSlot>?>(null) }
+    LaunchedEffect(Unit) { slots = load() }
+    val current = slots ?: return
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Who worked on this?") },
+        text = {
+            WorkerPicker(
+                roster = roster,
+                slots = current,
+                onChange = { slots = it },
+                onAddWorker = onAddWorker,
+            )
+        },
+        confirmButton = { TextButton(onClick = { onSave(current) }) { Text("Save") } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
+    )
 }
 
 /**

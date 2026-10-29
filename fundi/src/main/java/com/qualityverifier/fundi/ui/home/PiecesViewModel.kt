@@ -7,8 +7,11 @@ import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
 import com.qualityverifier.data.session.SessionRepository
 import com.qualityverifier.data.sync.AssessmentSync
+import com.qualityverifier.data.workers.WorkerRepository
 import com.qualityverifier.di.AppContainer
 import com.qualityverifier.domain.SessionSummary
+import com.qualityverifier.domain.Worker
+import com.qualityverifier.domain.WorkerSlot
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -30,7 +33,28 @@ import kotlinx.coroutines.launch
 class PiecesViewModel(
     private val sessions: SessionRepository,
     private val sync: AssessmentSync,
+    private val workers: WorkerRepository,
 ) : ViewModel() {
+
+    /** The roster, for the card's "Who worked on this?" edit. */
+    val roster: StateFlow<List<Worker>> =
+        workers.observeWorkers()
+            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    /** Who is recorded on an assessment, for the edit's starting answer. */
+    suspend fun workersOf(sessionId: String): List<WorkerSlot> = workers.workersOf(sessionId)
+
+    /** Replaces who worked on an assessment. Local first; the server hears on the next sync. */
+    fun setWorkers(sessionId: String, workedOn: List<WorkerSlot>) {
+        viewModelScope.launch {
+            workers.setWorkersOf(sessionId, workedOn)
+            refresh()
+        }
+    }
+
+    fun addWorker(name: String) {
+        viewModelScope.launch { workers.add(name) }
+    }
 
     val pieces: StateFlow<List<SessionSummary>> =
         sessions.observeSummaries()
@@ -77,7 +101,9 @@ class PiecesViewModel(
 
     companion object {
         fun factory(container: AppContainer): ViewModelProvider.Factory = viewModelFactory {
-            initializer { PiecesViewModel(container.sessionRepository, container.assessmentSync) }
+            initializer {
+                PiecesViewModel(container.sessionRepository, container.assessmentSync, container.workerRepository)
+            }
         }
     }
 }

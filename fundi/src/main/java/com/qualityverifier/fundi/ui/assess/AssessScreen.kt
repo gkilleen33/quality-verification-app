@@ -38,6 +38,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import coil.compose.AsyncImage
 import com.qualityverifier.domain.ChatMessage
 import com.qualityverifier.domain.FundiIntake
+import com.qualityverifier.domain.WorkerSlot
 import com.qualityverifier.domain.FundiPurpose
 import com.qualityverifier.domain.ItemType
 import com.qualityverifier.domain.PlanRun
@@ -89,6 +90,8 @@ fun AssessScreen(
     val purpose by viewModel.purpose.collectAsState()
     val priorIssues by viewModel.priorIssues.collectAsState()
     val pieceName by viewModel.pieceLabel.collectAsState()
+    val roster by viewModel.roster.collectAsState()
+    val previousWorkers by viewModel.previousWorkers.collectAsState()
 
     val labels = FundiLabels.ENGLISH
     // The capture pipeline and the verdict speak ReportLabels, and follow the language
@@ -99,6 +102,7 @@ fun AssessScreen(
     var stage by remember { mutableStateOf(Stage.LOADING) }
     var intake by remember { mutableStateOf<FundiIntake?>(null) }
     var name by remember { mutableStateOf<String?>(null) }
+    var workedOn by remember { mutableStateOf<List<WorkerSlot>>(emptyList()) }
 
     // A finished assessment opens on its conversation; a new one on its intake. Decided
     // once it is known which this is, never from the message list, which arrives late.
@@ -124,9 +128,13 @@ fun AssessScreen(
             returning = returning,
             priorIssues = priorIssues,
             initialName = pieceName,
-            onComplete = { answered, pieceLabel ->
+            roster = roster,
+            initialWorkers = previousWorkers,
+            onAddWorker = viewModel::addWorker,
+            onComplete = { answered, pieceLabel, people ->
                 intake = answered
                 name = pieceLabel
+                workedOn = people
                 stage = Stage.OPENING_PHOTO
             },
             onCancel = onDone,
@@ -142,7 +150,7 @@ fun AssessScreen(
                 createFile = viewModel::newCaptureFile,
                 onCaptured = { file ->
                     stage = Stage.TALKING
-                    viewModel.start(answered, file.absolutePath, name)
+                    viewModel.start(answered, file.absolutePath, name, workedOn)
                 },
                 onKeep = {},
                 onRetake = {},
@@ -151,7 +159,7 @@ fun AssessScreen(
                 onSkip = if (optional) {
                     {
                         stage = Stage.TALKING
-                        viewModel.start(answered, null, name)
+                        viewModel.start(answered, null, name, workedOn)
                     }
                 } else {
                     null
