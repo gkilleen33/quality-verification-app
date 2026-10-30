@@ -99,6 +99,10 @@ data class FundiLabels(
     val intakeLanguageTitle: String,
     val intakePurposeTitle: String,
     val intakeReturningTitle: String,
+    /** The first intake step: what the maker calls this piece. Optional. */
+    val intakeNameTitle: String,
+    val intakeNameHint: String,
+    val intakeNameSkip: String,
     val purposeNames: Map<FundiPurpose, String>,
     val detailsPrompts: Map<FundiPurpose, String>,
     val intakeIssueTitle: String,
@@ -273,6 +277,9 @@ data class FundiLabels(
             intakeLanguageTitle = "Which language should we use?",
             intakePurposeTitle = "What do you want from this assessment?",
             intakeReturningTitle = "What do you want to check on this piece?",
+            intakeNameTitle = "What do you call this piece?",
+            intakeNameHint = "Dining table for the hotel",
+            intakeNameSkip = "Skip",
             purposeNames = mapOf(
                 FundiPurpose.EVALUATE to "Evaluate a finished product",
                 FundiPurpose.WORK_IN_PROGRESS to "Check work in progress",

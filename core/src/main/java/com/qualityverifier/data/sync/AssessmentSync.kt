@@ -39,6 +39,8 @@ class AssessmentSync(
         val reachedServer: Boolean,
         /** Evaluator reviews that reached the server, or were refused as unusable. */
         val reviews: Int = 0,
+        /** Piece names that reached the server, or will never be taken. */
+        val names: Int = 0,
     )
 
     /**
@@ -62,13 +64,23 @@ class AssessmentSync(
         // own unsent work, and a pull failing should not strand them for another cycle.
         val reviews = pushReviews()
 
+        // Names too, and before the pull for the same reason: a pull that landed first
+        // would write the server's older name over the one the maker just typed.
+        var names = 0
+        for (change in sessions.unsyncedPieceLabels()) {
+            if (client.renamePiece(change.pieceId, change.label)) {
+                sessions.markPieceLabelSynced(change)
+                names++
+            }
+        }
+
         // Refreshed here so a promotion in the portal reaches the phone without a
         // re-install. Null means the server was unreachable, in which case the cached
         // answer is better than assuming either way.
         client.isTester()?.let(tokens::setTester)
 
         val remote = client.sessions()
-            ?: return@withContext Result(0, deletes, reachedServer = false, reviews = reviews)
+            ?: return@withContext Result(0, deletes, reachedServer = false, reviews = reviews, names = names)
 
         val known = sessions.knownSessions()
         // Reports the customer dropped from this phone while choosing to leave our copy
@@ -117,12 +129,13 @@ class AssessmentSync(
                     previousSessionId = detail.session.previousSessionId,
                     intakeAnswers = detail.session.intakeAnswers,
                     pieceId = detail.session.pieceId,
+                    pieceLabel = detail.session.pieceLabel,
                 ),
                 messages,
             )
             fetched++
         }
-        Result(fetched, deletes, reachedServer = true, reviews = reviews)
+        Result(fetched, deletes, reachedServer = true, reviews = reviews, names = names)
     }
 
     /**

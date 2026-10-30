@@ -31,6 +31,8 @@ data class RemoteSession(
     @SerialName("intake_answers") val intakeAnswers: String? = null,
     /** Fundi Bora's piece, so a reinstalled phone regroups its history correctly. */
     @SerialName("piece_id") val pieceId: String? = null,
+    /** What the maker calls the piece, so a reinstall shows the name again. */
+    @SerialName("piece_label") val pieceLabel: String? = null,
 )
 
 @Serializable
@@ -49,6 +51,9 @@ data class RemoteSessionDetail(val session: RemoteSession, val messages: List<Re
 
 @Serializable
 private data class SessionListBody(val sessions: List<RemoteSession> = emptyList())
+
+@Serializable
+private data class PieceLabelBody(val label: String? = null)
 
 @Serializable
 private data class PasswordBody(
@@ -154,6 +159,34 @@ class SyncClient(
                 // Permanently unacceptable. Dropped rather than retried for ever.
                 response.code in 400..499 -> {
                     Log.w(TAG, "Server refused evaluator feedback (${response.code}); dropping it")
+                    true
+                }
+                else -> false
+            }
+        } ?: false
+    }
+
+    /**
+     * Tells the server what the maker calls a piece. Null clears the name.
+     *
+     * Returns true when the server has it, and **also** when it will never take it: a
+     * 404 means the piece is not on the server, which happens when its first turn has
+     * not gone yet, and that turn carries the name itself; any other 4xx is a name the
+     * server refuses outright. Only a transport failure or a 5xx is worth retrying,
+     * the same rule as [submitTesterFeedback].
+     */
+    suspend fun renamePiece(pieceId: String, label: String?): Boolean = withContext(io) {
+        val body = json.encodeToString(PieceLabelBody(label)).toRequestBody(JSON)
+        authenticated { token ->
+            Request.Builder().url(baseUrl + "v1/fundi/pieces/" + pieceId)
+                .addHeader("Authorization", "Bearer $token").put(body).build()
+        }?.use { response ->
+            when {
+                response.isSuccessful -> true
+                response.code in 400..499 -> {
+                    if (response.code != 404) {
+                        Log.w(TAG, "Server refused a piece name (${response.code}); dropping it")
+                    }
                     true
                 }
                 else -> false
