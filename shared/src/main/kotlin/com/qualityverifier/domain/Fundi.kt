@@ -66,6 +66,40 @@ enum class ToolKind(val id: String) {
 }
 
 /**
+ * The part of a piece a worker did. A closed list, mirrored by the CHECK on
+ * `session_workers.part` (V23) and held to it by FundiVocabularyTest.
+ *
+ * Coarse on purpose: a shop assigns work by trade, not by component, and a report on
+ * "the upholstery" is what a manager can hand to the person who did it.
+ */
+enum class WorkPart(val id: String) {
+    FRAME("frame"),
+    JOINERY("joinery"),
+    UPHOLSTERY("upholstery"),
+    FINISHING("finishing"),
+    ASSEMBLY("assembly"),
+    OTHER("other");
+
+    companion object {
+        fun fromId(id: String): WorkPart? =
+            entries.firstOrNull { it.id == id.trim().lowercase() }
+    }
+}
+
+/**
+ * One answer to "Who worked on this?": a worker from the roster, on an optional part.
+ *
+ * [workerId] null is the manager ("Me"). [name] travels so a worker added inside the
+ * picker reaches the server with the turn; the server keeps it only for a worker it has
+ * never seen.
+ */
+data class WorkerSlot(
+    val workerId: String?,
+    val name: String? = null,
+    val part: WorkPart? = null,
+)
+
+/**
  * Four states, not two.
  *
  * "Borrowed" is its own answer because it changes the advice rather than the inventory: a

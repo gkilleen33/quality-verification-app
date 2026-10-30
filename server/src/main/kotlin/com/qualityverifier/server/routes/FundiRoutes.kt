@@ -86,6 +86,50 @@ fun Route.fundiRoutes(store: FundiStore, auth: AuthStore) {
             call.respond(HttpStatusCode.NoContent)
         }
 
+        // The roster. Archived workers come back too: they keep their names on the
+        // pieces they worked on, and the phone hides them from its pickers itself.
+        get("/v1/fundi/workers") {
+            val userId = call.principal<JWTPrincipal>()?.subject
+                ?: return@get call.respond(
+                    HttpStatusCode.Unauthorized, ErrorResponse("invalid_token"),
+                )
+            if (!call.requireFundi(auth, userId)) return@get
+            call.respond(
+                WorkerListDto(
+                    store.listWorkers(userId).map { WorkerDto(it.id, it.name, it.archivedAt) },
+                ),
+            )
+        }
+
+        // Add, rename or archive one worker. The id is the phone's, as a piece id is.
+        put("/v1/fundi/workers/{id}") {
+            val userId = call.principal<JWTPrincipal>()?.subject
+                ?: return@put call.respond(
+                    HttpStatusCode.Unauthorized, ErrorResponse("invalid_token"),
+                )
+            if (!call.requireFundi(auth, userId)) return@put
+
+            val workerId = call.parameters["id"]?.takeIf(::isUuid)
+                ?: return@put call.respond(HttpStatusCode.NotFound, ErrorResponse("no_such_worker"))
+
+            val body = call.receive<WorkerUpsertDto>()
+            val name = body.name?.trim().orEmpty()
+            if (!WorkerNames.valid(name)) {
+                call.respond(
+                    HttpStatusCode.BadRequest,
+                    ErrorResponse("invalid_request", "name must be 1 to ${WorkerNames.MAX_LENGTH} characters"),
+                )
+                return@put
+            }
+            if (!store.upsertWorker(userId, workerId, name, body.archived)) {
+                // 404, never 403, as for a piece: the id is client-made and a different
+                // answer would say which ids exist.
+                call.respond(HttpStatusCode.NotFound, ErrorResponse("no_such_worker"))
+                return@put
+            }
+            call.respond(HttpStatusCode.NoContent)
+        }
+
         // What the maker calls a piece. The first assessment's opening turn names it;
         // this is the rename from the piece's card, and the only way a name changes.
         put("/v1/fundi/pieces/{id}") {

@@ -102,6 +102,8 @@ class MigrationsTest {
         "sessions" to "location",
         // V22: the maker's name for a piece, often the customer's name.
         "pieces" to "label",
+        // V23: a worker's nickname.
+        "workers" to "name",
     )
 
     @Test

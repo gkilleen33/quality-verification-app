@@ -17,7 +17,20 @@ data class SessionSummaryDto(
     @SerialName("intake_answers") val intakeAnswers: String? = null,
     @SerialName("piece_id") val pieceId: String? = null,
     @SerialName("piece_label") val pieceLabel: String? = null,
+    /** Who worked on it, by roster id and part. Names come from GET /v1/fundi/workers. */
+    val workers: List<SessionWorkerDto> = emptyList(),
 )
+
+@Serializable
+data class SessionWorkerDto(
+    /** Null is the manager. */
+    @SerialName("worker_id") val workerId: String? = null,
+    val part: String? = null,
+)
+
+/** The body of PUT /v1/sessions/{id}/workers: the whole set, replacing what was there. */
+@Serializable
+data class SessionWorkersRequest(val workers: List<WorkerSlotDto> = emptyList())
 
 @Serializable
 data class SessionListDto(val sessions: List<SessionSummaryDto>)
