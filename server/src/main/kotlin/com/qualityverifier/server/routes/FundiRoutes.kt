@@ -3,6 +3,7 @@ package com.qualityverifier.server.routes
 import com.qualityverifier.domain.Audience
 import com.qualityverifier.server.db.AuthStore
 import com.qualityverifier.server.db.FundiStore
+import com.qualityverifier.server.db.PieceLabels
 import io.ktor.http.HttpStatusCode
 import io.ktor.server.application.ApplicationCall
 import io.ktor.server.auth.authenticate
@@ -82,6 +83,44 @@ fun Route.fundiRoutes(store: FundiStore, auth: AuthStore) {
             }
             store.saveWorkshopLocation(userId, fix.latitude, fix.longitude, fix.accuracyMetres)
             log.info("Workshop location saved for {} (±{} m)", userId, fix.accuracyMetres.toInt())
+            call.respond(HttpStatusCode.NoContent)
+        }
+
+        // What the maker calls a piece. The first assessment's opening turn names it;
+        // this is the rename from the piece's card, and the only way a name changes.
+        put("/v1/fundi/pieces/{id}") {
+            val userId = call.principal<JWTPrincipal>()?.subject
+                ?: return@put call.respond(
+                    HttpStatusCode.Unauthorized, ErrorResponse("invalid_token"),
+                )
+            if (!call.requireFundi(auth, userId)) return@put
+
+            // Cast with ?::uuid below, so a malformed id must be refused here rather
+            // than thrown inside Postgres. It is the same "no such piece" as a stranger's.
+            val pieceId = call.parameters["id"]?.takeIf(::isUuid)
+                ?: return@put call.respond(HttpStatusCode.NotFound, ErrorResponse("no_such_piece"))
+
+            val raw = call.receive<PieceLabelDto>().label
+            val label = PieceLabels.clean(raw)
+            if (label == null && !raw.isNullOrBlank()) {
+                // Not blank, yet nothing usable: a NUL, which Postgres text refuses.
+                call.respond(HttpStatusCode.BadRequest, ErrorResponse("label_invalid"))
+                return@put
+            }
+            if (label != null && PieceLabels.length(label) > PieceLabels.MAX_LENGTH) {
+                call.respond(
+                    HttpStatusCode.BadRequest,
+                    ErrorResponse("label_too_long", "at most ${PieceLabels.MAX_LENGTH} characters"),
+                )
+                return@put
+            }
+
+            if (!store.renamePiece(userId, pieceId, label)) {
+                // 404, never 403: a piece id is a client-made uuid, and telling "not
+                // yours" from "none" would let anybody probe which ids exist.
+                call.respond(HttpStatusCode.NotFound, ErrorResponse("no_such_piece"))
+                return@put
+            }
             call.respond(HttpStatusCode.NoContent)
         }
     }

@@ -624,6 +624,50 @@ class ChatRouteTest {
         assertEquals(piece, store.sawPieceId)
     }
 
+    // The name travels with the piece on the opening turn. Whether it is stored is the
+    // store's decision (only when the piece is created); the route just hands it down.
+    @Test
+    fun `a piece label reaches the store with the piece`() = testApplication {
+        val store = FakeChatStore()
+        val app = withChat(
+            store,
+            FakeClaude(ClaudeResult.Success("ok", TokenUsage(), null)),
+            accountAudience = Audience.FUNDI,
+        )
+        val piece = UUID.randomUUID().toString()
+
+        app.post("/v1/fundi/chat") {
+            auth()
+            setBody(
+                TextContent(
+                    requestJsonWith(",\"piece_id\":\"$piece\",\"piece_label\":\"Kiti cha Wanjirũ\""),
+                    ContentType.Application.Json,
+                ),
+            )
+        }
+
+        assertEquals(piece, store.sawPieceId)
+        assertEquals("Kiti cha Wanjirũ", store.sawPieceLabel)
+    }
+
+    @Test
+    fun `a turn without a piece label still works`() = testApplication {
+        val store = FakeChatStore()
+        val app = withChat(
+            store,
+            FakeClaude(ClaudeResult.Success("ok", TokenUsage(), null)),
+            accountAudience = Audience.FUNDI,
+        )
+
+        val response = app.post("/v1/fundi/chat") {
+            auth()
+            setBody(TextContent(requestJsonWith(""), ContentType.Application.Json))
+        }
+
+        assertEquals(HttpStatusCode.OK, response.status)
+        assertNull(store.sawPieceLabel)
+    }
+
     // The mark has to reach the server, or a phone rebuilding its history gets the turn back
     // unmarked and shows the app's own prompt text again. See V18.
     @Test
@@ -939,16 +983,21 @@ class ChatRouteTest {
             sessionId: String, userId: String, itemTypeId: String,
             previousSessionId: String?, intakeAnswers: String?, promptSha: String?,
             audience: Audience,
-            dailyLimit: Int, testerDailyLimit: Int, pieceId: String?,
+            dailyLimit: Int, testerDailyLimit: Int, pieceId: String?, pieceLabel: String?,
         ) = access.also {
             sawDailyLimit = dailyLimit
             sawTesterDailyLimit = testerDailyLimit
             storedAudience = audience
             sawPieceId = pieceId
+            sawPieceLabel = pieceLabel
         }
 
         /** The piece the route handed down. The ownership rule is in the SQL. */
         var sawPieceId: String? = null
+            private set
+
+        /** The name the route handed down with it. Normalised in the store, not here. */
+        var sawPieceLabel: String? = null
             private set
 
         /** What the route passed down, so a test can prove the config reaches the store. */

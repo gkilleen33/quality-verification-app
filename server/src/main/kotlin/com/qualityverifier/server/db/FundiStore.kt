@@ -55,6 +55,34 @@ interface FundiStore {
      * A later point replaces an earlier one: a shop that moved is at its new address.
      */
     suspend fun saveWorkshopLocation(userId: String, latitude: Double, longitude: Double, accuracyMetres: Double)
+
+    /**
+     * Names a piece, or clears its name with null. Returns false when the piece is
+     * not this account's, which the route answers as 404.
+     *
+     * The server stamps nothing: the phone's clock is not trusted for ordering (see
+     * V18), and the last write the server receives is the name.
+     */
+    suspend fun renamePiece(userId: String, pieceId: String, label: String?): Boolean
+}
+
+/** The one rule for a piece's name, shared by the turn and the rename endpoint. */
+object PieceLabels {
+    /** Matches V22's `pieces_label_length`, counted in characters as Postgres counts them. */
+    const val MAX_LENGTH = 80
+
+    fun length(label: String): Int = label.codePointCount(0, label.length)
+
+    /**
+     * Trimmed; null when blank, or when it holds a NUL, which Postgres text cannot store
+     * and would otherwise fail the whole statement with error 22021.
+     */
+    fun clean(label: String?): String? =
+        label?.trim()?.takeIf { it.isNotEmpty() && '\u0000' !in it }
+
+    /** [clean], and null when too long, so the row is never refused over a name. */
+    fun normalise(label: String?): String? =
+        clean(label)?.takeIf { length(it) <= MAX_LENGTH }
 }
 
 /** A stored [ToolChange], with when it was recorded. */
@@ -239,6 +267,19 @@ class PostgresFundiStore(private val dataSource: DataSource) : FundiStore {
         }
         Unit
     }
+
+    override suspend fun renamePiece(userId: String, pieceId: String, label: String?): Boolean =
+        tx { connection ->
+            connection.prepareStatement(
+                "update pieces set label = ? where id = ?::uuid and user_id = ?::uuid"
+            ).use { statement ->
+                if (label == null) statement.setNull(1, Types.VARCHAR) else statement.setString(1, label)
+                statement.setString(2, pieceId)
+                statement.setString(3, userId)
+                // Zero rows means not theirs, or no such piece: the same answer either way.
+                statement.executeUpdate() > 0
+            }
+        }
 
     override suspend fun toolHistory(userId: String): List<RecordedToolChange> = tx { connection ->
         connection.prepareStatement(

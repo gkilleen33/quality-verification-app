@@ -218,6 +218,7 @@ private suspend fun RoutingContext.assessmentTurn(
                 dailyLimit = dailyAssessmentLimit,
                 testerDailyLimit = testerDailyAssessmentLimit,
                 pieceId = request.pieceId,
+                pieceLabel = request.pieceLabel,
             )
             if (access is SessionAccess.NotYours) {
                 // 404, never 403: telling the difference would let anybody enumerate

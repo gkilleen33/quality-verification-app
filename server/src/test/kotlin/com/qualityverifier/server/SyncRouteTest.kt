@@ -127,6 +127,28 @@ class SyncRouteTest {
         assertTrue(body, body.contains("\"piece_id\":\"$piece\""))
     }
 
+    // The name goes down with the piece, so a reinstalled phone shows "Dining table for
+    // the hotel" again rather than "Table". A piece never named simply has no field.
+    @Test
+    fun `the session list and detail carry the piece label`() = testApplication {
+        val piece = "c0ffee00-0000-4000-8000-000000000003"
+        val named = row(SESSION).copy(pieceId = piece, pieceLabel = "Dining table for the hotel")
+        val chat = FakeChatStore(
+            sessions = listOf(named, row("3ff77920-3928-46e5-8a77-5e16c1e901c7").copy(pieceId = piece)),
+            detail = named to emptyList(),
+        )
+        val app = withSync(chat, FakeAuth())
+
+        val list = app.get("/v1/sessions") { auth(MINE) }.bodyAsText()
+        // One named piece: counted with its opening quote, so an unnamed one encoded as
+        // null or left out of the encoding both read as "no name".
+        assertEquals(1, Regex("\"piece_label\":\"").findAll(list).count())
+        assertTrue(list, list.contains("\"piece_label\":\"Dining table for the hotel\""))
+
+        val detail = app.get("/v1/sessions/$SESSION") { auth(MINE) }.bodyAsText()
+        assertTrue(detail, detail.contains("\"piece_label\":\"Dining table for the hotel\""))
+    }
+
     @Test
     fun `an id that is not a uuid is a 404, not a 500`() = testApplication {
         // These ids are cast with `?::uuid`, so anything malformed throws inside Postgres
@@ -490,7 +512,7 @@ class SyncRouteTest {
             sessionId: String, userId: String, itemTypeId: String,
             previousSessionId: String?, intakeAnswers: String?, promptSha: String?,
             audience: Audience,
-            dailyLimit: Int, testerDailyLimit: Int, pieceId: String?,
+            dailyLimit: Int, testerDailyLimit: Int, pieceId: String?, pieceLabel: String?,
         ) = SessionAccess.Ok(created = true)
 
         override suspend fun appendUserTurn(
