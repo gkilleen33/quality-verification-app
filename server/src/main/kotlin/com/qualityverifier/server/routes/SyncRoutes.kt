@@ -20,6 +20,7 @@ import io.ktor.server.routing.Route
 import io.ktor.server.routing.delete
 import io.ktor.server.routing.get
 import io.ktor.server.routing.post
+import io.ktor.server.routing.put
 import org.slf4j.LoggerFactory
 
 private val log = LoggerFactory.getLogger("com.qualityverifier.server.sync")
@@ -61,6 +62,29 @@ fun Route.syncRoutes(
                 return@get
             }
             call.respond(SessionDetailDto(detail.first.toDto(), detail.second.map { it.toDto() }))
+        }
+
+        // "Who worked on this?", edited from the piece's card after the assessment. The
+        // whole set, replaced: merging two phones' edits of one assessment is not a
+        // supported case, and the last replacement the server receives wins.
+        put("/v1/sessions/{id}/workers") {
+            val userId = call.userId() ?: return@put call.unauthorized()
+            val id = call.parameters["id"].orEmpty()
+            if (!isUuid(id)) {
+                call.respond(HttpStatusCode.NotFound, ErrorResponse("no_such_session"))
+                return@put
+            }
+            val request = call.receive<SessionWorkersRequest>()
+            request.workers.firstNotNullOfOrNull { it.problem }?.let { problem ->
+                call.respond(HttpStatusCode.BadRequest, ErrorResponse("invalid_request", problem))
+                return@put
+            }
+            if (!chat.replaceSessionWorkers(userId, id, request.workers.map { it.toDomain() })) {
+                // Not theirs, not a Fundi Bora assessment, or gone: the same answer.
+                call.respond(HttpStatusCode.NotFound, ErrorResponse("no_such_session"))
+                return@put
+            }
+            call.respond(HttpStatusCode.NoContent)
         }
 
         delete("/v1/sessions/{id}") {
@@ -218,6 +242,7 @@ private fun SessionRow.toDto() = SessionSummaryDto(
     intakeAnswers = intakeAnswers,
     pieceId = pieceId,
     pieceLabel = pieceLabel,
+    workers = workers.map { SessionWorkerDto(workerId = it.workerId, part = it.part) },
 )
 
 private fun MessageRow.toDto() = MessageDto(

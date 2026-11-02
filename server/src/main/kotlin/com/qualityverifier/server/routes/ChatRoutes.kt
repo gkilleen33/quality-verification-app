@@ -176,6 +176,10 @@ private suspend fun RoutingContext.assessmentTurn(
             // Checked before it reaches `?::uuid`, where a malformed value would throw and
             // come back as a 500. It is our own client that sends it, so a bad one is a
             // bug worth refusing loudly rather than quietly unlinking the piece.
+            request.workers.firstNotNullOfOrNull { it.problem }?.let { problem ->
+                call.respond(HttpStatusCode.BadRequest, ErrorResponse("invalid_request", problem))
+                return
+            }
             if (request.pieceId != null && !isUuid(request.pieceId)) {
                 call.respond(
                     HttpStatusCode.BadRequest,
@@ -219,6 +223,7 @@ private suspend fun RoutingContext.assessmentTurn(
                 testerDailyLimit = testerDailyAssessmentLimit,
                 pieceId = request.pieceId,
                 pieceLabel = request.pieceLabel,
+                workers = request.workers.map { it.toDomain() },
             )
             if (access is SessionAccess.NotYours) {
                 // 404, never 403: telling the difference would let anybody enumerate

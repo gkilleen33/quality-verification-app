@@ -64,7 +64,28 @@ interface FundiStore {
      * V18), and the last write the server receives is the name.
      */
     suspend fun renamePiece(userId: String, pieceId: String, label: String?): Boolean
+
+    /** The roster, archived names included, so a reinstalled phone keeps them on past pieces. */
+    suspend fun listWorkers(userId: String): List<WorkerRow>
+
+    /**
+     * Adds or renames a worker. Returns false when the id belongs to another account.
+     *
+     * Archiving is sticky: the first `archived = true` sets `archived_at`, and nothing
+     * clears it, so a stale rename from a second phone cannot revive a worker the shop
+     * has let go. The server stamps `updated_at` from its own clock (V18).
+     */
+    suspend fun upsertWorker(userId: String, workerId: String, name: String, archived: Boolean): Boolean
 }
+
+/** A roster row as the phone reads it back. Times in epoch millis. */
+data class WorkerRow(
+    val id: String,
+    val name: String?,
+    val createdAt: Long,
+    val updatedAt: Long,
+    val archivedAt: Long?,
+)
 
 /** The one rule for a piece's name, shared by the turn and the rename endpoint. */
 object PieceLabels {
@@ -280,6 +301,60 @@ class PostgresFundiStore(private val dataSource: DataSource) : FundiStore {
                 statement.executeUpdate() > 0
             }
         }
+
+    override suspend fun listWorkers(userId: String): List<WorkerRow> = tx { connection ->
+        connection.prepareStatement(
+            """
+            select id::text, name,
+                   (extract(epoch from created_at) * 1000)::bigint,
+                   (extract(epoch from updated_at) * 1000)::bigint,
+                   (extract(epoch from archived_at) * 1000)::bigint
+            from workers where user_id = ?::uuid order by created_at, id
+            """.trimIndent()
+        ).use { statement ->
+            statement.setString(1, userId)
+            statement.executeQuery().use { rows ->
+                val out = mutableListOf<WorkerRow>()
+                while (rows.next()) {
+                    out += WorkerRow(
+                        id = rows.getString(1),
+                        name = rows.getString(2),
+                        createdAt = rows.getLong(3),
+                        updatedAt = rows.getLong(4),
+                        archivedAt = rows.getLong(5).takeUnless { rows.wasNull() },
+                    )
+                }
+                out
+            }
+        }
+    }
+
+    override suspend fun upsertWorker(
+        userId: String,
+        workerId: String,
+        name: String,
+        archived: Boolean,
+    ): Boolean = tx { connection ->
+        connection.prepareStatement(
+            """
+            insert into workers (id, user_id, name, archived_at)
+            values (?::uuid, ?::uuid, ?, case when ? then now() end)
+            on conflict (id) do update
+                set name        = excluded.name,
+                    updated_at  = now(),
+                    -- Sticky: once archived, a later write cannot revive it.
+                    archived_at = coalesce(workers.archived_at, excluded.archived_at)
+                -- Another account's id: no row changes, and the caller answers 404.
+                where workers.user_id = excluded.user_id
+            """.trimIndent()
+        ).use { statement ->
+            statement.setString(1, workerId)
+            statement.setString(2, userId)
+            statement.setString(3, name)
+            statement.setBoolean(4, archived)
+            statement.executeUpdate() > 0
+        }
+    }
 
     override suspend fun toolHistory(userId: String): List<RecordedToolChange> = tx { connection ->
         connection.prepareStatement(
