@@ -27,6 +27,11 @@ data class SessionStart(
     /** The physical piece, for Fundi Bora. Sent so the server can link the assessments. */
     val pieceId: String? = null,
     /**
+     * The piece's name, for Fundi Bora. Sent on every turn like [pieceId]; the server
+     * keeps it only when the turn creates the piece, so no turn is the special one.
+     */
+    val pieceLabel: String? = null,
+    /**
      * The intake column as stored, undecoded.
      *
      * Kagua's code and Fundi Bora's share it and neither can read the other's, so the

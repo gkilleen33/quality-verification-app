@@ -6,6 +6,7 @@ import com.qualityverifier.data.db.MessageEntity
 import com.qualityverifier.data.db.DismissedSessionEntity
 import com.qualityverifier.data.db.MessageWithAttachments
 import com.qualityverifier.data.db.PendingTesterFeedbackEntity
+import com.qualityverifier.data.db.PieceEntity
 import com.qualityverifier.data.db.SessionDao
 import com.qualityverifier.data.db.SessionEntity
 import com.qualityverifier.domain.AssessmentContext
@@ -46,6 +47,7 @@ class RoomSessionRepository(
                     verdictLanguage = row.verdictLanguage,
                     verdictUnverifiedCount = row.verdictUnverifiedCount,
                     pieceId = row.pieceId,
+                    pieceLabel = row.pieceLabel,
                 )
             }
         }
@@ -64,6 +66,8 @@ class RoomSessionRepository(
                 intake = decodeIntake(row.intakeAnswers),
                 location = row.locationFix(),
                 pieceId = row.pieceId,
+                // Read from the piece each time, so a rename reaches the next turn.
+                pieceLabel = dao.findPiece(row.pieceId ?: row.id)?.label,
                 intakeCode = row.intakeAnswers,
             )
         }
@@ -90,8 +94,24 @@ class RoomSessionRepository(
         intake: AssessmentContext?,
         pieceId: String?,
         intakeCode: String?,
+        pieceLabel: String?,
     ) {
         val timestamp = now()
+        if (pieceId != null) {
+            when {
+                // A new piece: its first assessment uses its own id as the piece id. The
+                // opening turn carries the name, so it is already as good as sent. Decided
+                // from the ids, not from the row: a piece from before Room 11 has no row
+                // and is still not new, and the server would ignore a label sent for it.
+                pieceId == sessionId -> dao.upsertPiece(
+                    PieceEntity(pieceId, pieceLabel, labelUpdatedAt = timestamp, labelSyncedAt = timestamp)
+                )
+                // A returning piece given a different name at the intake. Null means the
+                // maker skipped the question, never "clear it": clearing is the card's job.
+                pieceLabel != null && dao.findPiece(pieceId)?.label != pieceLabel ->
+                    setPieceLabel(pieceId, pieceLabel)
+            }
+        }
         dao.insertSession(
             SessionEntity(
                 id = sessionId,
@@ -175,6 +195,14 @@ class RoomSessionRepository(
                 pieceId = session.pieceId,
             )
         )
+        session.pieceId?.let { pieceId ->
+            // The server's name wins unless this phone holds a rename it has not sent.
+            // Two statements that each decide for themselves, so a rename made between
+            // them is kept rather than overwritten.
+            val syncedAt = now()
+            dao.insertPieceIfAbsent(PieceEntity(pieceId, session.pieceLabel, labelSyncedAt = syncedAt))
+            dao.applySyncedLabel(pieceId, session.pieceLabel, syncedAt)
+        }
         // Cleared and rewritten rather than merged. The server is authoritative for a
         // synced assessment, and merging two orderings of the same conversation is a
         // problem nobody needs to have.
@@ -257,6 +285,20 @@ class RoomSessionRepository(
 
     override suspend fun clearPendingRemoteDelete(sessionId: String) =
         dao.clearPendingDelete(sessionId)
+
+    override suspend fun pieceLabel(pieceId: String): String? = dao.findPiece(pieceId)?.label
+
+    override suspend fun setPieceLabel(pieceId: String, label: String?) {
+        dao.upsertPiece(
+            PieceEntity(id = pieceId, label = label, labelUpdatedAt = now(), labelSyncedAt = null)
+        )
+    }
+
+    override suspend fun unsyncedPieceLabels(): List<PieceLabelChange> =
+        dao.unsyncedPieces().map { PieceLabelChange(it.id, it.label, it.labelUpdatedAt) }
+
+    override suspend fun markPieceLabelSynced(change: PieceLabelChange) =
+        dao.markPieceSynced(change.pieceId, change.asOf, now())
 
     private suspend fun insert(
         sessionId: String,

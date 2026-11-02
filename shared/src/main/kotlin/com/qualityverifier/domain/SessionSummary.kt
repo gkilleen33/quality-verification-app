@@ -19,6 +19,8 @@ data class SessionSummary(
     val verdictUnverifiedCount: Int? = null,
     /** The physical piece, for Fundi Bora. Null means the session is its own piece. */
     val pieceId: String? = null,
+    /** What the maker calls the piece. Null until they name it. */
+    val pieceLabel: String? = null,
 ) {
     /** Which piece this is, falling back to the session itself for rows made before pieces. */
     val piece: String get() = pieceId ?: id

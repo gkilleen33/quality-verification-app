@@ -82,6 +82,28 @@ data class SessionEntity(
     val pieceId: String? = null,
 )
 
+/**
+ * A physical piece, as far as the phone needs to know it: its name.
+ *
+ * Its own table rather than a column on `sessions`, because a piece has one name across
+ * all of its assessments, and a rename from the card has to change every row that shows
+ * it. Keyed on the piece id, which is the first assessment's session id
+ * ([SessionEntity.pieceId]).
+ *
+ * [labelSyncedAt] null means the server has not been told the current name: a rename
+ * made offline waits here and goes up on the next sync, before the pull, so the pull
+ * cannot overwrite it. The first assessment's opening turn carries the name itself, so a
+ * piece named at the start is written as already synced.
+ */
+@Entity(tableName = "pieces")
+data class PieceEntity(
+    @PrimaryKey val id: String,
+    val label: String? = null,
+    /** The phone's own clock, for ordering its own writes; never sent. */
+    val labelUpdatedAt: Long? = null,
+    val labelSyncedAt: Long? = null,
+)
+
 @Entity(
     tableName = "messages",
     foreignKeys = [

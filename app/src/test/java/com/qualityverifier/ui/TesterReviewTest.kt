@@ -262,6 +262,7 @@ class TesterReviewTest {
             intake: AssessmentContext?,
             pieceId: String?,
             intakeCode: String?,
+            pieceLabel: String?,
         ) = Unit
 
         override suspend fun appendUserMessage(
@@ -291,6 +292,15 @@ class TesterReviewTest {
         val dismissed = mutableSetOf<String>()
         override suspend fun dismissLocally(sessionId: String) { dismissed += sessionId }
         override suspend fun dismissedSessions(): Set<String> = dismissed
+
+        // Pieces are Fundi Bora's; Kagua never names one.
+        override suspend fun pieceLabel(pieceId: String): String? = null
+        override suspend fun setPieceLabel(pieceId: String, label: String?) = Unit
+        override suspend fun unsyncedPieceLabels() =
+            emptyList<com.qualityverifier.data.session.PieceLabelChange>()
+        override suspend fun markPieceLabelSynced(
+            change: com.qualityverifier.data.session.PieceLabelChange,
+        ) = Unit
 
         override suspend fun recordTesterFeedback(feedback: LocalTesterFeedback) {
             testerFeedback.removeAll { it.sessionId == feedback.sessionId }

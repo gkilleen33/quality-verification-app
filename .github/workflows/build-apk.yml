@@ -42,6 +42,14 @@ jobs:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/android-toolchain
       - run: ./gradlew --no-daemon testDebugUnitTest lintDebug :shared:test :server:test
+      # The Room schema the compiler exported, so a migration PR written without an
+      # Android toolchain can commit the new version's JSON from this run.
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: room-schemas
+          path: core/schemas
+          if-no-files-found: ignore
 
   publish:
     # Anything that is not a pull request produces a downloadable build. The checks run

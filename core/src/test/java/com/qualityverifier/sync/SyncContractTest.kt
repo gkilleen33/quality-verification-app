@@ -24,7 +24,8 @@ class SyncContractTest {
         {"session": {"id": "s1", "item_type_id": "wooden-stool",
                      "created_at": 1, "updated_at": 2, "preview": "p", "message_count": 2,
                      "intake_answers": "fundi-en-evaluate",
-                     "piece_id": "c0ffee00-0000-4000-8000-000000000001"},
+                     "piece_id": "c0ffee00-0000-4000-8000-000000000001",
+                     "piece_label": "Dining table for the hotel"},
          "messages": [
            {"id": "m1", "role": "USER", "text": "About my workshop", "ordinal": 0,
             "created_at": 1, "blobs": [], "composed": true},
@@ -41,6 +42,13 @@ class SyncContractTest {
     }
 
     @Test
+    fun `the piece's name comes back with it`() {
+        val detail = json.decodeFromString<RemoteSessionDetail>(body)
+
+        assertEquals("Dining table for the hotel", detail.session.pieceLabel)
+    }
+
+    @Test
     fun `which turns the app wrote comes back too`() {
         val detail = json.decodeFromString<RemoteSessionDetail>(body)
 
@@ -53,8 +61,10 @@ class SyncContractTest {
     fun `a session with no piece is still readable`() {
         val detail = json.decodeFromString<RemoteSessionDetail>(
             body.replace(Regex(""",\s*"piece_id":\s*"[^"]*""""), "")
+                .replace(Regex(""",\s*"piece_label":\s*"[^"]*""""), "")
         )
 
         assertNull(detail.session.pieceId)
+        assertNull(detail.session.pieceLabel)
     }
 }

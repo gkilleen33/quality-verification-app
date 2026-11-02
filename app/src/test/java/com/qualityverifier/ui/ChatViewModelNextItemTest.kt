@@ -309,6 +309,7 @@ class ChatViewModelNextItemTest {
             intake: AssessmentContext?,
             pieceId: String?,
             intakeCode: String?,
+            pieceLabel: String?,
         ) {
             createdFrom = previousSessionId
             createdIntake = intake?.takeIf { it.isComplete }
@@ -347,6 +348,15 @@ class ChatViewModelNextItemTest {
         val dismissed = mutableSetOf<String>()
         override suspend fun dismissLocally(sessionId: String) { dismissed += sessionId }
         override suspend fun dismissedSessions(): Set<String> = dismissed
+
+        // Pieces are Fundi Bora's; Kagua never names one.
+        override suspend fun pieceLabel(pieceId: String): String? = null
+        override suspend fun setPieceLabel(pieceId: String, label: String?) = Unit
+        override suspend fun unsyncedPieceLabels() =
+            emptyList<com.qualityverifier.data.session.PieceLabelChange>()
+        override suspend fun markPieceLabelSynced(
+            change: com.qualityverifier.data.session.PieceLabelChange,
+        ) = Unit
 
         val testerFeedback = mutableListOf<com.qualityverifier.data.session.LocalTesterFeedback>()
         override suspend fun recordTesterFeedback(

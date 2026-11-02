@@ -55,6 +55,12 @@ interface SessionRepository {
          * over [intake] when both are given; nothing passes both.
          */
         intakeCode: String? = null,
+        /**
+         * What the maker calls the piece, from the intake. Written to the piece when
+         * this is its first assessment, so the opening turn carries it; recorded as a
+         * rename when the piece already has a different name.
+         */
+        pieceLabel: String? = null,
     )
 
     suspend fun sessionExists(sessionId: String): Boolean
@@ -127,7 +133,24 @@ interface SessionRepository {
     suspend fun dismissLocally(sessionId: String)
 
     suspend fun dismissedSessions(): Set<String>
+
+    /** What the maker calls a piece, or null. Fundi Bora only. */
+    suspend fun pieceLabel(pieceId: String): String?
+
+    /**
+     * Renames a piece, or clears its name with null. Written locally first and sent on
+     * the next sync, before the pull, so a name given offline is not overwritten.
+     */
+    suspend fun setPieceLabel(pieceId: String, label: String?)
+
+    /** Names the server has not been told yet. */
+    suspend fun unsyncedPieceLabels(): List<PieceLabelChange>
+
+    suspend fun markPieceLabelSynced(change: PieceLabelChange)
 }
+
+/** A rename waiting to reach the server. [asOf] is the phone's clock at the rename. */
+data class PieceLabelChange(val pieceId: String, val label: String?, val asOf: Long?)
 
 /** An evaluator's review as the phone holds it, before it reaches the server. */
 data class LocalTesterFeedback(

@@ -88,6 +88,7 @@ fun AssessScreen(
     val language by viewModel.language.collectAsState()
     val purpose by viewModel.purpose.collectAsState()
     val priorIssues by viewModel.priorIssues.collectAsState()
+    val pieceName by viewModel.pieceLabel.collectAsState()
 
     val labels = FundiLabels.ENGLISH
     // The capture pipeline and the verdict speak ReportLabels, and follow the language
@@ -97,6 +98,7 @@ fun AssessScreen(
 
     var stage by remember { mutableStateOf(Stage.LOADING) }
     var intake by remember { mutableStateOf<FundiIntake?>(null) }
+    var name by remember { mutableStateOf<String?>(null) }
 
     // A finished assessment opens on its conversation; a new one on its intake. Decided
     // once it is known which this is, never from the message list, which arrives late.
@@ -121,8 +123,10 @@ fun AssessScreen(
             labels = labels,
             returning = returning,
             priorIssues = priorIssues,
-            onComplete = { answered ->
+            initialName = pieceName,
+            onComplete = { answered, pieceLabel ->
                 intake = answered
+                name = pieceLabel
                 stage = Stage.OPENING_PHOTO
             },
             onCancel = onDone,
@@ -138,7 +142,7 @@ fun AssessScreen(
                 createFile = viewModel::newCaptureFile,
                 onCaptured = { file ->
                     stage = Stage.TALKING
-                    viewModel.start(answered, file.absolutePath)
+                    viewModel.start(answered, file.absolutePath, name)
                 },
                 onKeep = {},
                 onRetake = {},
@@ -147,7 +151,7 @@ fun AssessScreen(
                 onSkip = if (optional) {
                     {
                         stage = Stage.TALKING
-                        viewModel.start(answered, null)
+                        viewModel.start(answered, null, name)
                     }
                 } else {
                     null

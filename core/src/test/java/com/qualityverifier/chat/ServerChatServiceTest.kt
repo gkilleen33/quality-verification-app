@@ -93,6 +93,24 @@ class ServerChatServiceTest {
         assertTrue("the earlier turn must not be sent", !body.contains("Take some photos"))
     }
 
+    // The server keeps the name only when the turn creates the piece, so it is sent on
+    // every turn like the piece id and no turn is the special one.
+    @Test
+    fun `the piece and its name travel with the turn`() = runTest {
+        server.enqueue(json("""{"message_id":"m1","text":"thanks"}"""))
+        sessionStart = SessionStart(
+            ItemType.WOODEN_STOOL, null, null,
+            pieceId = "c0ffee00-0000-4000-8000-000000000001",
+            pieceLabel = "Kiti cha Wanjirũ",
+        )
+
+        service().send("s1", ItemType.WOODEN_STOOL, history())
+
+        val body = server.takeRequest().body.readUtf8()
+        assertTrue(body, body.contains("\"piece_id\":\"c0ffee00-0000-4000-8000-000000000001\""))
+        assertTrue(body, body.contains("\"piece_label\":\"Kiti cha Wanjirũ\""))
+    }
+
     @Test
     fun `a photo already on the server is not uploaded again`() = runTest {
         // HEAD says present, so no PUT. This is what stops a nine-photo assessment
