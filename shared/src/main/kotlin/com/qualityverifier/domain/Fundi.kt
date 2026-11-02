@@ -99,6 +99,7 @@ data class WorkerSlot(
     val part: WorkPart? = null,
 )
 
+
 /** A person on the manager's roster. Archived, not deleted: past pieces still name them. */
 data class Worker(
     val id: String,

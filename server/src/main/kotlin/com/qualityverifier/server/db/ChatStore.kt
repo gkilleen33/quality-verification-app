@@ -2,6 +2,7 @@ package com.qualityverifier.server.db
 
 import com.qualityverifier.domain.Attachment
 import com.qualityverifier.domain.Audience
+import com.qualityverifier.domain.WorkerSlot
 import com.qualityverifier.server.routes.SessionLocation
 import com.qualityverifier.domain.ChatMessage
 import com.qualityverifier.domain.Role
@@ -10,6 +11,9 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.sql.Connection
 import javax.sql.DataSource
+import org.slf4j.LoggerFactory
+
+private val log = LoggerFactory.getLogger("com.qualityverifier.server.chatstore")
 
 sealed interface SessionAccess {
     data class Ok(val created: Boolean) : SessionAccess
@@ -51,7 +55,14 @@ data class SessionRow(
      * re-assessment would start a new piece instead of joining the old one.
      */
     val pieceId: String? = null,
+    /** What the maker calls the piece. Null until they name it. */
+    val pieceLabel: String? = null,
+    /** Who worked on it, as recorded at the assessment. Fundi Bora only. */
+    val workers: List<SessionWorker> = emptyList(),
 )
+
+/** One `session_workers` row. A null [workerId] is the manager; a null [part], the whole piece. */
+data class SessionWorker(val workerId: String?, val part: String?)
 
 data class MessageRow(
     val id: String,
@@ -99,7 +110,25 @@ interface ChatStore {
          * skew that maker's record.
          */
         pieceId: String? = null,
+        /**
+         * The piece's name, written only when this turn creates the piece. Blank or
+         * over the V22 bound is stored as no name rather than refused: the name is
+         * optional data on a turn somebody is about to spend minutes on.
+         */
+        pieceLabel: String? = null,
+        /**
+         * Who worked on the piece, written only when this turn creates the session, and
+         * only for a Fundi Bora assessment. A slot naming another account's worker is
+         * dropped and logged, never linked.
+         */
+        workers: List<WorkerSlot> = emptyList(),
     ): SessionAccess
+
+    /**
+     * Replaces who worked on a session the caller owns. False when it is not theirs, or
+     * not a Fundi Bora assessment.
+     */
+    suspend fun replaceSessionWorkers(userId: String, sessionId: String, workers: List<WorkerSlot>): Boolean
 
     /**
      * Records where an assessment was made, once.
@@ -228,6 +257,8 @@ class PostgresChatStore(private val dataSource: DataSource) : ChatStore {
         dailyLimit: Int,
         testerDailyLimit: Int,
         pieceId: String?,
+        pieceLabel: String?,
+        workers: List<WorkerSlot>,
     ): SessionAccess = tx { connection ->
         val owner = connection.prepareStatement(
             "select user_id::text from sessions where id = ?::uuid"
@@ -290,14 +321,15 @@ class PostgresChatStore(private val dataSource: DataSource) : ChatStore {
         if (linkPiece) {
             connection.prepareStatement(
                 """
-                insert into pieces (id, user_id, item_type_id)
-                values (?::uuid, ?::uuid, ?)
+                insert into pieces (id, user_id, item_type_id, label)
+                values (?::uuid, ?::uuid, ?, ?)
                 on conflict (id) do nothing
                 """.trimIndent()
             ).use { statement ->
                 statement.setString(1, pieceId)
                 statement.setString(2, userId)
                 statement.setString(3, itemTypeId)
+                statement.setString(4, PieceLabels.normalise(pieceLabel))
                 statement.executeUpdate()
             }
         }
@@ -328,7 +360,102 @@ class PostgresChatStore(private val dataSource: DataSource) : ChatStore {
             statement.setString(9, userId)
             statement.executeUpdate()
         }
+        // Fundi Bora only, like the piece. Kagua's endpoint never sends any.
+        if (audience == Audience.FUNDI) writeSessionWorkers(connection, userId, sessionId, workers)
         SessionAccess.Ok(created = true)
+    }
+
+    override suspend fun replaceSessionWorkers(
+        userId: String,
+        sessionId: String,
+        workers: List<WorkerSlot>,
+    ): Boolean = tx { connection ->
+        // Also bumps updated_at, so a second phone on the account sees the edit at its
+        // next pull, which skips sessions no newer than its own copy.
+        val theirs = connection.prepareStatement(
+            """
+            update sessions set updated_at = now()
+            where id = ?::uuid and user_id = ?::uuid and audience = ? and client_deleted_at is null
+            """.trimIndent()
+        ).use { statement ->
+            statement.setString(1, sessionId)
+            statement.setString(2, userId)
+            statement.setString(3, Audience.FUNDI.id)
+            statement.executeUpdate() > 0
+        }
+        if (!theirs) return@tx false
+        connection.prepareStatement("delete from session_workers where session_id = ?::uuid").use {
+            it.setString(1, sessionId)
+            it.executeUpdate()
+        }
+        writeSessionWorkers(connection, userId, sessionId, workers)
+        true
+    }
+
+    private fun workerExists(connection: Connection, workerId: String): Boolean =
+        connection.prepareStatement("select 1 from workers where id = ?::uuid").use { statement ->
+            statement.setString(1, workerId)
+            statement.executeQuery().use { it.next() }
+        }
+
+    /**
+     * Links each slot to the session. A worker the server has never seen is created from
+     * the slot's name, because the phone made the id (as it makes session and piece
+     * ids) and the picker works offline. A worker that belongs to another account is
+     * dropped and logged: nobody can attach their assessment to somebody else's roster.
+     */
+    private fun writeSessionWorkers(
+        connection: Connection,
+        userId: String,
+        sessionId: String,
+        workers: List<WorkerSlot>,
+    ) {
+        for (slot in workers) {
+            val workerId = slot.workerId
+            if (workerId != null) {
+                // An id the server has never seen needs its name, or the roster would hold
+                // a nameless row until the phone's own write repaired it. The phone sends
+                // the name with any worker added inside the picker, so this is a client bug.
+                val name = slot.name?.takeIf { it.isNotBlank() }
+                if (name == null && !workerExists(connection, workerId)) {
+                    log.warn("Session {} named unknown worker {} with no name; dropped", sessionId, workerId)
+                    continue
+                }
+                connection.prepareStatement(
+                    """
+                    insert into workers (id, user_id, name) values (?::uuid, ?::uuid, ?)
+                    on conflict (id) do nothing
+                    """.trimIndent()
+                ).use { statement ->
+                    statement.setString(1, workerId)
+                    statement.setString(2, userId)
+                    statement.setString(3, name)
+                    statement.executeUpdate()
+                }
+                val owner = connection.prepareStatement(
+                    "select user_id::text from workers where id = ?::uuid"
+                ).use { statement ->
+                    statement.setString(1, workerId)
+                    statement.executeQuery().use { if (it.next()) it.getString(1) else null }
+                }
+                if (owner != userId) {
+                    log.warn("Session {} named worker {} of another account; dropped", sessionId, workerId)
+                    continue
+                }
+            }
+            connection.prepareStatement(
+                """
+                insert into session_workers (session_id, worker_id, part)
+                values (?::uuid, ?::uuid, ?)
+                on conflict do nothing
+                """.trimIndent()
+            ).use { statement ->
+                statement.setString(1, sessionId)
+                statement.setString(2, workerId)
+                statement.setString(3, slot.part?.id)
+                statement.executeUpdate()
+            }
+        }
     }
 
     /**
@@ -624,10 +751,12 @@ class PostgresChatStore(private val dataSource: DataSource) : ChatStore {
                            (extract(epoch from s.updated_at) * 1000)::bigint,
                            s.preview_text, count(m.id)::int,
                            s.verdict_level_id, s.verdict_language,
-                           s.previous_session_id::text, s.intake_answers, s.piece_id::text
+                           s.previous_session_id::text, s.intake_answers, s.piece_id::text,
+                           p.label
                     from sessions s left join messages m on m.session_id = s.id
+                    left join pieces p on p.id = s.piece_id
                     where s.user_id = ?::uuid and s.client_deleted_at is null
-                    group by s.id
+                    group by s.id, p.label
                     order by s.updated_at desc
                     """.trimIndent()
                 ).use { statement ->
@@ -637,7 +766,30 @@ class PostgresChatStore(private val dataSource: DataSource) : ChatStore {
                         while (rows.next()) out += rows.toSessionRow()
                         out
                     }
+                }.let { rows ->
+                    val workers = sessionWorkersFor(connection, userId)
+                    rows.map { it.copy(workers = workers[it.id].orEmpty()) }
                 }
+            }
+        }
+
+    /** Every session's workers for one account, in one query. */
+    private fun sessionWorkersFor(connection: Connection, userId: String): Map<String, List<SessionWorker>> =
+        connection.prepareStatement(
+            """
+            select sw.session_id::text, sw.worker_id::text, sw.part
+            from session_workers sw join sessions s on s.id = sw.session_id
+            where s.user_id = ?::uuid order by sw.id
+            """.trimIndent()
+        ).use { statement ->
+            statement.setString(1, userId)
+            statement.executeQuery().use { rows ->
+                val out = mutableMapOf<String, MutableList<SessionWorker>>()
+                while (rows.next()) {
+                    out.getOrPut(rows.getString(1)) { mutableListOf() } +=
+                        SessionWorker(rows.getString(2), rows.getString(3))
+                }
+                out
             }
         }
 
@@ -653,10 +805,12 @@ class PostgresChatStore(private val dataSource: DataSource) : ChatStore {
                        (extract(epoch from s.updated_at) * 1000)::bigint,
                        s.preview_text, count(m.id)::int,
                        s.verdict_level_id, s.verdict_language,
-                       s.previous_session_id::text, s.intake_answers, s.piece_id::text
+                       s.previous_session_id::text, s.intake_answers, s.piece_id::text,
+                       p.label
                 from sessions s left join messages m on m.session_id = s.id
+                left join pieces p on p.id = s.piece_id
                 where s.id = ?::uuid and s.user_id = ?::uuid and s.client_deleted_at is null
-                group by s.id
+                group by s.id, p.label
                 """.trimIndent()
             ).use { statement ->
                 statement.setString(1, sessionId)
@@ -664,6 +818,8 @@ class PostgresChatStore(private val dataSource: DataSource) : ChatStore {
                 statement.executeQuery().use { rows ->
                     if (rows.next()) rows.toSessionRow() else null
                 }
+            }?.let { row ->
+                row.copy(workers = sessionWorkersFor(connection, userId)[row.id].orEmpty())
             } ?: return@withContext null
 
             val blobs = mutableMapOf<String, MutableList<String>>()
@@ -761,6 +917,7 @@ class PostgresChatStore(private val dataSource: DataSource) : ChatStore {
         previousSessionId = getString(9),
         intakeAnswers = getString(10),
         pieceId = getString(11),
+        pieceLabel = getString(12),
     )
 
     private fun touch(connection: Connection, sessionId: String, preview: String) {

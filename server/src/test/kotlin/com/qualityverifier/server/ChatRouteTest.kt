@@ -6,6 +6,8 @@ import com.qualityverifier.domain.Audience
 import com.qualityverifier.domain.ChatMessage
 import com.qualityverifier.domain.ItemType
 import com.qualityverifier.domain.Role
+import com.qualityverifier.domain.WorkPart
+import com.qualityverifier.domain.WorkerSlot
 import com.qualityverifier.server.auth.AccessTokens
 import com.qualityverifier.server.blobs.BlobStore
 import com.qualityverifier.server.chat.ClaudeClient
@@ -624,6 +626,114 @@ class ChatRouteTest {
         assertEquals(piece, store.sawPieceId)
     }
 
+    // The name travels with the piece on the opening turn. Whether it is stored is the
+    // store's decision (only when the piece is created); the route just hands it down.
+    @Test
+    fun `a piece label reaches the store with the piece`() = testApplication {
+        val store = FakeChatStore()
+        val app = withChat(
+            store,
+            FakeClaude(ClaudeResult.Success("ok", TokenUsage(), null)),
+            accountAudience = Audience.FUNDI,
+        )
+        val piece = UUID.randomUUID().toString()
+
+        app.post("/v1/fundi/chat") {
+            auth()
+            setBody(
+                TextContent(
+                    requestJsonWith(",\"piece_id\":\"$piece\",\"piece_label\":\"Kiti cha Wanjirũ\""),
+                    ContentType.Application.Json,
+                ),
+            )
+        }
+
+        assertEquals(piece, store.sawPieceId)
+        assertEquals("Kiti cha Wanjirũ", store.sawPieceLabel)
+    }
+
+    // Who worked on the piece travels with the opening turn. The route checks the slots
+    // and hands them down; which worker may be linked is decided in the SQL.
+    @Test
+    fun `the workers reach the store with the turn`() = testApplication {
+        val store = FakeChatStore()
+        val app = withChat(
+            store,
+            FakeClaude(ClaudeResult.Success("ok", TokenUsage(), null)),
+            accountAudience = Audience.FUNDI,
+        )
+        val kamau = UUID.randomUUID().toString()
+
+        val response = app.post("/v1/fundi/chat") {
+            auth()
+            setBody(
+                TextContent(
+                    requestJsonWith(
+                        ",\"workers\":[{\"id\":\"$kamau\",\"name\":\"Kamau\",\"part\":\"joinery\"},{\"part\":\"finishing\"}]",
+                    ),
+                    ContentType.Application.Json,
+                ),
+            )
+        }
+
+        assertEquals(HttpStatusCode.OK, response.status)
+        assertEquals(
+            listOf(WorkerSlot(kamau, "Kamau", WorkPart.JOINERY), WorkerSlot(null, null, WorkPart.FINISHING)),
+            store.sawWorkers,
+        )
+    }
+
+    @Test
+    fun `a slot with an unknown part or a malformed id is refused before anything is spent`() = testApplication {
+        val store = FakeChatStore()
+        val claude = FakeClaude(ClaudeResult.Success("ok", TokenUsage(), null))
+        val app = withChat(store, claude, accountAudience = Audience.FUNDI)
+
+        val badPart = app.post("/v1/fundi/chat") {
+            auth()
+            setBody(TextContent(requestJsonWith(",\"workers\":[{\"part\":\"legs\"}]"), ContentType.Application.Json))
+        }
+        assertEquals(HttpStatusCode.BadRequest, badPart.status)
+
+        val badId = app.post("/v1/fundi/chat") {
+            auth()
+            setBody(TextContent(requestJsonWith(",\"workers\":[{\"id\":\"kamau\",\"name\":\"Kamau\"}]"), ContentType.Application.Json))
+        }
+        assertEquals(HttpStatusCode.BadRequest, badId.status)
+        assertTrue(badId.bodyAsText().contains("uuid"))
+
+        // A NUL cannot be stored in Postgres text, so it is refused here, not thrown there.
+        val nul = app.post("/v1/fundi/chat") {
+            auth()
+            setBody(
+                TextContent(
+                    requestJsonWith(",\"workers\":[{\"id\":\"${UUID.randomUUID()}\",\"name\":\"a\\u0000b\"}]"),
+                    ContentType.Application.Json,
+                ),
+            )
+        }
+        assertEquals(HttpStatusCode.BadRequest, nul.status)
+        assertTrue(store.sawWorkers.isEmpty())
+    }
+
+    @Test
+    fun `a turn without a piece label still works`() = testApplication {
+        val store = FakeChatStore()
+        val app = withChat(
+            store,
+            FakeClaude(ClaudeResult.Success("ok", TokenUsage(), null)),
+            accountAudience = Audience.FUNDI,
+        )
+
+        val response = app.post("/v1/fundi/chat") {
+            auth()
+            setBody(TextContent(requestJsonWith(""), ContentType.Application.Json))
+        }
+
+        assertEquals(HttpStatusCode.OK, response.status)
+        assertNull(store.sawPieceLabel)
+    }
+
     // The mark has to reach the server, or a phone rebuilding its history gets the turn back
     // unmarked and shows the app's own prompt text again. See V18.
     @Test
@@ -939,16 +1049,31 @@ class ChatRouteTest {
             sessionId: String, userId: String, itemTypeId: String,
             previousSessionId: String?, intakeAnswers: String?, promptSha: String?,
             audience: Audience,
-            dailyLimit: Int, testerDailyLimit: Int, pieceId: String?,
+            dailyLimit: Int, testerDailyLimit: Int, pieceId: String?, pieceLabel: String?,
+            workers: List<WorkerSlot>,
         ) = access.also {
             sawDailyLimit = dailyLimit
             sawTesterDailyLimit = testerDailyLimit
             storedAudience = audience
             sawPieceId = pieceId
+            sawPieceLabel = pieceLabel
+            sawWorkers = workers
         }
+
+        override suspend fun replaceSessionWorkers(
+            userId: String, sessionId: String, workers: List<WorkerSlot>,
+        ) = true
+
+        /** The slots the route handed down, already checked. */
+        var sawWorkers: List<WorkerSlot> = emptyList()
+            private set
 
         /** The piece the route handed down. The ownership rule is in the SQL. */
         var sawPieceId: String? = null
+            private set
+
+        /** The name the route handed down with it. Normalised in the store, not here. */
+        var sawPieceLabel: String? = null
             private set
 
         /** What the route passed down, so a test can prove the config reaches the store. */
