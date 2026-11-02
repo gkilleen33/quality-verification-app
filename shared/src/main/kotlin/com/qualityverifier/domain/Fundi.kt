@@ -99,6 +99,21 @@ data class WorkerSlot(
     val part: WorkPart? = null,
 )
 
+
+/** A person on the manager's roster. Archived, not deleted: past pieces still name them. */
+data class Worker(
+    val id: String,
+    val name: String,
+    val archived: Boolean,
+)
+
+/** The bound on a worker's name, the same on the phone as in V23's CHECK. */
+object WorkerNames {
+    const val MAX_LENGTH = 60
+
+    fun fits(name: String): Boolean = name.codePointCount(0, name.length) <= MAX_LENGTH
+}
+
 /**
  * Four states, not two.
  *

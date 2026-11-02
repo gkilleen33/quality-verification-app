@@ -20,6 +20,7 @@ import com.qualityverifier.fundi.ui.setup.GoalsScreen
 import com.qualityverifier.fundi.ui.setup.SetupViewModel
 import com.qualityverifier.fundi.ui.setup.ToolsScreen
 import com.qualityverifier.fundi.ui.setup.WorkshopScreen
+import com.qualityverifier.fundi.ui.workers.WorkersScreen
 import com.qualityverifier.text.FundiLabels
 import java.util.UUID
 
@@ -30,6 +31,7 @@ private object Routes {
     const val SETUP_TOOLS = "setup/tools"
     const val SETUP_GOALS = "setup/goals"
     const val HOME = "home"
+    const val WORKERS = "workers"
     const val ASSESS = "assess/{sessionId}/{itemTypeId}?piece={piece}&returning={returning}"
 
     /**
@@ -180,7 +182,12 @@ fun FundiNav() {
                         Routes.assess(UUID.randomUUID().toString(), itemType.id),
                     )
                 },
+                onWorkers = { navController.navigate(Routes.WORKERS) },
             )
+        }
+
+        composable(Routes.WORKERS) {
+            WorkersScreen(onBack = { navController.popBackStack() })
         }
 
         composable(
