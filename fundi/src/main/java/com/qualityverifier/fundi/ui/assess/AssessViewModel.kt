@@ -11,6 +11,7 @@ import com.qualityverifier.data.db.SessionImageStore
 import com.qualityverifier.data.fundi.FundiProfiles
 import com.qualityverifier.data.fundi.ProfileOutcome
 import com.qualityverifier.data.session.SessionRepository
+import com.qualityverifier.data.workers.WorkerRepository
 import com.qualityverifier.di.AppContainer
 import com.qualityverifier.domain.AssessmentLanguage
 import com.qualityverifier.domain.Attachment
@@ -22,6 +23,8 @@ import com.qualityverifier.domain.ItemType
 import com.qualityverifier.domain.PlanRun
 import com.qualityverifier.domain.PriorIssue
 import com.qualityverifier.domain.Role
+import com.qualityverifier.domain.Worker
+import com.qualityverifier.domain.WorkerSlot
 import com.qualityverifier.text.FundiLabels
 import com.qualityverifier.text.ReportLabels
 import com.qualityverifier.text.buildFundiOpeningMessage
@@ -72,8 +75,21 @@ class AssessViewModel(
     private val chat: ChatService,
     private val images: SessionImageStore,
     private val profiles: FundiProfiles,
+    private val workers: WorkerRepository,
     private val io: CoroutineDispatcher = Dispatchers.IO,
 ) : ViewModel() {
+
+    /** The roster, for the picker. Archived workers are left out there, not here. */
+    val roster: StateFlow<List<Worker>> =
+        workers.observeWorkers()
+            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    /**
+     * Who worked on this piece last time, as the picker's starting answer on a returning
+     * piece. The same people usually do the same parts; the manager changes what differs.
+     */
+    private val _previousWorkers = MutableStateFlow<List<WorkerSlot>>(emptyList())
+    val previousWorkers: StateFlow<List<WorkerSlot>> = _previousWorkers.asStateFlow()
 
     val messages: StateFlow<List<ChatMessage>> =
         sessions.observeMessages(sessionId)
@@ -159,6 +175,9 @@ class AssessViewModel(
             // The most recent assessment that recorded anything, rather than simply the
             // most recent: a check that was abandoned before its verdict says nothing.
             lastRecord = turnsBySession.firstNotNullOfOrNull { previousRecord(it, FundiLabels.ENGLISH) }
+            // The people, from the most recent assessment whatever it recorded: who was
+            // in the shop is a fact about the piece, not about the verdict.
+            earlier.firstOrNull()?.let { _previousWorkers.value = workers.workersOf(it.id) }
         }
     }
 
@@ -168,6 +187,11 @@ class AssessViewModel(
 
     /** Destination for the next shot. The camera screen writes straight into it. */
     fun newCaptureFile(): File? = runCatching { images.newImageFile(sessionId) }.getOrNull()
+
+    /** A person added inside the picker. On the roster at once; the server hears with the turn. */
+    fun addWorker(name: String, onAdded: (Worker) -> Unit) {
+        viewModelScope.launch { onAdded(workers.add(name)) }
+    }
 
     /**
      * Sends the completed intake, and the opening photograph if there is one.
@@ -189,7 +213,13 @@ class AssessViewModel(
      * skipped it. The repository decides whether that names a new piece or renames an
      * old one.
      */
-    fun start(intake: FundiIntake, photoPath: String?, pieceLabel: String? = null) {
+    fun start(
+        intake: FundiIntake,
+        photoPath: String?,
+        pieceLabel: String? = null,
+        /** Who worked on the piece, from the picker. Empty when skipped. */
+        workedOn: List<WorkerSlot> = emptyList(),
+    ) {
         if (_sending.value || !intake.isComplete) return
         _sending.value = true
         _language.value = intake.language
@@ -208,6 +238,9 @@ class AssessViewModel(
                         pieceLabel = pieceLabel,
                     )
                     _pieceLabel.value = pieceLabel
+                    // Recorded as already sent: the opening turn carries the set, and the
+                    // server writes it when it creates the session.
+                    workers.recordWorkersOf(sessionId, workedOn)
                 }
                 sessions.appendUserMessage(
                     sessionId = sessionId,
@@ -356,6 +389,7 @@ class AssessViewModel(
                     chat = container.chatService,
                     images = container.images,
                     profiles = container.fundiProfiles,
+                    workers = container.workerRepository,
                 )
             }
         }

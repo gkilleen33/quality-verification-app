@@ -18,6 +18,8 @@ import com.qualityverifier.domain.Role
 import com.qualityverifier.domain.SessionStart
 import com.qualityverifier.domain.SessionSummary
 import com.qualityverifier.domain.VerdictLevel
+import com.qualityverifier.domain.WorkPart
+import com.qualityverifier.domain.WorkerSlot
 import com.qualityverifier.text.decodeIntake
 import com.qualityverifier.text.encodeIntake
 import com.qualityverifier.text.markdownToPlainText
@@ -68,6 +70,9 @@ class RoomSessionRepository(
                 pieceId = row.pieceId,
                 // Read from the piece each time, so a rename reaches the next turn.
                 pieceLabel = dao.findPiece(row.pieceId ?: row.id)?.label,
+                workers = dao.sessionWorkerSlots(sessionId).map {
+                    WorkerSlot(it.workerId, it.name, it.part?.let(WorkPart::fromId))
+                },
                 intakeCode = row.intakeAnswers,
             )
         }

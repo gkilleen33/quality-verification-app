@@ -12,6 +12,10 @@ import com.qualityverifier.data.session.SyncedMessage
 import com.qualityverifier.data.session.SyncedSession
 import com.qualityverifier.data.session.LocalTesterFeedback
 import com.qualityverifier.data.session.PieceLabelChange
+import com.qualityverifier.data.workers.PendingSessionSet
+import com.qualityverifier.data.workers.ServerWorker
+import com.qualityverifier.data.workers.WorkerChange
+import com.qualityverifier.data.workers.WorkerRepository
 import com.qualityverifier.domain.Attachment
 import com.qualityverifier.domain.SessionSummary
 import com.qualityverifier.domain.SessionStart
@@ -28,6 +32,9 @@ import com.qualityverifier.domain.OwnedTool
 import com.qualityverifier.domain.Role
 import com.qualityverifier.domain.ToolKind
 import com.qualityverifier.domain.ToolOwnership
+import com.qualityverifier.domain.WorkPart
+import com.qualityverifier.domain.Worker
+import com.qualityverifier.domain.WorkerSlot
 import com.qualityverifier.domain.Workshop
 import com.qualityverifier.fundi.ui.assess.AssessViewModel
 import com.qualityverifier.images.ImageQuality
@@ -83,6 +90,7 @@ class AssessViewModelTest {
         profiles: FundiProfiles = FakeProfiles(),
         pieceId: String = "s1",
         returning: Boolean = false,
+        workers: FakeWorkers = FakeWorkers(),
     ) = AssessViewModel(
         sessionId = "s1",
         itemType = ItemType.WOODEN_TABLE,
@@ -92,6 +100,7 @@ class AssessViewModelTest {
         chat = chat,
         images = FakeImages(),
         profiles = profiles,
+        workers = workers,
         io = dispatcher,
     )
 
@@ -123,6 +132,43 @@ class AssessViewModelTest {
         advanceUntilIdle()
 
         assertNull(sessions.created.single().pieceLabel)
+    }
+
+    // Who worked on the piece is recorded with the session, as already sent: the opening
+    // turn carries the set, and the server writes it when it creates the session.
+    @Test
+    fun `who worked on it is recorded with the session`() = runTest {
+        val workers = FakeWorkers()
+        val kamau = WorkerSlot("w1", "Kamau", WorkPart.JOINERY)
+
+        model(workers = workers).start(
+            FundiIntake(AssessmentLanguage.ENGLISH, FundiPurpose.EVALUATE),
+            "/tmp/whole.jpg",
+            workedOn = listOf(kamau, WorkerSlot(null)),
+        )
+        advanceUntilIdle()
+
+        assertEquals(listOf(kamau, WorkerSlot(null)), workers.recorded["s1"])
+    }
+
+    // On a returning piece the picker starts from last time's people: the same hands
+    // usually do the same parts, and the manager changes only what differs.
+    @Test
+    fun `a returning piece starts the picker from the previous assessment's people`() = runTest {
+        val earlier = SessionSummary(
+            id = "s0", itemType = ItemType.WOODEN_TABLE, createdAt = 1L, updatedAt = 2L,
+            preview = "", messageCount = 3, pieceId = "s0",
+        )
+        val workers = FakeWorkers().apply { recorded["s0"] = listOf(WorkerSlot("w1", null, WorkPart.FRAME)) }
+        val model = model(
+            sessions = FakeSessions(earlier = listOf(earlier to emptyList<String>())),
+            pieceId = "s0",
+            returning = true,
+            workers = workers,
+        )
+        advanceUntilIdle()
+
+        assertEquals(listOf(WorkerSlot("w1", null, WorkPart.FRAME)), model.previousWorkers.value)
     }
 
     // The tool list is the whole argument for collecting a profile. If it does not reach
@@ -495,6 +541,33 @@ class AssessViewModelTest {
         override suspend fun clearTesterFeedback(sessionId: String) = no()
         override suspend fun dismissLocally(sessionId: String) = no()
         override suspend fun dismissedSessions() = no()
+    }
+
+    /** The roster and the per-session sets, as far as an assessment touches them. */
+    private class FakeWorkers : WorkerRepository {
+        val recorded = mutableMapOf<String, List<WorkerSlot>>()
+        val added = mutableListOf<String>()
+        override fun observeWorkers(): Flow<List<Worker>> = MutableStateFlow(emptyList())
+        override suspend fun add(name: String): Worker {
+            added += name
+            return Worker("w${added.size}", name, archived = false)
+        }
+        override suspend fun workersOf(sessionId: String) = recorded[sessionId].orEmpty()
+        override suspend fun recordWorkersOf(sessionId: String, workers: List<WorkerSlot>) {
+            recorded[sessionId] = workers
+        }
+
+        private fun no(): Nothing = error("an assessment does not touch this")
+
+        override suspend fun rename(workerId: String, name: String) = no()
+        override suspend fun archive(workerId: String) = no()
+        override suspend fun unsynced(): List<WorkerChange> = no()
+        override suspend fun markSynced(change: WorkerChange) = no()
+        override suspend fun mergeFromServer(workers: List<ServerWorker>) = no()
+        override suspend fun setWorkersOf(sessionId: String, workers: List<WorkerSlot>) = no()
+        override suspend fun pendingSessions(): List<PendingSessionSet> = no()
+        override suspend fun clearPending(pending: PendingSessionSet) = no()
+        override suspend fun applySynced(sessionId: String, workers: List<WorkerSlot>) = no()
     }
 
     private class FakeChat(

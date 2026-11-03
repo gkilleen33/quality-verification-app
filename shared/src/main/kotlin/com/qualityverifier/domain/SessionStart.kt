@@ -32,6 +32,13 @@ data class SessionStart(
      */
     val pieceLabel: String? = null,
     /**
+     * Who worked on the piece, for Fundi Bora. Sent on every turn; the server keeps the
+     * set only when the turn creates the session, and the card's edit goes by its own
+     * route. Names travel so a worker added in the picker reaches the server with the
+     * turn, before the roster sync has run.
+     */
+    val workers: List<WorkerSlot> = emptyList(),
+    /**
      * The intake column as stored, undecoded.
      *
      * Kagua's code and Fundi Bora's share it and neither can read the other's, so the
