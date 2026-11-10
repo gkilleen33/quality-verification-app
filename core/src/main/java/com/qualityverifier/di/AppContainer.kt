@@ -2,9 +2,12 @@ package com.qualityverifier.di
 
 import android.content.Context
 import android.os.Build
+import android.util.Log
 import androidx.room.Room
 import com.qualityverifier.data.auth.AuthClient
 import com.qualityverifier.data.auth.EncryptedPrefsTokenStore
+import com.qualityverifier.data.auth.LocalAccountGuard
+import com.qualityverifier.data.auth.PrefsLocalAccountOwner
 import com.qualityverifier.data.auth.TokenProvider
 import com.qualityverifier.data.auth.TokenStore
 import com.qualityverifier.data.chat.ChatService
@@ -111,6 +114,25 @@ class AppContainer(
 
     val tokenStore: TokenStore = EncryptedPrefsTokenStore(appContext)
 
+    /**
+     * Clears the local data when a different account signs in (see [LocalAccountGuard]).
+     *
+     * Every Room table and every photo: assessments, messages, pieces, the roster and all
+     * the pending queues belong to the account that made them. The location preference
+     * does not, and stays (see [LocationPreference]).
+     */
+    private val localAccount = LocalAccountGuard(
+        owner = PrefsLocalAccountOwner(appContext),
+        clearLocalData = {
+            database.clearAllTables()
+            images.deleteAll()
+        },
+    ).also {
+        // An install from v0.3.0 still signed in: its tokens name the owner, so record it
+        // now, before anybody can sign out and somebody else sign in.
+        it.adoptIfUnrecorded(tokenStore::userId)
+    }
+
     /** Whether assessments record where they were made. Chosen at sign-up, set in Settings. */
     val locationPreference = LocationPreference(appContext)
 
@@ -146,6 +168,11 @@ class AppContainer(
         // token is revoked. Model only; nothing that identifies a person.
         deviceName = "${Build.MANUFACTURER} ${Build.MODEL} (Android ${Build.VERSION.RELEASE})",
         onSignedIn = { appVersionCheck.check() },
+        beforeSaving = { userId ->
+            if (localAccount.beforeSigningIn(userId)) {
+                Log.i(TAG, "A different account signed in; cleared the previous one's local data")
+            }
+        },
     )
 
     private val tokenProvider = TokenProvider(
@@ -209,8 +236,17 @@ class AppContainer(
         json = json,
     )
 
-    /** Signs out locally. The refresh token stays revocable server-side regardless. */
+    /**
+     * Signs out locally. The refresh token stays revocable server-side regardless.
+     *
+     * Clears the tokens only. The local data stays for the same account signing back in,
+     * and is cleared at the next sign-in if that is somebody else (see [localAccount]).
+     */
     fun signOut() = tokenProvider.signOut()
 
     val isSignedIn: Boolean get() = tokenStore.isSignedIn()
+
+    private companion object {
+        const val TAG = "AppContainer"
+    }
 }

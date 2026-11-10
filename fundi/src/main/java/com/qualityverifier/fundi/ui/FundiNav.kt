@@ -80,8 +80,10 @@ fun FundiNav() {
     val signOut = {
         container.signOut()
         navController.navigate(Routes.SIGN_IN) {
-            // Everything goes: the next person to open the app must not find another
-            // maker's pieces behind the back button.
+            // The whole back stack goes, so back from sign-in cannot reopen a signed-out
+            // maker's screens. That is all this does. The pieces and roster stay on the
+            // phone; they are cleared when a different account signs in (AppContainer's
+            // LocalAccountGuard), and kept when the same maker signs back in.
             popUpTo(0) { inclusive = true }
         }
     }

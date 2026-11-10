@@ -46,6 +46,14 @@ class ImageFileStore(private val context: Context) : ImageBytesSource, SessionIm
         runCatching { File(root, sessionId).deleteRecursively() }
     }
 
+    /**
+     * Every photo, for a different account signing in. A failure is not fatal: with the
+     * rows gone nothing can show a leftover file, and [pruneOrphans] removes it later.
+     */
+    fun deleteAll() {
+        runCatching { root.deleteRecursively() }
+    }
+
     override fun delete(file: File) {
         runCatching { file.delete() }
     }

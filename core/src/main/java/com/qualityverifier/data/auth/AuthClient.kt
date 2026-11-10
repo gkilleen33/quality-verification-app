@@ -74,6 +74,13 @@ class AuthClient(
      * the server about app versions again, as the build plan requires after sign-in.
      */
     private val onSignedIn: () -> Unit = {},
+    /**
+     * Called with the account's id once the server has accepted a sign-in or registration,
+     * before the tokens are saved. The container uses it to clear the previous account's
+     * local data (see [LocalAccountGuard]). Runs on [io]; if it throws, the sign-in fails
+     * and nothing is saved.
+     */
+    private val beforeSaving: (userId: String) -> Unit = {},
 ) {
 
     /**
@@ -181,12 +188,19 @@ class AuthClient(
                 val text = response.body?.string().orEmpty()
                 if (response.isSuccessful) {
                     val decoded = json.decodeFromString<TokenBody>(text)
-                    if (decoded.accessToken.isBlank() || decoded.refreshToken.isBlank()) {
+                    // The user id too: without it the phone cannot tell whose local data
+                    // it holds. The server has always sent it.
+                    if (decoded.accessToken.isBlank() || decoded.refreshToken.isBlank() ||
+                        decoded.userId.isBlank()
+                    ) {
                         return@use AuthResult.Failure(
                             ChatErrorKind.UNKNOWN,
                             "Something went wrong. Please try again.",
                         )
                     }
+                    // Before the save, so no sync can run for this account while the
+                    // previous one's rows are still there to push.
+                    beforeSaving(decoded.userId)
                     store.save(
                         accessToken = decoded.accessToken,
                         expiresInSeconds = decoded.expiresIn,
