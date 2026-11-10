@@ -96,6 +96,18 @@ fun AppNav() {
         return
     }
 
+    // Signing out and deleting the account end in the same place, so they share one path:
+    // a deleted account whose tokens were left on the handset would look signed in until
+    // the next request was refused.
+    val signOut = {
+        container.signOut()
+        navController.navigate(Routes.SIGN_IN) {
+            // Everything goes: the next person to open the app must not find another
+            // account's assessments behind the back button.
+            popUpTo(0) { inclusive = true }
+        }
+    }
+
     NavHost(navController = navController, startDestination = start) {
 
         composable(Routes.SIGN_IN) {
@@ -149,16 +161,21 @@ fun AppNav() {
                 ProfileScreen(
                     contentPadding = padding,
                     onOpenSettings = { navController.navigate(Routes.SETTINGS) },
-                    onSignOut = {
-                        container.signOut()
-                        navController.navigate(Routes.SIGN_IN) {
-                            // Everything goes: the next person to open the app must not
-                            // find another account's assessments behind the back button.
-                            popUpTo(0) { inclusive = true }
-                        }
-                    },
+                    onSignOut = signOut,
                 )
             }
+        }
+
+        // Outside the tab scaffold, like the chat: Settings is somewhere you go from
+        // Profile and come back from, not a tab of its own, so it has a back arrow and no
+        // bottom bar.
+        composable(Routes.SETTINGS) {
+            SettingsScreen(
+                onBack = { navController.popBackStack() },
+                // The server has already deleted the account by the time this runs; the
+                // view model only reports success after DELETE /v1/account succeeds.
+                onAccountDeleted = signOut,
+            )
         }
 
         composable(
