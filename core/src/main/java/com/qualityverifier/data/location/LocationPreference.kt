@@ -1,6 +1,8 @@
 package com.qualityverifier.data.location
 
+import android.annotation.SuppressLint
 import android.content.Context
+import android.content.SharedPreferences
 
 /**
  * Whether to record where an assessment was made.
@@ -16,7 +18,8 @@ import android.content.Context
  * Device-wide rather than per account. Two accounts on one handset is not something the
  * pilot expects, and the alternative — keying this by user id — would leave the setting
  * unreadable at exactly the moments it is needed, before sign-in completes and after
- * sign-out.
+ * sign-out. In Fundi Bora the answer is still one person's, so when a different account
+ * signs in it is forgotten (see [forget]) and the new maker is asked again.
  *
  * ## Answered, and the switch
  *
@@ -29,13 +32,17 @@ import android.content.Context
  *
  * @param answerRequired true in Fundi Bora. See above.
  */
-class LocationPreference(
-    context: Context,
-    private val answerRequired: Boolean = false,
+class LocationPreference internal constructor(
+    private val prefs: SharedPreferences,
+    private val answerRequired: Boolean,
 ) {
 
-    private val prefs = context.applicationContext
-        .getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+    // The app's constructor. The one taking the prefs directly lets plain JVM tests run
+    // this class without a Context.
+    constructor(context: Context, answerRequired: Boolean = false) : this(
+        context.applicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE),
+        answerRequired,
+    )
 
     /**
      * The switch as stored. Defaults to true for an installation that has never been
@@ -69,6 +76,27 @@ class LocationPreference(
             .putBoolean(KEY_RECORD_AT_START, record)
             .putBoolean(KEY_ANSWERED, true)
             .apply()
+    }
+
+    /**
+     * Forgets the answer, as if this installation had never been asked. With [answerRequired]
+     * that makes [needsAnswer] true and [records] false until somebody answers again.
+     *
+     * For a different account signing in on Fundi Bora (see `AppContainer`): the answer was
+     * the previous maker's, and without this every assessment of the next one would record a
+     * point they were never asked about.
+     *
+     * commit(), not apply(), for the reason
+     * [com.qualityverifier.data.auth.PrefsLocalAccountOwner.record] gives: the new
+     * owner is recorded straight after this, and a process killed in between must not leave
+     * the new account holding the previous one's yes.
+     */
+    @SuppressLint("ApplySharedPref")
+    fun forget() {
+        prefs.edit()
+            .remove(KEY_RECORD_AT_START)
+            .remove(KEY_ANSWERED)
+            .commit()
     }
 
     private companion object {

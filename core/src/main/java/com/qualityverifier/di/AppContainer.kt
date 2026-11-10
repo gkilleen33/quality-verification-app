@@ -129,26 +129,32 @@ class AppContainer(
     val tokenStore: TokenStore = EncryptedPrefsTokenStore(appContext)
 
     /**
+     * Whether assessments record where they were made. Chosen at sign-up, set in Settings.
+     * Declared before [localAccount], whose clear forgets it.
+     */
+    val locationPreference = LocationPreference(appContext, locationAnswerRequired)
+
+    /**
      * Clears the local data when a different account signs in (see [LocalAccountGuard]).
      *
      * Every Room table and every photo: assessments, messages, pieces, the roster and all
-     * the pending queues belong to the account that made them. The location preference
-     * does not, and stays (see [LocationPreference]).
+     * the pending queues belong to the account that made them. In Fundi Bora the answer to
+     * the location question does too, so it is forgotten and the new maker is asked on the
+     * home screen; otherwise every assessment they made would record the previous maker's
+     * yes. Kagua's location preference stays, as before (see [LocationPreference]).
      */
     private val localAccount = LocalAccountGuard(
         owner = PrefsLocalAccountOwner(appContext),
         clearLocalData = {
             database.clearAllTables()
             images.deleteAll()
+            if (locationAnswerRequired) locationPreference.forget()
         },
     ).also {
         // An install from v0.3.0 still signed in: its tokens name the owner, so record it
         // now, before anybody can sign out and somebody else sign in.
         it.adoptIfUnrecorded(tokenStore::userId)
     }
-
-    /** Whether assessments record where they were made. Chosen at sign-up, set in Settings. */
-    val locationPreference = LocationPreference(appContext, locationAnswerRequired)
 
     /**
      * One fix per assessment, taken without the customer doing anything.
