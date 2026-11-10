@@ -1,5 +1,6 @@
 package com.qualityverifier.server.routes
 
+import com.qualityverifier.server.auth.AccessTokens
 import com.qualityverifier.server.auth.Passwords
 import com.qualityverifier.server.blobs.BlobStore
 import com.qualityverifier.server.db.AuthStore
@@ -35,6 +36,8 @@ private val log = LoggerFactory.getLogger("com.qualityverifier.server.sync")
 fun Route.syncRoutes(
     chat: ChatStore,
     auth: AuthStore,
+    /** For the token pair a password change hands back to the phone that made it. */
+    accessTokens: AccessTokens,
     blobs: BlobStore,
     feedbackStore: FeedbackStore,
 ) {
@@ -211,7 +214,12 @@ fun Route.syncRoutes(
             // somebody else having had access.
             val revoked = auth.revokeChain(userId)
             log.info("Password changed for {}; revoked {} token(s)", userId, revoked)
-            call.respond(HttpStatusCode.NoContent)
+            // The revocation also took the caller's own refresh token, so this phone gets
+            // a fresh pair, issued after the revocation so it survives it. Without one the
+            // phone's next refresh is refused and it is signed out with no explanation.
+            // No user agent: the phone does not send one here, as it does not on refresh.
+            // An older app checks only for a 2xx and ignores the body, so it is unaffected.
+            call.respond(issueTokens(auth, accessTokens, userId, userAgent = null))
         }
 
         delete("/v1/account") {

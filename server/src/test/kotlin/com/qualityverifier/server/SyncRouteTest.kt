@@ -22,6 +22,8 @@ import com.qualityverifier.server.db.StoredReply
 import com.qualityverifier.server.db.StoredRefresh
 import com.qualityverifier.server.db.UserRow
 import com.qualityverifier.server.routes.ChangePasswordRequest
+import com.qualityverifier.server.routes.TokenResponse
+import kotlinx.serialization.json.Json
 import io.ktor.client.plugins.contentnegotiation.ContentNegotiation as ClientContentNegotiation
 import io.ktor.client.request.delete
 import com.qualityverifier.server.db.TesterFeedback
@@ -274,9 +276,34 @@ class SyncRouteTest {
             setBody(ChangePasswordRequest("the real one", "a new long password"))
         }
 
-        assertEquals(HttpStatusCode.NoContent, response.status)
+        assertEquals(HttpStatusCode.OK, response.status)
         assertEquals(listOf(MINE), auth.passwordChanges)
         assertEquals(listOf(MINE), auth.revoked)
+    }
+
+    @Test
+    fun `changing a password keeps the phone that changed it signed in`() = testApplication {
+        // The revocation takes this phone's own refresh token too. Without a new pair its
+        // next refresh is refused and it signs out with no explanation.
+        val auth = FakeAuth(currentPassword = "the real one")
+        val app = withSync(FakeChatStore(), auth)
+
+        val response = app.post("/v1/auth/password") {
+            this.auth(MINE); contentType(ContentType.Application.Json)
+            setBody(ChangePasswordRequest("the real one", "a new long password"))
+        }
+
+        assertEquals(HttpStatusCode.OK, response.status)
+        val tokens = Json { ignoreUnknownKeys = true }
+            .decodeFromString<TokenResponse>(response.bodyAsText())
+        assertEquals(MINE, tokens.userId)
+        assertTrue("a refresh token comes back", tokens.refreshToken.isNotBlank())
+        assertEquals(
+            "the access token is this account's",
+            MINE, AccessTokens(KEY).verifier.verify(tokens.accessToken).subject,
+        )
+        // Issued after the revocation, or the revocation would take it as well.
+        assertEquals(listOf("revoke $MINE", "issue $MINE"), auth.tokenEvents)
     }
 
     @Test
@@ -631,17 +658,24 @@ class SyncRouteTest {
         val accountsDeleted = mutableListOf<String>()
         val revoked = mutableListOf<String>()
 
+        /** Revocations and issues in the order they happened. */
+        val tokenEvents = mutableListOf<String>()
+
         override suspend fun register(registration: Registration) = RegisterOutcome.InviteUnusable
         override suspend fun findUser(userId: String) =
             UserRow(userId, "Grady", "individual", null, disabled = false, isTester = isTester)
 
         override suspend fun issueRefresh(
             userId: String, token: String, expiresAt: Instant, userAgent: String?, replaces: String?,
-        ) = "r"
+        ): String {
+            tokenEvents += "issue $userId"
+            return "r"
+        }
 
         override suspend fun findRefresh(token: String): StoredRefresh? = null
         override suspend fun revokeChain(userId: String): Int {
             revoked += userId
+            tokenEvents += "revoke $userId"
             return 1
         }
 

@@ -205,7 +205,12 @@ fun Route.authRoutes(store: AuthStore, accessTokens: AccessTokens) {
     }
 }
 
-private suspend fun issueTokens(
+/**
+ * A new refresh token and access token for [userId]. Internal rather than private because
+ * a password change issues the calling phone a pair too (see syncRoutes), and two copies
+ * of this would drift apart on lifetime.
+ */
+internal suspend fun issueTokens(
     store: AuthStore,
     accessTokens: AccessTokens,
     userId: String,

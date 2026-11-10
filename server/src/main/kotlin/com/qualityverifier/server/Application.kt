@@ -372,7 +372,7 @@ fun Application.module(
             )
             // Reading assessments back, plus the two account actions. Needs both halves:
             // the chat store for sessions and the auth store for credentials.
-            syncRoutes(it.store, auth.store, it.blobs, it.feedback)
+            syncRoutes(it.store, auth.store, auth.accessTokens, it.blobs, it.feedback)
         }
 
         // Also behind auth, but deliberately not inside the `chat` block: the setup
