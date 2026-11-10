@@ -54,7 +54,10 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.qualityverifier.R
 import com.qualityverifier.domain.ItemType
+import com.qualityverifier.domain.UpdatePrompt
 import com.qualityverifier.ui.appContainer
+import com.qualityverifier.ui.rememberUpdateLabels
+import com.qualityverifier.ui.update.UpdateBanner
 
 /**
  * The starting point: the wordmark, and the question the whole app answers.
@@ -72,6 +75,8 @@ fun HomeScreen(
     val container = appContainer()
     val viewModel: HomeViewModel = viewModel(factory = HomeViewModel.factory(container))
     val reportCount by viewModel.reportCount.collectAsState()
+    val update by container.appVersionCheck.state.collectAsState()
+    val updateLabels = rememberUpdateLabels()
 
     val context = LocalContext.current
     // Resolved once per composition: the set of drawables cannot change at runtime.
@@ -91,6 +96,17 @@ fun HomeScreen(
         horizontalArrangement = Arrangement.spacedBy(12.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
+        // Above everything, so it is seen; dismissible, so it is not in the way.
+        if (update.prompt == UpdatePrompt.AVAILABLE) {
+            item(span = { GridItemSpan(maxLineSpan) }) {
+                UpdateBanner(
+                    labels = updateLabels,
+                    downloadUrl = update.downloadUrl,
+                    onDismiss = container.appVersionCheck::dismissBanner,
+                )
+            }
+        }
+
         item(span = { GridItemSpan(maxLineSpan) }) {
             Column {
                 Text(

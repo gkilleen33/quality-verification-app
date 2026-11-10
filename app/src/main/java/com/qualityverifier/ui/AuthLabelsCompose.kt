@@ -4,6 +4,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.platform.LocalConfiguration
 import com.qualityverifier.text.AuthLabels
+import com.qualityverifier.text.UpdateLabels
 
 /**
  * The account screens' wording, in the phone's language.
@@ -16,4 +17,11 @@ import com.qualityverifier.text.AuthLabels
 fun rememberAuthLabels(): AuthLabels {
     val language = LocalConfiguration.current.locales[0].language
     return remember(language) { AuthLabels.forDevice(language) }
+}
+
+/** The update banner's and blocking screen's wording, in the phone's language, as above. */
+@Composable
+fun rememberUpdateLabels(): UpdateLabels {
+    val language = LocalConfiguration.current.locales[0].language
+    return remember(language) { UpdateLabels.forDevice(language) }
 }

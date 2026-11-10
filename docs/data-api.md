@@ -43,7 +43,7 @@ milliseconds throughout.
 | Endpoint | Returns |
 |---|---|
 | `GET /users` | accounts, with phone, name, business, latitude/longitude and accuracy |
-| `GET /assessments` | assessments, newest last. Filters: `user`, `item`, `testers=1`, `updated_since` |
+| `GET /assessments` | assessments, newest last, each with the `app_version_code` that started it. Filters: `user`, `item`, `testers=1`, `updated_since` |
 | `GET /assessments/{id}` | one assessment with its messages, photo hashes in order, and the evaluator's critique if there is one |
 | `GET /tester-feedback` | every evaluator critique, keyed on `session_id` |
 | `GET /photos/{sha256}` | the JPEG bytes |
@@ -81,6 +81,16 @@ otherwise be a request for any file in the blob directory.
 - `assessments[].user_id` → `users[].id`
 - `tester_feedback[].session_id` → `assessments[].id` (one critique per assessment, at most)
 - `messages[].photos[]` → `/photos/{sha}`
+
+## Which build made an assessment
+
+`assessments[].app_version_code` is the `versionCode` of the app that started the
+assessment, sent by the phone in its `X-App-Version` header and written once when the
+session is created (V24). Read it with `audience`: both apps share version numbers, so 4 in
+Kagua and 4 in Fundi Bora are different builds. It is `null` for every assessment made by
+v0.3.0 or older, which did not send the header; null means "not known" and stands for no
+particular version. A change to photo processing or to the intake ships in a build, so this is
+the column that separates assessments made before such a change from those made after.
 
 ## Three things that will bite an analysis if nobody mentions them
 

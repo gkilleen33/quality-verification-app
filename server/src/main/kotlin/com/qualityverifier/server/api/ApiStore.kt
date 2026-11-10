@@ -219,6 +219,7 @@ class PostgresApiStore(private val dataSource: DataSource) : ApiStore {
         hasTesterFeedback = getBoolean(10),
         deletedByUser = getBoolean(11),
         audience = getString(12),
+        appVersionCode = nullableInt(13),
     )
 
     private fun ResultSet.toFeedback() = ApiTesterFeedback(
@@ -233,6 +234,12 @@ class PostgresApiStore(private val dataSource: DataSource) : ApiStore {
     /** getDouble returns 0.0 for SQL null, which would put a workshop off the Gulf of Guinea. */
     private fun ResultSet.nullableDouble(index: Int): Double? {
         val value = getDouble(index)
+        return if (wasNull()) null else value
+    }
+
+    /** getInt returns 0 for SQL null, which would read as a version that never existed. */
+    private fun ResultSet.nullableInt(index: Int): Int? {
+        val value = getInt(index)
         return if (wasNull()) null else value
     }
 
@@ -255,7 +262,8 @@ class PostgresApiStore(private val dataSource: DataSource) : ApiStore {
                    coalesce(u.is_tester, false),
                    exists (select 1 from tester_feedback f where f.session_id = s.id),
                    (s.client_deleted_at is not null),
-                   s.audience
+                   s.audience,
+                   s.app_version_code
         """
     }
 }

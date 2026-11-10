@@ -146,6 +146,26 @@ class ApiRouteTest {
     }
 
     @Test
+    fun `an assessment says which app build started it, and null when that is not known`() = testApplication {
+        // V24. Null is an assessment from v0.3.0 or older, and it has to arrive as an
+        // explicit null rather than a missing key or a zero, so an analysis can tell the
+        // two apart from a build that never existed.
+        val keys = FakeApiKeyStore()
+        val store = FakeApiStore(
+            assessments = listOf(
+                API_ASSESSMENT.copy(appVersionCode = 4),
+                API_ASSESSMENT.copy(id = "3ff77920-3928-46e5-8a77-5e16c1e901c6", appVersionCode = null),
+            ),
+        )
+        val app = withApi(keys = keys, store = store)
+
+        val body = app.get("/api/v1/assessments") { key(keys.anyKey()) }.bodyAsText()
+
+        assertTrue(body, body.contains("\"app_version_code\":4"))
+        assertTrue(body, body.contains("\"app_version_code\":null"))
+    }
+
+    @Test
     fun `filters reach the store`() = testApplication {
         val keys = FakeApiKeyStore()
         val store = FakeApiStore()

@@ -1,11 +1,14 @@
 package com.qualityverifier.server
 
 import com.qualityverifier.data.prompts.PromptRepository
+import com.qualityverifier.domain.AppId
+import com.qualityverifier.domain.AppVersionHeaders
 import com.qualityverifier.domain.Attachment
 import com.qualityverifier.domain.Audience
 import com.qualityverifier.domain.ChatMessage
 import com.qualityverifier.domain.ItemType
 import com.qualityverifier.domain.Role
+import com.qualityverifier.domain.VersionPolicy
 import com.qualityverifier.domain.WorkPart
 import com.qualityverifier.domain.WorkerSlot
 import com.qualityverifier.server.auth.AccessTokens
@@ -913,6 +916,94 @@ class ChatRouteTest {
         assertEquals(ItemType.WOODEN_TABLE, prompts.asked)
     }
 
+    // ---------------------------------------------------------------- app version (V24)
+
+    @Test
+    fun `the app's versionCode reaches the session it starts`() = testApplication {
+        val store = FakeChatStore()
+        val app = withChat(store, FakeClaude(ClaudeResult.Success("x", TokenUsage(), null)))
+
+        val response = app.post("/v1/chat") {
+            auth(); contentType(ContentType.Application.Json)
+            header(AppVersionHeaders.VERSION, "4")
+            header(AppVersionHeaders.APP, "kagua")
+            setBody(request())
+        }
+
+        assertEquals(HttpStatusCode.OK, response.status)
+        assertEquals(4, store.sawAppVersionCode)
+    }
+
+    @Test
+    fun `an app older than the header is served, and its session records no version`() = testApplication {
+        // A v0.3.0 phone sends neither header. It must work exactly as before, and its
+        // session must say "not known" rather than a guessed number.
+        val store = FakeChatStore()
+        val app = withChat(store, FakeClaude(ClaudeResult.Success("x", TokenUsage(), null)))
+
+        val response = app.post("/v1/chat") {
+            auth(); contentType(ContentType.Application.Json)
+            setBody(request())
+        }
+
+        assertEquals(HttpStatusCode.OK, response.status)
+        assertEquals(1, store.ensuredSessions)
+        assertNull(store.sawAppVersionCode)
+    }
+
+    @Test
+    fun `an app below the minimum is answered 426 before anything is stored or spent`() = testApplication {
+        val store = FakeChatStore()
+        val claude = FakeClaude(ClaudeResult.Success("never", TokenUsage(), null))
+        val app = withChat(store, claude, appVersions = minimumFive())
+
+        val response = app.post("/v1/chat") {
+            auth(); contentType(ContentType.Application.Json)
+            header(AppVersionHeaders.VERSION, "4")
+            header(AppVersionHeaders.APP, "kagua")
+            setBody(request())
+        }
+
+        assertEquals(426, response.status.value)
+        assertTrue(response.bodyAsText().contains("upgrade_required"))
+        assertEquals(0, store.ensuredSessions)
+        assertEquals(0, claude.calls)
+    }
+
+    @Test
+    fun `a raised minimum never refuses a request with no version header`() = testApplication {
+        val store = FakeChatStore()
+        val app = withChat(store, FakeClaude(ClaudeResult.Success("x", TokenUsage(), null)), appVersions = minimumFive())
+
+        val response = app.post("/v1/chat") {
+            auth(); contentType(ContentType.Application.Json)
+            setBody(request())
+        }
+
+        assertEquals(HttpStatusCode.OK, response.status)
+    }
+
+    @Test
+    fun `an app at the minimum is served`() = testApplication {
+        val store = FakeChatStore()
+        val app = withChat(store, FakeClaude(ClaudeResult.Success("x", TokenUsage(), null)), appVersions = minimumFive())
+
+        val response = app.post("/v1/chat") {
+            auth(); contentType(ContentType.Application.Json)
+            header(AppVersionHeaders.VERSION, "5")
+            header(AppVersionHeaders.APP, "kagua")
+            setBody(request())
+        }
+
+        assertEquals(HttpStatusCode.OK, response.status)
+        assertEquals(5, store.sawAppVersionCode)
+    }
+
+    /** Kagua's minimum raised to 5, as it would be to close an unsafe old protocol. */
+    private fun minimumFive() = AppVersions(
+        mapOf(AppId.KAGUA to VersionPolicy(latest = 5, minimum = 5, downloadUrl = "https://example.test/")),
+    )
+
     // ---------------------------------------------------------------- harness
 
     private fun io.ktor.client.request.HttpRequestBuilder.auth() {
@@ -942,6 +1033,7 @@ class ChatRouteTest {
         fundiLimit: Int = Config.DEFAULT_DAILY_ASSESSMENT_LIMIT * Config.FUNDI_LIMIT_MULTIPLE,
         /** Which app the signed-in account belongs to. Kagua unless a test says otherwise. */
         accountAudience: Audience = Audience.BUYER,
+        appVersions: AppVersions = AppVersions.UNCONFIGURED,
     ) = run {
         application {
             module(
@@ -954,6 +1046,7 @@ class ChatRouteTest {
                     testerDailyAssessmentLimit = testerLimit,
                     fundiDailyAssessmentLimit = fundiLimit,
                 ),
+                appVersions = appVersions,
             )
         }
         createClient { install(ClientContentNegotiation) { json() } }
@@ -1051,6 +1144,7 @@ class ChatRouteTest {
             audience: Audience,
             dailyLimit: Int, testerDailyLimit: Int, pieceId: String?, pieceLabel: String?,
             workers: List<WorkerSlot>,
+            appVersionCode: Int?,
         ) = access.also {
             sawDailyLimit = dailyLimit
             sawTesterDailyLimit = testerDailyLimit
@@ -1058,7 +1152,17 @@ class ChatRouteTest {
             sawPieceId = pieceId
             sawPieceLabel = pieceLabel
             sawWorkers = workers
+            sawAppVersionCode = appVersionCode
+            ensuredSessions++
         }
+
+        /** The versionCode the route read from X-App-Version; null when it sent none. */
+        var sawAppVersionCode: Int? = null
+            private set
+
+        /** How many times the route reached ensureSession. */
+        var ensuredSessions = 0
+            private set
 
         override suspend fun replaceSessionWorkers(
             userId: String, sessionId: String, workers: List<WorkerSlot>,

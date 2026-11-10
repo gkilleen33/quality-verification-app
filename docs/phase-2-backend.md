@@ -533,6 +533,43 @@ Two properties worth knowing rather than rediscovering:
      tomorrow rather than "in a moment", taking the number from the server so the two
      cannot drift.
 
+## App versions and the update prompt (v0.4.0)
+
+From v0.4.0 every request from either app carries `X-App-Version` (its `versionCode`) and
+`X-App-Id` (`kagua` or `fundi`). Both apps share version numbers, so the id is what says
+which app a number belongs to. Release builds call `GET /v1/auth/config?app=kagua|fundi`
+when the app starts and after each sign-in; debug builds send the headers but skip the
+call. The route takes no token and answers `{latest, minimum, download_url}`:
+
+- Below `latest`, the home screen shows a dismissible "A new version is available" banner.
+  Dismissing it hides it until the app next starts.
+- Below `minimum`, the app shows a blocking screen in place of everything else, and the
+  server answers every request `426 upgrade_required`, except `/v1/auth/config`, sign-in,
+  register, refresh and `/healthz*`, which are always served.
+- A request with no version header, from v0.3.0 or older, or with no readable app id, is
+  never refused. The admin portal and the data API send neither header.
+
+The values come from six environment variables, set in a systemd drop-in rather than in
+`kagua-run`, since none is a secret:
+
+| Variable | Unset means |
+|---|---|
+| `KAGUA_APP_LATEST_KAGUA`, `KAGUA_APP_LATEST_FUNDI` | 1 |
+| `KAGUA_APP_MINIMUM_KAGUA`, `KAGUA_APP_MINIMUM_FUNDI` | 1 |
+| `KAGUA_APP_DOWNLOAD_URL_KAGUA`, `KAGUA_APP_DOWNLOAD_URL_FUNDI` | `https://github.com/gkilleen33/quality-verification-app/releases/latest` |
+
+An unreadable number reads as 1, never higher, so a typo cannot lock phones out; a minimum
+above latest raises latest to match. The server logs both apps' values at start.
+
+`server/deploy/systemd/kagua.service.d/app-versions.conf` holds the drop-in with the
+install steps. At each release's deploy, set `LATEST` to the release's `versionCode`,
+install the file into `/etc/systemd/system/kagua.service.d/`, `systemctl daemon-reload`,
+and let `tools/deploy.sh` restart the service. `minimum` stays 1 unless a security flaw, an
+unsafe old protocol, or a server change old apps cannot use forces it up.
+
+V24 adds `sessions.app_version_code`, written once from the header when a session is
+created, and null for v0.3.0 and older. The data API reports it on each assessment.
+
 ## Note on egress
 
 History is re-sent on every turn, so the same photos travel upstream several times per

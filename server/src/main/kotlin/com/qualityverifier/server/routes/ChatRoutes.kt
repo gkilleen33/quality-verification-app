@@ -1,6 +1,7 @@
 package com.qualityverifier.server.routes
 
 import com.qualityverifier.data.prompts.PromptRepository
+import com.qualityverifier.domain.AppVersionHeaders
 import com.qualityverifier.domain.Audience
 import com.qualityverifier.domain.ItemType
 import com.qualityverifier.server.blobs.BlobStore
@@ -224,6 +225,12 @@ private suspend fun RoutingContext.assessmentTurn(
                 pieceId = request.pieceId,
                 pieceLabel = request.pieceLabel,
                 workers = request.workers.map { it.toDomain() },
+                // A header, not a body field: the strict JSON reader would refuse a new
+                // key from a new app talking to an old server. Absent from a v0.3.0 app,
+                // whose session then records null.
+                appVersionCode = AppVersionHeaders.parseVersion(
+                    call.request.headers[AppVersionHeaders.VERSION],
+                ),
             )
             if (access is SessionAccess.NotYours) {
                 // 404, never 403: telling the difference would let anybody enumerate

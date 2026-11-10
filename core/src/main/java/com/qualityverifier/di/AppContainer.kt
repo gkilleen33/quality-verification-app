@@ -20,8 +20,11 @@ import com.qualityverifier.data.session.SessionRepository
 import com.qualityverifier.data.sync.AccountActions
 import com.qualityverifier.data.sync.AssessmentSync
 import com.qualityverifier.data.sync.SyncClient
+import com.qualityverifier.data.update.AppIdentityInterceptor
+import com.qualityverifier.data.update.AppVersionCheck
 import com.qualityverifier.data.workers.RoomWorkerRepository
 import com.qualityverifier.data.workers.WorkerRepository
+import com.qualityverifier.domain.AppId
 import kotlinx.serialization.json.Json
 import okhttp3.OkHttpClient
 import java.util.concurrent.TimeUnit
@@ -65,6 +68,15 @@ class AppContainer(
      * the account is a fundi's rather than quietly coaching a buyer.
      */
     private val chatPath: String = "v1/chat",
+    /**
+     * Which app this is, sent as X-App-Id. No default, unlike [chatPath]: both apps share
+     * a versionCode, so a wrong id here would apply the other app's minimum to this one.
+     */
+    appId: AppId,
+    /** The app's own BuildConfig.VERSION_CODE, sent as X-App-Version. */
+    versionCode: Int,
+    /** False in debug builds, which send the headers but skip the update prompt. */
+    checkForUpdates: Boolean,
 ) {
 
     private val appContext = context.applicationContext
@@ -76,6 +88,10 @@ class AppContainer(
     }
 
     private val httpClient: OkHttpClient = OkHttpClient.Builder()
+        // Every request says which app and which build it comes from. The server records
+        // the build on each new assessment and refuses one below the minimum with 426;
+        // on a 426 the config is read again so the blocking screen appears at once.
+        .addInterceptor(AppIdentityInterceptor(appId, versionCode) { appVersionCheck.check() })
         .connectTimeout(30, TimeUnit.SECONDS)
         // Our server waits on Claude, so a turn can still take minutes. The nginx read
         // timeout in front of it is 180s; this has to outlast that or the phone gives up
@@ -106,6 +122,21 @@ class AppContainer(
      */
     val locationCapture = LocationCapture(appContext, locationPreference)
 
+    /**
+     * Whether this build is behind the release, or below the minimum the server serves.
+     * Checked when the app starts (each app's Application calls [AppVersionCheck.check])
+     * and after each sign-in (below). The home screen shows the banner; each app's nav
+     * shows the blocking screen.
+     */
+    val appVersionCheck: AppVersionCheck = AppVersionCheck(
+        client = httpClient,
+        baseUrl = baseUrl,
+        json = json,
+        appId = appId,
+        versionCode = versionCode,
+        enabled = checkForUpdates,
+    )
+
     val authClient: AuthClient = AuthClient(
         client = httpClient,
         store = tokenStore,
@@ -114,6 +145,7 @@ class AppContainer(
         // For the refresh_tokens row, so a lost handset can be identified when its
         // token is revoked. Model only; nothing that identifies a person.
         deviceName = "${Build.MANUFACTURER} ${Build.MODEL} (Android ${Build.VERSION.RELEASE})",
+        onSignedIn = { appVersionCheck.check() },
     )
 
     private val tokenProvider = TokenProvider(
