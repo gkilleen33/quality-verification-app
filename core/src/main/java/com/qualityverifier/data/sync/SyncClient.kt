@@ -355,7 +355,9 @@ class SyncClient(
         val pair = runCatching { json.decodeFromString<PasswordChangedBody>(text) }
             .onFailure { e -> Log.w(TAG, "Could not read the tokens after a password change", e) }
             .getOrNull() ?: return
-        if (pair.accessToken.isBlank() || pair.refreshToken.isBlank()) return
+        // The user id too, as AuthClient requires at sign-in: a pair saved without one
+        // leaves the phone unable to tell whose local data it holds.
+        if (pair.accessToken.isBlank() || pair.refreshToken.isBlank() || pair.userId.isBlank()) return
         tokens.adopt(
             since,
             accessToken = pair.accessToken,

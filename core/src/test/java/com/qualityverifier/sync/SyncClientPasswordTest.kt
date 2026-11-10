@@ -94,4 +94,21 @@ class SyncClientPasswordTest {
         assertEquals(PasswordOutcome.Changed, client(store).changePassword("old-password", "new-password"))
         assertEquals("refresh-before", store.refresh)
     }
+
+    @Test
+    fun `a pair without a user id is not saved`() = runTest {
+        // Sign-in refuses the same answer. A pair saved with a blank id would leave the
+        // phone unable to tell whose local data it holds.
+        val store = RecordingStore()
+        server.enqueue(
+            MockResponse().setResponseCode(200).setBody(
+                """{"access_token":"access-after","expires_in":900,""" +
+                    """"refresh_token":"refresh-after","user_id":""}""",
+            ),
+        )
+
+        assertEquals(PasswordOutcome.Changed, client(store).changePassword("old-password", "new-password"))
+        assertEquals("refresh-before", store.refresh)
+        assertEquals("u", store.user)
+    }
 }
