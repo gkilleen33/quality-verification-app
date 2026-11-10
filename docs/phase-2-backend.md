@@ -29,7 +29,7 @@ Already shipped in the app; not negotiable server-side.
 - **Requests take up to 120 seconds** — Claude vision on a slow connection.
 - **Bodies up to ~15 MB** — nine base64 photos in one request.
 - `cache_control` must pass through unchanged; it is a 1-hour prompt cache and it cuts the bill.
-- Photos arrive already resized to 1568px / JPEG 80. Do not re-compress.
+- Photos arrive already resized to 2576px / JPEG 80 (1568px before v0.4.0). Do not re-compress.
 
 ## Email sent to IT
 
@@ -172,8 +172,8 @@ no frontend build — on a 3.7 GB box that matters. Two new dependencies: an Arg
 and a TOTP library.
 
 Server-rendered HTML with paginated queries is nearly free next to a single vision request.
-Photos are already ≤1568px at q80, so they are served directly with `loading="lazy"` and
-need no thumbnail pipeline.
+Photos are already ≤2576px at q80 (≤1568px before v0.4.0), so they are served directly
+with `loading="lazy"` and need no thumbnail pipeline.
 
 **Scope**
 

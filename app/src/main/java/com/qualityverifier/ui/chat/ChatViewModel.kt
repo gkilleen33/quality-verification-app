@@ -23,6 +23,7 @@ import com.qualityverifier.domain.ItemType
 import com.qualityverifier.domain.PlanRun
 import com.qualityverifier.domain.Role
 import com.qualityverifier.domain.Verdict
+import com.qualityverifier.images.UNREADABLE_PHOTO
 import com.qualityverifier.text.ReportLabels
 import com.qualityverifier.text.buildComparisonRequest
 import com.qualityverifier.text.buildIntakeMessage
@@ -535,7 +536,7 @@ class ChatViewModel(
             }
             if (!prepared) {
                 withContext(io) { images.delete(file) }
-                _notice.value = "That photo could not be read. Please take it again."
+                _notice.value = UNREADABLE_PHOTO
                 return@launch
             }
             val warning = withContext(io) { images.measureQuality(file)?.warning }
