@@ -16,6 +16,7 @@ import com.qualityverifier.domain.UpdatePrompt
 import com.qualityverifier.text.decodeIntake
 import com.qualityverifier.text.encodeIntake
 import com.qualityverifier.ui.appContainer
+import com.qualityverifier.ui.rememberAuthLabels
 import com.qualityverifier.ui.rememberUpdateLabels
 import com.qualityverifier.ui.update.UpdateRequiredScreen
 import com.qualityverifier.ui.chat.ChatScreen
@@ -171,6 +172,8 @@ fun AppNav() {
         // bottom bar.
         composable(Routes.SETTINGS) {
             SettingsScreen(
+                container = container,
+                labels = rememberAuthLabels(),
                 onBack = { navController.popBackStack() },
                 // The server has already deleted the account by the time this runs; the
                 // view model only reports success after DELETE /v1/account succeeds.

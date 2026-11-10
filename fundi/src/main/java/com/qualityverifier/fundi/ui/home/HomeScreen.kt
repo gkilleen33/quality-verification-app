@@ -29,6 +29,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -64,6 +65,8 @@ fun HomeScreen(
     onStart: (ItemType) -> Unit,
     /** The roster screen. */
     onWorkers: () -> Unit,
+    /** Password, the location switch, sign-out, and account deletion. */
+    onSettings: () -> Unit,
 ) {
     val container = fundiContainer()
     val model: PiecesViewModel = viewModel(factory = PiecesViewModel.factory(container))
@@ -102,7 +105,20 @@ fun HomeScreen(
         }
 
         item {
-            Text("Fundi Bora", style = MaterialTheme.typography.displaySmall)
+            // Beside the wordmark rather than beside "My workers": that row only exists
+            // once there are pieces, and a maker with none still needs a way to sign out.
+            Row(
+                Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    "Fundi Bora",
+                    style = MaterialTheme.typography.displaySmall,
+                    modifier = Modifier.weight(1f, fill = false),
+                )
+                TextButton(onClick = onSettings) { Text("Settings") }
+            }
             Spacer(Modifier.height(8.dp))
         }
 

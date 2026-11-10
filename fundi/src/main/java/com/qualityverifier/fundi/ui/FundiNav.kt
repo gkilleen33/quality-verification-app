@@ -22,8 +22,10 @@ import com.qualityverifier.fundi.ui.setup.SetupViewModel
 import com.qualityverifier.fundi.ui.setup.ToolsScreen
 import com.qualityverifier.fundi.ui.setup.WorkshopScreen
 import com.qualityverifier.fundi.ui.workers.WorkersScreen
+import com.qualityverifier.text.AuthLabels
 import com.qualityverifier.text.FundiLabels
 import com.qualityverifier.text.UpdateLabels
+import com.qualityverifier.ui.settings.SettingsScreen
 import com.qualityverifier.ui.update.UpdateRequiredScreen
 import java.util.UUID
 
@@ -35,6 +37,7 @@ private object Routes {
     const val SETUP_GOALS = "setup/goals"
     const val HOME = "home"
     const val WORKERS = "workers"
+    const val SETTINGS = "settings"
     const val ASSESS = "assess/{sessionId}/{itemTypeId}?piece={piece}&returning={returning}"
 
     /**
@@ -53,8 +56,8 @@ private object Routes {
 fun FundiNav() {
     val container = fundiContainer()
     val navController = rememberNavController()
-    // Evaluated once per process: signing in navigates onward itself, and nothing here
-    // signs out yet.
+    // Evaluated once per process. Signing in navigates onward itself, and signing out
+    // replaces the whole stack with sign-in, so this never needs re-reading.
     val start = remember { if (container.isSignedIn) Routes.HOME else Routes.SIGN_IN }
 
     // English only, and that is a gap rather than a decision — see FundiLabels. Kagua's
@@ -69,6 +72,18 @@ fun FundiNav() {
     if (update.prompt == UpdatePrompt.REQUIRED) {
         UpdateRequiredScreen(UpdateLabels.ENGLISH, update.downloadUrl)
         return
+    }
+
+    // Signing out and deleting the account end in the same place, as in Kagua: a deleted
+    // account whose tokens were left on the handset would look signed in until the next
+    // request was refused.
+    val signOut = {
+        container.signOut()
+        navController.navigate(Routes.SIGN_IN) {
+            // Everything goes: the next person to open the app must not find another
+            // maker's pieces behind the back button.
+            popUpTo(0) { inclusive = true }
+        }
     }
 
     NavHost(navController = navController, startDestination = start) {
@@ -195,11 +210,26 @@ fun FundiNav() {
                     )
                 },
                 onWorkers = { navController.navigate(Routes.WORKERS) },
+                onSettings = { navController.navigate(Routes.SETTINGS) { launchSingleTop = true } },
             )
         }
 
         composable(Routes.WORKERS) {
             WorkersScreen(onBack = { navController.popBackStack() })
+        }
+
+        // Kagua's screen, with Fundi Bora's wording where Kagua's would be wrong, and the
+        // sign-out button Kagua keeps on Profile. Fundi Bora has no Profile.
+        composable(Routes.SETTINGS) {
+            SettingsScreen(
+                container = container,
+                labels = remember(labels) { labels.onSettings(AuthLabels.ENGLISH) },
+                onBack = { navController.popBackStack() },
+                // The view model reports success only after DELETE /v1/account succeeds,
+                // so the server has already deleted the account by the time this runs.
+                onAccountDeleted = signOut,
+                onSignOut = signOut,
+            )
         }
 
         composable(

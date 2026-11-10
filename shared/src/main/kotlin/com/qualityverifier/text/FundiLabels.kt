@@ -82,6 +82,14 @@ data class FundiLabels(
     val setupSkip: String,
     val setupSaving: String,
     val setupFailed: String,
+    // ---- Settings. The screen is shared with Kagua and worded by AuthLabels; these are
+    // the three places where Kagua's sentence would be wrong here. See [onSettings].
+    /** Under the location switch. Says what the switch covers and what it does not. */
+    val settingsRecordLocationHint: String,
+    /** REVIEW CRITICAL: what deleting the account removes, from anonymise_user (V23). */
+    val settingsDeleteAccountBlurb: String,
+    /** REVIEW CRITICAL: the irreversible confirmation. */
+    val settingsDeleteAccountConfirmBody: String,
     // ---- the two cards. The mockup's own words where it has them.
     val diagnosisHeading: String,
     /** "Not a grade — a cause". The one line that says what this screen is for. */
@@ -175,6 +183,23 @@ data class FundiLabels(
     fun nameOf(kind: ToolKind): String = toolNames[kind] ?: kind.id.replace('_', ' ')
     fun nameOf(goal: FundiGoal): String = goalNames[goal] ?: goal.id.replace('_', ' ')
 
+    /**
+     * The settings screen's wording: [base] with Fundi Bora's sentences where Kagua's
+     * would be wrong.
+     *
+     * Kagua's location hint is about the shops a buyer assesses in and says nothing else is
+     * ever recorded, but a maker may already have recorded their shop at setup. Kagua's
+     * deletion text names a business and says reports on the phone are deleted; a maker has
+     * pieces and workers, whose names the server clears, and nothing on the phone is
+     * deleted. Everything else (the password fields, sign-out) reads the same in both apps,
+     * so it stays Kagua's and stays in one place.
+     */
+    fun onSettings(base: AuthLabels): AuthLabels = base.copy(
+        recordLocationHint = settingsRecordLocationHint,
+        deleteAccountBlurb = settingsDeleteAccountBlurb,
+        deleteAccountConfirmBody = settingsDeleteAccountConfirmBody,
+    )
+
     companion object {
         val ENGLISH = FundiLabels(
             code = "en",
@@ -253,6 +278,19 @@ data class FundiLabels(
             setupSkip = "Skip for now",
             setupSaving = "Saving…",
             setupFailed = "Could not save that. Check your connection and try again.",
+            settingsRecordLocationHint = "We use this for research, to know where each " +
+                "assessment was made. Nothing is recorded at any other time, apart from " +
+                "your shop's location if you chose to record it during setup.",
+            settingsDeleteAccountBlurb = "We remove your name, phone number, the locations " +
+                "we recorded, and the names you gave your pieces and workers from our " +
+                "records straight away, and you will not be able to sign in again.\n\nWe " +
+                "keep the assessments themselves, under a random number that is not linked " +
+                "to you, because they are what this research studies. We cannot take " +
+                "personal details out of photos or messages, so please do not put them " +
+                "there. This cannot be undone.",
+            settingsDeleteAccountConfirmBody = "Your name, phone number, locations, and the " +
+                "names of your pieces and workers are removed now. The assessments stay, " +
+                "under a random number. You cannot sign in again and this cannot be undone.",
             diagnosisHeading = "DIAGNOSIS",
             diagnosisSubhead = "Not a grade — a cause",
             whatHappenedHeading = "WHAT HAPPENED",
