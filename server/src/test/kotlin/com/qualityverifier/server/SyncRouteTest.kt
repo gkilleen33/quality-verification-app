@@ -307,6 +307,42 @@ class SyncRouteTest {
     }
 
     @Test
+    fun `a disabled account cannot change its password or get new tokens`() = testApplication {
+        // Its access token still verifies until it expires. Refresh refuses a disabled
+        // account; this route mints tokens too, so it must refuse it the same way, or a
+        // disable would never take effect.
+        val auth = FakeAuth(currentPassword = "the real one", disabled = true)
+        val app = withSync(FakeChatStore(), auth)
+
+        val response = app.post("/v1/auth/password") {
+            this.auth(MINE); contentType(ContentType.Application.Json)
+            setBody(ChangePasswordRequest("the real one", "a new long password"))
+        }
+
+        assertEquals(HttpStatusCode.Unauthorized, response.status)
+        assertTrue(response.bodyAsText().contains("invalid_token"))
+        assertTrue(auth.passwordChanges.isEmpty())
+        assertTrue(auth.tokenEvents.isEmpty())
+    }
+
+    @Test
+    fun `a password change whose new tokens fail still reports the change`() = testApplication {
+        // The password and the revocation are already committed. A 500 would tell the
+        // person nothing changed, and they would try the old password next.
+        val auth = FakeAuth(currentPassword = "the real one", issueFails = true)
+        val app = withSync(FakeChatStore(), auth)
+
+        val response = app.post("/v1/auth/password") {
+            this.auth(MINE); contentType(ContentType.Application.Json)
+            setBody(ChangePasswordRequest("the real one", "a new long password"))
+        }
+
+        assertEquals(HttpStatusCode.NoContent, response.status)
+        assertEquals(listOf(MINE), auth.passwordChanges)
+        assertEquals(listOf(MINE), auth.revoked)
+    }
+
+    @Test
     fun `a short new password is refused`() = testApplication {
         val auth = FakeAuth(currentPassword = "the real one")
         val app = withSync(FakeChatStore(), auth)
@@ -653,6 +689,9 @@ class SyncRouteTest {
     private class FakeAuth(
         private val currentPassword: String? = null,
         private val isTester: Boolean = false,
+        private val disabled: Boolean = false,
+        /** Makes issuing a refresh token throw, as a dropped database connection would. */
+        private val issueFails: Boolean = false,
     ) : AuthStore {
         val passwordChanges = mutableListOf<String>()
         val accountsDeleted = mutableListOf<String>()
@@ -663,11 +702,12 @@ class SyncRouteTest {
 
         override suspend fun register(registration: Registration) = RegisterOutcome.InviteUnusable
         override suspend fun findUser(userId: String) =
-            UserRow(userId, "Grady", "individual", null, disabled = false, isTester = isTester)
+            UserRow(userId, "Grady", "individual", null, disabled = disabled, isTester = isTester)
 
         override suspend fun issueRefresh(
             userId: String, token: String, expiresAt: Instant, userAgent: String?, replaces: String?,
         ): String {
+            if (issueFails) throw java.sql.SQLException("connection lost")
             tokenEvents += "issue $userId"
             return "r"
         }

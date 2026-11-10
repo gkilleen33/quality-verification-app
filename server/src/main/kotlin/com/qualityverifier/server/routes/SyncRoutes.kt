@@ -22,6 +22,7 @@ import io.ktor.server.routing.delete
 import io.ktor.server.routing.get
 import io.ktor.server.routing.post
 import io.ktor.server.routing.put
+import kotlinx.coroutines.CancellationException
 import org.slf4j.LoggerFactory
 
 private val log = LoggerFactory.getLogger("com.qualityverifier.server.sync")
@@ -200,6 +201,16 @@ fun Route.syncRoutes(
                 return@post
             }
 
+            // This route mints tokens, so it must refuse whoever /v1/auth/refresh refuses.
+            // Without this a disabled account's still-valid access token could change the
+            // password and walk away with a new pair, and disabling it would never stick.
+            // passwordHashFor excludes deleted accounts but not disabled ones.
+            val user = auth.findUser(userId)
+            if (user == null || user.disabled) {
+                call.respond(HttpStatusCode.Unauthorized, ErrorResponse("invalid_token"))
+                return@post
+            }
+
             // The current password is required even though the caller already holds a
             // valid token: a token can be lifted from an unlocked phone, and a password
             // change is what would lock the owner out of their own account.
@@ -219,7 +230,24 @@ fun Route.syncRoutes(
             // phone's next refresh is refused and it is signed out with no explanation.
             // No user agent: the phone does not send one here, as it does not on refresh.
             // An older app checks only for a 2xx and ignores the body, so it is unaffected.
-            call.respond(issueTokens(auth, accessTokens, userId, userAgent = null))
+            val tokens = try {
+                issueTokens(auth, accessTokens, userId, userAgent = null)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                // The password has already changed, in its own transaction, so a 500 here
+                // would tell the person it had not, and they would try the old one next.
+                // 204 is the answer the app took before this route returned tokens: it
+                // reports the change and keeps the old pair, whose next refresh fails and
+                // asks them to sign in, now with the new password.
+                log.error("Password changed for {} but issuing its new tokens failed", userId, e)
+                null
+            }
+            if (tokens == null) {
+                call.respond(HttpStatusCode.NoContent)
+            } else {
+                call.respond(tokens)
+            }
         }
 
         delete("/v1/account") {
