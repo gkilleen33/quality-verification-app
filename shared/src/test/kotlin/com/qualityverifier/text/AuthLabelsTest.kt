@@ -1,5 +1,6 @@
 package com.qualityverifier.text
 
+import com.qualityverifier.domain.KenyanPhone
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
@@ -39,6 +40,10 @@ class AuthLabelsTest {
         listOf(
             en.phoneLabel to sw.phoneLabel,
             en.phoneHint to sw.phoneHint,
+            en.phoneLeadingZero to sw.phoneLeadingZero,
+            en.phoneWrongStart to sw.phoneWrongStart,
+            en.phoneTooShort to sw.phoneTooShort,
+            en.phoneNotKenyan to sw.phoneNotKenyan,
             en.passwordLabel to sw.passwordLabel,
             en.signIn to sw.signIn,
             en.goToRegister to sw.goToRegister,
@@ -169,6 +174,21 @@ class AuthLabelsTest {
         assertTrue(AuthLabels.ENGLISH.humanReviewNotice.contains("photos"))
         assertTrue(AuthLabels.SWAHILI.humanReviewNotice.contains("Watafiti"))
         assertTrue(AuthLabels.SWAHILI.humanReviewNotice.contains("picha"))
+    }
+
+    @Test
+    fun `every phone problem has its own sentence, naming what to type`() {
+        // A refused keystroke with no sentence under the field reads as a broken keyboard.
+        listOf(AuthLabels.ENGLISH, AuthLabels.SWAHILI).forEach { labels ->
+            val sentences = KenyanPhone.Problem.entries.map(labels::phoneProblem)
+            assertTrue("${labels.code}: a problem has no sentence", sentences.all { it.isNotBlank() })
+            assertEquals("${labels.code}: two problems share a sentence", sentences.size, sentences.toSet().size)
+            // The hint no longer asks for the country code, which the field now supplies.
+            assertTrue("${labels.code}", labels.phoneHint.contains("712345678"))
+            assertTrue("${labels.code}", !labels.phoneHint.contains("+254700"))
+        }
+        assertTrue(AuthLabels.ENGLISH.phoneWrongStart.contains("7, 1, or 2"))
+        assertTrue(AuthLabels.SWAHILI.phoneWrongStart.contains("7, 1 au 2"))
     }
 
     @Test

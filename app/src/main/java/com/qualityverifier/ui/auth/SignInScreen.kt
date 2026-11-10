@@ -30,7 +30,9 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.qualityverifier.domain.KenyanPhone
 import com.qualityverifier.ui.appContainer
+import com.qualityverifier.ui.phone.KenyanPhoneField
 import com.qualityverifier.ui.rememberAuthLabels
 
 /**
@@ -50,7 +52,9 @@ fun SignInScreen(onSignedIn: () -> Unit, onRegister: () -> Unit) {
     val error by viewModel.error.collectAsState()
     val signedIn by viewModel.signedIn.collectAsState()
 
-    var phone by remember { mutableStateOf("+254") }
+    // The nine digits after +254; KenyanPhone.toE164 makes the number that is sent.
+    var phone by remember { mutableStateOf("") }
+    val e164 = KenyanPhone.toE164(phone)
     var password by remember { mutableStateOf("") }
 
     LaunchedEffect(signedIn) { if (signedIn) onSignedIn() }
@@ -71,18 +75,12 @@ fun SignInScreen(onSignedIn: () -> Unit, onRegister: () -> Unit) {
         )
         Spacer(Modifier.height(24.dp))
 
-        OutlinedTextField(
-            value = phone,
-            onValueChange = { phone = it.filter { c -> c.isDigit() || c == '+' } },
-            label = { Text(labels.phoneLabel) },
-            // Prefilled with +254 and digits-only afterwards, because the server requires
-            // international format and rejecting "0700..." after the fact teaches nothing.
-            supportingText = { Text(labels.phoneHint) },
-            keyboardOptions = KeyboardOptions(
-                keyboardType = KeyboardType.Phone,
-                imeAction = ImeAction.Next,
-            ),
-            singleLine = true,
+        // A fixed +254 and the nine digits after it. A leading 0 cannot be typed, so the
+        // number on screen is the number the server stores.
+        KenyanPhoneField(
+            labels = labels,
+            digits = phone,
+            onDigitsChange = { phone = it },
             modifier = Modifier.fillMaxWidth(),
         )
 
@@ -109,8 +107,8 @@ fun SignInScreen(onSignedIn: () -> Unit, onRegister: () -> Unit) {
 
         Spacer(Modifier.height(8.dp))
         Button(
-            onClick = { viewModel.signIn(phone, password) },
-            enabled = !busy && phone.length > 6 && password.isNotBlank(),
+            onClick = { e164?.let { viewModel.signIn(it, password) } },
+            enabled = !busy && e164 != null && password.isNotBlank(),
             modifier = Modifier
                 .fillMaxWidth()
                 .height(56.dp),

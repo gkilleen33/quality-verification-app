@@ -1,5 +1,7 @@
 package com.qualityverifier.text
 
+import com.qualityverifier.domain.KenyanPhone
+
 /**
  * Wording for the account screens: sign in, register, settings, and the delete dialog.
  *
@@ -23,7 +25,13 @@ data class AuthLabels(
     // Sign in
     val tagline: String,
     val phoneLabel: String,
+    /** Under the field, after the fixed +254: what goes in it. */
     val phoneHint: String,
+    // Why the phone field refused an edit or cannot send yet, one per KenyanPhone.Problem.
+    val phoneLeadingZero: String,
+    val phoneWrongStart: String,
+    val phoneTooShort: String,
+    val phoneNotKenyan: String,
     val passwordLabel: String,
     val signIn: String,
     val goToRegister: String,
@@ -106,12 +114,24 @@ data class AuthLabels(
     fun savedLocation(metres: Int): String =
         savedLocationFormat.replace("{m}", metres.toString())
 
+    /** The sentence the phone field shows for [problem]. */
+    fun phoneProblem(problem: KenyanPhone.Problem): String = when (problem) {
+        KenyanPhone.Problem.LEADING_ZERO -> phoneLeadingZero
+        KenyanPhone.Problem.WRONG_START -> phoneWrongStart
+        KenyanPhone.Problem.TOO_SHORT -> phoneTooShort
+        KenyanPhone.Problem.NOT_KENYAN -> phoneNotKenyan
+    }
+
     companion object {
         val ENGLISH = AuthLabels(
             code = "en",
             tagline = "Jua kabla ya kununua — know before you buy.",
             phoneLabel = "Phone number",
-            phoneHint = "Starting with your country code, e.g. +254700123456",
+            phoneHint = "The 9 digits after +254, for example 712345678",
+            phoneLeadingZero = "Leave out the 0 at the start: type 712345678, not 0712345678.",
+            phoneWrongStart = "The number after +254 starts with 7, 1, or 2.",
+            phoneTooShort = "Type all 9 digits after +254.",
+            phoneNotKenyan = "Only Kenyan numbers, starting +254, can be used.",
             passwordLabel = "Password",
             signIn = "Sign in",
             goToRegister = "I have an invite code — create an account",
@@ -188,7 +208,11 @@ data class AuthLabels(
             code = "sw",
             tagline = "Jua kabla ya kununua.",
             phoneLabel = "Namba ya simu",
-            phoneHint = "Anza na namba ya nchi, mfano +254700123456",
+            phoneHint = "Tarakimu 9 baada ya +254, mfano 712345678",
+            phoneLeadingZero = "Usianze na 0: andika 712345678, si 0712345678.",
+            phoneWrongStart = "Namba baada ya +254 inaanza na 7, 1 au 2.",
+            phoneTooShort = "Andika tarakimu zote 9 baada ya +254.",
+            phoneNotKenyan = "Namba za Kenya tu, zinazoanza na +254, zinaweza kutumika.",
             passwordLabel = "Neno la siri",
             signIn = "Ingia",
             goToRegister = "Nina kodi ya mwaliko — fungua akaunti",
