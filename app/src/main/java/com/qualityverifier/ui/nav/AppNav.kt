@@ -99,9 +99,11 @@ fun AppNav() {
 
     // Signing out and deleting the account end in the same place, so they share one path:
     // a deleted account whose tokens were left on the handset would look signed in until
-    // the next request was refused.
-    val signOut = {
-        container.signOut()
+    // the next request was refused. They differ only in the push: a sign-out sends the
+    // account's unsent work first, in the background; a deleted account sends nothing
+    // (see AppContainer.signOut).
+    val leave = { pushPendingWork: Boolean ->
+        container.signOut(pushPendingWork)
         navController.navigate(Routes.SIGN_IN) {
             // The whole back stack goes, so back from sign-in cannot reopen a signed-out
             // account's screens. That is all this does. The assessments stay on the phone;
@@ -110,6 +112,8 @@ fun AppNav() {
             popUpTo(0) { inclusive = true }
         }
     }
+    val signOut = { leave(true) }
+    val accountDeleted = { leave(false) }
 
     NavHost(navController = navController, startDestination = start) {
 
@@ -179,7 +183,7 @@ fun AppNav() {
                 onBack = { navController.popBackStack() },
                 // The server has already deleted the account by the time this runs; the
                 // view model only reports success after DELETE /v1/account succeeds.
-                onAccountDeleted = signOut,
+                onAccountDeleted = accountDeleted,
             )
         }
 

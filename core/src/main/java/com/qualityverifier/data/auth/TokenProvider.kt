@@ -92,6 +92,32 @@ class TokenProvider(
     }
 
     /**
+     * Signs out as [signOut] does, and hands back a copy of the tokens it cleared, for one
+     * last push of the account's unsent work. Null when nothing was signed in.
+     *
+     * Copied and cleared under the one [lock], so no refresh can save between the two.
+     */
+    fun signOutKeepingCopy(): HeldTokenStore? = synchronized(lock) {
+        val copy = store.refreshToken()?.let { refreshToken ->
+            HeldTokenStore(
+                accessToken = store.accessToken(),
+                accessTokenExpiresAt = store.accessTokenExpiresAt(),
+                // A refresh holding the mutex is about to spend this token, and its answer
+                // will be discarded because the generation moves below. Presenting the
+                // spent token again is what the server reads as theft, revoking the
+                // account on every phone. So the copy goes without it, and the push makes
+                // do with the access token, or sends nothing if that is near expiry.
+                refreshToken = refreshToken.takeUnless { mutex.isLocked },
+                userId = store.userId(),
+                now = now,
+            )
+        }
+        generation++
+        store.clear()
+        copy
+    }
+
+    /**
      * Which sign-in the stored tokens belong to. A caller whose answer carries new tokens
      * reads it before sending and passes it to [adopt].
      */

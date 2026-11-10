@@ -76,9 +76,11 @@ fun FundiNav() {
 
     // Signing out and deleting the account end in the same place, as in Kagua: a deleted
     // account whose tokens were left on the handset would look signed in until the next
-    // request was refused.
-    val signOut = {
-        container.signOut()
+    // request was refused. They differ only in the push: a sign-out sends the maker's
+    // unsent names, roster and worker sets first, in the background; a deleted account
+    // sends nothing (see AppContainer.signOut).
+    val leave = { pushPendingWork: Boolean ->
+        container.signOut(pushPendingWork)
         navController.navigate(Routes.SIGN_IN) {
             // The whole back stack goes, so back from sign-in cannot reopen a signed-out
             // maker's screens. That is all this does. The pieces and roster stay on the
@@ -87,6 +89,8 @@ fun FundiNav() {
             popUpTo(0) { inclusive = true }
         }
     }
+    val signOut = { leave(true) }
+    val accountDeleted = { leave(false) }
 
     NavHost(navController = navController, startDestination = start) {
 
@@ -229,7 +233,7 @@ fun FundiNav() {
                 onBack = { navController.popBackStack() },
                 // The view model reports success only after DELETE /v1/account succeeds,
                 // so the server has already deleted the account by the time this runs.
-                onAccountDeleted = signOut,
+                onAccountDeleted = accountDeleted,
                 onSignOut = signOut,
             )
         }

@@ -78,9 +78,10 @@ class AuthClient(
      * Called with the account's id once the server has accepted a sign-in or registration,
      * before the tokens are saved. The container uses it to clear the previous account's
      * local data (see [LocalAccountGuard]). Runs on [io]; if it throws, the sign-in fails
-     * and nothing is saved.
+     * and nothing is saved. Suspending, so the container can first wait for the previous
+     * account's push at sign-out to finish reading the rows the clear would delete.
      */
-    private val beforeSaving: (userId: String) -> Unit = {},
+    private val beforeSaving: suspend (userId: String) -> Unit = {},
 ) {
 
     /**

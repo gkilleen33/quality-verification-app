@@ -211,6 +211,70 @@ class TokenProviderTest {
             assertNull(store.refreshToken())
         }
 
+    @Test
+    fun `signing out keeping a copy clears the store and hands the tokens over`() = runTest {
+        // The copy is what the push at sign-out sends with. The store must be empty all the
+        // same: the phone is signed out the moment the button is pressed.
+        val store = FakeStore(access = null, refresh = null, expiresAt = 0)
+        store.save("good", 3600, "refresh-0", "user-0")
+        val provider = TokenProvider(store, countingRefresher(AtomicInteger()), ::now)
+
+        val copy = provider.signOutKeepingCopy()
+
+        assertNull(store.refreshToken())
+        assertTrue(!store.isSignedIn())
+        assertEquals("good", copy?.accessToken())
+        assertEquals("refresh-0", copy?.refreshToken())
+        assertEquals("user-0", copy?.userId())
+        assertEquals(now() + HOUR, copy?.accessTokenExpiresAt())
+    }
+
+    @Test
+    fun `a refresh using the copy never writes to the store`() = runTest {
+        // The store may already hold the next account's tokens.
+        val store = FakeStore(access = "expired", expiresAt = now() - 1)
+        val refreshes = AtomicInteger()
+        val copy = TokenProvider(store, countingRefresher(refreshes), ::now).signOutKeepingCopy()!!
+        store.save("access-b", 900, "refresh-b", "user-b") // the next sign-in
+
+        val pushing = TokenProvider(copy, countingRefresher(refreshes), ::now)
+
+        assertEquals("fresh-1", pushing.accessToken())
+        assertEquals("refresh-1", copy.refreshToken())
+        assertEquals("refresh-b", store.refreshToken())
+    }
+
+    @Test
+    fun `a copy taken during a refresh carries no refresh token`() = runTest {
+        // That refresh is about to spend the token. Presenting it again from the copy is
+        // what the server reads as theft, revoking the account on every phone.
+        val store = FakeStore(access = "expired", expiresAt = now() - 1)
+        val gate = CompletableDeferred<Unit>()
+        val provider = TokenProvider(
+            store,
+            { gate.await(); RefreshOutcome.Renewed("fresh-a", 900, "refresh-a", "user-a") },
+            ::now,
+        )
+
+        val pending = async { provider.accessToken() }
+        runCurrent() // the refresh holds the mutex and is waiting on the server
+        val copy = provider.signOutKeepingCopy()
+        gate.complete(Unit)
+
+        assertNull(copy?.refreshToken())
+        assertEquals("expired", copy?.accessToken())
+        assertNull(pending.await())
+        assertNull(store.refreshToken())
+    }
+
+    @Test
+    fun `with nothing signed in there is no copy`() = runTest {
+        val store = FakeStore(access = null, refresh = null, expiresAt = 0)
+        val provider = TokenProvider(store, countingRefresher(AtomicInteger()), ::now)
+
+        assertNull(provider.signOutKeepingCopy())
+    }
+
     // ---------------------------------------------------------------- harness
 
     private fun now(): Long = 1_000_000L
