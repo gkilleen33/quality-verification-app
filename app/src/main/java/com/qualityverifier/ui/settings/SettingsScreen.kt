@@ -1,5 +1,6 @@
 package com.qualityverifier.ui.settings
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
@@ -74,12 +75,18 @@ fun SettingsScreen(onBack: () -> Unit, onAccountDeleted: () -> Unit) {
         }
     }
 
+    // No way off this screen while a request is in flight. Leaving clears the view
+    // model, which cancels the coroutine but not the blocking HTTP call: the server
+    // still deletes the account, nothing signs out, and the user is left on Profile
+    // signed in to an account that no longer exists.
+    BackHandler(enabled = busy) {}
+
     Scaffold(
         topBar = {
             TopAppBar(
                 title = { Text(labels.accountSettings) },
                 navigationIcon = {
-                    IconButton(onClick = onBack) {
+                    IconButton(onClick = onBack, enabled = !busy) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
                     }
                 },
@@ -172,7 +179,10 @@ fun SettingsScreen(onBack: () -> Unit, onAccountDeleted: () -> Unit) {
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(56.dp),
-            ) { Text(labels.deleteAccount) }
+            ) {
+                if (busy) CircularProgressIndicator(Modifier.height(20.dp))
+                else Text(labels.deleteAccount)
+            }
         }
     }
 

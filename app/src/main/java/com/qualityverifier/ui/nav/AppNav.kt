@@ -160,7 +160,7 @@ fun AppNav() {
             MainScaffold(MainTab.PROFILE, navController.tabSelector()) { padding ->
                 ProfileScreen(
                     contentPadding = padding,
-                    onOpenSettings = { navController.navigate(Routes.SETTINGS) },
+                    onOpenSettings = { navController.navigate(Routes.SETTINGS) { launchSingleTop = true } },
                     onSignOut = signOut,
                 )
             }
