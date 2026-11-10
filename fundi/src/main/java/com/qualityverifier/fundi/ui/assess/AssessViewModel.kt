@@ -27,6 +27,7 @@ import com.qualityverifier.domain.PriorIssue
 import com.qualityverifier.domain.Role
 import com.qualityverifier.domain.Worker
 import com.qualityverifier.domain.WorkerSlot
+import com.qualityverifier.images.UNREADABLE_PHOTO
 import com.qualityverifier.text.FundiLabels
 import com.qualityverifier.text.ReportLabels
 import com.qualityverifier.text.buildFundiOpeningMessage
@@ -34,8 +35,10 @@ import com.qualityverifier.text.buildSubmissionText
 import com.qualityverifier.text.parseAssistantContent
 import com.qualityverifier.text.previousRecord
 import com.qualityverifier.text.priorIssues
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -51,6 +54,29 @@ import java.util.UUID
 /** What went wrong, in words the maker can act on. */
 data class AssessError(val message: String)
 
+/** What a photograph being taken is for, so a kept one goes to the right place. */
+sealed interface PhotoTarget {
+    /**
+     * The opening photograph, sent with the intake once kept. It carries the intake
+     * because the intake is sent only then, and a photograph under review has not been
+     * kept yet.
+     */
+    data class Opening(
+        val intake: FundiIntake,
+        val pieceLabel: String?,
+        val workedOn: List<WorkerSlot>,
+    ) : PhotoTarget
+
+    data class PlanShot(val index: Int) : PhotoTarget
+}
+
+/**
+ * A photograph just taken and held back for the maker to look at, because the on-device
+ * check thinks it may be too dark or blurred to read. Kagua's `CaptureReview`, with
+ * Fundi Bora's targets.
+ */
+data class PhotoReview(val path: String, val warning: String, val target: PhotoTarget)
+
 /**
  * One assessment of one piece, from the opening photograph to the fix plan.
  *
@@ -58,7 +84,8 @@ data class AssessError(val message: String)
  * also carries an intake questionnaire, comparisons between two pieces, the evaluator
  * questionnaire and sharing — none of which a maker standing over their own bench has any
  * use for. What the two genuinely share is already shared: the camera and plan runner are
- * `:capture`, and storage, upload dedup and the retry are `:core`.
+ * `:capture`, and storage, photo processing and its quality check, upload dedup and the
+ * retry are `:core`.
  *
  * The turn goes to `v1/fundi/chat`, chosen once in [AppContainer] rather than here,
  * because the endpoint is what selects the coaching prompt.
@@ -110,6 +137,21 @@ class AssessViewModel(
 
     private val _run = MutableStateFlow<PlanRun?>(null)
     val run: StateFlow<PlanRun?> = _run.asStateFlow()
+
+    /** A photograph the quality check flagged, until the maker keeps or retakes it. */
+    private val _review = MutableStateFlow<PhotoReview?>(null)
+    val review: StateFlow<PhotoReview?> = _review.asStateFlow()
+
+    /**
+     * Whether the opening photograph has been kept and the intake sent with it, which is
+     * when the screen leaves the camera. Its own flag rather than [sending]: a send that
+     * fails at once could rise and fall between two frames and never be seen.
+     */
+    private val _openingSent = MutableStateFlow(false)
+    val openingSent: StateFlow<Boolean> = _openingSent.asStateFlow()
+
+    /** The newest photograph still being processed, so leaving the camera can drop it. */
+    private var preparing: Job? = null
 
     /** Plans already answered, so a sent run is never re-offered. */
     private val fulfilled = mutableSetOf<String>()
@@ -310,6 +352,79 @@ class AssessViewModel(
         if (message.id in fulfilled || _run.value != null) return
         val plan = parseAssistantContent(message.text).plan ?: return
         _run.value = PlanRun(plan = plan, sourceMessageId = message.id)
+    }
+
+    /**
+     * Prepares a photograph the camera has just written, then keeps it or holds it for
+     * review. The same path as Kagua's (`ChatViewModel.onPhotoCaptured`), so both apps
+     * send Claude the same kind of picture.
+     *
+     * The file is rewritten in place before anything else sees it. That file is what the
+     * turn attaches, what the upload hashes and what Claude is sent, so the SHA-256 is of
+     * the processed photograph. Until v0.4.0 Fundi Bora sent the camera's file as it was:
+     * full size, its rotation only an EXIF tag, and the camera's metadata still inside.
+     *
+     * The check is advisory, so it only interrupts: a photograph it cannot measure, or
+     * measures as fine, is kept without a tap, and the maker works through the shot list
+     * without confirming every frame.
+     */
+    fun onPhotoCaptured(file: File, target: PhotoTarget) {
+        val job = viewModelScope.launch {
+            val prepared = withContext(io) { file.length() > 0 && images.normaliseInPlace(file) }
+            if (!prepared) {
+                withContext(io) { images.delete(file) }
+                _error.value = AssessError(UNREADABLE_PHOTO)
+                return@launch
+            }
+            val warning = withContext(io) { images.measureQuality(file)?.warning }
+            if (warning != null) {
+                _review.value = PhotoReview(file.absolutePath, warning, target)
+            } else {
+                accept(file.absolutePath, target)
+            }
+        }
+        // Runs once the processing has finished writing, so the delete cannot race it.
+        job.invokeOnCompletion { cause ->
+            if (cause is CancellationException) images.delete(file)
+        }
+        preparing = job
+    }
+
+    /**
+     * The maker left the camera. A photograph still being processed, or held for review,
+     * was never kept, so it is dropped. Without this, an opening photograph that finished
+     * processing after the maker went back to the intake would send the intake anyway.
+     */
+    fun leaveCamera() {
+        preparing?.cancel()
+        preparing = null
+        discardReviewedPhoto()
+    }
+
+    /** Keeps a photograph the check complained about. The maker has looked at it; they decide. */
+    fun keepReviewedPhoto() {
+        val reviewed = _review.value ?: return
+        _review.value = null
+        accept(reviewed.path, reviewed.target)
+    }
+
+    /** Retakes it: the file is deleted and nothing is attached. */
+    fun discardReviewedPhoto() {
+        val reviewed = _review.value ?: return
+        _review.value = null
+        viewModelScope.launch { withContext(io) { images.delete(File(reviewed.path)) } }
+    }
+
+    private fun accept(path: String, target: PhotoTarget) {
+        // A retake that worked answers the earlier "could not be read".
+        if (_error.value?.message == UNREADABLE_PHOTO) _error.value = null
+        when (target) {
+            is PhotoTarget.Opening -> {
+                _openingSent.value = true
+                start(target.intake, path, target.pieceLabel, target.workedOn)
+            }
+            is PhotoTarget.PlanShot -> attachShot(target.index, path)
+        }
     }
 
     fun attachShot(index: Int, path: String) {

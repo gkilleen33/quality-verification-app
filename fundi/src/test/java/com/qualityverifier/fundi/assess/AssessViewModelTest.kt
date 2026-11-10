@@ -38,7 +38,9 @@ import com.qualityverifier.domain.Worker
 import com.qualityverifier.domain.WorkerSlot
 import com.qualityverifier.domain.Workshop
 import com.qualityverifier.fundi.ui.assess.AssessViewModel
+import com.qualityverifier.fundi.ui.assess.PhotoTarget
 import com.qualityverifier.images.ImageQuality
+import com.qualityverifier.images.UNREADABLE_PHOTO
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -94,6 +96,7 @@ class AssessViewModelTest {
         returning: Boolean = false,
         workers: FakeWorkers = FakeWorkers(),
         location: LocationSource = LocationSource.None,
+        images: FakeImages = FakeImages(),
     ) = AssessViewModel(
         sessionId = "s1",
         itemType = ItemType.WOODEN_TABLE,
@@ -101,7 +104,7 @@ class AssessViewModelTest {
         returning = returning,
         sessions = sessions,
         chat = chat,
-        images = FakeImages(),
+        images = images,
         profiles = profiles,
         workers = workers,
         location = location,
@@ -418,6 +421,141 @@ class AssessViewModelTest {
         assertTrue(sessions.userTurns.isEmpty())
     }
 
+    // ------------------------------------------------------------------ photographs
+
+    private val dark = ImageQuality(sharpness = 140.0, brightness = 10.0)
+
+    // The upload hashes the stored file, so the file must already be the processed one
+    // when it is attached; otherwise the SHA-256 names the camera's original.
+    @Test
+    fun `a plan shot is processed before it is attached`() = runTest {
+        val images = FakeImages()
+        val model = model(images = images)
+        model.offerPlanFrom(ChatMessage("a1", Role.ASSISTANT, plannedReply))
+        val file = images.newImageFile("s1")
+
+        model.onPhotoCaptured(file, PhotoTarget.PlanShot(0))
+        advanceUntilIdle()
+
+        assertEquals(listOf(file), images.normalised)
+        assertEquals(file.absolutePath, model.run.value?.shots?.get(0))
+        assertNull("a usable photograph must not stop the shot list", model.review.value)
+    }
+
+    // The warning Kagua shows, from the same check: held back, and the maker decides.
+    @Test
+    fun `a dark plan shot is held for the maker to look at, and keeping it attaches it`() = runTest {
+        val images = FakeImages(quality = dark)
+        val model = model(images = images)
+        model.offerPlanFrom(ChatMessage("a1", Role.ASSISTANT, plannedReply))
+        val file = images.newImageFile("s1")
+
+        model.onPhotoCaptured(file, PhotoTarget.PlanShot(0))
+        advanceUntilIdle()
+
+        val review = model.review.value
+        assertNotNull("a dark photograph should be held back", review)
+        assertEquals(dark.warning, review!!.warning)
+        assertFalse("not attached while under review", model.run.value!!.shots.containsKey(0))
+
+        model.keepReviewedPhoto()
+
+        assertNull(model.review.value)
+        assertEquals(file.absolutePath, model.run.value?.shots?.get(0))
+    }
+
+    @Test
+    fun `retaking a held shot deletes it and attaches nothing`() = runTest {
+        val images = FakeImages(quality = dark)
+        val model = model(images = images)
+        model.offerPlanFrom(ChatMessage("a1", Role.ASSISTANT, plannedReply))
+        val file = images.newImageFile("s1")
+        model.onPhotoCaptured(file, PhotoTarget.PlanShot(0))
+        advanceUntilIdle()
+
+        model.discardReviewedPhoto()
+        advanceUntilIdle()
+
+        assertNull(model.review.value)
+        assertFalse(model.run.value!!.shots.containsKey(0))
+        assertEquals(listOf(file), images.deleted)
+    }
+
+    // Never sent as the camera wrote it: a file that will not process is dropped.
+    @Test
+    fun `a photograph that cannot be read is dropped with an explanation`() = runTest {
+        val images = FakeImages(normalises = false)
+        val model = model(images = images)
+        model.offerPlanFrom(ChatMessage("a1", Role.ASSISTANT, plannedReply))
+        val file = images.newImageFile("s1")
+
+        model.onPhotoCaptured(file, PhotoTarget.PlanShot(0))
+        advanceUntilIdle()
+
+        assertFalse(model.run.value!!.shots.containsKey(0))
+        assertEquals(listOf(file), images.deleted)
+        assertEquals(UNREADABLE_PHOTO, model.error.value?.message)
+    }
+
+    // The intake waits for the opening photograph to be kept: a dark one is shown back
+    // first, and nothing reaches the model until the maker answers.
+    @Test
+    fun `a dark opening photograph holds the intake until it is kept`() = runTest {
+        val sessions = FakeSessions()
+        val images = FakeImages(quality = dark)
+        val model = model(sessions = sessions, images = images)
+        val file = images.newImageFile("s1")
+
+        model.onPhotoCaptured(file, PhotoTarget.Opening(intake, "Stool", emptyList()))
+        advanceUntilIdle()
+
+        assertNotNull(model.review.value)
+        assertTrue("nothing sent while under review", sessions.userTurns.isEmpty())
+        assertFalse(model.openingSent.value)
+
+        model.keepReviewedPhoto()
+        advanceUntilIdle()
+
+        assertTrue(model.openingSent.value)
+        val opening = sessions.userTurns.single()
+        assertEquals(listOf(file.absolutePath), opening.attachments.map { it.path })
+        assertEquals("Stool", sessions.created.single().pieceLabel)
+    }
+
+    // Processing takes a moment on a cheap phone. A maker who backs out to the intake in
+    // that moment has not sent it, and the photograph is dropped.
+    @Test
+    fun `leaving the camera while a photograph is processed sends nothing`() = runTest {
+        val sessions = FakeSessions()
+        val images = FakeImages()
+        val model = model(sessions = sessions, images = images)
+        advanceUntilIdle()
+        val file = images.newImageFile("s1")
+
+        model.onPhotoCaptured(file, PhotoTarget.Opening(intake, null, emptyList()))
+        model.leaveCamera()
+        advanceUntilIdle()
+
+        assertTrue(sessions.userTurns.isEmpty())
+        assertFalse(model.openingSent.value)
+        assertEquals(listOf(file), images.deleted)
+    }
+
+    @Test
+    fun `a usable opening photograph is processed and sent with the intake`() = runTest {
+        val sessions = FakeSessions()
+        val images = FakeImages()
+        val model = model(sessions = sessions, images = images)
+        val file = images.newImageFile("s1")
+
+        model.onPhotoCaptured(file, PhotoTarget.Opening(intake, null, emptyList()))
+        advanceUntilIdle()
+
+        assertEquals(listOf(file), images.normalised)
+        assertTrue(model.openingSent.value)
+        assertEquals(listOf(file.absolutePath), sessions.userTurns.single().attachments.map { it.path })
+    }
+
     // ------------------------------------------------------------------ the intake
 
     // The rule Kagua keeps and this one must: nothing reaches the model until the intake
@@ -717,12 +855,31 @@ class AssessViewModelTest {
         override suspend fun saveWorkshopLocation(fix: com.qualityverifier.domain.LocationFix) = true
     }
 
-    private class FakeImages : SessionImageStore {
+    /**
+     * A store backed by real temporary files, because the capture path checks that the
+     * camera wrote something before processing it. Records what it processed and deleted.
+     */
+    private class FakeImages(
+        private val normalises: Boolean = true,
+        private val quality: ImageQuality? = null,
+    ) : SessionImageStore {
+        val normalised = mutableListOf<File>()
+        val deleted = mutableListOf<File>()
+
         override fun newImageFile(sessionId: String): File =
-            File.createTempFile("capture", ".jpg").apply { deleteOnExit() }
+            File.createTempFile("capture", ".jpg").apply {
+                writeBytes(ByteArray(16))
+                deleteOnExit()
+            }
         override fun importFromUri(sessionId: String, uri: Uri): File? = null
-        override fun normaliseInPlace(file: File) = true
-        override fun delete(file: File) { file.delete() }
-        override fun measureQuality(file: File): ImageQuality? = null
+        override fun normaliseInPlace(file: File): Boolean {
+            if (normalises) normalised += file
+            return normalises
+        }
+        override fun delete(file: File) {
+            deleted += file
+            file.delete()
+        }
+        override fun measureQuality(file: File): ImageQuality? = quality
     }
 }

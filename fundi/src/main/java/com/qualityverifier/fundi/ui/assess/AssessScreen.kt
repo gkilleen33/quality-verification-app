@@ -92,6 +92,8 @@ fun AssessScreen(
     val pieceName by viewModel.pieceLabel.collectAsState()
     val roster by viewModel.roster.collectAsState()
     val previousWorkers by viewModel.previousWorkers.collectAsState()
+    val review by viewModel.review.collectAsState()
+    val openingSent by viewModel.openingSent.collectAsState()
 
     val labels = FundiLabels.ENGLISH
     // The capture pipeline and the verdict speak ReportLabels, and follow the language
@@ -112,6 +114,13 @@ fun AssessScreen(
             false -> if (stage == Stage.LOADING) stage = Stage.INTAKE
             null -> Unit
         }
+    }
+
+    // The opening photograph is kept only after it is processed, and after the maker has
+    // answered a quality warning if there was one; the intake is sent then, and the
+    // conversation opens.
+    LaunchedEffect(openingSent) {
+        if (openingSent && stage == Stage.OPENING_PHOTO) stage = Stage.TALKING
     }
 
     // A plan is picked up from the conversation rather than from the reply, so it
@@ -145,19 +154,29 @@ fun AssessScreen(
             val optional = answered.purpose.photoOptional
             CaptureScreen(
                 instruction = labels.photoInstructions[answered.purpose],
-                reviewPhotoPath = null,
-                warning = null,
+                reviewPhotoPath = review?.path,
+                warning = review?.warning,
                 createFile = viewModel::newCaptureFile,
+                // Processed and checked first, as in Kagua. The screen leaves the camera
+                // when the photograph is kept and the intake goes with it (openingSent).
                 onCaptured = { file ->
-                    stage = Stage.TALKING
-                    viewModel.start(answered, file.absolutePath, name, workedOn)
+                    viewModel.onPhotoCaptured(
+                        file,
+                        PhotoTarget.Opening(answered, name, workedOn),
+                    )
                 },
-                onKeep = {},
-                onRetake = {},
-                onClose = { stage = Stage.INTAKE },
+                onKeep = viewModel::keepReviewedPhoto,
+                onRetake = viewModel::discardReviewedPhoto,
+                onClose = {
+                    // A photograph still processing or under review was never kept, and
+                    // must not send the intake after the maker has gone back to it.
+                    viewModel.leaveCamera()
+                    stage = Stage.INTAKE
+                },
                 skipLabel = labels.skipPhoto.takeIf { optional },
                 onSkip = if (optional) {
                     {
+                        viewModel.leaveCamera()
                         stage = Stage.TALKING
                         viewModel.start(answered, null, name, workedOn)
                     }
@@ -176,13 +195,18 @@ fun AssessScreen(
                 val shot = current.plan.photos[index]
                 CaptureScreen(
                     instruction = shot.instruction.ifBlank { shot.title },
-                    reviewPhotoPath = null,
-                    warning = null,
+                    reviewPhotoPath = review?.path,
+                    warning = review?.warning,
                     createFile = viewModel::newCaptureFile,
-                    onCaptured = { file -> viewModel.attachShot(index, file.absolutePath) },
-                    onKeep = {},
-                    onRetake = {},
-                    onClose = { stage = Stage.TALKING },
+                    onCaptured = { file ->
+                        viewModel.onPhotoCaptured(file, PhotoTarget.PlanShot(index))
+                    },
+                    onKeep = viewModel::keepReviewedPhoto,
+                    onRetake = viewModel::discardReviewedPhoto,
+                    onClose = {
+                        viewModel.leaveCamera()
+                        stage = Stage.TALKING
+                    },
                     counter = reportLabels.shotOf(index + 1, current.plan.photos.size),
                     skipLabel = reportLabels.cannotDoThis,
                     onSkip = { viewModel.skipShot(index) },
