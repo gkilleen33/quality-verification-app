@@ -92,6 +92,31 @@ class KenyanPhoneTest {
         assertEquals(Problem.WRONG_START, KenyanPhone.problem("52345678"))
         // And once the front is wrong, typing a right digit there is accepted.
         assertEquals(Edit("102345678"), KenyanPhone.edit("02345678", "102345678"))
+        // Deleting a selection that starts at the front counts as a deletion too.
+        assertEquals(Edit("45678"), KenyanPhone.edit("712345678", "45678"))
+    }
+
+    @Test
+    fun `typing over a selected number is not a deletion, so the first digit is checked`() {
+        // Select all, then type 5 or 0: shorter than before, but a digit was typed in.
+        assertEquals(Edit("712345678", Problem.WRONG_START), KenyanPhone.edit("712345678", "5"))
+        assertEquals(Edit("712345678", Problem.LEADING_ZERO), KenyanPhone.edit("712345678", "0"))
+        // Select the first three digits and type 9 over them.
+        assertEquals(Edit("712345678", Problem.WRONG_START), KenyanPhone.edit("712345678", "9345678"))
+    }
+
+    @Test
+    fun `direction marks copied in front of a number are dropped`() {
+        listOf(
+            "‪+2540712345678‬",
+            "‎+254712345678",
+            "‏0712345678",
+            "⁦+254 712 345 678⁩",
+            "‫‎ 254712345678",
+        ).forEach { pasted ->
+            assertEquals(pasted, Edit("712345678"), KenyanPhone.edit("", pasted))
+        }
+        assertEquals(Edit("", Problem.NOT_KENYAN), KenyanPhone.edit("", "‪+256700123456‬"))
     }
 
     @Test

@@ -10,8 +10,10 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.TextFieldValue
 import com.qualityverifier.domain.KenyanPhone
 import com.qualityverifier.text.AuthLabels
 
@@ -32,6 +34,11 @@ import com.qualityverifier.text.AuthLabels
  *
  * "Too short" waits until the person leaves the field: shown while they are still typing,
  * it would sit under every number from the first digit to the eighth.
+ *
+ * The field holds a [TextFieldValue], not just the text, so it owns the cursor. With the
+ * String overload, a refused edit kept the old text but took the refused edit's cursor:
+ * a 0 typed in front of 12345678 left the cursor after the 1, and the next 7 landed
+ * there. Callers still pass and receive only the digits.
  */
 @Composable
 fun KenyanPhoneField(
@@ -42,6 +49,11 @@ fun KenyanPhoneField(
 ) {
     var refused by remember { mutableStateOf<KenyanPhone.Problem?>(null) }
     var focused by remember { mutableStateOf(false) }
+    var held by remember { mutableStateOf(TextFieldValue(digits, TextRange(digits.length))) }
+
+    // A screen can change the digits itself (clearing the form, restoring after rotation);
+    // the cursor then goes to the end of what it set.
+    val value = if (held.text == digits) held else TextFieldValue(digits, TextRange(digits.length))
 
     val standing = KenyanPhone.problem(digits)
     val shown = refused ?: standing?.takeIf {
@@ -49,11 +61,25 @@ fun KenyanPhoneField(
     }
 
     OutlinedTextField(
-        value = digits,
+        value = value,
         onValueChange = { proposed ->
-            val edit = KenyanPhone.edit(digits, proposed)
-            refused = edit.refused
-            if (edit.digits != digits) onDigitsChange(edit.digits)
+            // Compose also calls this when only the cursor moves; that is not an edit, and
+            // must not clear the message about the last one.
+            if (proposed.text == value.text) {
+                held = proposed
+            } else {
+                val edit = KenyanPhone.edit(value.text, proposed.text)
+                refused = edit.refused
+                held = when (edit.digits) {
+                    // Taken as typed: keep the cursor where the keyboard put it.
+                    proposed.text -> proposed
+                    // Refused, or nothing but a dropped character such as +: put back the
+                    // text and the cursor from before.
+                    value.text -> value
+                    else -> placeCursor(proposed, edit.digits)
+                }
+                if (edit.digits != digits) onDigitsChange(edit.digits)
+            }
         },
         label = { Text(labels.phoneLabel) },
         prefix = { Text(KenyanPhone.COUNTRY_CODE + " ") },
@@ -66,4 +92,20 @@ fun KenyanPhoneField(
         singleLine = true,
         modifier = modifier.onFocusChanged { focused = it.isFocused },
     )
+}
+
+/**
+ * The cursor for an accepted edit that [KenyanPhone.edit] changed on the way in. When it
+ * only dropped characters ("71-2", a paste with spaces), the cursor stays after the same
+ * digit it followed. When it rewrote the number (a pasted "+254 0712…" cut to nine
+ * digits), no digit lines up with the paste, so the cursor goes to the end.
+ */
+private fun placeCursor(proposed: TextFieldValue, digits: String): TextFieldValue {
+    val onlyDropped = proposed.text.filter { it in '0'..'9' } == digits
+    val cursor = if (onlyDropped) {
+        proposed.text.take(proposed.selection.end).count { it in '0'..'9' }
+    } else {
+        digits.length
+    }
+    return TextFieldValue(digits, TextRange(cursor))
 }

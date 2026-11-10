@@ -56,12 +56,16 @@ object KenyanPhone {
      * - A pasted international number from another country is refused, rather than its
      *   first nine digits being kept as if they were Kenyan.
      * - More than [DIGITS] digits is refused without a message: the field is full.
+     * - Anything before the first digit or + is dropped: spaces, and the invisible
+     *   direction marks (U+200E, U+202A and others) that a number copied from a message or
+     *   contact card often starts with. `trim()` keeps those, and a + behind one would
+     *   not be seen.
      * - An edit that makes the first digit 0 or anything outside [FIRST_DIGITS] is
      *   refused. Deleting the first digit is allowed even when it leaves a wrong one in
      *   front, so the number can be corrected in place; [problem] then reports it.
      */
     fun edit(previous: String, proposed: String): Edit {
-        val raw = proposed.trim()
+        val raw = proposed.dropWhile { it != '+' && it !in '0'..'9' }
         val digits = raw.filter { it in '0'..'9' }
 
         // Only a paste carries a + or 00 with a whole number after it: the field holds at
@@ -86,11 +90,27 @@ object KenyanPhone {
 
         val wrongStart = startProblem(local)
         val previousStartOk = startProblem(previous) == null
-        val isDeletion = local.length < previous.length
-        if (wrongStart != null && previousStartOk && !isDeletion) {
+        if (wrongStart != null && previousStartOk && !isDeletion(previous, local)) {
             return Edit(previous, wrongStart)
         }
         return Edit(local)
+    }
+
+    /**
+     * Whether [local] is [previous] with one run of digits cut out and nothing typed in:
+     * what backspace, or deleting a selection, produces.
+     *
+     * Being shorter is not enough. Selecting the whole number and typing 5 or 0 over it
+     * also shortens it, and was let through as a deletion, so a number starting 5 or 0
+     * could then be typed. Selecting the front of the number and typing the last selected
+     * digit over it (select all of 712345678, type 8) is still read as a deletion, since
+     * the text alone cannot tell the two apart; the field then reports the wrong start
+     * and the number cannot be sent.
+     */
+    private fun isDeletion(previous: String, local: String): Boolean {
+        if (local.length >= previous.length) return false
+        val kept = local.commonPrefixWith(previous).length
+        return previous.endsWith(local.substring(kept))
     }
 
     /** Why [digits] cannot be sent yet, or null when it is a complete number. */
