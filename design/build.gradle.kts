@@ -17,9 +17,11 @@ plugins {
 //
 // No screens and no strings. Wording is fetched with the prompts and is not a
 // compile-time constant, so it arrives through ReportLabels rather than from resources.
-// One exception: ui/update holds the update banner and the update-required screen, which
-// both apps must draw identically. They take their wording from UpdateLabels and their
-// state from the caller, so this module still knows nothing about which app it is in.
+// Two exceptions, both things the two apps must draw identically. ui/update holds the
+// update banner and the update-required screen, worded by UpdateLabels; ui/phone holds
+// the +254 phone field, worded by AuthLabels, with its rule in KenyanPhone in :shared.
+// Each takes its wording and state from the caller, so this module still knows nothing
+// about which app it is in.
 android {
     namespace = "com.qualityverifier.design"
     compileSdk = 36
