@@ -88,6 +88,12 @@ class AppContainer(
     versionCode: Int,
     /** False in debug builds, which send the headers but skip the update prompt. */
     checkForUpdates: Boolean,
+    /**
+     * Whether the location switch counts only once the person has answered the question
+     * (see [LocationPreference]). True in Fundi Bora, whose switch defaulted to on before
+     * makers were asked. Defaulted to false, Kagua's, so Kagua is unchanged.
+     */
+    locationAnswerRequired: Boolean = false,
 ) {
 
     private val appContext = context.applicationContext
@@ -142,7 +148,7 @@ class AppContainer(
     }
 
     /** Whether assessments record where they were made. Chosen at sign-up, set in Settings. */
-    val locationPreference = LocationPreference(appContext)
+    val locationPreference = LocationPreference(appContext, locationAnswerRequired)
 
     /**
      * One fix per assessment, taken without the customer doing anything.

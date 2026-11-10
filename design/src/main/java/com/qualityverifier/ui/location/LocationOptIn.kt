@@ -66,7 +66,9 @@ fun LocationOptIn(
 ) {
     val context = LocalContext.current
 
-    var enabled by remember { mutableStateOf(preference.recordAtStart) }
+    // What is recorded, not the stored switch alone: in Fundi Bora a switch nobody has
+    // answered records nothing, and drawing it on would say otherwise.
+    var enabled by remember { mutableStateOf(preference.records) }
     var granted by remember {
         mutableStateOf(
             ContextCompat.checkSelfPermission(
@@ -96,7 +98,8 @@ fun LocationOptIn(
                 checked = enabled,
                 onCheckedChange = { next ->
                     enabled = next
-                    preference.recordAtStart = next
+                    // Moving the switch is an answer, so Fundi Bora stops asking.
+                    preference.answer(next)
                 },
             )
         }

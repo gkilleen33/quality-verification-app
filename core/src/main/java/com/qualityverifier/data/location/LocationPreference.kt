@@ -17,15 +17,30 @@ import android.content.Context
  * pilot expects, and the alternative — keying this by user id — would leave the setting
  * unreadable at exactly the moments it is needed, before sign-in completes and after
  * sign-out.
+ *
+ * ## Answered, and the switch
+ *
+ * Fundi Bora's switch shipped defaulting to on before any maker had been asked about a
+ * point per assessment; its setup asked only about the shop. So on that app the switch
+ * counts only once [answered] is true, and [answered] defaults to false. An install from
+ * before the question existed therefore records nothing until the maker answers it once,
+ * and nothing stored needs rewriting for that to hold. Kagua passes [answerRequired]
+ * false: its sign-up form shows the switch, and every Kagua account has passed it.
+ *
+ * @param answerRequired true in Fundi Bora. See above.
  */
-class LocationPreference(context: Context) {
+class LocationPreference(
+    context: Context,
+    private val answerRequired: Boolean = false,
+) {
 
     private val prefs = context.applicationContext
         .getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
 
     /**
-     * Defaults to true for an installation that has never been asked, which is what makes
-     * the sign-up toggle read correctly the first time it is drawn.
+     * The switch as stored. Defaults to true for an installation that has never been
+     * asked, which is what makes Kagua's sign-up toggle read correctly the first time it
+     * is drawn. Read [records] to decide anything; this alone ignores [answered].
      */
     var recordAtStart: Boolean
         get() = prefs.getBoolean(KEY_RECORD_AT_START, true)
@@ -33,8 +48,32 @@ class LocationPreference(context: Context) {
             prefs.edit().putBoolean(KEY_RECORD_AT_START, value).apply()
         }
 
+    /**
+     * Whether the person has answered the question themselves: on a screen that asked it,
+     * or by moving the switch in Settings. False until then.
+     */
+    val answered: Boolean
+        get() = prefs.getBoolean(KEY_ANSWERED, false)
+
+    /** Whether assessments record their point. What capture reads and the switch shows. */
+    val records: Boolean
+        get() = LocationRule.records(recordAtStart, answered, answerRequired)
+
+    /** True while this app still has to ask. Only ever true in Fundi Bora. */
+    val needsAnswer: Boolean
+        get() = answerRequired && !answered
+
+    /** The person's answer, yes or no. Every screen that asks writes through this. */
+    fun answer(record: Boolean) {
+        prefs.edit()
+            .putBoolean(KEY_RECORD_AT_START, record)
+            .putBoolean(KEY_ANSWERED, true)
+            .apply()
+    }
+
     private companion object {
         const val PREFS_NAME = "kagua_preferences"
         const val KEY_RECORD_AT_START = "record_location_at_start"
+        const val KEY_ANSWERED = "record_location_answered"
     }
 }
