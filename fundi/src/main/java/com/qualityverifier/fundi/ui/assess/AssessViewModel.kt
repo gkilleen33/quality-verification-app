@@ -10,6 +10,7 @@ import com.qualityverifier.data.chat.ChatService
 import com.qualityverifier.data.db.SessionImageStore
 import com.qualityverifier.data.fundi.FundiProfiles
 import com.qualityverifier.data.fundi.ProfileOutcome
+import com.qualityverifier.data.location.LocationSource
 import com.qualityverifier.data.session.SessionRepository
 import com.qualityverifier.data.workers.WorkerRepository
 import com.qualityverifier.di.AppContainer
@@ -20,6 +21,7 @@ import com.qualityverifier.domain.FundiIntake
 import com.qualityverifier.domain.FundiProfile
 import com.qualityverifier.domain.FundiPurpose
 import com.qualityverifier.domain.ItemType
+import com.qualityverifier.domain.LocationFix
 import com.qualityverifier.domain.PlanRun
 import com.qualityverifier.domain.PriorIssue
 import com.qualityverifier.domain.Role
@@ -76,6 +78,11 @@ class AssessViewModel(
     private val images: SessionImageStore,
     private val profiles: FundiProfiles,
     private val workers: WorkerRepository,
+    /**
+     * The one location fix for a new assessment, as Kagua takes it. The default records
+     * nothing, so tests about conversations need not stub a GPS.
+     */
+    private val location: LocationSource = LocationSource.None,
     private val io: CoroutineDispatcher = Dispatchers.IO,
 ) : ViewModel() {
 
@@ -141,8 +148,24 @@ class AssessViewModel(
     private val _existing = MutableStateFlow<Boolean?>(null)
     val existing: StateFlow<Boolean?> = _existing.asStateFlow()
 
+    /**
+     * This assessment's point, once it has arrived, until there is a session row to put it
+     * in. The row is written only when the intake is sent, and a fix outdoors can arrive
+     * before that; written into no row it would be lost (`SessionDao.setLocation` is an
+     * update).
+     */
+    private var heldFix: LocationFix? = null
+    private var rowExists = false
+    private var pointWritten = false
+
     init {
-        viewModelScope.launch { _existing.value = sessions.sessionExists(sessionId) }
+        viewModelScope.launch {
+            val exists = sessions.sessionExists(sessionId)
+            _existing.value = exists
+            // Only for an assessment that is beginning. Reopening one from Home must not
+            // record where it was read, which would be both wrong and a second point.
+            if (!exists) captureLocation()
+        }
         viewModelScope.launch {
             sessions.startOf(sessionId)?.intakeCode?.let(FundiIntake::decode)?.let { (lang, why) ->
                 _language.value = lang
@@ -242,6 +265,10 @@ class AssessViewModel(
                     // server writes it when it creates the session.
                     workers.recordWorkersOf(sessionId, workedOn)
                 }
+                // Before the opening turn is stored, so a fix that has already arrived
+                // goes out with it: the point reaches the server only inside a turn.
+                rowExists = true
+                writePointIfReady()
                 sessions.appendUserMessage(
                     sessionId = sessionId,
                     text = buildFundiOpeningMessage(intake, profile, FundiLabels.ENGLISH, lastRecord),
@@ -364,6 +391,38 @@ class AssessViewModel(
         viewModelScope.launch { withContext(io) { paths.forEach { images.delete(File(it)) } } }
     }
 
+    /**
+     * Starts the one fix for this assessment, if the maker agreed and Android allows it.
+     *
+     * [LocationSource.isAvailable] reads the switch, the maker's answer, the permission and
+     * the phone's location services, all silently: nothing here ever asks Android, so no
+     * assessment shows a permission prompt. A permission given "Only this time" and since
+     * lapsed reads as refused, and nothing is recorded.
+     *
+     * Its own coroutine, and nothing joins it, as in Kagua: the fix settles while the maker
+     * answers the intake and takes photographs. Failure is silence; an assessment must not
+     * stall or show an error because a GPS fix did not arrive.
+     */
+    private fun captureLocation() {
+        if (!location.isAvailable) return
+        viewModelScope.launch {
+            val fix = runCatching { location.capture() }.getOrNull() ?: return@launch
+            heldFix = fix
+            writePointIfReady()
+        }
+    }
+
+    /**
+     * Writes the point once both it and the row exist, and only once. The next turn sent
+     * reads it from the row (`ServerChatService`), which is how it reaches the server.
+     */
+    private suspend fun writePointIfReady() {
+        val fix = heldFix ?: return
+        if (!rowExists || pointWritten) return
+        pointWritten = true
+        runCatching { sessions.recordLocation(sessionId, fix) }
+    }
+
     private suspend fun deliver() {
         when (val result = chat.send(sessionId, itemType, sessions.messagesOnce(sessionId))) {
             is ChatResult.Success -> sessions.appendAssistantMessage(sessionId, result.text)
@@ -390,6 +449,7 @@ class AssessViewModel(
                     images = container.images,
                     profiles = container.fundiProfiles,
                     workers = container.workerRepository,
+                    location = container.locationCapture,
                 )
             }
         }

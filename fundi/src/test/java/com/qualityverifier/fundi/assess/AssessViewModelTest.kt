@@ -7,6 +7,7 @@ import com.qualityverifier.data.chat.ChatService
 import com.qualityverifier.data.db.SessionImageStore
 import com.qualityverifier.data.fundi.FundiProfiles
 import com.qualityverifier.data.fundi.ProfileOutcome
+import com.qualityverifier.data.location.LocationSource
 import com.qualityverifier.data.session.SessionRepository
 import com.qualityverifier.data.session.SyncedMessage
 import com.qualityverifier.data.session.SyncedSession
@@ -38,6 +39,7 @@ import com.qualityverifier.domain.WorkerSlot
 import com.qualityverifier.domain.Workshop
 import com.qualityverifier.fundi.ui.assess.AssessViewModel
 import com.qualityverifier.images.ImageQuality
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
@@ -91,6 +93,7 @@ class AssessViewModelTest {
         pieceId: String = "s1",
         returning: Boolean = false,
         workers: FakeWorkers = FakeWorkers(),
+        location: LocationSource = LocationSource.None,
     ) = AssessViewModel(
         sessionId = "s1",
         itemType = ItemType.WOODEN_TABLE,
@@ -101,8 +104,125 @@ class AssessViewModelTest {
         images = FakeImages(),
         profiles = profiles,
         workers = workers,
+        location = location,
         io = dispatcher,
     )
+
+    // ------------------------------------------------------------------ the location point
+
+    private val fix = LocationFix(-1.2864, 36.8172, 12.0, 1_000L)
+    private val intake = FundiIntake(AssessmentLanguage.ENGLISH, FundiPurpose.EVALUATE)
+
+    // Outdoors a fix can land before the intake is sent, when there is no session row to
+    // write it into. Held until there is, and written before the opening turn is stored,
+    // so that turn carries it to the server.
+    @Test
+    fun `a fix that arrives before the intake goes out with the opening turn`() = runTest {
+        val sessions = FakeSessions()
+        val gps = FakeLocation(available = true)
+        val model = model(sessions = sessions, location = gps)
+        advanceUntilIdle()
+        gps.result.complete(fix)
+        advanceUntilIdle()
+        assertTrue("nothing is written before the row exists", sessions.locations.isEmpty())
+
+        model.start(intake, "/tmp/whole.jpg")
+        advanceUntilIdle()
+
+        assertEquals(listOf(fix), sessions.locations)
+        assertEquals("written before the opening turn", 0, sessions.turnsBeforeLocation.single())
+    }
+
+    // Indoors it often lands minutes later; the row exists by then, and the next turn
+    // carries it.
+    @Test
+    fun `a fix that arrives after the intake is written once`() = runTest {
+        val sessions = FakeSessions()
+        val gps = FakeLocation(available = true)
+        val model = model(sessions = sessions, location = gps)
+        advanceUntilIdle()
+
+        model.start(intake, "/tmp/whole.jpg")
+        advanceUntilIdle()
+        assertTrue(sessions.locations.isEmpty())
+
+        gps.result.complete(fix)
+        advanceUntilIdle()
+
+        assertEquals(listOf(fix), sessions.locations)
+        assertEquals("one fix per assessment", 1, gps.captures)
+    }
+
+    // Switched off, unanswered, no permission, or location services off: the source says
+    // unavailable, and nothing is even started. No prompt, no point.
+    @Test
+    fun `nothing is captured when the source is unavailable`() = runTest {
+        val sessions = FakeSessions()
+        val gps = FakeLocation(available = false)
+        val model = model(sessions = sessions, location = gps)
+        advanceUntilIdle()
+
+        model.start(intake, "/tmp/whole.jpg")
+        advanceUntilIdle()
+
+        assertEquals(0, gps.captures)
+        assertTrue(sessions.locations.isEmpty())
+    }
+
+    // Reopening a finished assessment from Home must not record where it was read.
+    @Test
+    fun `reopening an assessment records no point`() = runTest {
+        val sessions = FakeSessions().apply { exists = true }
+        val gps = FakeLocation(available = true)
+        model(sessions = sessions, location = gps)
+        advanceUntilIdle()
+
+        assertEquals(0, gps.captures)
+    }
+
+    // A re-assessment is a new session on the same piece, so it gets its own point.
+    @Test
+    fun `a re-assessment records its own point`() = runTest {
+        val sessions = FakeSessions().apply { existingLabel = "Old stool" }
+        val gps = FakeLocation(available = true)
+        val model = model(sessions = sessions, pieceId = "p1", returning = true, location = gps)
+        advanceUntilIdle()
+        gps.result.complete(fix)
+
+        model.start(FundiIntake(AssessmentLanguage.ENGLISH, FundiPurpose.REEVALUATE), "/tmp/whole.jpg")
+        advanceUntilIdle()
+
+        assertEquals(1, gps.captures)
+        assertEquals(listOf("s1" to fix), sessions.locationsBySession)
+    }
+
+    // No fix in the window is not an error the maker sees.
+    @Test
+    fun `no fix records nothing and the assessment carries on`() = runTest {
+        val sessions = FakeSessions()
+        val gps = FakeLocation(available = true)
+        val model = model(sessions = sessions, location = gps)
+        advanceUntilIdle()
+        gps.result.complete(null)
+
+        model.start(intake, "/tmp/whole.jpg")
+        advanceUntilIdle()
+
+        assertTrue(sessions.locations.isEmpty())
+        assertEquals(1, sessions.userTurns.size)
+        assertNull(model.error.value)
+    }
+
+    /** A GPS whose one fix the test hands over when it chooses. */
+    private class FakeLocation(private val available: Boolean) : LocationSource {
+        val result = CompletableDeferred<LocationFix?>()
+        var captures = 0
+        override val isAvailable: Boolean get() = available
+        override suspend fun capture(): LocationFix? {
+            captures++
+            return result.await()
+        }
+    }
 
     // The name goes with the session row at creation, so the repository can decide
     // whether it names a new piece or renames an old one.
@@ -501,7 +621,9 @@ class AssessViewModelTest {
         override suspend fun setPieceLabel(pieceId: String, label: String?) = no()
         override suspend fun unsyncedPieceLabels() = no()
         override suspend fun markPieceLabelSynced(change: PieceLabelChange) = no()
-        override suspend fun sessionExists(sessionId: String) = false
+        /** Whether the assessment is already on the handset, as when reopened from Home. */
+        var exists = false
+        override suspend fun sessionExists(sessionId: String) = exists
         override suspend fun appendUserMessage(
             sessionId: String,
             text: String,
@@ -523,7 +645,14 @@ class AssessViewModelTest {
 
         private fun no(): Nothing = error("an assessment does not touch this")
 
-        override suspend fun recordLocation(sessionId: String, fix: LocationFix) = no()
+        val locationsBySession = mutableListOf<Pair<String, LocationFix>>()
+        val locations: List<LocationFix> get() = locationsBySession.map { it.second }
+        /** How many user turns were stored when each point was written. */
+        val turnsBeforeLocation = mutableListOf<Int>()
+        override suspend fun recordLocation(sessionId: String, fix: LocationFix) {
+            locationsBySession += sessionId to fix
+            turnsBeforeLocation += userTurns.size
+        }
         override suspend fun deleteMessage(messageId: String) = no()
         override suspend fun deleteSession(sessionId: String) = no()
         override suspend fun pruneOrphanImages() = no()

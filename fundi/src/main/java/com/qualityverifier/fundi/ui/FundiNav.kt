@@ -138,6 +138,10 @@ fun FundiNav() {
                 onConsent = model::answerConsent,
                 onLocate = model::locateShop,
                 onPermission = model::onPermission,
+                // Written straight to the preference rather than held with the profile:
+                // it is a setting on this phone, not part of what the server is sent, and
+                // a maker who answers and then skips setup has still answered.
+                assessLocation = container.locationPreference,
                 onNext = { navController.navigate(Routes.SETUP_TOOLS) },
                 // Skipping lands on home with no profile at all. The coaching then runs
                 // tool-blind, which is worse advice but not broken advice, and setup can

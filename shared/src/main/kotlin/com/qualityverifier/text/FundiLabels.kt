@@ -66,6 +66,17 @@ data class FundiLabels(
     val setupLocateFailed: String,
     val setupLocateNoPermission: String,
     val setupLocateRetry: String,
+    // ---- a point per assessment. One question, asked once: at setup, or on Home for a
+    // maker who never saw setup's. The same words in both places and in Settings, so the
+    // switch they find later is recognisably what they answered.
+    /** REVIEW CRITICAL: the consent question itself. */
+    val assessLocationQuestion: String,
+    /** Under the question and under the switch: what it is for and what it does not cover. */
+    val assessLocationHint: String,
+    val assessLocationYes: String,
+    val assessLocationNo: String,
+    /** The switch in Settings: the question, said as the setting it became. */
+    val assessLocationSwitch: String,
     val setupYears: String,
     val setupWorkers: String,
     val setupMakes: String,
@@ -82,10 +93,9 @@ data class FundiLabels(
     val setupSkip: String,
     val setupSaving: String,
     val setupFailed: String,
-    // ---- Settings. The screen is shared with Kagua and worded by AuthLabels; these are
-    // the three places where Kagua's sentence would be wrong here. See [onSettings].
-    /** Under the location switch. Says what the switch covers and what it does not. */
-    val settingsRecordLocationHint: String,
+    // ---- Settings. The screen is shared with Kagua and worded by AuthLabels; these and
+    // the location switch's two above are where Kagua's sentence would be wrong here.
+    // See [onSettings].
     /** REVIEW CRITICAL: what deleting the account removes, from anonymise_user (V23). */
     val settingsDeleteAccountBlurb: String,
     /** REVIEW CRITICAL: the irreversible confirmation. */
@@ -187,15 +197,18 @@ data class FundiLabels(
      * The settings screen's wording: [base] with Fundi Bora's sentences where Kagua's
      * would be wrong.
      *
-     * Kagua's location hint is about the shops a buyer assesses in and says nothing else is
-     * ever recorded, but a maker may already have recorded their shop at setup. Kagua's
+     * Kagua's location switch records "at the start of new evaluations" and its hint is
+     * about the shops a buyer assesses in and says nothing else is ever recorded; a maker
+     * assesses pieces, and may already have recorded their shop at setup. So the switch
+     * reads as the question the maker answered ([assessLocationQuestion]). Kagua's
      * deletion text names a business and says reports on the phone are deleted; a maker has
      * pieces and workers, whose names the server clears, and nothing on the phone is
      * deleted. Everything else (the password fields, sign-out) reads the same in both apps,
      * so it stays Kagua's and stays in one place.
      */
     fun onSettings(base: AuthLabels): AuthLabels = base.copy(
-        recordLocationHint = settingsRecordLocationHint,
+        recordLocationLabel = assessLocationSwitch,
+        recordLocationHint = assessLocationHint,
         deleteAccountBlurb = settingsDeleteAccountBlurb,
         deleteAccountConfirmBody = settingsDeleteAccountConfirmBody,
     )
@@ -243,7 +256,10 @@ data class FundiLabels(
             setupAtShopNo = "No",
             setupGpsQuestion = "Can we record a GPS point for your shop? It helps us " +
                 "understand where shops work and link you to opportunities near you. " +
-                "We record this one point, now, and nothing else.",
+                // Was "…now, and nothing else." until a point per assessment existed: the
+                // question below asks about those separately, and "nothing else" beside
+                // it would be false for a maker who says yes to both.
+                "This records one point for your shop, now.",
             setupGpsYes = "Yes, record it",
             setupGpsNo = "No thanks",
             setupLocating = "Finding your location",
@@ -253,6 +269,15 @@ data class FundiLabels(
             setupLocateNoPermission = "Location access is off for Fundi Bora, so nothing " +
                 "was recorded.",
             setupLocateRetry = "Try again",
+            assessLocationQuestion = "Can we record your phone's location each time you " +
+                "assess a piece?",
+            assessLocationHint = "We use this for research, to know where each " +
+                "assessment was made. Nothing is recorded at any other time, apart from " +
+                "your shop's location if you chose to record it. You can change this any " +
+                "time in Settings.",
+            assessLocationYes = "Yes, record it",
+            assessLocationNo = "No thanks",
+            assessLocationSwitch = "Record my phone's location each time I assess a piece.",
             setupYears = "Years in the trade",
             setupWorkers = "People working with you",
             setupMakes = "What you mostly make",
@@ -278,9 +303,6 @@ data class FundiLabels(
             setupSkip = "Skip for now",
             setupSaving = "Saving…",
             setupFailed = "Could not save that. Check your connection and try again.",
-            settingsRecordLocationHint = "We use this for research, to know where each " +
-                "assessment was made. Nothing is recorded at any other time, apart from " +
-                "your shop's location if you chose to record it during setup.",
             settingsDeleteAccountBlurb = "We remove your name, phone number, the locations " +
                 "we recorded, and the names you gave your pieces and workers from our " +
                 "records straight away, and you will not be able to sign in again.\n\nWe " +

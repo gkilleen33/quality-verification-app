@@ -41,6 +41,9 @@ import com.qualityverifier.domain.Worker
 import com.qualityverifier.domain.WorkerSlot
 import com.qualityverifier.fundi.ui.assess.WorkerPicker
 import com.qualityverifier.fundi.ui.fundiContainer
+import com.qualityverifier.fundi.ui.location.AssessmentLocationDialog
+import com.qualityverifier.fundi.ui.location.rememberAssessmentLocationAnswer
+import com.qualityverifier.text.FundiLabels
 import com.qualityverifier.text.UpdateLabels
 import com.qualityverifier.ui.update.UpdateBanner
 import java.text.SimpleDateFormat
@@ -83,6 +86,16 @@ fun HomeScreen(
     }
 
     var choosing by remember { mutableStateOf(pieces.isEmpty()) }
+
+    // Once, for a maker who reached Home without answering the location question: an
+    // install from before it existed, a skipped setup, or a sign-in on a new phone. Until
+    // they answer, assessments record no point (LocationPreference.records).
+    val locationPreference = container.locationPreference
+    var askLocation by remember { mutableStateOf(locationPreference.needsAnswer) }
+    val answerLocation = rememberAssessmentLocationAnswer(locationPreference) { askLocation = false }
+    if (askLocation) {
+        AssessmentLocationDialog(FundiLabels.ENGLISH, answerLocation)
+    }
 
     LazyColumn(
         // systemBarsPadding, because MainActivity draws edge to edge: without it the
