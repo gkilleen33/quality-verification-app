@@ -1,5 +1,6 @@
 package com.qualityverifier.server
 
+import com.qualityverifier.data.chat.AnthropicRequest
 import com.qualityverifier.data.prompts.PromptRepository
 import com.qualityverifier.domain.AppId
 import com.qualityverifier.domain.AppVersionHeaders
@@ -36,6 +37,10 @@ import io.ktor.http.contentType
 import io.ktor.serialization.kotlinx.json.json
 import io.ktor.server.testing.ApplicationTestBuilder
 import io.ktor.server.testing.testApplication
+import kotlinx.coroutines.runBlocking
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -334,6 +339,138 @@ class ChatRouteTest {
             assertEquals("the turn must still succeed", HttpStatusCode.OK, response.status)
         }
         assertTrue("nothing should have been stored: ${store.locations}", store.locations.isEmpty())
+    }
+
+    // ------------------------------------------------------------ photo metadata (V25)
+
+    /** A photo in a fresh blob store, so a turn naming it passes the missing-photo check. */
+    private fun storedPhoto(): Pair<BlobStore, String> {
+        val blobs = BlobStore(folder.newFolder())
+        val bytes = "a photograph of a chair leg".toByteArray()
+        val sha = BlobStore.hash(bytes)
+        runBlocking { blobs.put(sha, bytes) }
+        return blobs to sha
+    }
+
+    private fun cameraMeta() = buildJsonObject {
+        put("taken_at", "2026-11-10T14:03:22")
+        put("make", "samsung")
+        put("model", "SM-A145F")
+        put("iso", 200)
+        put("body_serial", "R58T90ABCDE")
+        put("gps_latitude", -1.2921)
+        put("gps_longitude", 36.8219)
+    }
+
+    @Test
+    fun `a photo's metadata reaches the store with its hash`() = testApplication {
+        val (blobs, sha) = storedPhoto()
+        val store = FakeChatStore()
+        val app = withChat(store, FakeClaude(ClaudeResult.Success("ok", TokenUsage(), "m")), blobs = blobs)
+
+        val response = app.post("/v1/chat") {
+            auth(); contentType(ContentType.Application.Json)
+            setBody(
+                request().copy(
+                    blobs = listOf(sha),
+                    // Upper case on the wire still names the same photo.
+                    photoMeta = buildJsonObject { put(sha.uppercase(), cameraMeta()) },
+                )
+            )
+        }
+
+        assertEquals(HttpStatusCode.OK, response.status)
+        assertEquals(mapOf(sha to cameraMeta()), store.sawPhotoMeta)
+    }
+
+    @Test
+    fun `a turn without metadata stores none`() = testApplication {
+        // Every v0.3.0 phone, and every turn with no photo.
+        val (blobs, sha) = storedPhoto()
+        val store = FakeChatStore()
+        val app = withChat(store, FakeClaude(ClaudeResult.Success("ok", TokenUsage(), "m")), blobs = blobs)
+
+        val response = app.post("/v1/chat") {
+            auth(); contentType(ContentType.Application.Json)
+            setBody(request().copy(blobs = listOf(sha)))
+        }
+
+        assertEquals(HttpStatusCode.OK, response.status)
+        assertEquals(emptyMap<String, JsonObject>(), store.sawPhotoMeta)
+    }
+
+    @Test
+    fun `bad metadata is dropped and the turn goes ahead`() = testApplication {
+        // Optional data on a turn somebody spent minutes on, as with the location: no shape
+        // of photo_meta may cost the assessment.
+        val (blobs, sha) = storedPhoto()
+        val store = FakeChatStore()
+        val claude = FakeClaude(ClaudeResult.Success("ok", TokenUsage(), "m"))
+        val app = withChat(store, claude, blobs = blobs)
+        val other = "b".repeat(64)
+        val cases = listOf(
+            "\"nonsense\"",                                          // not an object
+            "[1,2,3]",                                               // not an object either
+            """{"$sha":"samsung"}""",                                // a photo's entry not an object
+            """{"$sha":{"maker_note":"opaque"}}""",                  // only unknown keys
+            """{"$sha":{"iso":"two hundred"}}""",                    // the wrong kind
+            """{"$sha":{"artist":"${"x".repeat(5000)}"}}""",         // over the size bound
+            """{"$other":{"make":"samsung"}}""",                     // a photo not in this turn
+        )
+
+        for (meta in cases) {
+            val response = app.post("/v1/chat") {
+                auth(); contentType(ContentType.Application.Json)
+                setBody(TextContent(turnJson(sha, meta), ContentType.Application.Json))
+            }
+            assertEquals("photo_meta = ${meta.take(40)}", HttpStatusCode.OK, response.status)
+            assertEquals("photo_meta = ${meta.take(40)}", emptyMap<String, JsonObject>(), store.sawPhotoMeta)
+        }
+        assertEquals(cases.size, claude.calls)
+    }
+
+    @Test
+    fun `the request to Claude is the same bytes with and without metadata`() = testApplication {
+        // Prompt caching matches the request prefix byte for byte, and a broken cache raises
+        // no error. The metadata goes to the attachment row and nowhere else, so the same
+        // turn assembles to the same request whether or not the phone sent any.
+        val (blobs, sha) = storedPhoto()
+        val store = FakeChatStore(echoTurns = true)
+        val claude = FakeClaude(ClaudeResult.Success("ok", TokenUsage(), "m"))
+        val app = withChat(store, claude, blobs = blobs)
+        val turn = request().copy(
+            sessionId = "6f1c1c1e-0000-4000-8000-000000000001",
+            messageId = "6f1c1c1e-0000-4000-8000-000000000002",
+            blobs = listOf(sha),
+        )
+
+        app.post("/v1/chat") {
+            auth(); contentType(ContentType.Application.Json)
+            setBody(turn)
+        }
+        val withoutMeta = claude.lastRequestJson
+        app.post("/v1/chat") {
+            auth(); contentType(ContentType.Application.Json)
+            setBody(turn.copy(photoMeta = buildJsonObject { put(sha, cameraMeta()) }))
+        }
+        val withMeta = claude.lastRequestJson
+
+        assertEquals(cameraMeta(), store.sawPhotoMeta?.get(sha))
+        assertTrue("the photo must be in the request: $withoutMeta", withoutMeta.contains("base64:"))
+        assertEquals(withoutMeta, withMeta)
+        listOf("SM-A145F", "R58T90ABCDE", "36.8219", "2026-11-10T14").forEach {
+            assertTrue("$it reached the request", !withMeta.contains(it))
+        }
+    }
+
+    @Test
+    fun `an attachment carries only what a request is built from`() {
+        // The domain type every request is assembled from. A field added here is a field
+        // that can reach Claude; metadata belongs in the attachment row, not in this.
+        val fields = Attachment::class.java.declaredFields
+            .filterNot { java.lang.reflect.Modifier.isStatic(it.modifiers) }
+            .map { it.name }.toSet()
+        assertEquals(setOf("id", "path", "mimeType"), fields)
     }
 
     @Test
@@ -1034,6 +1171,7 @@ class ChatRouteTest {
         /** Which app the signed-in account belongs to. Kagua unless a test says otherwise. */
         accountAudience: Audience = Audience.BUYER,
         appVersions: AppVersions = AppVersions.UNCONFIGURED,
+        blobs: BlobStore = BlobStore(folder.newFolder()),
     ) = run {
         application {
             module(
@@ -1041,7 +1179,7 @@ class ChatRouteTest {
                 database = null,
                 auth = Auth(AccountStore(accountAudience), AccessTokens(KEY)),
                 chat = Chat(
-                    store, BlobStore(folder.newFolder()), claude, prompts, NoFeedback,
+                    store, blobs, claude, prompts, NoFeedback,
                     dailyAssessmentLimit = dailyLimit,
                     testerDailyAssessmentLimit = testerLimit,
                     fundiDailyAssessmentLimit = fundiLimit,
@@ -1056,6 +1194,13 @@ class ChatRouteTest {
     private fun requestJsonWith(extra: String) = """
         {"session_id":"${UUID.randomUUID()}","item_type_id":"wooden-table",
          "message_id":"${UUID.randomUUID()}","text":"hello","blobs":[]$extra}
+    """.trimIndent()
+
+    /** A valid turn carrying the photo [sha], with [photoMeta] spliced in as raw JSON. */
+    private fun turnJson(sha: String, photoMeta: String) = """
+        {"session_id":"${UUID.randomUUID()}","item_type_id":"wooden-table",
+         "message_id":"${UUID.randomUUID()}","text":"hello","blobs":["$sha"],
+         "photo_meta":$photoMeta}
     """.trimIndent()
 
     private class RecordingPrompts : PromptRepository {
@@ -1086,6 +1231,14 @@ class ChatRouteTest {
         var lastHistoryText: String = ""
             private set
 
+        /**
+         * The request AnthropicClient would send for the last call, as JSON text: the same
+         * assembly and the same serialiser, with base64 replaced by a length so the text
+         * stays short. What prompt caching matches against, byte for byte.
+         */
+        var lastRequestJson: String = ""
+            private set
+
         override suspend fun send(
             systemPrompt: String,
             history: List<ChatMessage>,
@@ -1096,6 +1249,14 @@ class ChatRouteTest {
             lastSystemPrompt = systemPrompt
             lastHistoryText = history.joinToString("\n") { it.text }
             lastPhotos = photos
+            lastRequestJson = AnthropicRequest.json.encodeToString(
+                AnthropicRequest.build(
+                    systemPrompt = systemPrompt,
+                    history = history,
+                    imageBytes = imageBytes,
+                    encodeBase64 = { bytes -> "base64:${bytes.size}:${bytes.contentHashCode()}" },
+                ),
+            )
             return result
         }
     }
@@ -1105,6 +1266,8 @@ class ChatRouteTest {
         private val turnAlreadyStored: Boolean = false,
         private val storedReply: StoredReply? = null,
         private val storedHistory: List<ChatMessage> = listOf(ChatMessage("m", Role.USER, "I am buying this.")),
+        /** Serve the posted turn back as the history, as the real store would. */
+        private val echoTurns: Boolean = false,
     ) : ChatStore {
         val savedDigests = java.util.concurrent.CopyOnWriteArrayList<com.qualityverifier.server.db.Digest>()
         var digestUsageRows = 0
@@ -1188,16 +1351,40 @@ class ChatRouteTest {
 
         override suspend fun appendUserTurn(
             sessionId: String, messageId: String, text: String, blobHashes: List<String>,
-            composed: Boolean,
-        ) = (!turnAlreadyStored).also { sawComposed = composed }
+            composed: Boolean, photoMeta: Map<String, JsonObject>,
+        ) = (!turnAlreadyStored).also {
+            sawComposed = composed
+            sawPhotoMeta = photoMeta
+            lastTurn = ChatMessage(messageId, Role.USER, text) to blobHashes
+        }
 
         /** Whether the route marked the stored turn as the app's own. */
         var sawComposed: Boolean? = null
             private set
 
+        /** The checked metadata the route handed down, by hash. */
+        var sawPhotoMeta: Map<String, JsonObject>? = null
+            private set
+
+        private var lastTurn: Pair<ChatMessage, List<String>>? = null
+
         override suspend fun replyAfter(sessionId: String, userMessageId: String) = storedReply
 
-        override suspend fun history(sessionId: String, blobPath: (String) -> String) = storedHistory
+        /**
+         * With [echoTurns], the stored turn as PostgresChatStore.history returns it: the
+         * message and one Attachment per hash, built from the columns that query selects.
+         * Ids are fixed per position, where Postgres makes random ones, so two runs compare.
+         */
+        override suspend fun history(sessionId: String, blobPath: (String) -> String): List<ChatMessage> {
+            val (message, hashes) = lastTurn?.takeIf { echoTurns } ?: return storedHistory
+            return listOf(
+                message.copy(
+                    attachments = hashes.mapIndexed { index, sha ->
+                        Attachment(id = "attachment-$index", path = blobPath(sha.lowercase()), mimeType = "image/jpeg")
+                    },
+                ),
+            )
+        }
 
         override suspend fun appendAssistantTurn(
             sessionId: String, text: String, preview: String,

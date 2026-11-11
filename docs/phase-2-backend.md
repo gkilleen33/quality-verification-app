@@ -570,6 +570,20 @@ unsafe old protocol, or a server change old apps cannot use forces it up.
 V24 adds `sessions.app_version_code`, written once from the header when a session is
 created, and null for v0.3.0 and older. The data API reports it on each assessment.
 
+## Photo metadata (v0.4.0)
+
+The phone reads chosen EXIF fields from each photo before re-encoding it (shared
+`PhotoMeta.FIELDS`; GPS only while the location switch is on; never MakerNote or the
+thumbnail), keeps them beside the photo as `<name>.meta.json` until the photo is deleted,
+and sends them in the turn as `photo_meta`, an object keyed by blob hash. The field is
+optional, so older apps are unaffected. The route reads it as any JSON and checks it with
+`PhotoMeta.check`: unknown keys, values of the wrong kind, and objects over 4 KB are dropped
+and their keys logged, and the turn always goes ahead. V25 adds `attachments.photo_meta
+jsonb`, written with the attachment row; `anonymise_user` clears it. The metadata never
+reaches Claude: `ChatStore.history`, the only source of a request's photos, does not select
+the column, and `ChatRouteTest` checks the request is the same bytes with and without it.
+The data API returns it per photo on `GET /api/v1/assessments/{id}` only.
+
 ## Note on egress
 
 History is re-sent on every turn, so the same photos travel upstream several times per

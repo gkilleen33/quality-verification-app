@@ -14,6 +14,8 @@ import io.ktor.http.HttpStatusCode
 import io.ktor.server.testing.ApplicationTestBuilder
 import io.ktor.server.testing.testApplication
 import kotlinx.coroutines.runBlocking
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Rule
@@ -211,6 +213,40 @@ class ApiRouteTest {
         assertTrue(body, body.contains("I am buying this."))
         // The critique rides along, keyed on the same session id that is the merge key.
         assertTrue(body, body.contains("\"advice_stars\":5"))
+    }
+
+    @Test
+    fun `an assessment gives each photo's camera metadata beside its hash, and the list does not`() = testApplication {
+        // V25. Entry n describes photo n; null is a photo sent without any, and has to arrive
+        // as an explicit null so the positions stay aligned.
+        val keys = FakeApiKeyStore()
+        val meta = buildJsonObject {
+            put("make", "samsung")
+            put("gps_latitude", -1.2921)
+            put("gps_longitude", 36.8219)
+        }
+        val detail = ApiAssessmentDetail(
+            assessment = API_ASSESSMENT,
+            messages = listOf(
+                ApiMessage(
+                    "USER", "Here they are.", 1L, listOf("aa".repeat(32), "bb".repeat(32)),
+                    photoMeta = listOf(meta, null),
+                ),
+            ),
+            feedback = null,
+        )
+        val store = FakeApiStore(assessments = listOf(API_ASSESSMENT), detail = detail)
+        val app = withApi(keys = keys, store = store)
+
+        val one = app.get("/api/v1/assessments/${API_ASSESSMENT.id}") { key(keys.anyKey()) }.bodyAsText()
+        val list = app.get("/api/v1/assessments") { key(keys.anyKey()) }.bodyAsText()
+
+        assertTrue(
+            one,
+            one.contains("\"photo_meta\":[{\"make\":\"samsung\",\"gps_latitude\":-1.2921,\"gps_longitude\":36.8219},null]"),
+        )
+        assertTrue("the list route must not carry metadata: $list", !list.contains("photo_meta"))
+        assertTrue(list, !list.contains("samsung"))
     }
 
     @Test

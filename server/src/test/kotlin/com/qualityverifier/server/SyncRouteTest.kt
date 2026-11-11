@@ -642,7 +642,7 @@ class SyncRouteTest {
 
         override suspend fun appendUserTurn(
             sessionId: String, messageId: String, text: String, blobHashes: List<String>,
-            composed: Boolean,
+            composed: Boolean, photoMeta: Map<String, kotlinx.serialization.json.JsonObject>,
         ) = true
 
         /** What the last replacement carried, by session; null when refused. */

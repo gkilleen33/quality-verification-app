@@ -257,12 +257,23 @@ private suspend fun RoutingContext.assessmentTurn(
                     .onFailure { log.warn("Could not record the assessment location", it) }
             }
 
+            // Checked, never refused: a bad value costs that value, and the turn goes ahead.
+            // Only the keys are logged; the values can be a GPS point or an owner's name.
+            val photoMeta = request.photoMetaByHash()
+            if (photoMeta.dropped.isNotEmpty()) {
+                log.warn(
+                    "Dropped photo metadata {} on message {}",
+                    photoMeta.dropped.distinct().take(25), request.messageId,
+                )
+            }
+
             val isNewTurn = store.appendUserTurn(
                 sessionId = request.sessionId,
                 messageId = request.messageId,
                 text = request.text,
                 blobHashes = request.blobs,
                 composed = request.composed,
+                photoMeta = photoMeta.byHash,
             )
             if (!isNewTurn) {
                 // The phone is retrying a turn we already have. If the reply is stored,

@@ -9,6 +9,7 @@ import com.qualityverifier.domain.Role
 import com.qualityverifier.server.chat.TokenUsage
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import kotlinx.serialization.json.JsonObject
 import java.sql.Connection
 import javax.sql.DataSource
 import org.slf4j.LoggerFactory
@@ -158,6 +159,11 @@ interface ChatStore {
          * see V18 for why the phone's own copy of the mark is not enough.
          */
         composed: Boolean = false,
+        /**
+         * Camera metadata by lowercase hash, already checked against PhotoMeta.FIELDS.
+         * Written to each attachment row of that hash (V25); a hash with none gets null.
+         */
+        photoMeta: Map<String, JsonObject> = emptyMap(),
     ): Boolean
 
     suspend fun replyAfter(sessionId: String, userMessageId: String): StoredReply?
@@ -516,6 +522,7 @@ class PostgresChatStore(private val dataSource: DataSource) : ChatStore {
         text: String,
         blobHashes: List<String>,
         composed: Boolean,
+        photoMeta: Map<String, JsonObject>,
     ): Boolean = tx { connection ->
         val inserted = connection.prepareStatement(
             """
@@ -536,15 +543,19 @@ class PostgresChatStore(private val dataSource: DataSource) : ChatStore {
         if (!inserted) return@tx false
 
         blobHashes.forEachIndexed { index, sha ->
+            val hash = sha.lowercase()
             connection.prepareStatement(
                 """
-                insert into attachments (id, message_id, sha256, mime_type, ordinal)
-                values (gen_random_uuid(), ?::uuid, ?, 'image/jpeg', ?)
+                insert into attachments (id, message_id, sha256, mime_type, ordinal, photo_meta)
+                values (gen_random_uuid(), ?::uuid, ?, 'image/jpeg', ?, ?::jsonb)
                 """.trimIndent()
             ).use { statement ->
                 statement.setString(1, messageId)
-                statement.setString(2, sha.lowercase())
+                statement.setString(2, hash)
                 statement.setInt(3, index)
+                // Text cast to jsonb by Postgres. Only ever an object PhotoMeta.check rebuilt,
+                // so nothing here can make the cast fail and take the turn with it.
+                statement.setString(4, photoMeta[hash]?.toString())
                 statement.executeUpdate()
             }
         }
@@ -580,6 +591,10 @@ class PostgresChatStore(private val dataSource: DataSource) : ChatStore {
      * attachment order is the order the customer took the photos, which the protocols
      * refer to by position. Both have to be reproducible turn after turn or the cached
      * prefix stops matching.
+     *
+     * The attachment query names its four columns and never `photo_meta` (V25). This is the
+     * only way a photo reaches a request to Claude, so a photo's camera metadata cannot,
+     * and the request is the same bytes whether or not the phone sent any.
      */
     override suspend fun history(sessionId: String, blobPath: (String) -> String): List<ChatMessage> =
         withContext(Dispatchers.IO) {

@@ -104,6 +104,8 @@ class MigrationsTest {
         "pieces" to "label",
         // V23: a worker's nickname.
         "workers" to "name",
+        // V25: a photo's GPS point, serial numbers, and owner and artist names.
+        "attachments" to "photo_meta",
     )
 
     @Test

@@ -44,7 +44,7 @@ milliseconds throughout.
 |---|---|
 | `GET /users` | accounts, with phone, name, business, latitude/longitude and accuracy |
 | `GET /assessments` | assessments, newest last, each with the `app_version_code` that started it. Filters: `user`, `item`, `testers=1`, `updated_since` |
-| `GET /assessments/{id}` | one assessment with its messages, photo hashes in order, and the evaluator's critique if there is one |
+| `GET /assessments/{id}` | one assessment with its messages, photo hashes in order, each photo's camera metadata, and the evaluator's critique if there is one |
 | `GET /tester-feedback` | every evaluator critique, keyed on `session_id` |
 | `GET /photos/{sha256}` | the JPEG bytes |
 
@@ -75,6 +75,30 @@ refer to it — deduplicate on the hash and you will not download it twice.
 A hash that no assessment refers to returns 404 even if the file is on disk. That is
 deliberate: the path parameter becomes a filename, so "any 64 hex characters" would
 otherwise be a request for any file in the blob directory.
+
+### Camera metadata
+
+From v0.4.0 the phone reads chosen EXIF fields from each photo before it shrinks and
+re-encodes it, and the uploaded JPEG carries none. The fields are stored beside the photo
+(V25) and returned only by `GET /assessments/{id}`, as `messages[].photo_meta`: a list in
+the same order as `messages[].photos`, so entry n describes photo n. An entry is `null` for
+a photo sent without metadata, which is every photo from v0.3.0 or older and every photo of
+a deleted account. Within an entry, a key the camera did not fill is absent.
+
+| Key | Meaning |
+|---|---|
+| `taken_at`, `taken_at_offset` | when the photo was taken, by the camera's clock (`2026-11-10T14:03:22`), and its offset from UTC (`+03:00`) if recorded |
+| `make`, `model` | the phone |
+| `exposure_time_s`, `f_number`, `iso`, `flash`, `focal_length_mm`, `focal_length_35mm`, `white_balance` | camera settings. `flash` is the EXIF bit field (bit 0: fired); `white_balance` is 0 automatic, 1 manual |
+| `lens_make`, `lens_model`, `lens_specification` | the lens; the specification is up to four numbers: shortest and longest focal length, then the smallest F-number at each |
+| `body_serial`, `lens_serial`, `image_unique_id` | identifiers |
+| `owner_name`, `artist` | names the phone's owner set in the camera |
+| `original_width`, `original_height` | the photo's size before shrinking, upright |
+| `gps_latitude`, `gps_longitude`, `gps_altitude_m`, `gps_time` | the camera's GPS (`gps_time` is UTC), only while the app's location switch was on |
+
+Serial numbers, the unique ID, owner and artist names, and GPS identify a person or a
+handset: store them with the restricted identifiers. They are not the assessment's location
+(that is the session's own point), and many phones fill few of these fields.
 
 ## Joining it together
 

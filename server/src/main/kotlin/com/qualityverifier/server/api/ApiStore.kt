@@ -2,6 +2,9 @@ package com.qualityverifier.server.api
 
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.jsonObject
 import java.sql.ResultSet
 import javax.sql.DataSource
 
@@ -139,6 +142,12 @@ class PostgresApiStore(private val dataSource: DataSource) : ApiStore {
                        (select array_agg(a.sha256 order by a.ordinal, a.id)
                           from attachments a where a.message_id = m.id),
                        '{}'
+                   ),
+                   -- Same order as the hashes, so entry n describes photo n.
+                   coalesce(
+                       (select array_agg(a.photo_meta::text order by a.ordinal, a.id)
+                          from attachments a where a.message_id = m.id),
+                       '{}'
                    )
               from messages m
              where m.session_id = ?::uuid
@@ -151,11 +160,14 @@ class PostgresApiStore(private val dataSource: DataSource) : ApiStore {
                 while (rows.next()) {
                     @Suppress("UNCHECKED_CAST")
                     val photos = (rows.getArray(4).array as Array<String>).toList()
+                    @Suppress("UNCHECKED_CAST")
+                    val meta = (rows.getArray(5).array as Array<String?>).map { photoMetaOf(it) }
                     out += ApiMessage(
                         role = rows.getString(1),
                         text = rows.getString(2),
                         createdAt = rows.getLong(3),
                         photos = photos,
+                        photoMeta = meta,
                     )
                 }
                 out
@@ -230,6 +242,14 @@ class PostgresApiStore(private val dataSource: DataSource) : ApiStore {
         itemQuality = getInt(5),
         extraFeedback = getString(6),
     )
+
+    /**
+     * One stored `photo_meta`, or null. A value that does not read as an object (V25's CHECK
+     * says it cannot happen) is reported as null rather than failing the whole assessment.
+     */
+    private fun photoMetaOf(text: String?): JsonObject? = text?.let {
+        runCatching { Json.parseToJsonElement(it).jsonObject }.getOrNull()
+    }
 
     /** getDouble returns 0.0 for SQL null, which would put a workshop off the Gulf of Guinea. */
     private fun ResultSet.nullableDouble(index: Int): Double? {

@@ -2,6 +2,7 @@ package com.qualityverifier.server.api
 
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.JsonObject
 
 /**
  * What the read-only API returns.
@@ -99,6 +100,16 @@ data class ApiMessage(
     @SerialName("created_at") val createdAt: Long,
     /** SHA-256 hashes, in the order the customer took them. Fetch with /api/v1/photos. */
     val photos: List<String>,
+    /**
+     * Each photo's camera metadata (V25), in the same order as [photos]: the first entry
+     * belongs to the first hash. Null for a photo sent without any, which is every photo
+     * from v0.3.0 or older and every photo of a deleted account. Keys are
+     * `PhotoMeta.FIELDS`; a key the camera did not fill is absent.
+     *
+     * A list beside [photos] rather than objects in its place, so a consumer reading the
+     * hashes is unchanged. On this route only: the assessment list carries no messages.
+     */
+    @SerialName("photo_meta") val photoMeta: List<JsonObject?> = emptyList(),
 )
 
 @Serializable
