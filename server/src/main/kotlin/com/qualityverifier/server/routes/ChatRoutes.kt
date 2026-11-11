@@ -3,7 +3,9 @@ package com.qualityverifier.server.routes
 import com.qualityverifier.data.prompts.PromptRepository
 import com.qualityverifier.domain.AppVersionHeaders
 import com.qualityverifier.domain.Audience
+import com.qualityverifier.domain.ChatMessage
 import com.qualityverifier.domain.ItemType
+import com.qualityverifier.domain.Role
 import com.qualityverifier.server.blobs.BlobStore
 import com.qualityverifier.server.chat.ClaudeClient
 import com.qualityverifier.server.chat.ClaudeResult
@@ -13,6 +15,8 @@ import com.qualityverifier.server.chat.UpstreamError
 import com.qualityverifier.server.db.AuthStore
 import com.qualityverifier.server.db.ChatStore
 import com.qualityverifier.server.db.SessionAccess
+import com.qualityverifier.text.AssistantContent
+import com.qualityverifier.text.fundiDefectCount
 import com.qualityverifier.text.markdownToPlainText
 import com.qualityverifier.text.parseAssistantContent
 import io.ktor.http.HttpStatusCode
@@ -311,10 +315,13 @@ private suspend fun RoutingContext.assessmentTurn(
                             ?: markdownToPlainText(parsed.prose.ifBlank { result.text }),
                         verdictLevelId = parsed.verdict?.level?.id,
                         verdictLanguage = parsed.verdict?.language,
-                        // Already parsed, and until now thrown away. Null when there is
-                        // no verdict, which is not the same as a verdict that found
-                        // nothing wrong — see V15.
-                        defectCount = parsed.verdict?.defects?.size,
+                        // Null when there is no verdict, which is not the same as a
+                        // verdict that found nothing wrong — see V15.
+                        defectCount = when (audience) {
+                            // Kagua has no diagnosis; its verdict's defects are its list.
+                            Audience.BUYER -> parsed.verdict?.defects?.size
+                            Audience.FUNDI -> fundiCountAfter(parsed, history)
+                        },
                     )
                     // The route's audience, so spend splits by app: the column defaults to
                     // buyer, and a Fundi Bora turn billed as Kagua's raises no error.
@@ -381,6 +388,26 @@ private suspend fun RoutingContext.requireAudience(
     log.warn("Account {} ({}) tried to use the {} assessment endpoint", userId, actual, audience)
     call.respond(HttpStatusCode.Forbidden, ErrorResponse("wrong_app"))
     return false
+}
+
+/**
+ * Fundi Bora's defect count once [reply] is stored, or null to leave the session's alone.
+ *
+ * The count is the problems in the session's newest diagnosis, read with its newest
+ * verdict ([fundiDefectCount]), so a follow-up that resends one block and not the other
+ * still counts right. The earlier replies come from [history], the stored conversation
+ * this turn was answered from; the server keeps no other copy of the newest diagnosis.
+ *
+ * A reply with neither block changes nothing and is not worth parsing the session for.
+ * One with a diagnosis and no verdict gives a count only when an earlier reply had a
+ * verdict, and the store writes it only over a verdict already recorded.
+ */
+private fun fundiCountAfter(reply: AssistantContent, history: List<ChatMessage>): Int? {
+    if (reply.verdict == null && reply.diagnosis == null && !reply.cleanDiagnosis) return null
+    val earlier = history.asReversed()
+        .filter { it.role == Role.ASSISTANT }
+        .map { parseAssistantContent(it.text) }
+    return fundiDefectCount(listOf(reply) + earlier)
 }
 
 private fun sha256Of(value: String): String =

@@ -36,6 +36,13 @@ data class AssistantContent(
      */
     val diagnosis: Diagnosis? = null,
     val fixPlan: FixPlan? = null,
+    /**
+     * True when the reply sent a diagnosis that parsed and found nothing: no findings and
+     * no question. [diagnosis] is null for it, since it has nothing to draw, but it is
+     * still the session's newest diagnosis, and a count read from an older one would
+     * bring back problems the model has since cleared. See [fundiDefectCount].
+     */
+    val cleanDiagnosis: Boolean = false,
 ) {
     /**
      * What to put in the message bubble.
@@ -208,6 +215,7 @@ fun parseAssistantContent(text: String): AssistantContent {
         plan = plan?.takeIf { it.isRunnable },
         diagnosis = diagnosis?.takeIf { it.isRenderable },
         fixPlan = fixPlan?.takeIf { it.isRunnable },
+        cleanDiagnosis = diagnosis?.isRenderable == false,
     )
 }
 

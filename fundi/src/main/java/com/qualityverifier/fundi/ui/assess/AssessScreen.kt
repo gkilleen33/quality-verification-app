@@ -46,6 +46,7 @@ import com.qualityverifier.domain.WorkerSlot
 import com.qualityverifier.fundi.ui.coach.DiagnosisCard
 import com.qualityverifier.fundi.ui.coach.FixPlanCard
 import com.qualityverifier.fundi.ui.coach.VerdictCard
+import com.qualityverifier.fundi.ui.coach.verdictCardProblems
 import com.qualityverifier.fundi.ui.fundiContainer
 import com.qualityverifier.text.FundiLabels
 import com.qualityverifier.text.ReportLabels
@@ -401,8 +402,8 @@ private fun AssistantTurn(message: ChatMessage, labels: FundiLabels, reportLabel
         }
         // A verdict means a full assessment; drawn first because it is the answer the
         // maker came for.
-        content.verdict?.let { VerdictCard(it, reportLabels) }
-        content.diagnosis?.let { DiagnosisCard(it, labels, reportLabels::severity) }
+        content.verdict?.let { VerdictCard(it, verdictCardProblems(content), reportLabels) }
+        content.diagnosis?.let { DiagnosisCard(it, labels, reportLabels) }
         content.fixPlan?.let { FixPlanCard(it, labels) }
     }
 }

@@ -21,11 +21,14 @@ import com.qualityverifier.domain.Diagnosis
 import com.qualityverifier.domain.Finding
 import com.qualityverifier.domain.FixPlan
 import com.qualityverifier.domain.FixStage
+import com.qualityverifier.domain.Problem
 import com.qualityverifier.domain.Severity
 import com.qualityverifier.domain.ToolSuggestion
 import com.qualityverifier.domain.Verdict
+import com.qualityverifier.text.AssistantContent
 import com.qualityverifier.text.FundiLabels
 import com.qualityverifier.text.ReportLabels
+import com.qualityverifier.text.problemsOf
 import com.qualityverifier.ui.theme.verdictColors
 
 /**
@@ -45,13 +48,14 @@ fun DiagnosisCard(
     diagnosis: Diagnosis,
     labels: FundiLabels,
     /**
-     * The word for a severity, from [com.qualityverifier.text.ReportLabels].
+     * The words for a severity and for a problem's consequence, from Kagua's labels.
      *
      * Passed in rather than duplicated into FundiLabels: a defect the buyer's app calls
      * "Serious" and the maker's app calls something else is one concept with two names,
-     * and no analysis spanning both apps could join them.
+     * and no analysis spanning both apps could join them. The same holds for "What I
+     * see", which the customer report will print under the same problem.
      */
-    severityName: (Severity) -> String,
+    reportLabels: ReportLabels,
     modifier: Modifier = Modifier,
 ) {
     Card(
@@ -78,7 +82,7 @@ fun DiagnosisCard(
             // chooses what to work on; the fix plan below is for the first.
             diagnosis.findings.filter { it.title.isNotBlank() }.forEachIndexed { index, finding ->
                 if (index > 0) HorizontalDivider(Modifier.padding(vertical = 4.dp))
-                FindingDetail(finding, labels, severityName)
+                FindingDetail(finding, labels, reportLabels)
             }
 
             if (diagnosis.awaitingCheck) {
@@ -93,7 +97,7 @@ fun DiagnosisCard(
 private fun FindingDetail(
     finding: Finding,
     labels: FundiLabels,
-    severityName: (Severity) -> String,
+    reportLabels: ReportLabels,
 ) {
     Row(
         Modifier.fillMaxWidth(),
@@ -104,7 +108,7 @@ private fun FindingDetail(
             style = MaterialTheme.typography.titleMedium,
             modifier = Modifier.weight(1f),
         )
-        SeverityTag(finding.severity, severityName)
+        SeverityTag(finding.severity, reportLabels::severity)
     }
 
     // The chain the whole card exists for: observation, then the step in the making, then
@@ -129,6 +133,13 @@ private fun FindingDetail(
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
     }
+
+    // The consequence, for replies that write each problem once: the finding carries it,
+    // where it used to be repeated in a verdict defect the phone only ever drew the title
+    // of. Blank on every finding in the older shape, so those render exactly as they did.
+    Field(reportLabels.whatISeeHeading, finding.whatISee)
+    Field(reportLabels.whatItMeansHeading, finding.whatItMeans)
+    Field(reportLabels.whatToDoHeading, finding.whatToDo)
 }
 
 /**
@@ -147,6 +158,8 @@ private fun FindingDetail(
 @Composable
 fun VerdictCard(
     verdict: Verdict,
+    /** From [verdictCardProblems]; the verdict's own defects are empty in one-list replies. */
+    problems: List<Problem>,
     labels: ReportLabels,
     modifier: Modifier = Modifier,
 ) {
@@ -180,11 +193,11 @@ fun VerdictCard(
                     color = colours.onContainer,
                 )
             }
-            verdict.defects.filter { it.title.isNotBlank() }.forEach { defect ->
+            problems.forEach { problem ->
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text("•", color = colours.onContainer)
                     Text(
-                        defect.title,
+                        problem.title,
                         style = MaterialTheme.typography.bodyMedium,
                         color = colours.onContainer,
                     )
@@ -193,6 +206,17 @@ fun VerdictCard(
         }
     }
 }
+
+/**
+ * The problems the verdict card lists for one reply: their titles, one line each.
+ *
+ * Read through [problemsOf] rather than from the verdict's defects. Replies that write each
+ * problem once leave the defects empty and put the problems in the diagnosis, and a card
+ * reading only the defects would show a verdict with nothing wrong. Older replies list the
+ * defects, which is what this returns for them. Untitled ones have nothing to show.
+ */
+internal fun verdictCardProblems(content: AssistantContent): List<Problem> =
+    problemsOf(content).filter { it.title.isNotBlank() }
 
 @Composable
 fun FixPlanCard(

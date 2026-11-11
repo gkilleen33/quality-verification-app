@@ -620,6 +620,132 @@ class ChatRouteTest {
         assertEquals("Imara kwa ujumla", store.lastPreview)
     }
 
+    // ----------------------------------------------------- the defect count (V15)
+
+    // Fundi Bora's replies come in two shapes: today's, where every problem is a finding
+    // and again a verdict defect, and one list, where the findings carry the consequence
+    // and the verdict lists no defects. The count is the problems of the session's newest
+    // diagnosis read with its newest verdict, so both shapes and both kinds of follow-up
+    // count right. Kagua's is the verdict's defects, untouched.
+
+    @Test
+    fun `Kagua's count is its verdict's defects`() = testApplication {
+        val store = FakeChatStore()
+        val app = withChat(store, FakeClaude(ClaudeResult.Success(todayShape, TokenUsage(), null)))
+
+        app.post("/v1/chat") { auth(); contentType(ContentType.Application.Json); setBody(request()) }
+
+        assertEquals(2, store.lastDefectCount)
+    }
+
+    @Test
+    fun `Fundi Bora's count in today's shape is the verdict's defects, as before`() = testApplication {
+        // Three findings beside two defects, so a count of the findings would show.
+        val store = FakeChatStore()
+        val app = fundiChat(store, todayShape)
+
+        app.post("/v1/fundi/chat") { auth(); contentType(ContentType.Application.Json); setBody(request()) }
+
+        assertEquals("fair", store.lastVerdictLevel)
+        assertEquals(2, store.lastDefectCount)
+    }
+
+    @Test
+    fun `Fundi Bora's count in the one-list shape is the findings`() = testApplication {
+        val store = FakeChatStore()
+        val app = fundiChat(store, oneListShape)
+
+        app.post("/v1/fundi/chat") { auth(); contentType(ContentType.Application.Json); setBody(request()) }
+
+        assertEquals("fair", store.lastVerdictLevel)
+        assertEquals(2, store.lastDefectCount)
+    }
+
+    @Test
+    fun `a follow-up that resends only the verdict keeps the count of the diagnosis before it`() = testApplication {
+        val store = FakeChatStore(storedHistory = earlierEvaluation())
+        val app = fundiChat(store, "```qv-verdict\n{\"verdict\":\"fair\",\"headline\":\"Still the joint\"}\n```")
+
+        app.post("/v1/fundi/chat") { auth(); contentType(ContentType.Application.Json); setBody(request()) }
+
+        assertEquals("fair", store.lastVerdictLevel)
+        assertEquals(2, store.lastDefectCount)
+    }
+
+    @Test
+    fun `a follow-up that resends only the diagnosis changes the count of the verdict before it`() = testApplication {
+        val store = FakeChatStore(storedHistory = earlierEvaluation())
+        val app = fundiChat(store, oneFindingDiagnosis)
+
+        app.post("/v1/fundi/chat") { auth(); contentType(ContentType.Application.Json); setBody(request()) }
+
+        // No verdict in the reply, so no level to write: the store updates the count of
+        // the one already recorded.
+        assertNull(store.lastVerdictLevel)
+        assertEquals(1, store.lastDefectCount)
+    }
+
+    @Test
+    fun `a session with a diagnosis and no verdict keeps no count`() = testApplication {
+        // Diagnose, a new problem, a fix check: partial checks stay out of the two rates.
+        val store = FakeChatStore()
+        val app = fundiChat(store, oneFindingDiagnosis)
+
+        app.post("/v1/fundi/chat") { auth(); contentType(ContentType.Application.Json); setBody(request()) }
+
+        assertEquals(1, store.assistantTurns)
+        assertNull(store.lastDefectCount)
+    }
+
+    private fun ApplicationTestBuilder.fundiChat(store: FakeChatStore, reply: String) = withChat(
+        store,
+        FakeClaude(ClaudeResult.Success(reply, TokenUsage(), null)),
+        accountAudience = Audience.FUNDI,
+    )
+
+    /** A session that has had one full evaluation in the one-list shape, then a question. */
+    private fun earlierEvaluation() = listOf(
+        ChatMessage("u1", Role.USER, "Evaluate this table."),
+        ChatMessage("a1", Role.ASSISTANT, oneListShape),
+        ChatMessage("u2", Role.USER, "I looked again at the joint."),
+    )
+
+    /** Today's shape: three findings, and two of them again as verdict defects. */
+    private val todayShape = """
+        ```fb-diagnosis
+        {"findings":[
+          {"title":"Gap at the back joint","area":"structural","severity":"moderate","dimension":"joint_fit"},
+          {"title":"Saw marks on the top","area":"surface","severity":"cosmetic","dimension":"finishing"},
+          {"title":"Glue left at the joint","area":"surface","severity":"cosmetic","dimension":"finishing"}]}
+        ```
+
+        ```qv-verdict
+        {"verdict":"fair","headline":"One joint to close","defects":[
+          {"title":"Gap at the back joint","severity":"moderate","what_i_see":"A gap."},
+          {"title":"Saw marks on the top","severity":"cosmetic","what_i_see":"Lines."}]}
+        ```
+    """.trimIndent()
+
+    /** One list: two findings with their consequence, and a verdict with no defects. */
+    private val oneListShape = """
+        ```fb-diagnosis
+        {"findings":[
+          {"title":"Gap at the back joint","area":"structural","severity":"moderate","dimension":"joint_fit","what_i_see":"A gap.","what_it_means":"It will loosen.","what_to_do":"Re-glue it."},
+          {"title":"Saw marks on the top","area":"surface","severity":"cosmetic","dimension":"finishing","what_i_see":"Lines.","what_it_means":"Looks only.","what_to_do":"Sand it."}]}
+        ```
+
+        ```qv-verdict
+        {"verdict":"fair","headline":"One joint to close"}
+        ```
+    """.trimIndent()
+
+    /** A diagnosis with one finding and no verdict beside it. */
+    private val oneFindingDiagnosis = """
+        ```fb-diagnosis
+        {"findings":[{"title":"Gap at the back joint","area":"structural","severity":"moderate","dimension":"joint_fit","what_i_see":"A gap."}]}
+        ```
+    """.trimIndent()
+
     @Test
     fun `a verdict starts the notes, and the next turn carries them instead of the photos`() = testApplication {
         val store = FakeChatStore(

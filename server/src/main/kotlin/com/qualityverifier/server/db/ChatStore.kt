@@ -177,11 +177,17 @@ interface ChatStore {
         verdictLevelId: String?,
         verdictLanguage: String?,
         /**
-         * How many defects the verdict listed, or null when there is no verdict.
+         * The session's defect count after this reply, or null when there is no verdict.
          *
          * Null and zero mean different things and the difference is load-bearing: a
          * truncated reply produces no verdict at all, and counting those as defect-free
          * would invert the rate they feed. See V15.
+         *
+         * Written with the verdict when [verdictLevelId] is set. Without one, a non-null
+         * count replaces the session's only if a verdict is already recorded: Fundi Bora
+         * counts the newest diagnosis, so a follow-up that resends only the diagnosis
+         * changes the count of the verdict before it. Null without a verdict writes
+         * nothing.
          */
         defectCount: Int?,
     ): String
@@ -686,6 +692,20 @@ class PostgresChatStore(private val dataSource: DataSource) : ChatStore {
                     statement.setNull(3, java.sql.Types.INTEGER)
                 }
                 statement.setString(4, sessionId)
+                statement.executeUpdate()
+            }
+        } else if (defectCount != null) {
+            // A diagnosis with no verdict in the same reply. Guarded in the SQL as well as
+            // by the route: a count with no verdict level breaks
+            // sessions_defect_count_needs_verdict (V15), and the failure would take the
+            // stored reply with it. Matching no row is the right outcome for a session
+            // that has no verdict yet.
+            connection.prepareStatement(
+                "update sessions set verdict_defect_count = ? " +
+                    "where id = ?::uuid and verdict_level_id is not null"
+            ).use { statement ->
+                statement.setInt(1, defectCount)
+                statement.setString(2, sessionId)
                 statement.executeUpdate()
             }
         }
