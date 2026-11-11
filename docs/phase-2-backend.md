@@ -103,6 +103,13 @@ Bedrock is where IT expects this to go eventually, hence that inline policy, but
 targets the Anthropic API directly. Keep the server's Claude client behind an interface so
 the swap stays contained — the same reason `AppContainer` exists on the app side.
 
+From v0.4.0, `tools/deploy.sh` ends every deploy with a read-only package security check:
+pending security updates (`apt-check`, against the package lists as last refreshed, with no
+`apt-get update`), installed and newer PostgreSQL and PostGIS packages, whether a reboot is
+required, and whether unattended-upgrades is enabled and when it last ran. It installs
+nothing and never reboots; a failure in the check is printed and does not fail the deploy.
+What it reports waits for a maintenance window outside pilot hours, after a snapshot.
+
 ## Done
 
 - **TLS, 1 Sep 2026.** `https://kagua.gradykilleen.me` → 184.72.223.202. Let's Encrypt cert
