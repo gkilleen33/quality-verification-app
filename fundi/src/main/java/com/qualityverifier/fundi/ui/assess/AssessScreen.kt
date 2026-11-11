@@ -109,18 +109,22 @@ fun AssessScreen(
 
     // A finished assessment opens on its conversation; a new one on its intake. Decided
     // once it is known which this is, never from the message list, which arrives late.
-    LaunchedEffect(existing) {
-        when (existing) {
-            true -> if (stage == Stage.LOADING) stage = Stage.TALKING
-            false -> if (stage == Stage.LOADING) stage = Stage.INTAKE
-            null -> Unit
+    // An intake already sent counts as finished: `existing` is read once when the view
+    // model starts, and a screen rebuilt after the intake went out (a rotation resets
+    // `stage`) would otherwise walk the maker through the intake again.
+    LaunchedEffect(existing, openingSent) {
+        if (stage != Stage.LOADING) return@LaunchedEffect
+        when {
+            existing == true || openingSent -> stage = Stage.TALKING
+            existing == false -> stage = Stage.INTAKE
         }
     }
 
     // The opening photograph is kept only after it is processed, and after the maker has
     // answered a quality warning if there was one; the intake is sent then, and the
-    // conversation opens.
-    LaunchedEffect(openingSent) {
+    // conversation opens. Keyed on the stage too, not only the flag: a maker who reaches
+    // the opening camera with the intake already out must not be left on it.
+    LaunchedEffect(openingSent, stage) {
         if (openingSent && stage == Stage.OPENING_PHOTO) stage = Stage.TALKING
     }
 

@@ -143,9 +143,12 @@ class AssessViewModel(
     val review: StateFlow<PhotoReview?> = _review.asStateFlow()
 
     /**
-     * Whether the opening photograph has been kept and the intake sent with it, which is
-     * when the screen leaves the camera. Its own flag rather than [sending]: a send that
-     * fails at once could rise and fall between two frames and never be seen.
+     * Whether the intake has been sent, with the opening photograph if one was kept. The
+     * screen leaves the camera then, and never shows it again for this assessment. Its own
+     * flag rather than [sending]: a send that fails at once could rise and fall between two
+     * frames and never be seen. It is also what makes [start] happen once: the view model
+     * outlives the screen, so a rebuilt screen that walks the maker through the intake
+     * again cannot send a second one.
      */
     private val _openingSent = MutableStateFlow(false)
     val openingSent: StateFlow<Boolean> = _openingSent.asStateFlow()
@@ -297,7 +300,10 @@ class AssessViewModel(
         /** Who worked on the piece, from the picker. Empty when skipped. */
         workedOn: List<WorkerSlot> = emptyList(),
     ) {
-        if (_sending.value || !intake.isComplete) return
+        // Once per assessment. A second intake would be a second opening turn in the same
+        // session, read by the model as the maker starting over mid-plan.
+        if (_openingSent.value || _sending.value || !intake.isComplete) return
+        _openingSent.value = true
         _sending.value = true
         _language.value = intake.language
         _purpose.value = intake.purpose
@@ -449,10 +455,7 @@ class AssessViewModel(
         // A retake that worked answers the earlier "could not be read".
         if (_error.value?.message == UNREADABLE_PHOTO) _error.value = null
         when (target) {
-            is PhotoTarget.Opening -> {
-                _openingSent.value = true
-                start(target.intake, path, target.pieceLabel, target.workedOn)
-            }
+            is PhotoTarget.Opening -> start(target.intake, path, target.pieceLabel, target.workedOn)
             is PhotoTarget.PlanShot -> attachShot(target.index, path)
         }
     }

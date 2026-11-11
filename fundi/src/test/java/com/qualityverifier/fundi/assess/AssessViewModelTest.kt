@@ -657,6 +657,33 @@ class AssessViewModelTest {
         assertEquals("fundi-en-evaluate", created.intakeCode)
     }
 
+    // The view model outlives the screen. A rebuilt screen can walk the maker through the
+    // intake again; a second start must not put a second opening turn in the session.
+    @Test
+    fun `the intake is sent once, however often it is started`() = runTest {
+        val sessions = FakeSessions()
+        val model = model(sessions = sessions)
+
+        model.start(intake, "/tmp/whole.jpg")
+        advanceUntilIdle()
+        model.start(intake, null)
+        advanceUntilIdle()
+
+        assertTrue(model.openingSent.value)
+        assertEquals(1, sessions.userTurns.size)
+        assertEquals(1, sessions.created.size)
+    }
+
+    // Skipped is sent too: the screen leaves the camera on the same flag.
+    @Test
+    fun `an intake sent without a photograph also counts as sent`() = runTest {
+        val model = model()
+
+        model.start(FundiIntake(AssessmentLanguage.ENGLISH, FundiPurpose.LEARN, details = "dovetails"), null)
+
+        assertTrue(model.openingSent.value)
+    }
+
     // Learning a skill may come before anything has been cut.
     @Test
     fun `an intake with no photo still sends`() = runTest {
