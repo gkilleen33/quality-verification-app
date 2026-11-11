@@ -99,6 +99,27 @@ class DefaultPromptsInSyncTest {
         )
     }
 
+    // Each problem is written once, as a finding in the diagnosis. The verdict used to
+    // repeat every finding as a defect "using the same titles as your diagnosis", linked
+    // only by title, and the two lists could disagree. problemsOf reads either shape, but
+    // a prompt that asked for both again would bring the mismatch back.
+    @Test
+    fun `each problem is written once, as a finding with its consequence`() {
+        val fundi = DefaultPrompts.FUNDI_MASTER
+        assertTrue(
+            "the fundi master no longer says the verdict lists no defects",
+            fundi.contains("The verdict lists no defects."),
+        )
+        assertTrue(
+            "the findings no longer carry the three consequence fields",
+            fundi.contains("and what_i_see, what_it_means and what_to_do, as well as a title"),
+        )
+        assertFalse(
+            "the verdict asks for defects again",
+            fundi.contains("\"defects\"") || fundi.contains("using the same titles as your diagnosis"),
+        )
+    }
+
     // The other half of the same rule. A targeted check that came back clean says nothing
     // about the rest of the piece; if it issued a verdict it would be counted as a clean
     // piece and inflate the number a maker is judged on.
