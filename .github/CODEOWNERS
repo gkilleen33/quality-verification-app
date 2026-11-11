@@ -1,3 +1,4 @@
-# Every change requires review from the owner. Referenced by the branch
-# protection rule on `main` ("require review from Code Owners").
-* @gkilleen33
+# Every change requires review from a code owner. Referenced by the branch protection
+# rule on `main` ("require review from Code Owners"). Listing both on one line means
+# either one can approve; it does not require both.
+* @gkilleen33 @haddonnathan
