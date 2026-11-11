@@ -492,7 +492,8 @@ Two properties worth knowing rather than rediscovering:
    transaction, immediately, with **no mapping table anywhere**. The `users` row survives so
    `sessions.user_id` resolves, and its random uuid is the anonymous identifier the research
    uses. `purge_deleted_accounts` is left defined but no longer called, which makes the
-   revert a one-line change.
+   revert a one-line change. From V26 it also revokes the account's invite code before
+   blanking `users.invite_code`, whose unique index is what keeps a code single use.
 
    **It does not make the record anonymous, and nothing user-facing claims it does.**
    Photographs show workshop signage and premises; free text may name a person. The wording

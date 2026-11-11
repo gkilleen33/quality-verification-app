@@ -34,6 +34,8 @@ from `V11__anonymise_on_delete.sql`. In one transaction it:
   into or found by number
 - nulls `display_name`, `business_name`, `label`
 - nulls `business_location`, `business_location_accuracy_m`, `business_location_at`
+- revokes the account's invite code (`invite_codes.revoked_at`, from V26), so it cannot
+  register a new account once the line below frees it
 - nulls `invite_code`, because the code's label often names the person it was handed to
 - sets `deleted_at` and `anonymised_at`
 - deletes every row in `refresh_tokens` for that user
