@@ -83,7 +83,9 @@ internal fun evaluationRow(session: StoredSession, workers: List<NamedWorker>): 
     return listOf(
         session.id, session.userId, session.pieceId, isoTime(session.createdAt), session.itemTypeId,
         intake?.second?.id, intake?.first?.code, session.byTester, session.deletedByUser,
-        workers.size, workers.any { it.part == null },
+        // People, not rows: one worker on joinery and finishing is two rows. The manager's
+        // null id counts once.
+        workers.map { it.workerId }.distinct().size, workers.any { it.part == null },
         // Blank rather than zero when unknown, so a sum over the column does not count
         // an unreadable reply as a clean piece.
         if (list.unknown) "" else links.size, list.unknown,
