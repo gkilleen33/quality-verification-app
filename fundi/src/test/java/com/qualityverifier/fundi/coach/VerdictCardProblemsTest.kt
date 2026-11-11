@@ -29,8 +29,9 @@ class VerdictCardProblemsTest {
     }
 
     @Test
-    fun `a sound verdict in today's shape lists nothing, as before`() {
-        // Its cosmetic finding carries no consequence, so it is not one of the verdict's problems.
+    fun `a sound verdict in today's shape lists its cosmetic finding`() {
+        // The finding carries no consequence, but cosmetic findings are problems too
+        // (Nathan, 11 November 2026).
         val reply = parseAssistantContent(
             """
             ```fb-diagnosis
@@ -42,7 +43,7 @@ class VerdictCardProblemsTest {
             ```
             """.trimIndent(),
         )
-        assertTrue(verdictCardProblems(reply).isEmpty())
+        assertEquals(listOf("Saw marks on the top"), verdictCardProblems(reply).map { it.title })
     }
 
     @Test
