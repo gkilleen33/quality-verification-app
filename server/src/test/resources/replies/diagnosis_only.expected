@@ -1,0 +1,4 @@
+# A diagnosis with no verdict, in today's shape: the findings are the only list.
+# title | area | severity | dimension | default_part
+Drawer opening out of square | structural | moderate | frame_squareness | frame
+Runner set low on the right | hardware | minor | hardware | assembly
