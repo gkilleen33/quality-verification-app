@@ -19,15 +19,21 @@ import java.io.File
  */
 class ConsentVocabularyTest {
 
-    private val migration: String by lazy {
-        val file = File("db/migrations/V28__consents.sql")
+    private fun read(name: String): String {
+        val file = File("db/migrations/$name")
         assertTrue("expected the migration at ${file.absolutePath}; the module root moved?", file.exists())
-        file.readText().lines().joinToString("\n") { it.substringBefore("--") }
+        return file.readText().lines().joinToString("\n") { it.substringBefore("--") }
     }
 
-    private fun wordsIn(constraint: String, column: String): Set<String> {
-        val body = migration.substringAfter("CONSTRAINT $constraint", missingDelimiterValue = "")
-        assertTrue("no constraint $constraint in V28", body.isNotEmpty())
+    private val migration: String by lazy { read("V28__consents.sql") }
+
+    /** Replaces consents_kind_known and consents_only_transfer_withdrawn for the M-Pesa questions. */
+    private val mpesa: String by lazy { read("V29__mpesa.sql") }
+
+    private fun wordsIn(constraint: String, column: String, sql: String = migration): Set<String> {
+        // The last definition, since a later migration replaces a CHECK under the same name.
+        val body = sql.substringAfterLast("CONSTRAINT $constraint", missingDelimiterValue = "")
+        assertTrue("no constraint $constraint", body.isNotEmpty())
         val list = Regex("""\b$column\s+IN\s*\(([^)]*)\)""").find(body)?.groupValues?.get(1)
             ?: error("$constraint has no '$column IN (...)'")
         return Regex("""'([^']*)'""").findAll(list).map { it.groupValues[1] }.toSet()
@@ -35,7 +41,15 @@ class ConsentVocabularyTest {
 
     @Test
     fun `kinds match`() {
-        assertEquals(ConsentKind.entries.map { it.id }.toSet(), wordsIn("consents_kind_known", "kind"))
+        assertEquals(ConsentKind.entries.map { it.id }.toSet(), wordsIn("consents_kind_known", "kind", mpesa))
+    }
+
+    @Test
+    fun `the withdrawable kinds match`() {
+        assertEquals(
+            ConsentKind.WITHDRAWABLE.map { it.id }.toSet(),
+            wordsIn("consents_only_transfer_withdrawn", "kind", mpesa),
+        )
     }
 
     @Test

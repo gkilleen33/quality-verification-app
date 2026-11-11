@@ -4,13 +4,16 @@ import com.qualityverifier.domain.AppVersionHeaders
 import com.qualityverifier.domain.Audience
 import com.qualityverifier.server.Terms
 import com.qualityverifier.server.db.AuthStore
+import com.qualityverifier.server.db.UserRow
 import com.qualityverifier.server.terms.Agreement
 import com.qualityverifier.server.terms.ConsentKind
 import com.qualityverifier.server.terms.TermsLanguage
+import com.qualityverifier.text.MpesaConsentText
 import io.ktor.http.ContentType
 import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.withCharset
+import io.ktor.server.application.ApplicationCall
 import io.ktor.server.auth.authenticate
 import io.ktor.server.auth.jwt.JWTPrincipal
 import io.ktor.server.auth.principal
@@ -70,14 +73,21 @@ fun Route.consentRoutes(users: AuthStore, terms: Terms) {
                 call.respond(HttpStatusCode.BadRequest, ErrorResponse("invalid_request", "X-App-Version is required"))
                 return@post
             }
+            // One M-Pesa question at a time: each has its own text, so its own hash.
+            val mpesaKind = request.kinds.singleOrNull()?.let(ConsentKind::fromId)
+                ?.takeIf { it == ConsentKind.MPESA_READ || it == ConsentKind.MPESA_SEND }
+            if (mpesaKind != null) {
+                call.agreeToMpesa(user, mpesaKind, request, appVersion, terms)
+                return@post
+            }
             // Both boxes or nothing: an agreement to the terms without the transfer is not
             // one Fundi Bora can work under, and the screen cannot send one.
-            if (request.kinds.toSet() != ConsentKind.entries.map { it.id }.toSet() ||
-                request.kinds.size != ConsentKind.entries.size
+            if (request.kinds.toSet() != ConsentKind.TERMS_SCREEN.map { it.id }.toSet() ||
+                request.kinds.size != ConsentKind.TERMS_SCREEN.size
             ) {
                 call.respond(
                     HttpStatusCode.BadRequest,
-                    ErrorResponse("invalid_request", "kinds must be exactly terms and transfer"),
+                    ErrorResponse("invalid_request", "kinds must be exactly terms and transfer, or one M-Pesa question"),
                 )
                 return@post
             }
@@ -103,6 +113,7 @@ fun Route.consentRoutes(users: AuthStore, terms: Terms) {
                     textSha256 = file.sha256,
                     appVersion = appVersion,
                 ),
+                ConsentKind.TERMS_SCREEN,
             )
             terms.gate.forget(user.id)
             log.info("Recorded agreement to {} terms {} ({}) for user {}", user.audience.id, current, language.id, user.id)
@@ -122,19 +133,74 @@ fun Route.consentRoutes(users: AuthStore, terms: Terms) {
                 return@post
             }
             // Withdrawing the terms themselves is deleting the account, which Settings does.
-            if (request.kind != ConsentKind.TRANSFER.id) {
+            val kind = ConsentKind.fromId(request.kind)?.takeIf { it in ConsentKind.WITHDRAWABLE }
+            if (kind == null) {
                 call.respond(
                     HttpStatusCode.BadRequest,
-                    ErrorResponse("invalid_request", "only the transfer agreement can be withdrawn"),
+                    ErrorResponse("invalid_request", "only the transfer agreement and the M-Pesa questions can be withdrawn"),
                 )
                 return@post
             }
+            // Sending was only ever allowed on top of reading, so stopping reading stops
+            // sending too: the newest rows never say "send" without "read".
+            val withdrawn = if (kind == ConsentKind.MPESA_READ) {
+                listOf(ConsentKind.MPESA_SEND, ConsentKind.MPESA_READ)
+            } else {
+                listOf(kind)
+            }
             // Idempotent: a second withdrawal finds nothing to withdraw and writes nothing.
-            if (terms.consents.withdraw(user.id, user.audience, ConsentKind.TRANSFER, appVersion)) {
-                log.info("Recorded withdrawal of the transfer agreement for user {}", user.id)
+            withdrawn.forEach {
+                if (terms.consents.withdraw(user.id, user.audience, it, appVersion)) {
+                    log.info("Recorded withdrawal of {} for user {}", it.id, user.id)
+                }
             }
             terms.gate.forget(user.id)
             call.respond(HttpStatusCode.NoContent)
         }
     }
+}
+
+/**
+ * Records agreement to one M-Pesa question. Fundi Bora only: Kagua reads no messages.
+ *
+ * The phone sends the hash of the question it showed; it must be one of the texts in
+ * [MpesaConsentText.published], so the row names words the fundi actually read. Sending
+ * is asked only after a yes to reading, and the server holds the same order.
+ */
+private suspend fun ApplicationCall.agreeToMpesa(
+    user: UserRow,
+    kind: ConsentKind,
+    request: ConsentRequest,
+    appVersion: Int,
+    terms: Terms,
+) {
+    if (user.audience != Audience.FUNDI) {
+        respond(HttpStatusCode.Forbidden, ErrorResponse("not_a_fundi"))
+        return
+    }
+    val language = TermsLanguage.fromId(request.language)
+    val sha = request.textSha256.lowercase()
+    val published = MpesaConsentText.published[Triple(kind.id, request.version, request.language)]
+    if (language == null || published == null || published != sha) {
+        respond(HttpStatusCode.Conflict, ErrorResponse("mpesa_text_mismatch"))
+        return
+    }
+    if (kind == ConsentKind.MPESA_SEND && !terms.gate.agreed(user.id, ConsentKind.MPESA_READ)) {
+        respond(HttpStatusCode.Conflict, ErrorResponse("mpesa_read_required"))
+        return
+    }
+    terms.consents.agree(
+        user.id,
+        Agreement(
+            audience = user.audience,
+            version = request.version,
+            language = language,
+            textSha256 = sha,
+            appVersion = appVersion,
+        ),
+        listOf(kind),
+    )
+    terms.gate.forget(user.id)
+    log.info("Recorded agreement to {} {} for user {}", kind.id, request.version, user.id)
+    respond(HttpStatusCode.NoContent)
 }

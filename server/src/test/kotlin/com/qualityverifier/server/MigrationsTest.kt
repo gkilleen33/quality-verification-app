@@ -130,6 +130,30 @@ class MigrationsTest {
     }
 
     /**
+     * Tables whose rows anonymise_user deletes whole rather than blanking column by column.
+     * Each PR that adds one adds it here.
+     */
+    private val deletedTables = listOf(
+        // V29: a fundi's M-Pesa transactions, with free-text comments, and unread counts.
+        "mpesa_transactions",
+        "mpesa_unread_counts",
+    )
+
+    @Test
+    fun `anonymise_user deletes the account's rows from every table it empties`() {
+        val latest = files.last { it.readText().contains("FUNCTION anonymise_user") }
+        val body = latest.readText().substringAfter("FUNCTION anonymise_user")
+            .lines().joinToString(" ") { it.substringBefore("--") }
+            .replace(Regex("""\s+"""), " ")
+        deletedTables.forEach { table ->
+            assertTrue(
+                "${latest.name} defines anonymise_user without deleting the account's rows from $table",
+                Regex("""(?i)DELETE FROM $table WHERE user_id = target;""").containsMatchIn(body),
+            )
+        }
+    }
+
+    /**
      * Each redefinition of anonymise_user keeps everything the one before it did.
      *
      * The function is replaced whole every time it changes, so the only way to lose a

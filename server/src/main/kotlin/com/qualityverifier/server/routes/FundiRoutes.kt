@@ -179,7 +179,7 @@ fun Route.fundiRoutes(store: FundiStore, auth: AuthStore) {
  * registration — so the only thing stopping a buyer here is a workshop profile hanging off
  * an account nothing will ever read it for.
  */
-private suspend fun ApplicationCall.requireFundi(auth: AuthStore, userId: String): Boolean {
+internal suspend fun ApplicationCall.requireFundi(auth: AuthStore, userId: String): Boolean {
     val user = auth.findUser(userId)
     if (user?.audience == Audience.FUNDI) return true
     log.warn("Non-fundi account {} tried to use a Fundi Bora endpoint", userId)

@@ -67,6 +67,10 @@ import com.qualityverifier.server.routes.authRoutes
 import com.qualityverifier.server.routes.chatRoutes
 import com.qualityverifier.server.routes.consentRoutes
 import com.qualityverifier.server.routes.fundiRoutes
+import com.qualityverifier.server.routes.mpesaRoutes
+import com.qualityverifier.server.mpesa.CounterpartyCoder
+import com.qualityverifier.server.mpesa.MpesaStore
+import com.qualityverifier.server.mpesa.PostgresMpesaStore
 import com.qualityverifier.server.routes.syncRoutes
 import com.qualityverifier.server.routes.termsTextRoutes
 import com.qualityverifier.server.terms.ConsentStore
@@ -201,6 +205,19 @@ fun main() {
         Terms(gate = TermsGate(settings, consents, texts), consents = consents, texts = texts)
     }
 
+    // Fundi Bora's M-Pesa uploads. Need the database and the HMAC key: without the key a
+    // counterparty could only be stored in the clear, so the routes are not mounted and the
+    // phones keep their data until they are. A key too short to trust is treated as none.
+    val mpesa = if (database != null && config.mpesaHmacKey != null) {
+        runCatching { CounterpartyCoder(config.mpesaHmacKey) }
+            .onFailure { log.error("M-Pesa uploads are disabled: {}", it.message) }
+            .getOrNull()
+            ?.let { Mpesa(PostgresMpesaStore(database.source), it) }
+    } else {
+        log.warn("M-Pesa uploads are disabled: need a database and KAGUA_MPESA_HMAC_KEY.")
+        null
+    }
+
     log.info("Kagua server {} starting on {}:{}", config.version, config.host, config.port)
     if (config.dailyAssessmentLimit > 0) {
         log.info(
@@ -225,7 +242,7 @@ fun main() {
     )
 
     embeddedServer(Netty, port = config.port, host = config.host) {
-        module(config.version, database, auth, chat, fundi, admin, config.appVersions, settings, terms)
+        module(config.version, database, auth, chat, fundi, admin, config.appVersions, settings, terms, mpesa)
     }.start(wait = true)
 }
 
@@ -240,6 +257,9 @@ private val SWEEP_START_DELAY = 5.minutes
 
 /** Daily, matching the SQL purge it complements. */
 private val SWEEP_INTERVAL = 24.hours
+
+/** Every M-Pesa route starts with this. Their unreadable bodies are logged without the parser's message. */
+internal const val MPESA_PATH_PREFIX = "/v1/fundi/mpesa"
 
 /** Bundled so the module signature does not grow a parameter per collaborator. */
 class Auth(val store: AuthStore, val accessTokens: AccessTokens)
@@ -274,6 +294,12 @@ class Terms(val gate: TermsGate, val consents: ConsentStore, val texts: TermsTex
         },
     )
 }
+
+/**
+ * Fundi Bora's M-Pesa uploads (V29): the store and the coder that turns a counterparty into
+ * a code before anything is stored. Absent without the HMAC key, and then not mounted.
+ */
+class Mpesa(val store: MpesaStore, val coder: CounterpartyCoder)
 
 /** The admin portal. Absent when no session key is configured, so it simply is not mounted. */
 class Admin(
@@ -335,6 +361,8 @@ fun Application.module(
     settings: AppSettings = AppSettings.UNCONFIGURED,
     /** The terms texts, records and gate. Null in tests that do not need them, and then no app has terms. */
     terms: Terms? = null,
+    /** The M-Pesa uploads. Mounted only with auth and terms too: the routes check the mpesa_send agreement. */
+    mpesa: Mpesa? = null,
 ) {
     install(ContentNegotiation) { json() }
     // Before routing, so it runs ahead of authentication. See installAppVersionGate.
@@ -390,7 +418,16 @@ fun Application.module(
         val badRequest: suspend (ApplicationCall, Throwable) -> Unit = { call, cause ->
             // warn, not error: a malformed request is routine and a client bug, and
             // logging it at error is how the log stops being worth reading.
-            log.warn("Unreadable request on {}: {}", call.request.path(), cause.message)
+            //
+            // A JSON parse error's message quotes the input around the fault, and an M-Pesa
+            // upload holds counterparties' numbers and names, which must never reach a log.
+            // So those paths log only the kind of failure.
+            val path = call.request.path()
+            if (path.startsWith(MPESA_PATH_PREFIX)) {
+                log.warn("Unreadable request on {}: {}", path, cause.javaClass.simpleName)
+            } else {
+                log.warn("Unreadable request on {}: {}", path, cause.message)
+            }
             // No detail on the wire. The message can name a field or quote the body,
             // and request bodies here are photographs of people's homes.
             call.respond(HttpStatusCode.BadRequest, mapOf("error" to "invalid_request"))
@@ -443,6 +480,10 @@ fun Application.module(
         // answers are worth storing on a server with no Anthropic key configured, and
         // folding them in there would take them down with chat.
         if (auth != null) fundi?.let { fundiRoutes(it.store, auth.store) }
+
+        // Needs the terms bundle as well as auth: whether an account may upload is its
+        // mpesa_send agreement, which lives in the consent records.
+        if (auth != null && terms != null) mpesa?.let { mpesaRoutes(it.store, it.coder, auth.store, terms) }
 
         admin?.let {
             adminRoutes(it.store, it.blobs, it.feedback, it.apiKeys, it.secureCookie)

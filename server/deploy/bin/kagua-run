@@ -22,6 +22,11 @@ export KAGUA_ANTHROPIC_API_KEY="$(param /kagua/anthropic/api-key)"
 # Signs the admin portal's session cookie. Without it the portal is not mounted at all,
 # which is the right failure: a portal with a predictable signing key is worse than none.
 export KAGUA_ADMIN_SESSION_KEY="$(param /kagua/admin/session-key)"
+# Keys the codes stored for M-Pesa counterparties (CounterpartyCoder.kt). Optional, unlike
+# the four above: if the parameter does not exist yet, `|| true` keeps set -e from ending
+# this script, the variable is left empty, and the server starts without the M-Pesa upload
+# routes (Config.kt reads empty as absent). Phones keep their data and retry until it does.
+export KAGUA_MPESA_HMAC_KEY="$(param /kagua/mpesa/hmac-key 2>/dev/null || true)"
 export KAGUA_VERSION="$(cat /opt/kagua/VERSION 2>/dev/null || echo unknown)"
 
 exec java ${JAVA_OPTS:-} -jar "$JAR"

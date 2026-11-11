@@ -65,6 +65,13 @@ data class MeResponse(
     val terms: MeTerms? = null,
     /** Whether the newest transfer row is an agreement. Settings offers withdrawal only then. */
     @SerialName("transfer_agreed") val transferAgreed: Boolean = false,
+    /**
+     * Whether the newest rows for the two M-Pesa questions (V29) are agreements. Fundi Bora
+     * reads them after a reinstall or on a second phone, so it does not ask again, and an
+     * older build ignores them. Always false for Kagua.
+     */
+    @SerialName("mpesa_read_agreed") val mpesaReadAgreed: Boolean = false,
+    @SerialName("mpesa_send_agreed") val mpesaSendAgreed: Boolean = false,
 )
 
 /** The terms an account must agree to, on `/v1/me` rather than the config route, which uses no database. */
