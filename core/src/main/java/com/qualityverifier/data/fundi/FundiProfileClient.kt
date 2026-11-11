@@ -36,6 +36,13 @@ sealed interface ProfileOutcome {
 
     /** A Kagua account reached a Fundi Bora endpoint. A bug, not something to retry. */
     data object NotAFundi : ProfileOutcome
+
+    /**
+     * The account has terms to agree to. Reading the profile is open before agreeing, so
+     * this should not happen; it is told apart from [NotAFundi] in case the open list
+     * changes, since agreeing fixes it and nothing fixes the other.
+     */
+    data object TermsRequired : ProfileOutcome
 }
 
 /**
@@ -92,6 +99,9 @@ class FundiProfileClient(
         response.use {
             when {
                 it.code == 404 -> ProfileOutcome.NotSetUpYet
+                // terms_required before any other 403: peeked, so the body stays readable.
+                it.code == 403 && it.peekBody(512).string().contains("terms_required") ->
+                    ProfileOutcome.TermsRequired
                 it.code == 403 -> ProfileOutcome.NotAFundi
                 !it.isSuccessful -> ProfileOutcome.Unavailable
                 else -> runCatching {

@@ -61,6 +61,10 @@ import com.qualityverifier.ui.location.LocationOptIn
  * @param onSignOut shows a sign-out button when set. Kagua leaves it null because Profile
  *   already has one, and a second sign-out one screen away from the first would be two
  *   controls for one action. Fundi Bora has no Profile, so this is its only sign-out.
+ * @param agreementSection an app's own section, shown below the location switch. Fundi
+ *   Bora passes the control that withdraws its agreement to send data to the United
+ *   States; Kagua passes nothing, so its screen is unchanged. A slot rather than a flag,
+ *   because the wording, the confirmation and the request are Fundi Bora's alone.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -70,6 +74,7 @@ fun SettingsScreen(
     onBack: () -> Unit,
     onAccountDeleted: () -> Unit,
     onSignOut: (() -> Unit)? = null,
+    agreementSection: (@Composable () -> Unit)? = null,
 ) {
     val viewModel: SettingsViewModel = viewModel(factory = SettingsViewModel.factory(container))
 
@@ -177,6 +182,11 @@ fun SettingsScreen(
             Text(labels.locationHeading, style = MaterialTheme.typography.titleMedium)
             Spacer(Modifier.height(8.dp))
             LocationOptIn(labels, container.locationPreference)
+
+            if (agreementSection != null) {
+                Spacer(Modifier.height(28.dp))
+                agreementSection()
+            }
 
             // Above deletion, not beside it: signing out is undone by signing in again, and
             // it should not sit where a thumb reaching for it lands on the red button.

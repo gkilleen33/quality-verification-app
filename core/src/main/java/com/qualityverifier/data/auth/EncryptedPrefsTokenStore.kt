@@ -98,6 +98,16 @@ class EncryptedPrefsTokenStore(private val context: Context) : TokenStore {
         prefs()?.edit()?.putBoolean(KEY_TESTER, value)?.commit()
     }
 
+    // A string rather than a boolean, so "never asked" is its own state and not false.
+    override fun termsRequired(): Boolean? = read(KEY_TERMS_REQUIRED)?.toBooleanStrictOrNull()
+
+    @SuppressLint("ApplySharedPref")
+    override fun setTermsRequired(value: Boolean?) {
+        val editor = prefs()?.edit() ?: return
+        if (value == null) editor.remove(KEY_TERMS_REQUIRED) else editor.putString(KEY_TERMS_REQUIRED, value.toString())
+        editor.commit()
+    }
+
     @SuppressLint("ApplySharedPref")
     override fun clear() {
         prefs()?.edit()
@@ -106,6 +116,7 @@ class EncryptedPrefsTokenStore(private val context: Context) : TokenStore {
             ?.remove(KEY_USER)
             ?.remove(KEY_EXPIRES_AT)
             ?.remove(KEY_TESTER)
+            ?.remove(KEY_TERMS_REQUIRED)
             ?.commit()
     }
 
@@ -127,5 +138,6 @@ class EncryptedPrefsTokenStore(private val context: Context) : TokenStore {
         const val KEY_USER = "user_id"
         const val KEY_EXPIRES_AT = "access_expires_at"
         const val KEY_TESTER = "is_tester"
+        const val KEY_TERMS_REQUIRED = "terms_required"
     }
 }

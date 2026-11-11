@@ -53,7 +53,20 @@ dependencies {
     testImplementation(libs.kotlinx.coroutines.test)
 }
 
+// The terms texts live at the repository root, one copy shared with the Fundi Bora build.
+// Into the jar under terms/, where TermsTexts.fromClasspath reads and checks them.
+tasks.processResources {
+    from(rootProject.layout.projectDirectory.dir("terms")) {
+        into("terms")
+    }
+}
+
 tasks.withType<Test>().configureEach {
+    // TermsTextTest reads the terms folder directly, for the same reason as the migrations
+    // below: it is not a source directory, so Gradle has to be told it is an input.
+    inputs.dir(rootProject.layout.projectDirectory.dir("terms"))
+        .withPropertyName("terms")
+        .withPathSensitivity(PathSensitivity.RELATIVE)
     useJUnit()
     // MigrationsTest reads server/db/migrations, which is not a source directory. Without
     // declaring it, Gradle sees no input change when a migration is edited and reports the

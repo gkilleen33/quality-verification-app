@@ -93,6 +93,16 @@ android {
         unitTests.isReturnDefaultValues = true
     }
 
+    // The published terms texts, from the repository's one terms/ folder, which the server
+    // jar also carries. Bundled so the terms screen shows the English text without a
+    // download when its hash is the one the server lists. Asset paths are relative to that
+    // folder: fundi/2026-11/en.md.
+    sourceSets {
+        getByName("main") {
+            assets.srcDir(rootProject.file("terms"))
+        }
+    }
+
     packaging {
         resources.excludes += setOf("/META-INF/{AL2.0,LGPL2.1}")
     }

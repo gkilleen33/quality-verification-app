@@ -79,30 +79,27 @@ fun FundiSignInScreen(onSignedIn: () -> Unit, onRegister: () -> Unit) {
 }
 
 /**
- * Registering with an invite code.
+ * The first sign-up screen: invite code, name and number, then Proceed.
  *
  * The code decides which app the account is for — see `V16` — so a Kagua code typed in
  * here produces a Kagua account, and the server will then refuse it at every Fundi Bora
  * endpoint. Nothing on this screen can prevent that, because the client is deliberately
  * not told what the code grants; the refusal is the honest place for it to surface.
+ *
+ * Proceed asks the server nothing: it checks the number's format and that the name and code
+ * are filled in, then opens the password screen. A server call here would tell anyone who
+ * asked whether a number has an account. When phone verification exists, Proceed is where
+ * the code is sent.
  */
 @Composable
-fun FundiRegisterScreen(onRegistered: () -> Unit, onSignIn: () -> Unit) {
-    val container = fundiContainer()
-    val viewModel: FundiAuthViewModel =
-        viewModel(factory = FundiAuthViewModel.factory(container))
+fun FundiPhoneScreen(viewModel: FundiAuthViewModel, onProceed: () -> Unit, onSignIn: () -> Unit) {
+    val held by viewModel.details.collectAsState()
 
-    val busy by viewModel.busy.collectAsState()
-    val error by viewModel.error.collectAsState()
-    val signedIn by viewModel.signedIn.collectAsState()
-
-    var inviteCode by remember { mutableStateOf("") }
-    var name by remember { mutableStateOf("") }
-    var phone by remember { mutableStateOf("") }
+    // Kept across a trip to the password screen and back, so "Change details" edits them.
+    var inviteCode by remember { mutableStateOf(held?.code.orEmpty()) }
+    var name by remember { mutableStateOf(held?.name.orEmpty()) }
+    var phone by remember { mutableStateOf(held?.phone?.removePrefix(KenyanPhone.COUNTRY_CODE).orEmpty()) }
     val e164 = KenyanPhone.toE164(phone)
-    var password by remember { mutableStateOf("") }
-
-    LaunchedEffect(signedIn) { if (signedIn) onRegistered() }
 
     AuthColumn {
         Text("Fundi Bora", style = MaterialTheme.typography.displaySmall)
@@ -133,24 +130,73 @@ fun FundiRegisterScreen(onRegistered: () -> Unit, onSignIn: () -> Unit) {
             modifier = Modifier.fillMaxWidth(),
         )
         PhoneField(phone) { phone = it }
-        PasswordField(password, ImeAction.Done) { password = it }
-        Text(
-            "At least $MIN_PASSWORD characters.",
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-        ErrorText(error)
 
         Spacer(Modifier.height(8.dp))
         PrimaryButton(
-            label = "Create account",
-            busy = busy,
-            enabled = !busy && inviteCode.isNotBlank() && name.isNotBlank() &&
-                e164 != null && password.length >= MIN_PASSWORD,
-            onClick = { e164?.let { viewModel.register(inviteCode, it, password, name) } },
+            label = "Proceed",
+            busy = false,
+            enabled = inviteCode.isNotBlank() && name.isNotBlank() && e164 != null,
+            onClick = {
+                e164?.let {
+                    viewModel.holdDetails(SignUpDetails(code = inviteCode, name = name.trim(), phone = it))
+                    onProceed()
+                }
+            },
         )
         TextButton(onClick = onSignIn, modifier = Modifier.fillMaxWidth()) {
             Text("I already have an account")
+        }
+    }
+}
+
+/**
+ * The second sign-up screen: the password, then Create account. The terms screen follows.
+ *
+ * A refusal (an unusable code, a number that already has an account) shows here with
+ * "Change details", which returns to the phone screen with what was typed.
+ */
+@Composable
+fun FundiPasswordScreen(viewModel: FundiAuthViewModel, onRegistered: () -> Unit, onChangeDetails: () -> Unit) {
+    val busy by viewModel.busy.collectAsState()
+    val error by viewModel.error.collectAsState()
+    val signedIn by viewModel.signedIn.collectAsState()
+    val held by viewModel.details.collectAsState()
+
+    var password by remember { mutableStateOf("") }
+
+    LaunchedEffect(signedIn) { if (signedIn) onRegistered() }
+
+    AuthColumn {
+        Text("Fundi Bora", style = MaterialTheme.typography.displaySmall)
+        Spacer(Modifier.height(16.dp))
+
+        if (held == null) {
+            // Android closed the app in the background and the phone screen's answers went
+            // with it; they are never saved to disk beside a password.
+            Text(
+                "Please enter your details again.",
+                style = MaterialTheme.typography.bodyMedium,
+            )
+            PrimaryButton(label = "Change details", busy = false, enabled = true, onClick = onChangeDetails)
+        } else {
+            PasswordField(password, ImeAction.Done) { password = it }
+            Text(
+                "At least $MIN_PASSWORD characters.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            ErrorText(error)
+
+            Spacer(Modifier.height(8.dp))
+            PrimaryButton(
+                label = "Create account",
+                busy = busy,
+                enabled = !busy && password.length >= MIN_PASSWORD,
+                onClick = { viewModel.registerHeld(password) },
+            )
+            TextButton(onClick = onChangeDetails, enabled = !busy, modifier = Modifier.fillMaxWidth()) {
+                Text("Change details")
+            }
         }
     }
 }

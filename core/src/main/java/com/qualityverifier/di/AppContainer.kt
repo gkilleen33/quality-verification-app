@@ -24,6 +24,10 @@ import com.qualityverifier.data.session.SessionRepository
 import com.qualityverifier.data.sync.AccountActions
 import com.qualityverifier.data.sync.AssessmentSync
 import com.qualityverifier.data.sync.SyncClient
+import com.qualityverifier.data.terms.TermsApi
+import com.qualityverifier.data.terms.TermsClient
+import com.qualityverifier.data.terms.TermsRequiredInterceptor
+import com.qualityverifier.data.terms.TermsSignal
 import com.qualityverifier.data.update.AppIdentityInterceptor
 import com.qualityverifier.data.update.AppVersionCheck
 import com.qualityverifier.data.workers.RoomWorkerRepository
@@ -109,6 +113,15 @@ class AppContainer(
         // the build on each new assessment and refuses one below the minimum with 426;
         // on a 426 the config is read again so the blocking screen appears at once.
         .addInterceptor(AppIdentityInterceptor(appId, versionCode) { appVersionCheck.check() })
+        // A 403 terms_required, from any route, records the answer and tells Fundi Bora's
+        // navigation to open the terms screen. Kagua's server sends none while Kagua has no
+        // terms, so this never fires there.
+        .addInterceptor(
+            TermsRequiredInterceptor {
+                tokenStore.setTermsRequired(true)
+                termsSignal.raise()
+            },
+        )
         .connectTimeout(30, TimeUnit.SECONDS)
         // Our server waits on Claude, so a turn can still take minutes. The nginx read
         // timeout in front of it is 180s; this has to outlast that or the phone gives up
@@ -251,6 +264,22 @@ class AppContainer(
     val isTester: Boolean get() = tokenStore.isTester()
 
     val account: AccountActions = AccountActions(syncClient)
+
+    /** Raised on any 403 terms_required. Fundi Bora's navigation listens; Kagua does not. */
+    val termsSignal = TermsSignal()
+
+    /**
+     * The terms routes. Only Fundi Bora's terms screen and Settings call them; Kagua links
+     * this and never calls it. Through the shared client and token provider, as
+     * [fundiProfiles] is.
+     */
+    val terms: TermsApi = TermsClient(
+        client = httpClient,
+        tokens = tokenProvider,
+        store = tokenStore,
+        baseUrl = baseUrl,
+        json = json,
+    )
 
     /**
      * The maker's setup answers. Only Fundi Bora constructs a screen that touches it;

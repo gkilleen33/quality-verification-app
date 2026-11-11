@@ -36,6 +36,27 @@ class FundiAuthViewModel(private val auth: AuthClient) : ViewModel() {
     private val _signedIn = MutableStateFlow(false)
     val signedIn: StateFlow<Boolean> = _signedIn.asStateFlow()
 
+    /**
+     * What the phone screen collected, held for the password screen that follows it.
+     *
+     * In the view model, which both sign-up screens share, and never in saved state: the
+     * password screen adds the password to these and sends them together. After process
+     * death they are gone and the password screen sends the maker back to the phone screen.
+     */
+    private val _details = MutableStateFlow<SignUpDetails?>(null)
+    val details: StateFlow<SignUpDetails?> = _details.asStateFlow()
+
+    fun holdDetails(details: SignUpDetails) {
+        _error.value = null
+        _details.value = details
+    }
+
+    /** Creates the account from the held details and [password]. Does nothing without them. */
+    fun registerHeld(password: String) {
+        val held = _details.value ?: return
+        register(held.code, held.phone, password, held.name)
+    }
+
     fun signIn(phone: String, password: String) = attempt {
         auth.signIn(phone, password)
     }
@@ -84,3 +105,6 @@ class FundiAuthViewModel(private val auth: AuthClient) : ViewModel() {
         }
     }
 }
+
+/** The phone screen's answers: the invite code, the maker's name, and the number in E.164. */
+data class SignUpDetails(val code: String, val name: String, val phone: String)

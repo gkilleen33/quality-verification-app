@@ -1,0 +1,6 @@
+# Published terms texts, one per line: app version language sha256.
+#
+# The SHA-256 is of the file's exact bytes. The server refuses to start, and TermsTextTest
+# fails, when a listed file's bytes differ from its line: a published text never changes.
+# A change to the words is a new version, a new folder, and a new line here.
+fundi 2026-11 en 0000000000000000000000000000000000000000000000000000000000000000

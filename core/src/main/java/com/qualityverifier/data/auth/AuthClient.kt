@@ -85,19 +85,21 @@ class AuthClient(
 ) {
 
     /**
-     * Whether this account is one of our evaluators. Null if the call failed.
+     * Whether this account is one of our evaluators, and whether it has terms to agree to.
+     * Null if the call failed.
      *
      * Deliberately does not fail the sign-in. Being unable to answer a secondary question
-     * is not a reason to refuse somebody entry, and the flag defaults to false with the
-     * next sync putting it right.
+     * is not a reason to refuse somebody entry: the evaluator flag defaults to false with
+     * the next sync putting it right, and an unknown terms answer shows Fundi Bora's terms
+     * screen, which asks the server again.
      */
-    private fun fetchIsTester(accessToken: String): Boolean? = try {
+    private fun fetchProfile(accessToken: String): ProfileBody? = try {
         val request = Request.Builder().url(baseUrl + "v1/me")
             .addHeader("Authorization", "Bearer $accessToken").get().build()
         client.newCall(request).execute().use { response ->
             if (!response.isSuccessful) return@use null
             val text = response.body?.string() ?: return@use null
-            json.decodeFromString<ProfileBody>(text).isTester
+            json.decodeFromString<ProfileBody>(text)
         }
     } catch (e: Exception) {
         Log.w(TAG, "Could not read the profile after signing in", e)
@@ -213,7 +215,13 @@ class AuthClient(
                     // handed a code does — would otherwise finish it before the phone knew
                     // they were an evaluator, and never be asked for the review the
                     // walkthrough existed to produce.
-                    fetchIsTester(decoded.accessToken)?.let(store::setTester)
+                    // The terms answer is forgotten first, so a failed read leaves "not
+                    // asked" rather than whatever the store last held.
+                    store.setTermsRequired(null)
+                    fetchProfile(decoded.accessToken)?.let { profile ->
+                        store.setTester(profile.isTester)
+                        store.setTermsRequired(profile.termsRequired)
+                    }
                     // Never allowed to fail the sign-in it follows.
                     runCatching { onSignedIn() }
                         .onFailure { Log.w(TAG, "Post-sign-in hook failed", it) }
@@ -279,4 +287,6 @@ class AuthClient(
 @Serializable
 private data class ProfileBody(
     @SerialName("is_tester") val isTester: Boolean = false,
+    /** Absent from a server older than the terms (v0.5.0), and then false, as it was. */
+    @SerialName("terms_required") val termsRequired: Boolean = false,
 )

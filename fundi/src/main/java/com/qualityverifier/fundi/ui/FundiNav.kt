@@ -15,8 +15,15 @@ import com.qualityverifier.domain.ItemType
 import com.qualityverifier.domain.UpdatePrompt
 import com.qualityverifier.fundi.ui.assess.AssessScreen
 import com.qualityverifier.fundi.ui.home.HomeScreen
-import com.qualityverifier.fundi.ui.auth.FundiRegisterScreen
+import com.qualityverifier.fundi.ui.auth.FundiAuthViewModel
+import com.qualityverifier.fundi.ui.auth.FundiPasswordScreen
+import com.qualityverifier.fundi.ui.auth.FundiPhoneScreen
 import com.qualityverifier.fundi.ui.auth.FundiSignInScreen
+import com.qualityverifier.fundi.ui.terms.AgreementSection
+import com.qualityverifier.fundi.ui.terms.TermsMode
+import com.qualityverifier.fundi.ui.terms.TermsRules
+import com.qualityverifier.fundi.ui.terms.TermsScreen
+import com.qualityverifier.fundi.ui.terms.TermsStep
 import com.qualityverifier.fundi.ui.setup.GoalsScreen
 import com.qualityverifier.fundi.ui.setup.SetupViewModel
 import com.qualityverifier.fundi.ui.setup.ToolsScreen
@@ -31,7 +38,9 @@ import java.util.UUID
 
 private object Routes {
     const val SIGN_IN = "sign-in"
-    const val REGISTER = "register"
+    const val REGISTER_PHONE = "register/phone"
+    const val REGISTER_PASSWORD = "register/password"
+    const val TERMS = "terms/{mode}"
     const val SETUP_WORKSHOP = "setup/workshop"
     const val SETUP_TOOLS = "setup/tools"
     const val SETUP_GOALS = "setup/goals"
@@ -50,6 +59,15 @@ private object Routes {
         piece: String = sessionId,
         returning: Boolean = false,
     ) = "assess/$sessionId/$itemTypeId?piece=$piece&returning=$returning"
+
+    fun terms(mode: TermsMode) = "terms/${mode.id}"
+
+    /**
+     * The terms screen as the start destination, for an account that has not agreed. Its
+     * own route without an argument, because a start destination has to name a route
+     * exactly; it shows the same screen as [TERMS] in its returning mode.
+     */
+    const val TERMS_START = "terms-start"
 }
 
 @Composable
@@ -57,8 +75,16 @@ fun FundiNav() {
     val container = fundiContainer()
     val navController = rememberNavController()
     // Evaluated once per process. Signing in navigates onward itself, and signing out
-    // replaces the whole stack with sign-in, so this never needs re-reading.
-    val start = remember { if (container.isSignedIn) Routes.HOME else Routes.SIGN_IN }
+    // replaces the whole stack with sign-in, so this never needs re-reading. The terms
+    // screen opens first unless the server last said this account has agreed; offline, the
+    // last answer stands, and with none the screen asks the server.
+    val start = remember {
+        when (TermsRules.start(container.isSignedIn, container.tokenStore.termsRequired())) {
+            TermsStep.HOME -> Routes.HOME
+            TermsStep.TERMS -> Routes.TERMS_START
+            else -> Routes.SIGN_IN
+        }
+    }
 
     // English only, and that is a gap rather than a decision — see FundiLabels. Kagua's
     // Swahili is unreviewed placeholder copy already (issue #20), and a producer-facing
@@ -92,33 +118,103 @@ fun FundiNav() {
     val signOut = { leave(true) }
     val accountDeleted = { leave(false) }
 
+    // Any request the server refuses with 403 terms_required opens the terms screen on top
+    // of the screen that made it, where the turn waits for Retry. Single top, so several
+    // refusals at once open one screen.
+    LaunchedEffect(Unit) {
+        container.termsSignal.required.collect {
+            val here = navController.currentDestination?.route
+            if (here != Routes.TERMS && here != Routes.TERMS_START) {
+                navController.navigate(Routes.terms(TermsMode.CHANGED)) { launchSingleTop = true }
+            }
+        }
+    }
+    // Opening on home with a stored "agreed": ask the server again in the background, and
+    // open the terms screen if the terms changed or were withdrawn on another phone.
+    LaunchedEffect(Unit) {
+        if (start == Routes.HOME && container.terms.status()?.required == true) {
+            navController.navigate(Routes.terms(TermsMode.CHANGED)) { launchSingleTop = true }
+        }
+    }
+
+    // One terms screen behind both of its routes; the mode changes only the heading.
+    val termsScreen: @Composable (TermsMode) -> Unit = { mode ->
+        TermsScreen(
+            mode = mode,
+            onDone = { next ->
+                when (TermsRules.afterTerms(mode, next)) {
+                    TermsStep.BACK -> if (!navController.popBackStack()) {
+                        navController.navigate(Routes.HOME) { popUpTo(0) { inclusive = true } }
+                    }
+                    // Setup, not home, for an account with no workshop profile: a new
+                    // account, or a maker who quit at the terms screen before setup.
+                    TermsStep.SETUP -> navController.navigate(Routes.SETUP_WORKSHOP) {
+                        popUpTo(0) { inclusive = true }
+                    }
+                    else -> navController.navigate(Routes.HOME) { popUpTo(0) { inclusive = true } }
+                }
+            },
+            onSignOut = signOut,
+            onAccountSettings = { navController.navigate(Routes.SETTINGS) { launchSingleTop = true } },
+        )
+    }
+
     NavHost(navController = navController, startDestination = start) {
 
         composable(Routes.SIGN_IN) {
             FundiSignInScreen(
-                // Straight to home, not to setup. A maker signing in on a new handset has
-                // already answered all this, and their profile is on the server.
+                // Home, not setup: a maker signing in on a new handset has already answered
+                // all this, and their profile is on the server. The terms screen first if
+                // the account has not agreed; it goes to setup only if there is no profile.
                 onSignedIn = {
-                    navController.navigate(Routes.HOME) {
+                    val next = when (TermsRules.afterSignIn(container.tokenStore.termsRequired())) {
+                        TermsStep.HOME -> Routes.HOME
+                        else -> Routes.terms(TermsMode.RETURNING)
+                    }
+                    navController.navigate(next) {
                         popUpTo(Routes.SIGN_IN) { inclusive = true }
                     }
                 },
-                onRegister = { navController.navigate(Routes.REGISTER) },
+                onRegister = { navController.navigate(Routes.REGISTER_PHONE) },
             )
         }
 
-        composable(Routes.REGISTER) {
-            FundiRegisterScreen(
-                // Registration is the one path that leads into setup: a brand new account
-                // has no workshop row, and the tool list is what the coaching is built on.
-                onRegistered = {
-                    navController.navigate(Routes.SETUP_WORKSHOP) {
-                        popUpTo(Routes.SIGN_IN) { inclusive = true }
-                    }
-                },
+        // Sign-up is two screens, then the terms, then setup, with nothing in between.
+        composable(Routes.REGISTER_PHONE) { entry ->
+            FundiPhoneScreen(
+                viewModel = sharedSignUpViewModel(navController, entry),
+                onProceed = { navController.navigate(Routes.REGISTER_PASSWORD) { launchSingleTop = true } },
                 onSignIn = { navController.popBackStack() },
             )
         }
+
+        composable(Routes.REGISTER_PASSWORD) { entry ->
+            FundiPasswordScreen(
+                viewModel = sharedSignUpViewModel(navController, entry),
+                // The terms screen becomes the root: back from it leaves the app rather
+                // than returning to a sign-up form for an account that now exists.
+                onRegistered = {
+                    navController.navigate(Routes.terms(TermsMode.NEW)) {
+                        popUpTo(0) { inclusive = true }
+                    }
+                },
+                onChangeDetails = { navController.popBackStack(Routes.REGISTER_PHONE, inclusive = false) },
+            )
+        }
+
+        composable(
+            Routes.TERMS,
+            arguments = listOf(
+                navArgument("mode") {
+                    type = NavType.StringType
+                    defaultValue = TermsMode.RETURNING.id
+                },
+            ),
+        ) { entry ->
+            termsScreen(TermsMode.fromId(entry.arguments?.getString("mode")))
+        }
+
+        composable(Routes.TERMS_START) { termsScreen(TermsMode.RETURNING) }
 
         // One view model across all three setup screens, scoped to the graph rather than
         // to a screen: the profile is sent whole, so the answers have to survive Next.
@@ -239,6 +335,17 @@ fun FundiNav() {
                 // so the server has already deleted the account by the time this runs.
                 onAccountDeleted = accountDeleted,
                 onSignOut = signOut,
+                // Withdrawing the transfer agreement. Once the server confirms, the terms
+                // screen is the only screen left: nothing else works without the agreement.
+                agreementSection = {
+                    AgreementSection(
+                        onWithdrawn = {
+                            navController.navigate(Routes.terms(TermsMode.WITHDRAWN)) {
+                                popUpTo(0) { inclusive = true }
+                            }
+                        },
+                    )
+                },
             )
         }
 
@@ -266,6 +373,21 @@ fun FundiNav() {
             )
         }
     }
+}
+
+/**
+ * The sign-up view model, shared by the phone and password screens, so the password screen
+ * sends what the phone screen collected. Scoped to the phone screen's entry, as the setup
+ * screens share theirs.
+ */
+@Composable
+private fun sharedSignUpViewModel(
+    navController: androidx.navigation.NavHostController,
+    entry: androidx.navigation.NavBackStackEntry,
+): FundiAuthViewModel {
+    val owner = remember(entry) { navController.getBackStackEntry(Routes.REGISTER_PHONE) }
+    val container = fundiContainer()
+    return viewModel(viewModelStoreOwner = owner, factory = FundiAuthViewModel.factory(container))
 }
 
 /**
