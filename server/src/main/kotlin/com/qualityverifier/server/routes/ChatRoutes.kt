@@ -316,14 +316,17 @@ private suspend fun RoutingContext.assessmentTurn(
                         // nothing wrong — see V15.
                         defectCount = parsed.verdict?.defects?.size,
                     )
+                    // The route's audience, so spend splits by app: the column defaults to
+                    // buyer, and a Fundi Bora turn billed as Kagua's raises no error.
                     store.recordUsage(
                         userId, request.sessionId, result.model, result.usage,
                         httpStatus = 200, latencyMillis = elapsed, errorKind = null,
+                        audience = audience,
                     )
                     // After the reply is stored and before it is returned, so the notes are
                     // already being written while the phone is still drawing the verdict.
                     if (Compaction.worthCompacting(parsed.verdict != null, parsed.diagnosis != null, history)) {
-                        compactor.schedule(userId, request.sessionId, systemPrompt, messageId)
+                        compactor.schedule(userId, request.sessionId, systemPrompt, messageId, audience)
                     }
                     call.respond(ChatResponse(messageId, result.text))
                 }
@@ -332,7 +335,7 @@ private suspend fun RoutingContext.assessmentTurn(
                     store.recordUsage(
                         userId, request.sessionId, null, result.usage,
                         httpStatus = result.httpStatus, latencyMillis = elapsed,
-                        errorKind = result.error.name,
+                        errorKind = result.error.name, audience = audience,
                     )
                     // The customer's turn stays stored, so a retry does not ask them to
                     // take the photos again.

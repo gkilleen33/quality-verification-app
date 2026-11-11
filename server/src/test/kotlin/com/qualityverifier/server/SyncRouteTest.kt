@@ -664,7 +664,8 @@ class SyncRouteTest {
 
         override suspend fun recordUsage(
             userId: String, sessionId: String?, model: String?, usage: TokenUsage?,
-            httpStatus: Int?, latencyMillis: Long, errorKind: String?, callKind: String,
+            httpStatus: Int?, latencyMillis: Long, errorKind: String?, audience: Audience,
+            callKind: String,
         ) = Unit
 
         override suspend fun saveDigest(sessionId: String, digest: com.qualityverifier.server.db.Digest) = Unit

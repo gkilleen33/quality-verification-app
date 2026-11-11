@@ -194,6 +194,13 @@ interface ChatStore {
         httpStatus: Int?,
         latencyMillis: Long,
         errorKind: String?,
+        /**
+         * Which app the call was made for — the audience of the route that took the turn,
+         * passed on to the notes written after it. No default: the column's own default
+         * is `buyer` (V14), so a call path that forgot it would bill Fundi Bora's spend
+         * to Kagua without an error anywhere.
+         */
+        audience: Audience,
         /** "turn" or "digest" — see V19. */
         callKind: String = "turn",
     )
@@ -697,6 +704,7 @@ class PostgresChatStore(private val dataSource: DataSource) : ChatStore {
         httpStatus: Int?,
         latencyMillis: Long,
         errorKind: String?,
+        audience: Audience,
         callKind: String,
     ) = withContext(Dispatchers.IO) {
         dataSource.connection.use { connection ->
@@ -705,8 +713,8 @@ class PostgresChatStore(private val dataSource: DataSource) : ChatStore {
                 insert into usage_events (
                     user_id, session_id, model, input_tokens, output_tokens,
                     cache_read_tokens, cache_creation_tokens, http_status, latency_ms, error_kind,
-                    call_kind
-                ) values (?::uuid, ?::uuid, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    call_kind, audience
+                ) values (?::uuid, ?::uuid, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """.trimIndent()
             ).use { statement ->
                 statement.setString(1, userId)
@@ -721,6 +729,7 @@ class PostgresChatStore(private val dataSource: DataSource) : ChatStore {
                 statement.setInt(9, latencyMillis.toInt())
                 statement.setString(10, errorKind)
                 statement.setString(11, callKind)
+                statement.setString(12, audience.id)
                 statement.executeUpdate()
             }
             Unit

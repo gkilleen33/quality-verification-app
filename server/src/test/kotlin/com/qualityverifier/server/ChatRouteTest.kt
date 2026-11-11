@@ -771,6 +771,86 @@ class ChatRouteTest {
         assertEquals("nothing was spent", 0, store.usageRows)
     }
 
+    // Spend per app comes from usage_events.audience, whose column default is buyer (V14).
+    // Every call path therefore names the route's audience; one that forgot would bill
+    // Fundi Bora's spend to Kagua and raise no error. Compared as the stored ids, the
+    // values the insert writes.
+    @Test
+    fun `a Kagua turn is billed to buyer`() = testApplication {
+        val store = FakeChatStore()
+        val app = withChat(store, FakeClaude(ClaudeResult.Success("ok", TokenUsage(), null)))
+
+        app.post("/v1/chat") { auth(); contentType(ContentType.Application.Json); setBody(request()) }
+
+        assertEquals(listOf("turn" to "buyer"), store.usageAudiences.map { (kind, audience) -> kind to audience.id })
+    }
+
+    @Test
+    fun `a Fundi Bora turn is billed to fundi`() = testApplication {
+        val store = FakeChatStore()
+        val app = withChat(
+            store,
+            FakeClaude(ClaudeResult.Success("ok", TokenUsage(), null)),
+            accountAudience = Audience.FUNDI,
+        )
+
+        app.post("/v1/fundi/chat") {
+            auth(); contentType(ContentType.Application.Json); setBody(request())
+        }
+
+        assertEquals(listOf("turn" to "fundi"), store.usageAudiences.map { (kind, audience) -> kind to audience.id })
+    }
+
+    @Test
+    fun `a failed Fundi Bora call is still billed to fundi`() = testApplication {
+        // A failed call can have burned tokens, so it is billed too, and to the right app.
+        val store = FakeChatStore()
+        val app = withChat(
+            store,
+            FakeClaude(ClaudeResult.Failure(UpstreamError.TRUNCATED, "cut off", usage = TokenUsage(2, 4096, 0, 0))),
+            accountAudience = Audience.FUNDI,
+        )
+
+        app.post("/v1/fundi/chat") {
+            auth(); contentType(ContentType.Application.Json); setBody(request())
+        }
+
+        assertEquals(listOf("turn" to "fundi"), store.usageAudiences.map { (kind, audience) -> kind to audience.id })
+    }
+
+    @Test
+    fun `Fundi Bora's notes are billed to fundi, like the turn they follow`() = testApplication {
+        // The notes are a second Claude call per assessment, made from the compactor's
+        // own coroutine after the reply has gone back. It has no route of its own to read
+        // the audience from, so the route hands it down.
+        val store = FakeChatStore(
+            storedHistory = listOf(
+                ChatMessage("u1", Role.USER, "Check my stool.", listOf(Attachment("p1", "/blobs/abc.jpg"))),
+                ChatMessage("assistant-1", Role.ASSISTANT, "```qv-verdict\n{}\n```"),
+            ),
+        )
+        val reply = "```qv-verdict\n{\"verdict\":\"fair\",\"headline\":\"Sound\",\"defects\":[]}\n```"
+        val app = withChat(
+            store,
+            FakeClaude(ClaudeResult.Success(reply, TokenUsage(), null)),
+            accountAudience = Audience.FUNDI,
+        )
+
+        app.post("/v1/fundi/chat") {
+            auth(); contentType(ContentType.Application.Json); setBody(request())
+        }
+
+        // Billed in the background, after the notes are saved.
+        val deadline = System.currentTimeMillis() + 5_000
+        while (store.usageAudiences.none { it.first == "digest" } && System.currentTimeMillis() < deadline) {
+            Thread.sleep(20)
+        }
+        assertEquals(
+            listOf("turn" to "fundi", "digest" to "fundi"),
+            store.usageAudiences.map { (kind, audience) -> kind to audience.id },
+        )
+    }
+
     // A re-assessment is a new session naming the same piece. The route's job is to hand
     // the id down; which piece it may link to is decided in the SQL, against the account.
     @Test
@@ -1425,10 +1505,18 @@ class ChatRouteTest {
 
         override suspend fun recordUsage(
             userId: String, sessionId: String?, model: String?, usage: TokenUsage?,
-            httpStatus: Int?, latencyMillis: Long, errorKind: String?, callKind: String,
+            httpStatus: Int?, latencyMillis: Long, errorKind: String?, audience: Audience,
+            callKind: String,
         ) {
+            usageAudiences += callKind to audience
             if (callKind == "digest") digestUsageRows++ else usageRows++
         }
+
+        /**
+         * The audience each usage row was billed to, with its call kind, in order. Thread-
+         * safe because notes are billed from the compactor's own coroutine.
+         */
+        val usageAudiences = java.util.concurrent.CopyOnWriteArrayList<Pair<String, Audience>>()
 
         override suspend fun saveDigest(sessionId: String, digest: com.qualityverifier.server.db.Digest) {
             savedDigests += digest
