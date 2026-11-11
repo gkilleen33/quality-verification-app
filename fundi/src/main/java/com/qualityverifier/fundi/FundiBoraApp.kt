@@ -1,8 +1,14 @@
 package com.qualityverifier.fundi
 
 import android.app.Application
+import android.util.Log
 import com.qualityverifier.di.AppContainer
 import com.qualityverifier.domain.AppId
+import com.qualityverifier.fundi.mpesa.MpesaReader
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 
 /**
  * Fundi Bora's process.
@@ -39,5 +45,29 @@ class FundiBoraApp : Application() {
         )
         // At start; a second check follows each sign-in. See AppContainer.
         container.appVersionCheck.check()
+
+        // The M-Pesa receiver follows the reading switch for as long as the process lives,
+        // so turning reading off in Settings disables it at once.
+        background.launch {
+            container.mpesa.switches.collect { MpesaReader.applySwitch(this@FundiBoraApp, it.reading) }
+        }
+        // At start, the M-Pesa messages that arrived while the app was not running: only
+        // those received after the agreement and not yet stored (MpesaReader.scan). Then
+        // whatever the phone owes the server, if sending is on.
+        background.launch {
+            try {
+                if (container.mpesa.switches.value.reading) MpesaReader.scan(this@FundiBoraApp, container.mpesa)
+                if (container.isSignedIn) container.mpesa.push()
+            } catch (e: Exception) {
+                Log.w(TAG, "M-Pesa scan at start failed; the next start tries again", e)
+            }
+        }
+    }
+
+    /** Work that outlives every screen: the M-Pesa scan at start and the receiver's pushes. */
+    val background = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
+    private companion object {
+        const val TAG = "FundiBoraApp"
     }
 }

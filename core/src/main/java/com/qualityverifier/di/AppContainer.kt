@@ -19,6 +19,9 @@ import com.qualityverifier.data.fundi.FundiProfileClient
 import com.qualityverifier.data.fundi.FundiProfiles
 import com.qualityverifier.data.location.LocationCapture
 import com.qualityverifier.data.location.LocationPreference
+import com.qualityverifier.data.mpesa.MpesaClient
+import com.qualityverifier.data.mpesa.MpesaPreference
+import com.qualityverifier.data.mpesa.MpesaRepository
 import com.qualityverifier.data.session.RoomSessionRepository
 import com.qualityverifier.data.session.SessionRepository
 import com.qualityverifier.data.sync.AccountActions
@@ -151,6 +154,9 @@ class AppContainer(
 
     val tokenStore: TokenStore = EncryptedPrefsTokenStore(appContext)
 
+    /** Fundi Bora's two M-Pesa answers. Declared before [localAccount], whose clear forgets them. */
+    private val mpesaPreference = MpesaPreference(appContext)
+
     /**
      * Clears the local data when a different account signs in (see [LocalAccountGuard]).
      *
@@ -166,6 +172,9 @@ class AppContainer(
             database.clearAllTables()
             images.deleteAll()
             if (locationAnswerRequired) locationPreference.forget()
+            // The M-Pesa answers are one person's, like the transactions the clear above
+            // removed: the next account starts with reading and sending off.
+            mpesaPreference.forget()
         },
     ).also {
         // An install from v0.3.0 still signed in: its tokens name the owner, so record it
@@ -251,6 +260,17 @@ class AppContainer(
     // a roster.
     private val rosterEnabled = chatPath.startsWith("v1/fundi")
 
+    /**
+     * Fundi Bora's M-Pesa records and their push. Kagua links it and never calls it: only
+     * Fundi Bora declares the SMS permissions and the receiver, and nothing is read until a
+     * fundi agrees.
+     */
+    val mpesa: MpesaRepository = MpesaRepository(
+        dao = database.mpesaDao(),
+        prefs = mpesaPreference,
+        api = MpesaClient(client = httpClient, tokens = tokenProvider, baseUrl = baseUrl, json = json),
+    )
+
     val assessmentSync: AssessmentSync = AssessmentSync(
         client = syncClient,
         sessions = sessionRepository,
@@ -258,6 +278,8 @@ class AppContainer(
         tokens = tokenStore,
         workers = workerRepository,
         rosterEnabled = rosterEnabled,
+        // Same rule as the roster: an app on Fundi Bora's endpoint is the one that reads.
+        mpesa = if (rosterEnabled) mpesa::push else null,
     )
 
     /** True when this account is one of our evaluators. Read from the cached profile. */
@@ -368,6 +390,12 @@ class AppContainer(
             deviceName = "",
         )
         val tokens = TokenProvider(store = held, refresher = refresher::refresh)
+        // The same tables and answers, sent as the account leaving.
+        val mpesaAs = MpesaRepository(
+            dao = database.mpesaDao(),
+            prefs = mpesaPreference,
+            api = MpesaClient(client = pushHttpClient, tokens = tokens, baseUrl = baseUrl, json = json),
+        )
         return AssessmentSync(
             client = SyncClient(client = pushHttpClient, tokens = tokens, baseUrl = baseUrl, json = json),
             sessions = sessionRepository,
@@ -375,6 +403,7 @@ class AppContainer(
             tokens = held,
             workers = workerRepository,
             rosterEnabled = rosterEnabled,
+            mpesa = if (rosterEnabled) mpesaAs::push else null,
         )
     }
 
