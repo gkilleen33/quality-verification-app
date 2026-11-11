@@ -150,7 +150,19 @@ class AssessViewModel(
     private val _openingSent = MutableStateFlow(false)
     val openingSent: StateFlow<Boolean> = _openingSent.asStateFlow()
 
-    /** The newest photograph still being processed, so leaving the camera can drop it. */
+    /**
+     * Whether a photograph just taken is still being processed. The camera keeps its
+     * shutter busy until it is not: `CaptureScreen` frees the shutter as soon as the file
+     * is saved, and a second photograph taken meanwhile raced the first. Two opening
+     * photographs could each send the intake.
+     */
+    private val _processing = MutableStateFlow(false)
+    val processing: StateFlow<Boolean> = _processing.asStateFlow()
+
+    /**
+     * The photograph being processed, or the last one. Kept after it is cancelled: a
+     * cancelled job still finishes the write it is in, and a new photograph waits for it.
+     */
     private var preparing: Job? = null
 
     /** Plans already answered, so a sent run is never re-offered. */
@@ -367,8 +379,18 @@ class AssessViewModel(
      * The check is advisory, so it only interrupts: a photograph it cannot measure, or
      * measures as fine, is kept without a tap, and the maker works through the shot list
      * without confirming every frame.
+     *
+     * One photograph at a time. The shutter waits on [processing]; this is the backstop
+     * for a tap that landed before it did. A second photograph taken while the first is
+     * processed or under review is deleted, never kept: kept, it would land on whatever
+     * the camera shows next, an opening photograph on a plan shot.
      */
     fun onPhotoCaptured(file: File, target: PhotoTarget) {
+        if (preparing?.isCompleted == false || _review.value != null) {
+            viewModelScope.launch { withContext(io) { images.delete(file) } }
+            return
+        }
+        _processing.value = true
         val job = viewModelScope.launch {
             val prepared = withContext(io) { file.length() > 0 && images.normaliseInPlace(file) }
             if (!prepared) {
@@ -383,21 +405,23 @@ class AssessViewModel(
                 accept(file.absolutePath, target)
             }
         }
+        preparing = job
         // Runs once the processing has finished writing, so the delete cannot race it.
+        // The shutter is freed here too, and only here: a cancelled job is still writing.
         job.invokeOnCompletion { cause ->
             if (cause is CancellationException) images.delete(file)
+            _processing.value = false
         }
-        preparing = job
     }
 
     /**
-     * The maker left the camera. A photograph still being processed, or held for review,
-     * was never kept, so it is dropped. Without this, an opening photograph that finished
-     * processing after the maker went back to the intake would send the intake anyway.
+     * The maker left the camera, or the screen moved to another stage. A photograph still
+     * being processed, or held for review, was never kept, so it is dropped. Without this,
+     * an opening photograph that finished processing after the maker went back to the
+     * intake would send the intake anyway.
      */
     fun leaveCamera() {
         preparing?.cancel()
-        preparing = null
         discardReviewedPhoto()
     }
 
@@ -416,6 +440,12 @@ class AssessViewModel(
     }
 
     private fun accept(path: String, target: PhotoTarget) {
+        // An opening photograph that arrives once the intake is out has nothing to go
+        // with. Sent anyway, it would start the assessment a second time mid-plan.
+        if (target is PhotoTarget.Opening && _openingSent.value) {
+            viewModelScope.launch { withContext(io) { images.delete(File(path)) } }
+            return
+        }
         // A retake that worked answers the earlier "could not be read".
         if (_error.value?.message == UNREADABLE_PHOTO) _error.value = null
         when (target) {

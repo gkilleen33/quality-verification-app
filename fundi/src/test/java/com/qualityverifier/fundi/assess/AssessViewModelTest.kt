@@ -556,6 +556,56 @@ class AssessViewModelTest {
         assertEquals(listOf(file.absolutePath), sessions.userTurns.single().attachments.map { it.path })
     }
 
+    // The camera frees its shutter once the file is saved, before processing ends. A
+    // second tap in that moment must not start a second opening photograph, which would
+    // send the intake twice or come up for review on a later shot.
+    @Test
+    fun `a second photograph taken while the first is processed is deleted, not kept`() = runTest {
+        val sessions = FakeSessions()
+        val images = FakeImages()
+        val model = model(sessions = sessions, images = images)
+        advanceUntilIdle()
+        val first = images.newImageFile("s1")
+        val second = images.newImageFile("s1")
+
+        model.onPhotoCaptured(first, PhotoTarget.Opening(intake, null, emptyList()))
+        assertTrue("the shutter waits", model.processing.value)
+        model.onPhotoCaptured(second, PhotoTarget.Opening(intake, null, emptyList()))
+        advanceUntilIdle()
+
+        assertEquals(listOf(first), images.normalised)
+        assertEquals(listOf(second), images.deleted)
+        assertEquals(listOf(first.absolutePath), sessions.userTurns.single().attachments.map { it.path })
+        assertNull(model.review.value)
+        assertFalse("and is freed once the first is done", model.processing.value)
+    }
+
+    // An opening photograph held for review while the intake went out another way has
+    // nothing to go with. Kept anyway, it would start the assessment again mid-plan.
+    @Test
+    fun `keeping an opening photograph after the intake is out sends nothing`() = runTest {
+        val sessions = FakeSessions()
+        val images = FakeImages()
+        val model = model(sessions = sessions, images = images)
+        advanceUntilIdle()
+        model.onPhotoCaptured(images.newImageFile("s1"), PhotoTarget.Opening(intake, null, emptyList()))
+        advanceUntilIdle()
+        assertTrue(model.openingSent.value)
+
+        images.quality = dark
+        val late = images.newImageFile("s1")
+        model.onPhotoCaptured(late, PhotoTarget.Opening(intake, null, emptyList()))
+        advanceUntilIdle()
+        assertNotNull(model.review.value)
+
+        model.keepReviewedPhoto()
+        advanceUntilIdle()
+
+        assertEquals("only the first opening turn", 1, sessions.userTurns.size)
+        assertEquals(listOf(late), images.deleted)
+        assertNull(model.review.value)
+    }
+
     // ------------------------------------------------------------------ the intake
 
     // The rule Kagua keeps and this one must: nothing reaches the model until the intake
@@ -861,7 +911,8 @@ class AssessViewModelTest {
      */
     private class FakeImages(
         private val normalises: Boolean = true,
-        private val quality: ImageQuality? = null,
+        /** What the check reports; changed mid-test to make a later photograph dark. */
+        var quality: ImageQuality? = null,
     ) : SessionImageStore {
         val normalised = mutableListOf<File>()
         val deleted = mutableListOf<File>()

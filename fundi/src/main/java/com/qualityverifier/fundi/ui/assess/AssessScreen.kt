@@ -94,6 +94,7 @@ fun AssessScreen(
     val previousWorkers by viewModel.previousWorkers.collectAsState()
     val review by viewModel.review.collectAsState()
     val openingSent by viewModel.openingSent.collectAsState()
+    val processing by viewModel.processing.collectAsState()
 
     val labels = FundiLabels.ENGLISH
     // The capture pipeline and the verdict speak ReportLabels, and follow the language
@@ -122,6 +123,12 @@ fun AssessScreen(
     LaunchedEffect(openingSent) {
         if (openingSent && stage == Stage.OPENING_PHOTO) stage = Stage.TALKING
     }
+
+    // A photograph belongs to the stage it was taken in. Every change of stage leaves the
+    // camera, by a button or not: the last shot kept, the opening sent, or the screen
+    // rebuilt at LOADING. Finished on another stage, a dark opening photograph would come
+    // up for review on a plan shot's camera and send the intake a second time.
+    LaunchedEffect(stage) { viewModel.leaveCamera() }
 
     // A plan is picked up from the conversation rather than from the reply, so it
     // survives the screen being rebuilt.
@@ -156,6 +163,7 @@ fun AssessScreen(
                 instruction = labels.photoInstructions[answered.purpose],
                 reviewPhotoPath = review?.path,
                 warning = review?.warning,
+                processing = processing,
                 createFile = viewModel::newCaptureFile,
                 // Processed and checked first, as in Kagua. The screen leaves the camera
                 // when the photograph is kept and the intake goes with it (openingSent).
@@ -197,6 +205,7 @@ fun AssessScreen(
                     instruction = shot.instruction.ifBlank { shot.title },
                     reviewPhotoPath = review?.path,
                     warning = review?.warning,
+                    processing = processing,
                     createFile = viewModel::newCaptureFile,
                     onCaptured = { file ->
                         viewModel.onPhotoCaptured(file, PhotoTarget.PlanShot(index))

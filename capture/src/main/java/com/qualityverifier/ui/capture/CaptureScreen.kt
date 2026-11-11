@@ -98,6 +98,13 @@ fun CaptureScreen(
      * photo on a seven-shot plan.
      */
     takenPaths: List<String> = emptyList(),
+    /**
+     * Whether the caller is still processing the last photograph. The shutter and the
+     * skip wait for it: the shutter's own busy state ends when the file is saved, and a
+     * second shot or a skip taken during processing would overtake the first. False
+     * leaves the screen as it was, for a caller that does not report it.
+     */
+    processing: Boolean = false,
 ) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
@@ -248,13 +255,14 @@ fun CaptureScreen(
                             Box(Modifier.fillMaxWidth().padding(horizontal = 16.dp)) {
                                 OutlinedButton(
                                     onClick = skip,
+                                    enabled = !processing,
                                     modifier = Modifier.align(Alignment.Center),
                                 ) { Text(skipLabel, color = Color.White) }
                             }
                         }
                     }
                     Shutter(
-                        busy = busy,
+                        busy = busy || processing,
                         enabled = imageCapture != null,
                         onClick = {
                             val capture = imageCapture ?: return@Shutter
