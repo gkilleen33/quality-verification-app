@@ -165,12 +165,17 @@ class ImageFileStore(private val context: Context) : ImageBytesSource, SessionIm
             ExifInterface.ORIENTATION_NORMAL,
         ) ?: ExifInterface.ORIENTATION_NORMAL
 
-        val bitmap = decodeSampled(raw, bounds.outWidth, bounds.outHeight) ?: return null
-        val upright = uprightAndCapped(bitmap, orientation)
+        val upright = decodeUpright(raw, bounds.outWidth, bounds.outHeight, orientation)
+            ?: return null
 
         val encoded = ByteArrayOutputStream().use { out ->
-            upright.compress(Bitmap.CompressFormat.JPEG, JPEG_QUALITY, out)
-            upright.recycle()
+            // Recycled even if the encoder runs out of memory, so the caller's "could not
+            // be read" does not leave the frame for the next retake to work around.
+            try {
+                upright.compress(Bitmap.CompressFormat.JPEG, JPEG_QUALITY, out)
+            } finally {
+                upright.recycle()
+            }
             out.toByteArray()
         }
         return stripMetadata(encoded)
@@ -178,25 +183,35 @@ class ImageFileStore(private val context: Context) : ImageBytesSource, SessionIm
 
     /**
      * Decodes at the coarsest power-of-two sampling that keeps the long edge at or above
-     * [MAX_EDGE_PX], so the final scale is a downscale of less than half.
+     * [MAX_EDGE_PX], so the final scale is a downscale of less than half, then turns the
+     * frame upright and caps it.
      *
      * At 2,576 px that is no sampling at all for a 12 MP frame: 4,000 x 3,000 decodes to
-     * 48 MB, against 12 MB at the old 1,568 px cap. On a phone that cannot spare it, the
-     * decode is tried once more at twice the sampling. A photo a little under the cap is
-     * better than "That photo could not be read" on every retake.
+     * 48 MB, against 12 MB at the old 1,568 px cap, and the transform allocates its output
+     * while that is still held. On a phone that cannot spare it, at either step, both are
+     * tried once more at twice the sampling. Retrying only the decode was not enough: a
+     * phone that could just decode the frame ran out in the transform on every retake. A
+     * photo a little under the cap is better than "That photo could not be read".
      */
-    private fun decodeSampled(raw: ByteArray, width: Int, height: Int): Bitmap? {
+    private fun decodeUpright(raw: ByteArray, width: Int, height: Int, orientation: Int): Bitmap? {
         val sample = sampleSizeFor(width, height)
         return try {
-            decodeAt(raw, sample)
+            uprightAt(raw, sample, orientation)
         } catch (e: OutOfMemoryError) {
-            Log.w(TAG, "Out of memory decoding ${width}x$height at 1/$sample; trying 1/${sample * 2}")
+            // Whatever the first attempt allocated is recycled by now (see uprightAndCapped),
+            // so the retry does not start with the full frame still held.
+            Log.w(TAG, "Out of memory at 1/$sample for ${width}x$height; trying 1/${sample * 2}")
             try {
-                decodeAt(raw, sample * 2)
+                uprightAt(raw, sample * 2, orientation)
             } catch (e: OutOfMemoryError) {
                 null
             }
         }
+    }
+
+    private fun uprightAt(raw: ByteArray, sample: Int, orientation: Int): Bitmap? {
+        val bitmap = decodeAt(raw, sample) ?: return null
+        return uprightAndCapped(bitmap, orientation)
     }
 
     private fun decodeAt(raw: ByteArray, sample: Int): Bitmap? {
@@ -208,6 +223,9 @@ class ImageFileStore(private val context: Context) : ImageBytesSource, SessionIm
      * Rotation and the size cap in one transform, so only one more bitmap is allocated,
      * at the output size. Done as two steps, the rotation copied the full decoded frame
      * before the scale threw most of it away: twice the decode's memory at the peak.
+     *
+     * Out of memory here recycles [bitmap] before rethrowing, so the caller's retry at
+     * twice the sampling decodes into the memory this frame held.
      */
     private fun uprightAndCapped(bitmap: Bitmap, orientation: Int): Bitmap {
         val turn = uprightTurn(orientation)
