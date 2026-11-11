@@ -15,8 +15,19 @@ import com.qualityverifier.domain.Verdict
  *  - **One list** (the Fundi Bora prompt after v0.4.0): the verdict lists no defects, and
  *    each finding carries the consequence itself.
  *
- * So: the verdict's defects when it lists any, otherwise the diagnosis's findings. A
- * Kagua reply has no diagnosis and reads exactly as its defects.
+ * The two are told apart by the findings, never by the verdict alone: a diagnosis is in
+ * the one-list shape when any finding has a non-blank `what_i_see`, `what_it_means` or
+ * `what_to_do` ([writesConsequences]). A verdict with no defects is not enough, because
+ * today's shape writes one for a piece the model calls sound, with cosmetic findings
+ * beside it that were never meant as problems, and those must stay uncounted and undrawn.
+ *
+ * So, in order:
+ *  1. the verdict lists defects: they are the problems (today's shape);
+ *  2. the diagnosis is in the one-list shape: its findings are the problems;
+ *  3. a verdict with no defects beside a diagnosis in today's shape: no problems, as before;
+ *  4. no verdict at all: the findings, since there is nothing they could be repeated in.
+ *
+ * A Kagua reply has no diagnosis and reads exactly as its defects.
  *
  * Nothing is filtered. A problem with a blank title is still a problem the count has always
  * included, and each screen already decides for itself whether it can draw one.
@@ -42,6 +53,7 @@ fun problemsOf(verdict: Verdict?, diagnosis: Diagnosis?): List<Problem> {
             )
         }
     }
+    if (verdict != null && diagnosis?.writesConsequences != true) return emptyList()
     return findings.map { finding ->
         Problem(
             title = finding.title,
@@ -60,21 +72,29 @@ fun problemsOf(content: AssistantContent): List<Problem> =
     problemsOf(content.verdict, content.diagnosis)
 
 /**
- * What Fundi Bora stores as `sessions.verdict_defect_count`: how many problems the
- * session's newest verdict and newest diagnosis, read together through [problemsOf], list.
- * Null while the session has no verdict.
+ * What Fundi Bora stores as `sessions.verdict_defect_count`, from the session's newest
+ * verdict and newest diagnosis. Null while the session has no verdict, and null when the
+ * count cannot be known.
  *
  * Newest of each rather than both from the same reply, because a follow-up often resends
- * one block and not the other. In the one-list shape the verdict carries no problems, so
- * a follow-up that resends only the verdict keeps the count from the diagnosis before it,
- * and one that resends only the diagnosis changes the count of a verdict already given.
- * In today's shape the verdict's own defects are the count, exactly as before.
+ * one block and not the other. The rule, in order:
+ *  1. the newest diagnosis is in the one-list shape ([writesConsequences]): its findings.
+ *     A follow-up that resends only the verdict keeps that count, and one that resends only
+ *     the diagnosis changes the count of a verdict already given;
+ *  2. the newest verdict lists defects: their number, as before v0.4.0;
+ *  3. the newest diagnosis block would not decode
+ *     ([AssistantContent.diagnosisUnreadable]): null. Its problems are unknown, and
+ *     reading past it to an older diagnosis, or calling the piece clean, would record a
+ *     number the model never gave;
+ *  4. otherwise zero: a verdict with no defects in today's shape, as before v0.4.0.
  *
  * A diagnosis that found nothing counts as the newest diagnosis, with no problems, though
- * the parser drops it from [AssistantContent.diagnosis] for having nothing to draw.
+ * the parser drops it from [AssistantContent.diagnosis] for having nothing to draw. So
+ * does one that would not decode: the newest reply that sent a diagnosis block decides.
  *
- * Null and zero stay different (V15): zero is a verdict that found nothing; null is no
- * verdict, which keeps diagnose-only and other partial checks out of the two rates.
+ * Null and zero stay different (V15): zero is a verdict that found nothing; null keeps the
+ * assessment out of the two rates, which is right both for diagnose-only and other partial
+ * checks and for a verdict whose problems could not be read.
  *
  * [repliesNewestFirst] is every assistant reply in the session, parsed, the newest first,
  * including the one just received. Kagua does not use this: its count is the verdict's
@@ -82,10 +102,24 @@ fun problemsOf(content: AssistantContent): List<Problem> =
  */
 fun fundiDefectCount(repliesNewestFirst: List<AssistantContent>): Int? {
     val verdict = repliesNewestFirst.firstNotNullOfOrNull { it.verdict } ?: return null
-    val diagnosis = repliesNewestFirst.firstNotNullOfOrNull { reply ->
-        reply.diagnosis ?: if (reply.cleanDiagnosis) Diagnosis() else null
+    val diagnosisReply = repliesNewestFirst.firstOrNull { it.sentDiagnosis }
+    val diagnosis = diagnosisReply?.diagnosis
+    return when {
+        diagnosis != null && diagnosis.writesConsequences -> diagnosis.findings.size
+        verdict.defects.isNotEmpty() -> verdict.defects.size
+        diagnosisReply?.diagnosisUnreadable == true -> null
+        else -> 0
     }
-    return problemsOf(verdict, diagnosis).size
 }
+
+/**
+ * Whether this diagnosis is in the one-list shape: a finding carries its consequence.
+ * Today's prompt never asks for these fields on a finding, so they are blank on every
+ * reply written before the change.
+ */
+private val Diagnosis.writesConsequences: Boolean
+    get() = findings.any { finding ->
+        finding.whatISee.isNotBlank() || finding.whatItMeans.isNotBlank() || finding.whatToDo.isNotBlank()
+    }
 
 private fun titleKey(title: String): String = title.trim().lowercase()

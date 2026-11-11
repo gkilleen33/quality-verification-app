@@ -29,6 +29,23 @@ class VerdictCardProblemsTest {
     }
 
     @Test
+    fun `a sound verdict in today's shape lists nothing, as before`() {
+        // Its cosmetic finding carries no consequence, so it is not one of the verdict's problems.
+        val reply = parseAssistantContent(
+            """
+            ```fb-diagnosis
+            {"findings":[{"title":"Saw marks on the top","severity":"cosmetic","dimension":"finishing"}]}
+            ```
+
+            ```qv-verdict
+            {"verdict":"sound","headline":"Good work","defects":[]}
+            ```
+            """.trimIndent(),
+        )
+        assertTrue(verdictCardProblems(reply).isEmpty())
+    }
+
+    @Test
     fun `a verdict-only follow-up lists nothing of its own`() {
         // The problems are on the earlier turn's cards, still on screen above it.
         val reply = parseAssistantContent("```qv-verdict\n{\"verdict\":\"fair\",\"headline\":\"Still the joint\"}\n```")

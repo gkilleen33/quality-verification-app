@@ -161,22 +161,96 @@ class ProblemsTest {
     }
 
     @Test
-    fun `a verdict listing no defects counts the findings beside it, whatever the shape`() {
-        // The one rule both shapes share: the defects when there are any, otherwise the
-        // findings. A reply in today's shape whose verdict lists nothing while its
-        // diagnosis lists a finding used to count zero; it now counts the finding.
-        val reply = parseAssistantContent(
-            """
-            ```fb-diagnosis
-            {"findings":[{"title":"Saw marks on the top","area":"surface","severity":"cosmetic"}]}
-            ```
+    fun `a sound verdict in today's shape counts zero beside a cosmetic finding, as before`() {
+        // The verdict lists no defects, but the finding carries no consequence, so the
+        // reply is in today's shape and the finding was never meant as a problem.
+        val reply = parseAssistantContent(TODAY_SOUND)
+        assertEquals(0, fundiDefectCount(listOf(reply)))
+    }
 
-            ```qv-verdict
-            {"verdict":"sound","headline":"Good work","defects":[]}
-            ```
-            """.trimIndent(),
+    @Test
+    fun `a sound verdict in today's shape lists no problems, as before`() {
+        // Neither the phone's verdict card nor the admin portal's draws the cosmetic finding.
+        assertTrue(problemsOf(parseAssistantContent(TODAY_SOUND)).isEmpty())
+    }
+
+    @Test
+    fun `a sound verdict-only follow-up in today's shape counts zero, not the old defects`() {
+        // The newest diagnosis is in today's shape, so the newest verdict's defects decide.
+        val sound = "```qv-verdict\n{\"verdict\":\"sound\",\"headline\":\"All fixed\",\"defects\":[]}\n```"
+        val replies = listOf(sound, TODAY_EVALUATION).map(::parseAssistantContent)
+        assertEquals(0, fundiDefectCount(replies))
+    }
+
+    @Test
+    fun `a verdict-only follow-up in today's shape keeps its own defects`() {
+        val replies = listOf(TODAY_VERDICT_ONE_DEFECT, TODAY_EVALUATION).map(::parseAssistantContent)
+        assertEquals(1, fundiDefectCount(replies))
+    }
+
+    @Test
+    fun `a diagnosis-only reply in today's shape lists its findings`() {
+        // No verdict for them to be repeated in, so the findings are the only list.
+        val reply = parseAssistantContent(
+            "```fb-diagnosis\n{\"findings\":[{\"title\":\"Saw marks on the top\",\"severity\":\"cosmetic\"}]}\n```",
         )
+        assertEquals(listOf("Saw marks on the top"), problemsOf(reply).map { it.title })
+    }
+
+    // -------------------------------------------- a diagnosis that will not decode
+
+    @Test
+    fun `a diagnosis block that will not decode is marked, and one that decodes is not`() {
+        val unreadable = parseAssistantContent(UNREADABLE_DIAGNOSIS)
+        assertNull(unreadable.diagnosis)
+        assertTrue(unreadable.diagnosisUnreadable)
+        assertTrue(unreadable.sentDiagnosis)
+
+        val readable = parseAssistantContent(ONE_LIST_EVALUATION)
+        assertTrue(!readable.diagnosisUnreadable)
+        val clean = parseAssistantContent(CLEAN_DIAGNOSIS)
+        assertTrue(!clean.diagnosisUnreadable)
+        assertTrue(clean.sentDiagnosis)
+        val none = parseAssistantContent(VERDICT_ONLY)
+        assertTrue(!none.diagnosisUnreadable)
+        assertTrue(!none.sentDiagnosis)
+    }
+
+    @Test
+    fun `an unfenced diagnosis that will not decode is marked too`() {
+        val reply = parseAssistantContent("fb-diagnosis\n{\"findings\":[{\"title\":\"Gap\",}}")
+        assertTrue(reply.diagnosisUnreadable)
+    }
+
+    @Test
+    fun `a diagnosis that will not decode beside a verdict with no defects has no count`() {
+        // Not zero: that would record a piece as clean whose problems nobody could read.
+        val reply = parseAssistantContent(UNREADABLE_DIAGNOSIS + "\n\n" + VERDICT_ONLY)
+        assertEquals("fair", reply.verdict!!.levelId)
+        assertNull(fundiDefectCount(listOf(reply)))
+    }
+
+    @Test
+    fun `a diagnosis that will not decode is not read past to an older one`() {
+        // Beside the verdict...
+        val together = parseAssistantContent(UNREADABLE_DIAGNOSIS + "\n\n" + VERDICT_ONLY)
+        assertNull(fundiDefectCount(listOf(together, parseAssistantContent(ONE_LIST_EVALUATION))))
+        // ...or on its own after one.
+        val alone = listOf(UNREADABLE_DIAGNOSIS, ONE_LIST_EVALUATION).map(::parseAssistantContent)
+        assertNull(fundiDefectCount(alone))
+    }
+
+    @Test
+    fun `a diagnosis that will not decode leaves a verdict's own defects as the count`() {
+        val reply = parseAssistantContent(UNREADABLE_DIAGNOSIS + "\n\n" + TODAY_VERDICT_ONE_DEFECT)
         assertEquals(1, fundiDefectCount(listOf(reply)))
+    }
+
+    @Test
+    fun `a readable diagnosis after one that would not decode counts as usual`() {
+        val replies = listOf(DIAGNOSIS_ONE_FINDING, UNREADABLE_DIAGNOSIS, ONE_LIST_EVALUATION)
+            .map(::parseAssistantContent)
+        assertEquals(1, fundiDefectCount(replies))
     }
 
     @Test
@@ -321,6 +395,31 @@ class ProblemsTest {
         val DIAGNOSIS_ONE_FINDING = """
             ```fb-diagnosis
             {"findings":[{"title":"Gap at the back left joint","area":"structural","severity":"moderate","dimension":"joint_fit","what_i_see":"A gap at the back joint."}]}
+            ```
+        """.trimIndent()
+
+        /** Today's shape for a piece the model calls sound: one cosmetic finding, no defects. */
+        val TODAY_SOUND = """
+            ```fb-diagnosis
+            {"findings":[{"title":"Saw marks on the top","area":"surface","severity":"cosmetic","dimension":"finishing"}]}
+            ```
+
+            ```qv-verdict
+            {"verdict":"sound","headline":"Good work","defects":[]}
+            ```
+        """.trimIndent()
+
+        /** A follow-up in today's shape that resends the verdict, now with one defect. */
+        val TODAY_VERDICT_ONE_DEFECT = """
+            ```qv-verdict
+            {"verdict":"fair","headline":"One joint left","defects":[{"title":"Gap at the back left joint","severity":"moderate","what_i_see":"A gap."}]}
+            ```
+        """.trimIndent()
+
+        /** A diagnosis block cut off mid-object, which will not decode. */
+        val UNREADABLE_DIAGNOSIS = """
+            ```fb-diagnosis
+            {"findings":[{"title":"Gap at the back left joint","severity":"moderate","what_i_see":"A gap
             ```
         """.trimIndent()
 
