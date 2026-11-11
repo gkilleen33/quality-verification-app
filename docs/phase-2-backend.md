@@ -103,6 +103,13 @@ Bedrock is where IT expects this to go eventually, hence that inline policy, but
 targets the Anthropic API directly. Keep the server's Claude client behind an interface so
 the swap stays contained — the same reason `AppContainer` exists on the app side.
 
+From v0.4.0, `tools/deploy.sh` ends every deploy with a read-only package security check:
+pending security updates (`apt-check`, against the package lists as last refreshed, with no
+`apt-get update`), installed and newer PostgreSQL and PostGIS packages, whether a reboot is
+required, and whether unattended-upgrades is enabled and when it last ran. It installs
+nothing and never reboots; a failure in the check is printed and does not fail the deploy.
+What it reports waits for a maintenance window outside pilot hours, after a snapshot.
+
 ## Done
 
 - **TLS, 1 Sep 2026.** `https://kagua.gradykilleen.me` → 184.72.223.202. Let's Encrypt cert
@@ -492,7 +499,8 @@ Two properties worth knowing rather than rediscovering:
    transaction, immediately, with **no mapping table anywhere**. The `users` row survives so
    `sessions.user_id` resolves, and its random uuid is the anonymous identifier the research
    uses. `purge_deleted_accounts` is left defined but no longer called, which makes the
-   revert a one-line change.
+   revert a one-line change. From V26 it also revokes the account's invite code before
+   blanking `users.invite_code`, whose unique index is what keeps a code single use.
 
    **It does not make the record anonymous, and nothing user-facing claims it does.**
    Photographs show workshop signage and premises; free text may name a person. The wording
@@ -583,6 +591,37 @@ jsonb`, written with the attachment row; `anonymise_user` clears it. The metadat
 reaches Claude: `ChatStore.history`, the only source of a request's photos, does not select
 the column, and `ChatRouteTest` checks the request is the same bytes with and without it.
 The data API returns it per photo on `GET /api/v1/assessments/{id}` only.
+
+## Problems and the pilot measures (v0.4.0)
+
+`reports/DefectList.kt` reads an assessment's problems from its stored replies on every
+read, through the shared `problemsOf`, with the session's newest verdict and newest
+diagnosis deciding as they do for `verdict_defect_count`. Each problem gets a default part
+from one ordered table in the same file (`DefaultParts`). Nothing is stored. The data API's
+`GET /api/v1/assessments/{id}` returns them as `problems`; assessments on both routes gain
+`purpose`, `language`, `piece_id`, and `prompt_sha` (see `docs/data-api.md`).
+
+Two read-only commands print the pilot's measures as CSV on stdout. Each runs in a `READ
+ONLY` transaction that it rolls back, and connects without the server's pool, whose start-up
+lines would land in the CSV. Run them like `CreateAdmin`, with `KAGUA_DB_PASSWORD` in the
+environment; `--since=YYYY-MM-DD` limits either to sessions created on or after that date
+(UTC).
+
+```
+java -cp /opt/kagua/kagua.jar com.qualityverifier.server.reports.ProblemLinkageKt [--since=…] [--problems]
+java -cp /opt/kagua/kagua.jar com.qualityverifier.server.reports.DefectCoverageKt [--since=…] [--summary]
+```
+
+- **`ProblemLinkageKt`**: per Fundi Bora assessment, the share of its problems that reach a
+  worker named in "Who worked on this?" and, for the rest, the count of each reason
+  (`nobody_named`, `only_other`, `no_part`, `part_mismatch`). `--problems` prints one row per
+  problem with its reason, for checking placements by hand. A worker named for the whole
+  piece counts on every part; a worker on `other` is never linked; a problem with no part
+  reaches nobody.
+- **`DefectCoverageKt`**: per Fundi Bora assessment, its shape and, in today's shape, how
+  many verdict defects have no diagnosis finding of the same title, how many findings have
+  no defect, and whether the two lists differ in length. `--summary` prints the totals over
+  full assessments (`evaluate`, `reevaluate`) as `measure,value` rows.
 
 ## Note on egress
 

@@ -1,0 +1,5 @@
+# A follow-up that resends only the verdict replaces the earlier list. Its one defect still
+# takes the dimension of the finding in the earlier reply, matched whatever the case and
+# spacing of the title; the labels are lowercased and the title kept as written, trimmed.
+# title | area | severity | dimension | default_part
+gap at the front right joint | structural | minor | joint_fit | joinery

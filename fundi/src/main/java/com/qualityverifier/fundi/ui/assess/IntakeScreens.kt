@@ -27,6 +27,7 @@ import androidx.compose.ui.unit.dp
 import com.qualityverifier.domain.AssessmentLanguage
 import com.qualityverifier.domain.FundiIntake
 import com.qualityverifier.domain.FundiPurpose
+import com.qualityverifier.domain.ItemType
 import com.qualityverifier.domain.PieceNames
 import com.qualityverifier.domain.PriorIssue
 import com.qualityverifier.domain.Worker
@@ -55,6 +56,8 @@ fun IntakeFlow(
     priorIssues: List<PriorIssue>,
     /** What the piece is already called, prefilled so a returning piece keeps its name. */
     initialName: String?,
+    /** What the piece is, which decides the part chips in "Who worked on this?". */
+    itemType: ItemType,
     /** The roster, for "Who worked on this?". */
     roster: List<Worker>,
     /** Who worked on the piece last time, as the starting answer. Empty on a new piece. */
@@ -112,6 +115,7 @@ fun IntakeFlow(
             Step.WORKERS -> {
                 Title("Who worked on this?")
                 WorkerPicker(
+                    itemType = itemType,
                     roster = roster,
                     slots = workedOn,
                     onChange = { workedOn = it },

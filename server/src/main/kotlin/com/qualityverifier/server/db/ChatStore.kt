@@ -177,13 +177,26 @@ interface ChatStore {
         verdictLevelId: String?,
         verdictLanguage: String?,
         /**
-         * How many defects the verdict listed, or null when there is no verdict.
+         * Computes the session's defect count once this reply is stored, from the text of
+         * every assistant reply the session has stored, newest first, this one included.
+         * Null when this reply leaves the count as it is.
+         *
+         * Called inside the transaction that stores the reply, with the session row
+         * locked, so two turns answered at once each count from every reply stored before
+         * theirs rather than from the history their request was built from (F19).
+         *
+         * Its result is written with the verdict when [verdictLevelId] is set. Without
+         * one, it replaces the session's count only if a verdict is already recorded:
+         * Fundi Bora counts the newest diagnosis, so a follow-up that resends only the
+         * diagnosis changes the count of the verdict before it. A verdict with no counter
+         * records a null count.
          *
          * Null and zero mean different things and the difference is load-bearing: a
          * truncated reply produces no verdict at all, and counting those as defect-free
-         * would invert the rate they feed. See V15.
+         * would invert the rate they feed. See V15. A null result over a recorded verdict
+         * is a count nobody can know, and is written as null for the same reason.
          */
-        defectCount: Int?,
+        defectCount: ((storedRepliesNewestFirst: List<String>) -> Int?)?,
     ): String
 
     suspend fun recordUsage(
@@ -194,6 +207,13 @@ interface ChatStore {
         httpStatus: Int?,
         latencyMillis: Long,
         errorKind: String?,
+        /**
+         * Which app the call was made for — the audience of the route that took the turn,
+         * passed on to the notes written after it. No default: the column's own default
+         * is `buyer` (V14), so a call path that forgot it would bill Fundi Bora's spend
+         * to Kagua without an error anywhere.
+         */
+        audience: Audience,
         /** "turn" or "digest" — see V19. */
         callKind: String = "turn",
     )
@@ -647,8 +667,22 @@ class PostgresChatStore(private val dataSource: DataSource) : ChatStore {
         preview: String,
         verdictLevelId: String?,
         verdictLanguage: String?,
-        defectCount: Int?,
+        defectCount: ((storedRepliesNewestFirst: List<String>) -> Int?)?,
     ): String = tx { connection ->
+        if (defectCount != null) {
+            // Held until commit. Another turn of this session storing its reply now waits
+            // here, so whichever commits second counts with the other's reply in place.
+            // Taken before the insert, so this reply's ordinal is not decided until the
+            // other's is stored. `no key update` is the lock [touch] takes on this row
+            // anyway, taken earlier: it serialises the writers of this row and still lets
+            // a customer's turn insert its message, whose foreign key needs only key share.
+            connection.prepareStatement(
+                "select 1 from sessions where id = ?::uuid for no key update"
+            ).use { statement ->
+                statement.setString(1, sessionId)
+                statement.executeQuery().close()
+            }
+        }
         val id = connection.prepareStatement(
             """
             insert into messages (id, session_id, role, text, ordinal)
@@ -663,6 +697,8 @@ class PostgresChatStore(private val dataSource: DataSource) : ChatStore {
             statement.executeQuery().use { rows -> rows.next(); rows.getString(1) }
         }
         touch(connection, sessionId, preview)
+        // Read after the insert, so the reply just stored is the first of them.
+        val count = defectCount?.invoke(storedReplies(connection, sessionId))
         if (verdictLevelId != null) {
             connection.prepareStatement(
                 "update sessions set verdict_level_id = ?, verdict_language = ?, " +
@@ -673,17 +709,49 @@ class PostgresChatStore(private val dataSource: DataSource) : ChatStore {
                 // Typed setNull, not zero. Null means no verdict was recorded; zero means
                 // a verdict found nothing wrong. The two rates a maker is judged on turn
                 // on that distinction — see V15.
-                if (defectCount != null) {
-                    statement.setInt(3, defectCount)
+                if (count != null) {
+                    statement.setInt(3, count)
                 } else {
                     statement.setNull(3, java.sql.Types.INTEGER)
                 }
                 statement.setString(4, sessionId)
                 statement.executeUpdate()
             }
+        } else if (defectCount != null) {
+            // A diagnosis with no verdict in the same reply. Guarded in the SQL: a count
+            // with no verdict level breaks sessions_defect_count_needs_verdict (V15), and
+            // the failure would take the stored reply with it. Matching no row is the
+            // right outcome for a session that has no verdict yet. Null is written too: a
+            // diagnosis that would not decode leaves the recorded verdict's count unknown.
+            connection.prepareStatement(
+                "update sessions set verdict_defect_count = ? " +
+                    "where id = ?::uuid and verdict_level_id is not null"
+            ).use { statement ->
+                if (count != null) {
+                    statement.setInt(1, count)
+                } else {
+                    statement.setNull(1, java.sql.Types.INTEGER)
+                }
+                statement.setString(2, sessionId)
+                statement.executeUpdate()
+            }
         }
         id
     }
+
+    /** The text of every assistant reply in the session, newest first: [history]'s order reversed. */
+    private fun storedReplies(connection: Connection, sessionId: String): List<String> =
+        connection.prepareStatement(
+            """
+            select text from messages
+            where session_id = ?::uuid and role = 'ASSISTANT' order by ordinal desc, id desc
+            """.trimIndent()
+        ).use { statement ->
+            statement.setString(1, sessionId)
+            statement.executeQuery().use { rows ->
+                buildList { while (rows.next()) add(rows.getString(1)) }
+            }
+        }
 
     /**
      * One row per upstream call, written whether it succeeded or not — a failed call can
@@ -697,6 +765,7 @@ class PostgresChatStore(private val dataSource: DataSource) : ChatStore {
         httpStatus: Int?,
         latencyMillis: Long,
         errorKind: String?,
+        audience: Audience,
         callKind: String,
     ) = withContext(Dispatchers.IO) {
         dataSource.connection.use { connection ->
@@ -705,8 +774,8 @@ class PostgresChatStore(private val dataSource: DataSource) : ChatStore {
                 insert into usage_events (
                     user_id, session_id, model, input_tokens, output_tokens,
                     cache_read_tokens, cache_creation_tokens, http_status, latency_ms, error_kind,
-                    call_kind
-                ) values (?::uuid, ?::uuid, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    call_kind, audience
+                ) values (?::uuid, ?::uuid, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """.trimIndent()
             ).use { statement ->
                 statement.setString(1, userId)
@@ -721,6 +790,7 @@ class PostgresChatStore(private val dataSource: DataSource) : ChatStore {
                 statement.setInt(9, latencyMillis.toInt())
                 statement.setString(10, errorKind)
                 statement.setString(11, callKind)
+                statement.setString(12, audience.id)
                 statement.executeUpdate()
             }
             Unit

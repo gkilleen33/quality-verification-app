@@ -659,12 +659,14 @@ class SyncRouteTest {
         override suspend fun history(sessionId: String, blobPath: (String) -> String) = emptyList<com.qualityverifier.domain.ChatMessage>()
         override suspend fun appendAssistantTurn(
             sessionId: String, text: String, preview: String,
-            verdictLevelId: String?, verdictLanguage: String?, defectCount: Int?,
+            verdictLevelId: String?, verdictLanguage: String?,
+            defectCount: ((List<String>) -> Int?)?,
         ) = "a1"
 
         override suspend fun recordUsage(
             userId: String, sessionId: String?, model: String?, usage: TokenUsage?,
-            httpStatus: Int?, latencyMillis: Long, errorKind: String?, callKind: String,
+            httpStatus: Int?, latencyMillis: Long, errorKind: String?, audience: Audience,
+            callKind: String,
         ) = Unit
 
         override suspend fun saveDigest(sessionId: String, digest: com.qualityverifier.server.db.Digest) = Unit

@@ -46,6 +46,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.resetMain
@@ -770,6 +771,176 @@ class AssessViewModelTest {
         assertFalse(sessions.userTurns.single().composed)
     }
 
+    // ------------------------------------------------------------------ the turn with no reply
+
+    private val offline = ChatResult.Failure(ChatErrorKind.NETWORK, "offline")
+
+    // The case D4 is for: the network drops while the intake and first photograph are on
+    // their way. Retry must deliver that turn, under the id the server may already hold,
+    // and not a rebuilt one.
+    @Test
+    fun `Retry resends a failed opening turn with its id, intake and photograph`() = runTest {
+        val sessions = FakeSessions()
+        val chat = FakeChat(offline, ChatResult.Success(plannedReply))
+        val model = model(chat = chat, sessions = sessions)
+
+        model.start(intake, "/tmp/whole.jpg")
+        advanceUntilIdle()
+        assertEquals(true, model.error.value?.retryable)
+
+        model.retry()
+        advanceUntilIdle()
+
+        assertEquals(2, chat.sent.size)
+        val (first, again) = chat.sent
+        assertEquals("the same turn: id, text, photograph and all", first, again)
+        assertTrue("the intake", again.text.startsWith("I have finished this piece"))
+        assertEquals(listOf("/tmp/whole.jpg"), again.attachments.map { it.path })
+        assertEquals("stored once", 1, sessions.userTurns.size)
+        assertEquals(Role.ASSISTANT, sessions.messagesOnce("s1").last().role)
+    }
+
+    // A plan's photographs are on the stored turn already. Retry sends that turn; it does
+    // not ask for them again or store a second copy.
+    @Test
+    fun `Retry resends a failed run submission with its photographs`() = runTest {
+        val sessions = FakeSessions()
+        val chat = FakeChat(offline, ChatResult.Success("ok"))
+        val model = model(chat = chat, sessions = sessions)
+        model.offerPlanFrom(ChatMessage("a1", Role.ASSISTANT, plannedReply))
+        model.attachShot(0, "/tmp/shot0.jpg")
+
+        model.submitRun()
+        advanceUntilIdle()
+        model.retry()
+        advanceUntilIdle()
+
+        val (first, again) = chat.sent
+        assertEquals(first, again)
+        assertEquals(listOf("/tmp/shot0.jpg"), again.attachments.map { it.path })
+        assertEquals(1, sessions.userTurns.size)
+        assertNull("and the plan is not offered again", model.run.value)
+    }
+
+    @Test
+    fun `a Retry that lands clears the error and the offer`() = runTest {
+        val sessions = FakeSessions()
+        val model = model(chat = FakeChat(offline, ChatResult.Success("ok")), sessions = sessions)
+        backgroundScope.launch { model.unansweredTurn.collect { } }
+
+        model.send("It was cut freehand")
+        advanceUntilIdle()
+        assertNotNull(model.error.value)
+        assertTrue(model.unansweredTurn.value)
+
+        model.retry()
+        advanceUntilIdle()
+
+        assertNull(model.error.value)
+        assertFalse(model.unansweredTurn.value)
+    }
+
+    // The opening turn is resent, not started again. The row, the people and the point
+    // were written the first time, and start() stays once per assessment.
+    @Test
+    fun `Retry of the opening turn writes no second session or location point`() = runTest {
+        val sessions = FakeSessions()
+        val gps = FakeLocation(available = true)
+        val chat = FakeChat(offline, ChatResult.Success("ok"))
+        val model = model(chat = chat, sessions = sessions, location = gps)
+        advanceUntilIdle()
+        gps.result.complete(fix)
+        advanceUntilIdle()
+
+        model.start(intake, "/tmp/whole.jpg")
+        advanceUntilIdle()
+        model.retry()
+        advanceUntilIdle()
+        model.start(intake, "/tmp/whole.jpg")
+        advanceUntilIdle()
+
+        assertEquals(1, sessions.created.size)
+        assertEquals(listOf(fix), sessions.locations)
+        assertEquals(1, gps.captures)
+        assertEquals(1, sessions.userTurns.size)
+        assertEquals(2, chat.sent.size)
+    }
+
+    // Closed mid-turn and reopened from Home: the error went with the old view model, and
+    // the stored conversation is what says the turn has no reply.
+    @Test
+    fun `reopening on an unanswered turn offers Send again, which uses the same id`() = runTest {
+        val opening = ChatMessage(
+            "u-open", Role.USER, "I want to check my work",
+            listOf(Attachment("p1", "/tmp/whole.jpg")), composed = true,
+        )
+        val sessions = FakeSessions().apply {
+            exists = true
+            seed(opening)
+        }
+        val chat = FakeChat()
+        val model = model(chat = chat, sessions = sessions)
+        backgroundScope.launch { model.unansweredTurn.collect { } }
+        advanceUntilIdle()
+
+        assertTrue(model.unansweredTurn.value)
+        assertTrue("offered, never sent unasked", chat.sent.isEmpty())
+
+        model.retry()
+        advanceUntilIdle()
+
+        assertEquals(opening, chat.sent.single())
+        assertFalse(model.unansweredTurn.value)
+        assertTrue("nothing new stored for the maker", sessions.userTurns.isEmpty())
+    }
+
+    @Test
+    fun `a conversation that ends with a reply offers nothing, and Retry sends nothing`() = runTest {
+        val sessions = FakeSessions().apply {
+            exists = true
+            seed(ChatMessage("u1", Role.USER, "loose leg"), ChatMessage("a1", Role.ASSISTANT, "ok"))
+        }
+        val chat = FakeChat()
+        val model = model(chat = chat, sessions = sessions)
+        backgroundScope.launch { model.unansweredTurn.collect { } }
+        advanceUntilIdle()
+
+        assertFalse(model.unansweredTurn.value)
+        model.retry()
+        advanceUntilIdle()
+
+        assertTrue(chat.sent.isEmpty())
+        assertEquals("the reply is not stored twice", 2, sessions.messagesOnce("s1").size)
+    }
+
+    // Reopened on a run submission that never got its reply, the plan before it has been
+    // answered. Offered again, it would ask for photographs already on the stored turn.
+    @Test
+    fun `a plan with a turn after it is not offered again on reopening`() = runTest {
+        val model = model()
+        val plan = ChatMessage("a1", Role.ASSISTANT, plannedReply)
+        val submission = ChatMessage(
+            "u2", Role.USER, "shots", listOf(Attachment("p1", "/tmp/shot0.jpg")), composed = true,
+        )
+
+        model.offerPlanFromLatest(listOf(plan, submission))
+        assertNull(model.run.value)
+
+        model.offerPlanFromLatest(listOf(plan))
+        assertEquals("a1", model.run.value?.sourceMessageId)
+    }
+
+    // Sending the same turn again cannot fix a sign-in, so the row offers no Retry.
+    @Test
+    fun `a sign-in failure is not offered for Retry`() = runTest {
+        val model = model(chat = FakeChat(ChatResult.Failure(ChatErrorKind.AUTH, "Please sign in again.")))
+
+        model.send("loose leg")
+        advanceUntilIdle()
+
+        assertEquals(false, model.error.value?.retryable)
+    }
+
     private fun summary(id: String, piece: String?) = SessionSummary(
         id = id,
         itemType = ItemType.WOODEN_STOOL,
@@ -809,6 +980,11 @@ class AssessViewModelTest {
         val userTurns = mutableListOf<Turn>()
         val created = mutableListOf<Created>()
         private val stream = MutableStateFlow<List<ChatMessage>>(emptyList())
+
+        /** A conversation already on the handset, as when an assessment is reopened. */
+        fun seed(vararg messages: ChatMessage) {
+            stream.value = messages.toList()
+        }
 
         override fun observeMessages(sessionId: String): Flow<List<ChatMessage>> = stream
         override suspend fun messagesOnce(sessionId: String): List<ChatMessage> =
@@ -914,14 +1090,23 @@ class AssessViewModelTest {
         override suspend fun applySynced(sessionId: String, workers: List<WorkerSlot>) = no()
     }
 
-    private class FakeChat(
-        private val result: ChatResult = ChatResult.Success("ok"),
-    ) : ChatService {
+    /**
+     * Answers with [results] in order, then "ok". Records the turn each request carried:
+     * the newest user turn of the history, which is what `ServerChatService` puts on the
+     * wire, its id as the `message_id`.
+     */
+    private class FakeChat(vararg results: ChatResult) : ChatService {
+        private val queue = ArrayDeque(results.toList())
+        val sent = mutableListOf<ChatMessage>()
+
         override suspend fun send(
             sessionId: String,
             itemType: ItemType,
             history: List<ChatMessage>,
-        ) = result
+        ): ChatResult {
+            history.lastOrNull { it.role == Role.USER }?.let { sent += it }
+            return queue.removeFirstOrNull() ?: ChatResult.Success("ok")
+        }
     }
 
     private class FakeProfiles(

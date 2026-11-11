@@ -1,5 +1,6 @@
 package com.qualityverifier.server.api
 
+import com.qualityverifier.domain.FundiIntake
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
@@ -218,21 +219,28 @@ class PostgresApiStore(private val dataSource: DataSource) : ApiStore {
         }
     }
 
-    private fun ResultSet.toAssessment() = ApiAssessment(
-        id = getString(1),
-        userId = getString(2),
-        itemTypeId = getString(3),
-        createdAt = getLong(4),
-        updatedAt = getLong(5),
-        messageCount = getInt(6),
-        photoCount = getInt(7),
-        verdictLevelId = getString(8),
-        byTester = getBoolean(9),
-        hasTesterFeedback = getBoolean(10),
-        deletedByUser = getBoolean(11),
-        audience = getString(12),
-        appVersionCode = nullableInt(13),
-    )
+    private fun ResultSet.toAssessment(): ApiAssessment {
+        val intake = ApiIntake.of(getString(14))
+        return ApiAssessment(
+            id = getString(1),
+            userId = getString(2),
+            itemTypeId = getString(3),
+            createdAt = getLong(4),
+            updatedAt = getLong(5),
+            messageCount = getInt(6),
+            photoCount = getInt(7),
+            verdictLevelId = getString(8),
+            byTester = getBoolean(9),
+            hasTesterFeedback = getBoolean(10),
+            deletedByUser = getBoolean(11),
+            audience = getString(12),
+            appVersionCode = nullableInt(13),
+            purpose = intake.purpose,
+            language = intake.language,
+            pieceId = getString(15),
+            promptSha = getString(16),
+        )
+    }
 
     private fun ResultSet.toFeedback() = ApiTesterFeedback(
         sessionId = getString(1),
@@ -283,7 +291,29 @@ class PostgresApiStore(private val dataSource: DataSource) : ApiStore {
                    exists (select 1 from tester_feedback f where f.session_id = s.id),
                    (s.client_deleted_at is not null),
                    s.audience,
-                   s.app_version_code
+                   s.app_version_code,
+                   s.intake_answers,
+                   s.piece_id::text,
+                   s.prompt_sha
         """
+    }
+}
+
+/**
+ * The purpose and language of an assessment, out of `sessions.intake_answers`.
+ *
+ * Decoded here rather than published raw: the column holds two unrelated codes, Kagua's
+ * four-part one and Fundi Bora's `fundi-<language>-<purpose>` ([FundiIntake.encode]), and a
+ * consumer splitting strings would have to know both. Both null or both set, as
+ * [FundiIntake.decode] gives them: Kagua's code, an empty column, and a Fundi Bora code
+ * naming a language or purpose this server does not know all read as "not known".
+ */
+internal data class ApiIntake(val purpose: String?, val language: String?) {
+    companion object {
+        fun of(intakeAnswers: String?): ApiIntake {
+            val decoded = FundiIntake.decode(intakeAnswers) ?: return ApiIntake(null, null)
+            val (language, purpose) = decoded
+            return ApiIntake(purpose = purpose.id, language = language.code)
+        }
     }
 }
