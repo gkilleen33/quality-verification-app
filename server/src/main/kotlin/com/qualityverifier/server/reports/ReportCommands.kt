@@ -2,6 +2,9 @@ package com.qualityverifier.server.reports
 
 import com.qualityverifier.server.Config
 import org.postgresql.ds.PGSimpleDataSource
+import java.io.FileDescriptor
+import java.io.FileOutputStream
+import java.io.PrintStream
 import java.sql.Connection
 import java.time.Instant
 import java.time.LocalDate
@@ -76,6 +79,9 @@ internal class CommandArgs(
  * Hikari logs to stdout at start and these commands print their CSV there.
  */
 internal fun <T> readOnly(block: (Connection) -> T): T {
+    // UTF-8 whatever the locale: under SSM, or with stdout redirected to a file, LANG is
+    // usually unset and Java would print every "–" or "°" in a title as "?".
+    System.setOut(PrintStream(FileOutputStream(FileDescriptor.out), true, Charsets.UTF_8))
     val config = Config.fromEnvironment().database
     if (config == null) {
         System.err.println("No database configured: KAGUA_DB_PASSWORD is not set in this environment.")
