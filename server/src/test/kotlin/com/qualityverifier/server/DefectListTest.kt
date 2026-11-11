@@ -83,6 +83,40 @@ class DefectListTest {
     }
 
     @Test
+    fun `a sound verdict lists the cosmetic finding beside it, as the count counts it`() {
+        // Cosmetic findings count against first time clean (Nathan, 11 November 2026).
+        val reply = """
+            ```fb-diagnosis
+            {"findings":[{"title":"Saw marks on the top","area":"surface","severity":"cosmetic","dimension":"finishing"}]}
+            ```
+
+            ```qv-verdict
+            {"verdict":"sound","headline":"Good work","defects":[]}
+            ```
+        """.trimIndent()
+
+        val list = DefectList.fromTexts(listOf(reply))
+
+        assertFalse(list.unknown)
+        assertEquals(listOf("Saw marks on the top"), list.problems.map { it.title })
+        assertEquals(WorkPart.FINISHING, list.problems.single().defaultPart)
+        assertEquals(1, fundiDefectCount(listOf(parseAssistantContent(reply))))
+    }
+
+    @Test
+    fun `a sound verdict-only follow-up lists nothing, not the older diagnosis's findings`() {
+        // Today's prompt: the follow-up verdict clears the earlier problems, and the count is 0.
+        val older = Session.load("today_table_evaluation").replies.last()
+        val sound = "```qv-verdict\n{\"verdict\":\"sound\",\"headline\":\"All fixed\",\"defects\":[]}\n```"
+
+        val list = DefectList.fromTexts(listOf(older, sound))
+
+        assertFalse(list.unknown)
+        assertTrue(list.problems.isEmpty())
+        assertEquals(0, fundiDefectCount(listOf(sound, older).map(::parseAssistantContent)))
+    }
+
+    @Test
     fun `a newest diagnosis that will not decode makes the problems unknown, not empty`() {
         val unreadable = """
             ```fb-diagnosis
