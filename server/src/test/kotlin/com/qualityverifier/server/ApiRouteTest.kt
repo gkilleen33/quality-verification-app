@@ -1,9 +1,12 @@
 package com.qualityverifier.server
 
 import com.qualityverifier.server.api.ApiAssessmentDetail
+import com.qualityverifier.server.api.ApiIntake
 import com.qualityverifier.server.api.ApiMessage
+import com.qualityverifier.server.api.ApiProblem
 import com.qualityverifier.server.api.ApiTesterFeedback
 import com.qualityverifier.server.api.PostgresApiKeyStore
+import com.qualityverifier.server.api.apiProblemsOf
 import com.qualityverifier.server.blobs.BlobStore
 import io.ktor.client.HttpClient
 import io.ktor.client.request.get
@@ -250,6 +253,110 @@ class ApiRouteTest {
     }
 
     @Test
+    fun `an assessment lists its problems, and the list route carries none`() = testApplication {
+        // Problems are read from every reply, so they are on the single route only: on a
+        // page of 200 they would mean reading every conversation.
+        val keys = FakeApiKeyStore()
+        val fundi = API_ASSESSMENT.copy(audience = "fundi", purpose = "evaluate", language = "en")
+        val detail = ApiAssessmentDetail(
+            assessment = fundi,
+            messages = listOf(
+                ApiMessage("USER", "Here is the table.", 1L, emptyList()),
+                ApiMessage("ASSISTANT", TODAY_SHAPE_REPLY, 2L, emptyList()),
+            ),
+            feedback = null,
+        )
+        val store = FakeApiStore(assessments = listOf(fundi), detail = detail)
+        val app = withApi(keys = keys, store = store)
+
+        val one = app.get("/api/v1/assessments/${fundi.id}") { key(keys.anyKey()) }.bodyAsText()
+        val list = app.get("/api/v1/assessments") { key(keys.anyKey()) }.bodyAsText()
+
+        assertTrue(
+            one,
+            one.contains(
+                "\"problems\":[" +
+                    "{\"title\":\"Gap at the back joint\",\"area\":\"structural\",\"severity\":\"moderate\"," +
+                    "\"dimension\":\"joint_fit\",\"default_part\":\"joinery\"}," +
+                    "{\"title\":\"Knot near the edge\",\"area\":\"material\",\"severity\":\"minor\"," +
+                    "\"dimension\":null,\"default_part\":null}]",
+            ),
+        )
+        assertTrue("the list route must not carry problems: $list", !list.contains("problems"))
+        assertTrue(list, !list.contains("Gap at the back joint"))
+    }
+
+    @Test
+    fun `a diagnosis-only assessment lists its findings`() {
+        val detail = ApiAssessmentDetail(
+            assessment = API_ASSESSMENT.copy(audience = "fundi", purpose = "diagnose", language = "en"),
+            messages = listOf(
+                ApiMessage(
+                    "ASSISTANT",
+                    "```fb-diagnosis\n{\"findings\":[{\"title\":\"Drawer sticks\",\"area\":\"hardware\",\"severity\":\"minor\",\"dimension\":\"hardware\"}]}\n```",
+                    1L, emptyList(),
+                ),
+            ),
+            feedback = null,
+        )
+        val problems = apiProblemsOf(detail)!!
+        assertEquals(listOf("Drawer sticks"), problems.map { it.title })
+        assertEquals("assembly", problems.single().defaultPart)
+    }
+
+    @Test
+    fun `problems that cannot be read arrive as null, and none found as an empty list`() {
+        fun detailWith(reply: String) = ApiAssessmentDetail(
+            assessment = API_ASSESSMENT.copy(audience = "fundi"),
+            messages = listOf(ApiMessage("ASSISTANT", reply, 1L, emptyList())),
+            feedback = null,
+        )
+        assertEquals(null, apiProblemsOf(detailWith("```fb-diagnosis\n{\"findings\":[{\"title\":\"Gap\n```")))
+        assertEquals(emptyList<ApiProblem>(), apiProblemsOf(detailWith("Send me one more photo.")))
+    }
+
+    @Test
+    fun `an assessment carries its purpose, language, piece and prompt, as explicit nulls when not known`() = testApplication {
+        val keys = FakeApiKeyStore()
+        val sha = "9f2e" + "0".repeat(60)
+        val store = FakeApiStore(
+            assessments = listOf(
+                API_ASSESSMENT.copy(
+                    audience = "fundi", purpose = "reevaluate", language = "sw",
+                    pieceId = "5b0c6a2e-1f3d-4c4b-9a55-0d5f1c2e3a4b", promptSha = sha,
+                ),
+                API_ASSESSMENT.copy(id = "3ff77920-3928-46e5-8a77-5e16c1e901c6"),
+            ),
+        )
+        val app = withApi(keys = keys, store = store)
+
+        val body = app.get("/api/v1/assessments") { key(keys.anyKey()) }.bodyAsText()
+
+        assertTrue(body, body.contains("\"purpose\":\"reevaluate\""))
+        assertTrue(body, body.contains("\"language\":\"sw\""))
+        assertTrue(body, body.contains("\"piece_id\":\"5b0c6a2e-1f3d-4c4b-9a55-0d5f1c2e3a4b\""))
+        assertTrue(body, body.contains("\"prompt_sha\":\"$sha\""))
+        assertTrue(body, body.contains("\"purpose\":null"))
+        assertTrue(body, body.contains("\"language\":null"))
+        assertTrue(body, body.contains("\"piece_id\":null"))
+        assertTrue(body, body.contains("\"prompt_sha\":null"))
+    }
+
+    @Test
+    fun `purpose and language decode from the intake code, and anything else is null`() {
+        assertEquals(ApiIntake("evaluate", "en"), ApiIntake.of("fundi-en-evaluate"))
+        assertEquals(ApiIntake("customer_return", "sw"), ApiIntake.of("fundi-sw-customer_return"))
+        assertEquals(ApiIntake("work_in_progress", "en"), ApiIntake.of(" fundi-en-work_in_progress "))
+        // Kagua's own code, an empty column, and malformed or unknown Fundi Bora codes.
+        listOf(
+            null, "", "buying|daily|full|en", "kagua-en-evaluate", "fundi-en", "fundi-fr-evaluate",
+            "fundi-en-repaint", "fundi-en-evaluate-extra", "FUNDI-en-evaluate",
+        ).forEach { code ->
+            assertEquals(code.toString(), ApiIntake(null, null), ApiIntake.of(code))
+        }
+    }
+
+    @Test
     fun `an id that is not a uuid is a 404, not a 500`() = testApplication {
         val keys = FakeApiKeyStore()
         val app = withApi(keys = keys)
@@ -313,6 +420,24 @@ class ApiRouteTest {
     }
 
     // ---------------------------------------------------------------- harness
+
+    private companion object {
+        /** Today's shape: two defects, one with a finding of its title and one without. */
+        val TODAY_SHAPE_REPLY = """
+            One joint to close.
+
+            ```fb-diagnosis
+            {"findings":[{"title":"Gap at the back joint","area":"structural","severity":"moderate","dimension":"joint_fit"}]}
+            ```
+
+            ```qv-verdict
+            {"verdict":"fair","headline":"One joint","defects":[
+              {"title":"Gap at the back joint","area":"structural","severity":"moderate","what_i_see":"A gap."},
+              {"title":"Knot near the edge","area":"material","severity":"minor","what_i_see":"A knot."}
+            ]}
+            ```
+        """.trimIndent()
+    }
 
     private fun io.ktor.client.request.HttpRequestBuilder.key(secret: String) {
         header("X-API-Key", secret)

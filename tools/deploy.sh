@@ -2,7 +2,8 @@
 # Deploys a release to the server in one command: finds the migrations the server has not
 # applied, uploads them and the release's jar, rehearses the migrations against the live
 # database in a transaction that rolls back, asks, snapshots the database and the running
-# jar, applies the migrations, installs the jar it uploaded, and checks the result.
+# jar, applies the migrations, installs the jar it uploaded, and checks the result. It ends
+# with a read-only package security check, which reports and changes nothing.
 #
 #   tools/deploy.sh            # the nightly release (main at its last merge)
 #   tools/deploy.sh v0.2.0     # a tagged release; prefer these once they exist
@@ -279,3 +280,114 @@ SH
 DONE="$DONE, checked"
 echo "Deployed $RELEASE (${SHA:0:7})."
 echo "Backups: $BACKUPS/pre-deploy-$RUN_ID.dump and $BACKUPS/kagua-pre-deploy-$RUN_ID.jar"
+
+# The package security check (SSCS asked for one at every deploy, 9 November 2026).
+# unattended-upgrades installs security updates on its own; this confirms it still runs
+# and shows what it leaves: PostgreSQL and PostGIS upgrades and reboots wait for a
+# maintenance window. It runs no apt-get update, which would rewrite the package lists:
+# apt-check and apt-cache read the lists as apt-daily.timer last refreshed them, so
+# "pending" means pending as of the refresh time it prints. Every command only reads
+# (apt may rebuild its own binary cache in /var/cache/apt). A failing command prints its
+# error and the check goes on; the script always exits 0, so the step never fails.
+package_check_script() {
+    cat <<'SH'
+echo "-- package lists last refreshed"
+stamp=/var/lib/apt/periodic/update-success-stamp
+date -r "$stamp" '+%Y-%m-%d %H:%M %Z' 2>&1 || echo "unknown"
+
+echo "-- pending updates (apt-check)"
+sec=unknown
+if out=$(timeout 120 /usr/lib/update-notifier/apt-check --human-readable 2>&1); then
+    echo "$out"
+    # Without --human-readable it prints "<all>;<security>" on stderr.
+    sec=$(timeout 120 /usr/lib/update-notifier/apt-check 2>&1 >/dev/null | tail -n 1 | cut -s -d';' -f2)
+    case "$sec" in ''|*[!0-9]*) sec=unknown ;; esac
+else
+    echo "apt-check failed: $out"
+fi
+if [ "$sec" != 0 ] && [ "$sec" != unknown ]; then
+    echo "security updates by package (first 40):"
+    apt list --upgradable 2>/dev/null | grep -e '-security' | head -n 40 | sed 's/^/  /'
+fi
+
+echo "-- PostgreSQL and PostGIS packages (installed, then candidate if newer)"
+pg=0
+# The second status letter says whether a package is installed; the first is what apt
+# wants, which is "h" for a package held back with apt-mark hold. Held packages are the
+# ones waiting for a maintenance window, so they must stay in the report.
+pkgs=$(dpkg-query -W -f='${db:Status-Abbrev} ${Package}\n' 'postgresql*' 'postgis*' 2>/dev/null |
+    awk 'substr($1, 2, 1) == "i" { print $2 }')
+if [ -z "$pkgs" ]; then
+    echo "dpkg-query found no installed postgresql or postgis packages"
+    pg=unknown
+fi
+for p in $pkgs; do
+    pol=$(timeout 60 apt-cache policy "$p" 2>&1)
+    inst=$(echo "$pol" | awk '$1 == "Installed:" { print $2; exit }')
+    cand=$(echo "$pol" | awk '$1 == "Candidate:" { print $2; exit }')
+    if [ -z "$inst" ] || [ -z "$cand" ]; then
+        echo "  $p: apt-cache policy failed: $(echo "$pol" | head -n 3)"
+    elif [ "$inst" = "$cand" ] || [ "$cand" = "(none)" ]; then
+        printf '  %-36s %s\n' "$p" "$inst"
+    else
+        printf '  %-36s %s -> %s (pending)\n' "$p" "$inst" "$cand"
+        pg=$((pg + 1))
+    fi
+done
+
+echo "-- reboot"
+if [ -e /var/run/reboot-required ]; then
+    reboot=yes
+    echo "required, flagged $(date -r /var/run/reboot-required '+%Y-%m-%d %H:%M %Z' 2>&1)"
+    if [ -r /var/run/reboot-required.pkgs ]; then
+        echo "requested by:"
+        sort -u /var/run/reboot-required.pkgs | sed 's/^/  /'
+    fi
+else
+    reboot=no
+    echo "not required"
+fi
+
+echo "-- unattended-upgrades"
+case "$(dpkg-query -W -f='${db:Status-Abbrev}' unattended-upgrades 2>&1)" in
+    ?i*) uu_pkg=yes; echo "package installed" ;;
+    *) uu_pkg=no; echo "package not installed" ;;
+esac
+[ -e /etc/apt/apt.conf.d/20auto-upgrades ] || echo "/etc/apt/apt.conf.d/20auto-upgrades is missing"
+# The values apt uses, from 20auto-upgrades and any other file that sets them.
+periodic=$(apt-config dump 2>&1 | grep -E '^APT::Periodic::(Update-Package-Lists|Unattended-Upgrade) ')
+echo "${periodic:-APT::Periodic::Unattended-Upgrade is not set}"
+uu_val=$(echo "$periodic" | sed -n 's/^APT::Periodic::Unattended-Upgrade "\(.*\)";$/\1/p' | tail -n 1)
+# apt-daily-upgrade.timer starts each run; unattended-upgrades.service only finishes an
+# interrupted run at shutdown, so its "inactive" is normal.
+for u in apt-daily.timer apt-daily-upgrade.timer unattended-upgrades.service; do
+    printf '  %-30s %s, %s\n' "$u" "$(systemctl is-enabled "$u" 2>&1)" "$(systemctl is-active "$u" 2>&1)"
+done
+timer=$(systemctl is-enabled apt-daily-upgrade.timer 2>&1)
+echo "apt-daily-upgrade.service last finished: $(systemctl show apt-daily-upgrade.service -p ExecMainExitTimestamp --value 2>&1)"
+log=/var/log/unattended-upgrades/unattended-upgrades.log
+last=$(grep -h 'Starting unattended upgrades script' "$log.1" "$log" 2>/dev/null | tail -n 1 | cut -c1-16)
+echo "last run in $log: ${last:-none found}"
+[ -r "$log" ] && echo "its last line: $(tail -n 1 "$log")"
+if [ "$uu_pkg" = yes ] && [ -n "$uu_val" ] && [ "$uu_val" != 0 ] && [ "$timer" = enabled ]; then
+    uu=enabled
+else
+    uu="NOT enabled"
+fi
+
+echo
+echo "Security updates pending: $sec; PostgreSQL/PostGIS updates pending: $pg; reboot required: $reboot; unattended upgrades: $uu (last run ${last:-unknown})."
+if [ "$sec" != 0 ] || [ "$pg" != 0 ] || [ "$reboot" = yes ] || [ "$uu" != enabled ]; then
+    echo "Nothing was changed. Pending updates and reboots wait for a maintenance window outside pilot hours, after a snapshot."
+fi
+exit 0
+SH
+}
+
+echo
+echo "== package security check (read-only)"
+# remote exits on failure. As the last part of a pipeline it runs in a subshell, so that
+# exit ends only the check, and the deploy, already finished, still exits 0.
+if ! package_check_script | remote "package security check"; then
+    echo "deploy: the package security check did not complete; the deploy itself finished." >&2
+fi

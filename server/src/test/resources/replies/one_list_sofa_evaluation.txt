@@ -1,0 +1,67 @@
+intake: fundi-sw-evaluate
+--- reply ---
+Asante kwa picha. Sofa hii ina fremu imara, lakini kuna mambo manne ya kurekebisha.
+
+```fb-diagnosis
+{
+  "language": "sw",
+  "findings": [
+    {
+      "title": "Kitambaa kimevutwa vibaya kwenye mkono wa kushoto",
+      "area": "upholstery",
+      "severity": "moderate",
+      "dimension": "frame_squareness",
+      "what_happened": "Kitambaa kina mikunjo upande mmoja wa mkono.",
+      "manufacturing_cause": "Mkono wa fremu umeinama, kwa hiyo kitambaa kilivutwa zaidi upande mmoja.",
+      "root_habit": "Kitambaa kinavutwa kwa macho bila kupima pande zote mbili.",
+      "what_i_see": "Mkono wa kushoto una mikunjo kwenye kitambaa.",
+      "what_it_means": "Kitambaa kitachakaa haraka pale kinapovutwa zaidi.",
+      "what_to_do": "Toa kitambaa na ukivute upya sawasawa."
+    },
+    {
+      "title": "Kiungo cha reli ya nyuma kimefunguka",
+      "area": "structural",
+      "severity": "serious",
+      "dimension": "joint_fit",
+      "what_happened": "Kuna pengo la karibu 4mm kwenye kiungo cha reli ya nyuma.",
+      "manufacturing_cause": "Tenon ni nyembamba kuliko mortise.",
+      "root_habit": "Tenon inakatwa bila kupima mortise kwanza.",
+      "what_i_see": "Reli ya nyuma inasogea ukiisukuma.",
+      "what_it_means": "Sofa itaanza kulegea mtu akikaa.",
+      "what_to_do": "Fungua kiungo, ongeza kipande, gundisha na ubane."
+    },
+    {
+      "title": "Ufa kwenye reli ya kiti",
+      "area": "material",
+      "severity": "minor",
+      "dimension": "material",
+      "what_happened": "Ufa mdogo kando ya fundo kwenye reli ya kiti.",
+      "manufacturing_cause": "Mbao ilikuwa na fundo mahali pa kubeba uzito.",
+      "root_habit": "Mbao haichaguliwi kwa kuangalia mafundo.",
+      "what_i_see": "Kuna ufa mdogo chini ya kiti.",
+      "what_it_means": "Unaweza kuongezeka kwa muda.",
+      "what_to_do": "Badilisha reli hiyo kwa mbao isiyo na fundo."
+    },
+    {
+      "title": "Miguu haiko sawa",
+      "area": "level",
+      "severity": "minor",
+      "what_happened": "Mguu wa mbele wa kulia uko juu kidogo.",
+      "manufacturing_cause": "Miguu ilikatwa kabla fremu haijakaa sawa.",
+      "root_habit": "Urefu wa miguu haupimwi kwenye sakafu iliyo sawa.",
+      "what_i_see": "Sofa inayumba kidogo.",
+      "what_it_means": "Itayumba kwenye sakafu ya mteja.",
+      "what_to_do": "Punguza mguu mrefu."
+    }
+  ]
+}
+```
+
+```qv-verdict
+{
+  "verdict": "fair",
+  "language": "sw",
+  "headline": "Fremu imara, kiungo kimoja cha kurekebisha",
+  "summary": "Rekebisha kiungo cha reli ya nyuma kabla ya kumpa mteja."
+}
+```
