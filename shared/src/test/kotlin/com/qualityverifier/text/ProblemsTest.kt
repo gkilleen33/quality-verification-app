@@ -18,7 +18,8 @@ import org.junit.Test
  * Today's replies write each problem twice, as a finding and again as a verdict defect.
  * Replies that write each problem once put the consequence on the finding and leave the
  * verdict's defects empty. Stored replies keep whichever shape they were written in, so
- * every reader has to agree on both, and the count must not move for the old shape.
+ * every reader has to agree on both. For the old shape the count moves only where a verdict
+ * with no defects sits beside findings in the same reply: those findings now count.
  */
 class ProblemsTest {
 
@@ -161,25 +162,58 @@ class ProblemsTest {
     }
 
     @Test
-    fun `a sound verdict in today's shape counts zero beside a cosmetic finding, as before`() {
-        // The verdict lists no defects, but the finding carries no consequence, so the
-        // reply is in today's shape and the finding was never meant as a problem.
+    fun `a sound verdict in today's shape counts the cosmetic finding beside it`() {
+        // The verdict lists no defects and the finding carries no consequence, but a
+        // cosmetic finding counts against first time clean (Nathan, 11 November 2026).
         val reply = parseAssistantContent(TODAY_SOUND)
-        assertEquals(0, fundiDefectCount(listOf(reply)))
+        assertEquals(1, fundiDefectCount(listOf(reply)))
     }
 
     @Test
-    fun `a sound verdict in today's shape lists no problems, as before`() {
-        // Neither the phone's verdict card nor the admin portal's draws the cosmetic finding.
-        assertTrue(problemsOf(parseAssistantContent(TODAY_SOUND)).isEmpty())
+    fun `a sound verdict in today's shape lists the cosmetic finding beside it`() {
+        // The phone's verdict card and the admin portal's both draw it.
+        val problems = problemsOf(parseAssistantContent(TODAY_SOUND))
+        assertEquals(listOf("Saw marks on the top"), problems.map { it.title })
+        assertEquals("finishing", problems.single().dimension)
+    }
+
+    @Test
+    fun `a one-list reply whose findings leave out the consequence counts its findings`() {
+        // All three consequence fields missing does not make the reply clean.
+        val reply = parseAssistantContent(ONE_LIST_NO_CONSEQUENCE)
+        assertTrue("the verdict lists no defects", reply.verdict!!.defects.isEmpty())
+        assertEquals(2, fundiDefectCount(listOf(reply)))
+        assertEquals(
+            listOf("Gap at the back left joint", "Saw marks on the top"),
+            problemsOf(reply).map { it.title },
+        )
     }
 
     @Test
     fun `a sound verdict-only follow-up in today's shape counts zero, not the old defects`() {
-        // The newest diagnosis is in today's shape, so the newest verdict's defects decide.
+        // The newest diagnosis is in today's shape and older than the newest verdict, so its
+        // findings were cleared by that verdict and the verdict's defects decide.
         val sound = "```qv-verdict\n{\"verdict\":\"sound\",\"headline\":\"All fixed\",\"defects\":[]}\n```"
         val replies = listOf(sound, TODAY_EVALUATION).map(::parseAssistantContent)
         assertEquals(0, fundiDefectCount(replies))
+    }
+
+    @Test
+    fun `a sound verdict-only follow-up counts zero after a sound verdict with a cosmetic finding`() {
+        // The cosmetic finding is older than the newest verdict, so it is not recounted.
+        val sound = "```qv-verdict\n{\"verdict\":\"sound\",\"headline\":\"All fixed\",\"defects\":[]}\n```"
+        val replies = listOf(sound, TODAY_SOUND).map(::parseAssistantContent)
+        assertEquals(0, fundiDefectCount(replies))
+    }
+
+    @Test
+    fun `a diagnosis-only follow-up in today's shape counts its findings beside an older sound verdict`() {
+        // The newest diagnosis is newer than the newest verdict, so its findings count.
+        val diagnosis =
+            "```fb-diagnosis\n{\"findings\":[{\"title\":\"Saw marks on the top\",\"severity\":\"cosmetic\"}]}\n```"
+        val sound = "```qv-verdict\n{\"verdict\":\"sound\",\"headline\":\"Good work\",\"defects\":[]}\n```"
+        val replies = listOf(diagnosis, sound).map(::parseAssistantContent)
+        assertEquals(1, fundiDefectCount(replies))
     }
 
     @Test
@@ -406,6 +440,17 @@ class ProblemsTest {
 
             ```qv-verdict
             {"verdict":"sound","headline":"Good work","defects":[]}
+            ```
+        """.trimIndent()
+
+        /** The one-list shape with every consequence field left out: findings, no defects. */
+        val ONE_LIST_NO_CONSEQUENCE = """
+            ```fb-diagnosis
+            {"findings":[{"title":"Gap at the back left joint","area":"structural","severity":"moderate","dimension":"joint_fit"},{"title":"Saw marks on the top","area":"surface","severity":"cosmetic","dimension":"finishing"}]}
+            ```
+
+            ```qv-verdict
+            {"verdict":"fair","headline":"Strong table, one joint to close","summary":"Close the back joint first."}
             ```
         """.trimIndent()
 

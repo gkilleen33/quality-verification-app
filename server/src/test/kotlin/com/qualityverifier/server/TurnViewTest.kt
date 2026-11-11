@@ -41,8 +41,9 @@ class TurnViewTest {
     }
 
     @Test
-    fun `a sound verdict in today's shape draws no problem card, as before`() {
-        // Its cosmetic finding carries no consequence, so it is not one of the verdict's problems.
+    fun `a sound verdict in today's shape draws its cosmetic finding`() {
+        // The finding carries no consequence, but cosmetic findings are problems too
+        // (Nathan, 11 November 2026), so the reviewer sees it beside the verdict.
         val html = render(
             """
             ```fb-diagnosis
@@ -55,8 +56,8 @@ class TurnViewTest {
             """.trimIndent(),
         )
 
-        assertEquals(0, html.occurrences("class=\"vcard defect\""))
-        assertEquals(0, html.occurrences(problemHeading("Saw marks on the top")))
+        assertEquals(1, html.occurrences("class=\"vcard defect\""))
+        assertEquals(1, html.occurrences(problemHeading("Saw marks on the top")))
     }
 
     @Test

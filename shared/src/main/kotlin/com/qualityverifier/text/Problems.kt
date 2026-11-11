@@ -15,19 +15,19 @@ import com.qualityverifier.domain.Verdict
  *  - **One list** (the Fundi Bora prompt after v0.4.0): the verdict lists no defects, and
  *    each finding carries the consequence itself.
  *
- * The two are told apart by the findings, never by the verdict alone: a diagnosis is in
- * the one-list shape when any finding has a non-blank `what_i_see`, `what_it_means` or
- * `what_to_do` ([writesConsequences]). A verdict with no defects is not enough, because
- * today's shape writes one for a piece the model calls sound, with cosmetic findings
- * beside it that were never meant as problems, and those must stay uncounted and undrawn.
- *
  * So, in order:
  *  1. the verdict lists defects: they are the problems (today's shape);
- *  2. the diagnosis is in the one-list shape: its findings are the problems;
- *  3. a verdict with no defects beside a diagnosis in today's shape: no problems, as before;
- *  4. no verdict at all: the findings, since there is nothing they could be repeated in.
+ *  2. otherwise the diagnosis's findings, or none when the reply has no diagnosis.
  *
- * A Kagua reply has no diagnosis and reads exactly as its defects.
+ * Rule 2 covers a verdict with no defects beside findings in either shape, and a diagnosis
+ * with no verdict. Today's prompt writes a verdict with no defects for a piece the model
+ * calls sound, with cosmetic findings beside it. Those findings are problems too, and
+ * count against first time clean (Nathan, 11 November 2026). Telling the shapes apart by
+ * the consequence fields would also read a one-list reply as clean whenever the model left
+ * all three out, so the fields decide nothing here.
+ *
+ * A Kagua reply has no diagnosis and reads exactly as its defects; a verdict-only reply
+ * of either app with no defects has no problems.
  *
  * Nothing is filtered. A problem with a blank title is still a problem the count has always
  * included, and each screen already decides for itself whether it can draw one.
@@ -53,7 +53,6 @@ fun problemsOf(verdict: Verdict?, diagnosis: Diagnosis?): List<Problem> {
             )
         }
     }
-    if (verdict != null && diagnosis?.writesConsequences != true) return emptyList()
     return findings.map { finding ->
         Problem(
             title = finding.title,
@@ -86,7 +85,19 @@ fun problemsOf(content: AssistantContent): List<Problem> =
  *     ([AssistantContent.diagnosisUnreadable]): null. Its problems are unknown, and
  *     reading past it to an older diagnosis, or calling the piece clean, would record a
  *     number the model never gave;
- *  4. otherwise zero: a verdict with no defects in today's shape, as before v0.4.0.
+ *  4. the newest diagnosis came in the same reply as the newest verdict, or in a newer
+ *     one: its findings. This is a verdict with no defects beside findings without
+ *     consequence fields, such as today's sound verdict with a cosmetic finding. Cosmetic
+ *     findings count against first time clean (Nathan, 11 November 2026), and a one-list
+ *     reply whose findings left out all three fields is not clean either;
+ *  5. otherwise zero.
+ *
+ * Rule 4 skips a diagnosis older than the verdict because of today's prompt, which runs
+ * until the one-list prompt ships after v0.4.0. A verdict-only follow-up in today's shape
+ * ("sound, all fixed", no defects) clears the problems of the diagnosis before it, and
+ * counting that diagnosis's findings would bring back problems the model has since fixed.
+ * The one-list prompt sends a verdict with its diagnosis every time, so the newest
+ * diagnosis is never older there and rule 4 reads it.
  *
  * A diagnosis that found nothing counts as the newest diagnosis, with no problems, though
  * the parser drops it from [AssistantContent.diagnosis] for having nothing to draw. So
@@ -101,13 +112,17 @@ fun problemsOf(content: AssistantContent): List<Problem> =
  * defects, and it has no diagnosis.
  */
 fun fundiDefectCount(repliesNewestFirst: List<AssistantContent>): Int? {
-    val verdict = repliesNewestFirst.firstNotNullOfOrNull { it.verdict } ?: return null
-    val diagnosisReply = repliesNewestFirst.firstOrNull { it.sentDiagnosis }
+    // Indices into the list, newest first: a smaller index is a newer reply.
+    val verdictIndex = repliesNewestFirst.indexOfFirst { it.verdict != null }
+    val verdict = repliesNewestFirst.getOrNull(verdictIndex)?.verdict ?: return null
+    val diagnosisIndex = repliesNewestFirst.indexOfFirst { it.sentDiagnosis }
+    val diagnosisReply = repliesNewestFirst.getOrNull(diagnosisIndex)
     val diagnosis = diagnosisReply?.diagnosis
     return when {
         diagnosis != null && diagnosis.writesConsequences -> diagnosis.findings.size
         verdict.defects.isNotEmpty() -> verdict.defects.size
         diagnosisReply?.diagnosisUnreadable == true -> null
+        diagnosis != null && diagnosisIndex <= verdictIndex -> diagnosis.findings.size
         else -> 0
     }
 }
