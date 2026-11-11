@@ -53,7 +53,7 @@ class Stub<T : Any>(type: Class<T>, private val answers: Map<String, (Array<out 
                         ?: throw UnsupportedOperationException("${type.simpleName}.${method.name} is not stubbed")
                     // A suspend function's last argument is its continuation; a value
                     // returned straight away is its result.
-                    answer(args ?: emptyArray())
+                    answer(args ?: emptyArray<Any?>())
                 }
             }
         }
@@ -118,7 +118,7 @@ class TermsWorld {
 
     val auth = Stub(
         AuthStore::class.java,
-        mapOf("findUser" to { args -> users[args[0] as String] }),
+        mapOf("findUser" to { args: Array<out Any?> -> users[args[0] as String] }),
     )
     val chat = Stub(ChatStore::class.java)
     val fundiStore = Stub(FundiStore::class.java)

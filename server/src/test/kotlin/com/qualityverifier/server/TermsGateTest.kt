@@ -70,7 +70,7 @@ class TermsGateTest {
         HttpMethod.Get to "/v1/fundi/workers",
     )
 
-    private suspend fun HttpClient.call(method: HttpMethod, path: String, user: UserRow): HttpResponse =
+    private suspend fun HttpClient.hit(method: HttpMethod, path: String, user: UserRow): HttpResponse =
         request(path) {
             this.method = method
             signedInAs(user)
@@ -101,7 +101,7 @@ class TermsGateTest {
         val client = with(world) { mount(folder.newFolder()) }
 
         refused.forEach { (method, path) ->
-            val response = client.call(method, path, world.fundi)
+            val response = client.hit(method, path, world.fundi)
             assertTrue("$method $path was not refused: ${response.status}", response.isTermsRefusal())
         }
         assertEquals("a refused route reached its store", emptyList<String>(), world.routeCalls)
@@ -115,7 +115,7 @@ class TermsGateTest {
         open.forEach { (method, path) ->
             // Any answer but the refusal: the stores behind these are stubs, so some
             // answer 500, which still shows the gate let the request through.
-            val response = client.call(method, path, world.fundi)
+            val response = client.hit(method, path, world.fundi)
             assertTrue("$method $path was refused before agreeing", !response.isTermsRefusal())
         }
     }
@@ -128,7 +128,7 @@ class TermsGateTest {
         client.agree(world)
 
         refused.forEach { (method, path) ->
-            val response = client.call(method, path, world.fundi)
+            val response = client.hit(method, path, world.fundi)
             assertTrue("$method $path still refused after agreeing", !response.isTermsRefusal())
         }
     }
@@ -148,7 +148,7 @@ class TermsGateTest {
             ),
         )
 
-        assertTrue(client.call(HttpMethod.Post, "/v1/fundi/chat", world.fundi).isTermsRefusal())
+        assertTrue(client.hit(HttpMethod.Post, "/v1/fundi/chat", world.fundi).isTermsRefusal())
     }
 
     @Test
@@ -156,7 +156,7 @@ class TermsGateTest {
         val world = TermsWorld().apply { switchGate(Audience.FUNDI, on = true) }
         val client = with(world) { mount(folder.newFolder()) }
         client.agree(world)
-        assertTrue(!client.call(HttpMethod.Post, "/v1/fundi/chat", world.fundi).isTermsRefusal())
+        assertTrue(!client.hit(HttpMethod.Post, "/v1/fundi/chat", world.fundi).isTermsRefusal())
 
         val withdrawal = client.request("/v1/me/consents/withdrawal") {
             method = HttpMethod.Post
@@ -168,11 +168,11 @@ class TermsGateTest {
         assertEquals(HttpStatusCode.NoContent, withdrawal.status)
         assertTrue(
             "refused at once, not after the cache expires",
-            client.call(HttpMethod.Post, "/v1/fundi/chat", world.fundi).isTermsRefusal(),
+            client.hit(HttpMethod.Post, "/v1/fundi/chat", world.fundi).isTermsRefusal(),
         )
 
         client.agree(world)
-        assertTrue(!client.call(HttpMethod.Post, "/v1/fundi/chat", world.fundi).isTermsRefusal())
+        assertTrue(!client.hit(HttpMethod.Post, "/v1/fundi/chat", world.fundi).isTermsRefusal())
     }
 
     @Test
@@ -183,11 +183,11 @@ class TermsGateTest {
 
         world.raiseVersion("2026-12")
         world.gate.forget(world.fundi.id)
-        assertTrue(client.call(HttpMethod.Post, "/v1/fundi/chat", world.fundi).isTermsRefusal())
+        assertTrue(client.hit(HttpMethod.Post, "/v1/fundi/chat", world.fundi).isTermsRefusal())
 
         val later = world.texts.file(Audience.FUNDI, "2026-12", com.qualityverifier.server.terms.TermsLanguage.ENGLISH)!!
         client.agree(world, version = "2026-12", sha256 = later.sha256)
-        assertTrue(!client.call(HttpMethod.Post, "/v1/fundi/chat", world.fundi).isTermsRefusal())
+        assertTrue(!client.hit(HttpMethod.Post, "/v1/fundi/chat", world.fundi).isTermsRefusal())
     }
 
     @Test
@@ -199,7 +199,7 @@ class TermsGateTest {
         }
         val client = with(world) { mount(folder.newFolder()) }
 
-        val response = client.call(HttpMethod.Post, "/v1/chat", world.buyer)
+        val response = client.hit(HttpMethod.Post, "/v1/chat", world.buyer)
         assertTrue("a Kagua account was refused", !response.isTermsRefusal())
     }
 
@@ -209,7 +209,7 @@ class TermsGateTest {
         val client = with(world) { mount(folder.newFolder()) }
 
         (refused + open).forEach { (method, path) ->
-            val response = client.call(method, path, world.fundi)
+            val response = client.hit(method, path, world.fundi)
             assertTrue("$method $path was refused with the gate off", !response.isTermsRefusal())
         }
     }
@@ -222,7 +222,7 @@ class TermsGateTest {
         }
         val client = with(world) { mount(folder.newFolder()) }
 
-        val response = client.call(HttpMethod.Post, "/v1/fundi/chat", world.fundi)
+        val response = client.hit(HttpMethod.Post, "/v1/fundi/chat", world.fundi)
         assertTrue("a typo in terms_version locked the account out", !response.isTermsRefusal())
     }
 
