@@ -50,7 +50,9 @@ import com.qualityverifier.server.auth.AccessTokens
 import com.qualityverifier.server.blobs.BlobStore
 import com.qualityverifier.server.chat.AnthropicClient
 import com.qualityverifier.server.chat.ClaudeClient
+import com.qualityverifier.server.db.AppSettings
 import com.qualityverifier.server.db.AuthStore
+import com.qualityverifier.server.db.PostgresSettingsStore
 import com.qualityverifier.server.db.ChatStore
 import com.qualityverifier.server.db.FundiStore
 import com.qualityverifier.server.db.PostgresChatStore
@@ -175,6 +177,11 @@ fun main() {
         }
     }
 
+    // The settings the server reads while it runs (V27). Without a database every setting
+    // is at its default, which leaves the terms gate off.
+    val settings = database?.let { AppSettings(PostgresSettingsStore(it.source)) }
+        ?: AppSettings.UNCONFIGURED
+
     log.info("Kagua server {} starting on {}:{}", config.version, config.host, config.port)
     if (config.dailyAssessmentLimit > 0) {
         log.info(
@@ -199,7 +206,7 @@ fun main() {
     )
 
     embeddedServer(Netty, port = config.port, host = config.host) {
-        module(config.version, database, auth, chat, fundi, admin, config.appVersions)
+        module(config.version, database, auth, chat, fundi, admin, config.appVersions, settings)
     }.start(wait = true)
 }
 
@@ -283,6 +290,8 @@ fun Application.module(
     admin: Admin? = null,
     /** Each app's latest and minimum versionCode. Defaulted to 1 and 1 for tests. */
     appVersions: AppVersions = AppVersions.UNCONFIGURED,
+    /** The settings table, cached. Defaulted to every setting off for tests. No route reads it yet. */
+    settings: AppSettings = AppSettings.UNCONFIGURED,
 ) {
     install(ContentNegotiation) { json() }
     // Before routing, so it runs ahead of authentication. See installAppVersionGate.
