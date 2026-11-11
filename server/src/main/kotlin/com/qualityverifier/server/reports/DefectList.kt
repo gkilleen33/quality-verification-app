@@ -25,8 +25,12 @@ import com.qualityverifier.text.writesConsequences
  * the other, which is why it is the newest of each rather than the newest reply.
  *
  * Every purpose, not only full assessments: a diagnosis, a work-in-progress check, or a
- * customer return has no verdict, and its findings are its problems ([problemsOf], case 4).
+ * customer return has no verdict, and its findings are its problems ([problemsOf]).
  * A Kagua session has no diagnosis and reads as its verdict's defects.
+ *
+ * A verdict with no defects lists the findings of a diagnosis in the same reply or a newer
+ * one, cosmetic findings included (Nathan, 11 November 2026), and nothing for an older
+ * diagnosis, which that verdict has cleared. That is [fundiDefectCount]'s fourth rule.
  */
 data class DefectList(
     /** Why the maker opened the assessment, from `sessions.intake_answers`; null for Kagua. */
@@ -48,14 +52,22 @@ data class DefectList(
         /** From the session's assistant replies, parsed, newest first. */
         fun fromReplies(repliesNewestFirst: List<AssistantContent>, purpose: FundiPurpose? = null): DefectList {
             val newest = NewestBlocks.of(repliesNewestFirst)
+            val verdict = newest.verdict
             val diagnosis = newest.diagnosis
-            // fundiDefectCount's first rule: a newest diagnosis in the one-list shape gives the
-            // problems even beside an older verdict that still lists defects, which a session
-            // straddling the prompt change can have. problemsOf alone would take the defects.
-            val problems = if (diagnosis != null && diagnosis.writesConsequences) {
-                problemsOf(null, diagnosis)
-            } else {
-                problemsOf(newest.verdict, diagnosis)
+            val problems = when {
+                // fundiDefectCount's first rule: a newest diagnosis in the one-list shape gives
+                // the problems even beside an older verdict that still lists defects, which a
+                // session straddling the prompt change can have. problemsOf alone would take
+                // the defects.
+                diagnosis != null && diagnosis.writesConsequences -> problemsOf(null, diagnosis)
+                // No verdict, verdict defects, or a diagnosis no older than the verdict:
+                // problemsOf decides, as the count's other rules do.
+                verdict == null || verdict.defects.isNotEmpty() || newest.diagnosisNotOlderThanVerdict ->
+                    problemsOf(verdict, diagnosis)
+                // A verdict with no defects after the newest diagnosis, as today's prompt writes
+                // for "sound, all fixed": that diagnosis's findings are cleared, and listing
+                // them would disagree with the count of zero.
+                else -> emptyList()
             }
             val unknown = newest.diagnosisUnreadable && problems.isEmpty()
             return DefectList(
@@ -172,6 +184,12 @@ object DefaultParts {
 internal class NewestBlocks(
     val verdict: Verdict?,
     private val diagnosisReply: AssistantContent?,
+    /**
+     * Whether the newest diagnosis came in the same reply as the newest verdict, or in a
+     * newer one. False when either is missing. [fundiDefectCount] counts the findings of a
+     * diagnosis beside a verdict with no defects only in that case.
+     */
+    val diagnosisNotOlderThanVerdict: Boolean,
 ) {
     /** Null when there is none, when it found nothing, or when it would not decode. */
     val diagnosis: Diagnosis? get() = diagnosisReply?.diagnosis
@@ -181,9 +199,15 @@ internal class NewestBlocks(
     val diagnosisUnreadable: Boolean get() = diagnosisReply?.diagnosisUnreadable == true
 
     companion object {
-        fun of(repliesNewestFirst: List<AssistantContent>): NewestBlocks = NewestBlocks(
-            verdict = repliesNewestFirst.firstNotNullOfOrNull { it.verdict },
-            diagnosisReply = repliesNewestFirst.firstOrNull { it.sentDiagnosis },
-        )
+        fun of(repliesNewestFirst: List<AssistantContent>): NewestBlocks {
+            // Indices into the list, newest first: a smaller index is a newer reply.
+            val verdictIndex = repliesNewestFirst.indexOfFirst { it.verdict != null }
+            val diagnosisIndex = repliesNewestFirst.indexOfFirst { it.sentDiagnosis }
+            return NewestBlocks(
+                verdict = repliesNewestFirst.getOrNull(verdictIndex)?.verdict,
+                diagnosisReply = repliesNewestFirst.getOrNull(diagnosisIndex),
+                diagnosisNotOlderThanVerdict = verdictIndex >= 0 && diagnosisIndex >= 0 && diagnosisIndex <= verdictIndex,
+            )
+        }
     }
 }
