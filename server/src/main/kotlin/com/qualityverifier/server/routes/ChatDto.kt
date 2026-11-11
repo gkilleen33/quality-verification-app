@@ -78,6 +78,10 @@ data class ChatRequest(
      * The checked metadata for each photo in [blobs], by lowercase hash, and the keys that
      * were dropped. A hash not in [blobs] is ignored: the metadata describes this turn's
      * photos, and the attachment rows are what it is stored on.
+     *
+     * Walks only the top level, and never prints, compares, or hashes [photoMeta] or this
+     * request: each recurses, and a value nested thousands deep would overflow the stack.
+     * [PhotoMeta.check] drops nested values the same way.
      */
     fun photoMetaByHash(): CheckedPhotoMeta {
         val sent = photoMeta as? JsonObject

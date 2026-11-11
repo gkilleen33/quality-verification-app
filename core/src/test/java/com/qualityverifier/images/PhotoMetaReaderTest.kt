@@ -20,11 +20,13 @@ import org.junit.Test
  */
 class PhotoMetaReaderTest {
 
-    /** EXIF as ExifInterface reports it: strings, with rationals as `a/b`. */
+    /**
+     * EXIF as ExifInterface reports it: strings, with rationals as `a/b`. A 0/0 rational is
+     * NaN there, which [ExifInterfaceSource.number] answers as null, and so does this.
+     */
     private class FakeExif(
         private val tags: Map<String, String>,
         private val latLong: DoubleArray? = null,
-        private val altitude: Double? = null,
     ) : ExifSource {
         /** Every tag the reader asked for, so a test can say what was never read. */
         val asked = mutableSetOf<String>()
@@ -37,10 +39,9 @@ class PhotoMetaReaderTest {
             } else {
                 value.toDoubleOrNull()
             }
-        }
+        }?.takeIf { !it.isNaN() }
         override fun integer(tag: String): Int? = text(tag)?.toIntOrNull()
         override fun latLong(): DoubleArray? = latLong.also { asked += "latLong" }
-        override fun altitude(): Double? = altitude.also { asked += "altitude" }
     }
 
     /** A phone photo with most fields filled, as a Samsung writes them. */
@@ -65,6 +66,8 @@ class PhotoMetaReaderTest {
             ExifInterface.TAG_IMAGE_UNIQUE_ID to "XA0LLMF00SM",
             ExifInterface.TAG_CAMERA_OWNER_NAME to "Kamau",
             ExifInterface.TAG_ARTIST to "Kamau Furniture",
+            ExifInterface.TAG_GPS_ALTITUDE to "1661/1",
+            ExifInterface.TAG_GPS_ALTITUDE_REF to "0",
             ExifInterface.TAG_GPS_DATESTAMP to "2026:11:10",
             ExifInterface.TAG_GPS_TIMESTAMP to "11:03:20",
             // Never read: the maker's private block and the embedded thumbnail.
@@ -74,8 +77,11 @@ class PhotoMetaReaderTest {
             ExifInterface.TAG_THUMBNAIL_IMAGE_WIDTH to "512",
         ),
         latLong = doubleArrayOf(-1.2921, 36.8219),
-        altitude = 1661.0,
     )
+
+    /** A located photo with only the given altitude tags, for the altitude cases. */
+    private fun located(vararg altitude: Pair<String, String>) =
+        FakeExif(tags = mapOf(*altitude), latLong = doubleArrayOf(-1.2921, 36.8219))
 
     @Test
     fun `every field maps to its key`() {
@@ -123,7 +129,9 @@ class PhotoMetaReaderTest {
         val meta = PhotoMetaReader.read(exif, width = 3000, height = 4000, includeGps = false)
 
         PhotoMeta.GPS.forEach { assertTrue("$it kept with the switch off", it !in meta) }
-        assertTrue(exif.asked.toString(), "latLong" !in exif.asked && "altitude" !in exif.asked)
+        assertTrue(exif.asked.toString(), "latLong" !in exif.asked)
+        assertTrue(ExifInterface.TAG_GPS_ALTITUDE !in exif.asked)
+        assertTrue(ExifInterface.TAG_GPS_ALTITUDE_REF !in exif.asked)
         assertTrue(ExifInterface.TAG_GPS_DATESTAMP !in exif.asked)
         // The rest is unaffected.
         assertEquals(JsonPrimitive("R58T90ABCDE"), meta[PhotoMeta.BODY_SERIAL])
@@ -172,6 +180,56 @@ class PhotoMetaReaderTest {
             },
             meta,
         )
+    }
+
+    @Test
+    fun `an altitude below sea level is negative`() {
+        val exif = located(
+            ExifInterface.TAG_GPS_ALTITUDE to "12/1",
+            ExifInterface.TAG_GPS_ALTITUDE_REF to "1",
+        )
+
+        val meta = PhotoMetaReader.read(exif, width = 10, height = 10, includeGps = true)
+
+        assertEquals(JsonPrimitive(-12.0), meta[PhotoMeta.GPS_ALTITUDE_M])
+    }
+
+    @Test
+    fun `an altitude without its ref is omitted, not sent as zero`() {
+        // ExifInterface.getAltitude answers its default here: the sign is unknown.
+        val exif = located(ExifInterface.TAG_GPS_ALTITUDE to "1661/1")
+
+        val meta = PhotoMetaReader.read(exif, width = 10, height = 10, includeGps = true)
+
+        assertTrue(meta.toString(), PhotoMeta.GPS_ALTITUDE_M !in meta)
+        assertEquals(JsonPrimitive(-1.2921), meta[PhotoMeta.GPS_LATITUDE])
+    }
+
+    @Test
+    fun `a redacted altitude is omitted, not sent as zero`() {
+        // A phone that strips the height writes 0/0, which reads as NaN.
+        val exif = located(
+            ExifInterface.TAG_GPS_ALTITUDE to "0/0",
+            ExifInterface.TAG_GPS_ALTITUDE_REF to "0",
+        )
+
+        val meta = PhotoMetaReader.read(exif, width = 10, height = 10, includeGps = true)
+
+        assertTrue(meta.toString(), PhotoMeta.GPS_ALTITUDE_M !in meta)
+    }
+
+    @Test
+    fun `an altitude without a position is omitted`() {
+        val exif = FakeExif(
+            mapOf(
+                ExifInterface.TAG_GPS_ALTITUDE to "1661/1",
+                ExifInterface.TAG_GPS_ALTITUDE_REF to "0",
+            )
+        )
+
+        val meta = PhotoMetaReader.read(exif, width = 10, height = 10, includeGps = true)
+
+        assertTrue(meta.toString(), PhotoMeta.GPS_ALTITUDE_M !in meta)
     }
 
     @Test

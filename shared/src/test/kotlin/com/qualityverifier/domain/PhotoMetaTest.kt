@@ -1,6 +1,8 @@
 package com.qualityverifier.domain
 
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
@@ -161,6 +163,35 @@ class PhotoMetaTest {
         assertEquals(good, PhotoMeta.check(good).meta)
         assertNull(PhotoMeta.check(bad).meta)
         assertNull(PhotoMeta.check(long).meta)
+    }
+
+    @Test
+    fun `a value nested thousands deep is dropped without being read`() {
+        // toString() and equals() recurse, so this test never calls either on these values.
+        // Built in a loop for the same reason: a recursive builder would overflow first.
+        var deepObject: JsonElement = JsonPrimitive(1)
+        var deepArray: JsonElement = JsonPrimitive(1)
+        repeat(10_000) {
+            deepObject = JsonObject(mapOf("a" to deepObject))
+            deepArray = JsonArray(listOf(deepArray))
+        }
+        val raw = JsonObject(
+            linkedMapOf(
+                PhotoMeta.MAKE to deepObject,                  // a known key, an object value
+                PhotoMeta.LENS_SPECIFICATION to deepArray,     // the one array key, nested
+                "a" to deepObject,                             // an unknown key
+                PhotoMeta.MODEL to JsonPrimitive("SM-A145F"),
+            )
+        )
+
+        val checked = PhotoMeta.check(raw)
+
+        assertEquals(buildJsonObject { put(PhotoMeta.MODEL, "SM-A145F") }, checked.meta)
+        assertEquals(listOf(PhotoMeta.MAKE, PhotoMeta.LENS_SPECIFICATION, "a"), checked.dropped)
+        // The whole of a photo's entry nested, as `{"<sha>":{"a":{"a":…}}}` arrives.
+        val whole = PhotoMeta.check(deepObject)
+        assertNull(whole.meta)
+        assertEquals(listOf("a"), whole.dropped)
     }
 
     @Test

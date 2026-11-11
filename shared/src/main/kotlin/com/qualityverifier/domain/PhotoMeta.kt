@@ -168,13 +168,17 @@ object PhotoMeta {
     fun check(raw: JsonElement?): Checked {
         if (raw == null || raw is JsonNull) return Checked(null, emptyList())
         if (raw !is JsonObject) return Checked(null, listOf("(not an object)"))
-        if (raw.toString().toByteArray(Charsets.UTF_8).size > MAX_BYTES) {
+        // Measured without the nested values. No key takes one, and toString() recurses
+        // through them: an object nested thousands deep overflows the stack, a 500 rather
+        // than a dropped value. They are dropped by key below without ever being read.
+        val flat = JsonObject(raw.filterValues { isFlat(it) })
+        if (flat.toString().toByteArray(Charsets.UTF_8).size > MAX_BYTES) {
             return Checked(null, listOf("(over $MAX_BYTES bytes)"))
         }
         val kept = linkedMapOf<String, JsonElement>()
         val dropped = mutableListOf<String>()
         for ((key, value) in raw) {
-            val kind = FIELDS[key]
+            val kind = FIELDS[key]?.takeIf { isFlat(value) }
             val clean = kind?.let { cleaned(key, it, value) }
             if (clean == null) dropped += key else kept[key] = clean
         }
@@ -187,6 +191,10 @@ object PhotoMeta {
         }
         return Checked(if (kept.isEmpty()) null else JsonObject(kept), dropped)
     }
+
+    /** A primitive, or an array of primitives: as deep as any kept value goes. */
+    private fun isFlat(value: JsonElement): Boolean =
+        value is JsonPrimitive || (value is JsonArray && value.all { it is JsonPrimitive })
 
     /** [meta] without the keys the location switch governs. */
     fun withoutGps(meta: JsonObject): JsonObject = JsonObject(meta.filterKeys { it !in GPS })

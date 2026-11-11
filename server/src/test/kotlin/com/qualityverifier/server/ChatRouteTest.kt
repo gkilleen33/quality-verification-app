@@ -430,6 +430,31 @@ class ChatRouteTest {
     }
 
     @Test
+    fun `a value nested thousands deep is dropped and the turn goes ahead`() = testApplication {
+        // toString() on a value this deep overflows the stack. The reader parses it without
+        // recursing; nothing after it may recurse either, or the turn is a 500.
+        val (blobs, sha) = storedPhoto()
+        val store = FakeChatStore()
+        val claude = FakeClaude(ClaudeResult.Success("ok", TokenUsage(), "m"))
+        val app = withChat(store, claude, blobs = blobs)
+        val depth = 10_000
+        val deep = StringBuilder()
+        repeat(depth) { deep.append("{\"a\":") }
+        deep.append('1')
+        repeat(depth) { deep.append('}') }
+        val meta = """{"$sha":{"make":"samsung","a":$deep}}"""
+
+        val response = app.post("/v1/chat") {
+            auth(); contentType(ContentType.Application.Json)
+            setBody(TextContent(turnJson(sha, meta), ContentType.Application.Json))
+        }
+
+        assertEquals(HttpStatusCode.OK, response.status)
+        assertEquals(mapOf(sha to buildJsonObject { put("make", "samsung") }), store.sawPhotoMeta)
+        assertEquals(1, claude.calls)
+    }
+
+    @Test
     fun `the request to Claude is the same bytes with and without metadata`() = testApplication {
         // Prompt caching matches the request prefix byte for byte, and a broken cache raises
         // no error. The metadata goes to the attachment row and nowhere else, so the same

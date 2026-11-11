@@ -24,9 +24,6 @@ interface ExifSource {
 
     /** Latitude and longitude in decimal degrees, signed, or null without both. */
     fun latLong(): DoubleArray?
-
-    /** Metres above sea level, negative below, or null when the camera wrote none. */
-    fun altitude(): Double?
 }
 
 /** [ExifSource] over the photo's own EXIF, read from the original bytes. */
@@ -40,9 +37,6 @@ class ExifInterfaceSource(private val exif: ExifInterface) : ExifSource {
         exif.getAttributeInt(tag, Int.MIN_VALUE).takeIf { it != Int.MIN_VALUE }
 
     override fun latLong(): DoubleArray? = exif.latLong
-
-    override fun altitude(): Double? =
-        if (exif.getAttribute(ExifInterface.TAG_GPS_ALTITUDE) != null) exif.getAltitude(0.0) else null
 }
 
 /**
@@ -104,13 +98,14 @@ object PhotoMetaReader {
         integer(PhotoMeta.ORIGINAL_HEIGHT, height)
 
         if (exif != null && includeGps) {
-            exif.latLong()
+            val position = exif.latLong()
                 ?.takeIf { it.size == 2 && it[0] in -90.0..90.0 && it[1] in -180.0..180.0 }
-                ?.let { (lat, lon) ->
-                    out[PhotoMeta.GPS_LATITUDE] = JsonPrimitive(lat)
-                    out[PhotoMeta.GPS_LONGITUDE] = JsonPrimitive(lon)
-                }
-            number(PhotoMeta.GPS_ALTITUDE_M, exif.altitude()) { true }
+            position?.let { (lat, lon) ->
+                out[PhotoMeta.GPS_LATITUDE] = JsonPrimitive(lat)
+                out[PhotoMeta.GPS_LONGITUDE] = JsonPrimitive(lon)
+            }
+            // A height with no point under it is not a place.
+            if (position != null) number(PhotoMeta.GPS_ALTITUDE_M, altitude(exif)) { true }
             text(
                 PhotoMeta.GPS_TIME,
                 gpsTime(exif.text(ExifInterface.TAG_GPS_DATESTAMP), exif.text(ExifInterface.TAG_GPS_TIMESTAMP)),
@@ -141,6 +136,23 @@ object PhotoMetaReader {
     }
 
     internal fun offset(value: String?): String? = value?.trim()?.takeIf { OFFSET.matches(it) }
+
+    /**
+     * Metres above sea level, negative below. EXIF stores the height unsigned in GPSAltitude
+     * and the sign in GPSAltitudeRef: 0 above, 1 below. Read here rather than through
+     * [ExifInterface.getAltitude], which answers its default for a missing ref or a 0/0
+     * height, so any default it is given comes back looking like a measured height.
+     * Without a ref the sign is unknown, and the height is left out.
+     */
+    private fun altitude(exif: ExifSource): Double? {
+        val height = exif.number(ExifInterface.TAG_GPS_ALTITUDE)?.takeIf { it.isFinite() && it >= 0 }
+            ?: return null
+        return when (exif.integer(ExifInterface.TAG_GPS_ALTITUDE_REF)) {
+            0 -> height
+            1 -> -height
+            else -> null
+        }
+    }
 
     /** GPS date and time, both UTC, as one instant: `2026-11-10T11:03:20Z`. */
     internal fun gpsTime(date: String?, time: String?): String? {
