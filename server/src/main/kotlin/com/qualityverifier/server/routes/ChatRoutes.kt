@@ -3,9 +3,7 @@ package com.qualityverifier.server.routes
 import com.qualityverifier.data.prompts.PromptRepository
 import com.qualityverifier.domain.AppVersionHeaders
 import com.qualityverifier.domain.Audience
-import com.qualityverifier.domain.ChatMessage
 import com.qualityverifier.domain.ItemType
-import com.qualityverifier.domain.Role
 import com.qualityverifier.server.blobs.BlobStore
 import com.qualityverifier.server.chat.ClaudeClient
 import com.qualityverifier.server.chat.ClaudeResult
@@ -315,12 +313,13 @@ private suspend fun RoutingContext.assessmentTurn(
                             ?: markdownToPlainText(parsed.prose.ifBlank { result.text }),
                         verdictLevelId = parsed.verdict?.level?.id,
                         verdictLanguage = parsed.verdict?.language,
-                        // Null when there is no verdict, which is not the same as a
-                        // verdict that found nothing wrong — see V15.
+                        // Counted by the store from the replies it has stored, not from
+                        // [history]: another turn of this session may have stored its
+                        // reply while this one waited on Claude.
                         defectCount = when (audience) {
                             // Kagua has no diagnosis; its verdict's defects are its list.
-                            Audience.BUYER -> parsed.verdict?.defects?.size
-                            Audience.FUNDI -> fundiCountAfter(parsed, history)
+                            Audience.BUYER -> parsed.verdict?.let { verdict -> { _: List<String> -> verdict.defects.size } }
+                            Audience.FUNDI -> fundiCounter(parsed)
                         },
                     )
                     // The route's audience, so spend splits by app: the column defaults to
@@ -391,23 +390,24 @@ private suspend fun RoutingContext.requireAudience(
 }
 
 /**
- * Fundi Bora's defect count once [reply] is stored, or null to leave the session's alone.
+ * How the store counts Fundi Bora's defects once [reply] is stored, or null to leave the
+ * session's count alone.
  *
- * The count is the problems in the session's newest diagnosis, read with its newest
- * verdict ([fundiDefectCount]), so a follow-up that resends one block and not the other
- * still counts right. The earlier replies come from [history], the stored conversation
- * this turn was answered from; the server keeps no other copy of the newest diagnosis.
+ * The count reads the session's newest verdict and newest diagnosis ([fundiDefectCount]),
+ * so a follow-up that resends one block and not the other still counts right. The store
+ * hands over every stored reply, this one included, from inside the transaction that
+ * stores it; the server keeps no other copy of the newest diagnosis.
  *
  * A reply with neither block changes nothing and is not worth parsing the session for.
  * One with a diagnosis and no verdict gives a count only when an earlier reply had a
- * verdict, and the store writes it only over a verdict already recorded.
+ * verdict, and the store writes it only over a verdict already recorded. A diagnosis
+ * block that would not decode still counts as sent: it can make the count unknown.
  */
-private fun fundiCountAfter(reply: AssistantContent, history: List<ChatMessage>): Int? {
-    if (reply.verdict == null && reply.diagnosis == null && !reply.cleanDiagnosis) return null
-    val earlier = history.asReversed()
-        .filter { it.role == Role.ASSISTANT }
-        .map { parseAssistantContent(it.text) }
-    return fundiDefectCount(listOf(reply) + earlier)
+private fun fundiCounter(reply: AssistantContent): ((List<String>) -> Int?)? {
+    if (reply.verdict == null && !reply.sentDiagnosis) return null
+    return { storedRepliesNewestFirst ->
+        fundiDefectCount(storedRepliesNewestFirst.map(::parseAssistantContent))
+    }
 }
 
 private fun sha256Of(value: String): String =
