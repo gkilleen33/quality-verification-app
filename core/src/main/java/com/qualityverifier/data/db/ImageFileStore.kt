@@ -8,9 +8,15 @@ import android.net.Uri
 import android.util.Log
 import androidx.exifinterface.media.ExifInterface
 import com.qualityverifier.data.chat.ImageBytesSource
+import com.qualityverifier.domain.PhotoMeta
+import com.qualityverifier.images.ExifInterfaceSource
 import com.qualityverifier.images.ImageQuality
+import com.qualityverifier.images.PhotoMetaReader
 import com.qualityverifier.images.lumaOf
 import com.qualityverifier.images.measureQuality as measureLuma
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.jsonObject
 import java.io.ByteArrayOutputStream
 import java.io.File
 import java.util.UUID
@@ -26,8 +32,22 @@ import java.util.UUID
  * many turns carry it, which matters on metered mobile data. Rotation matters for
  * accuracy too: Claude cannot judge whether a table is level from a sideways photo.
  * Kagua and Fundi Bora both route every new photo through here.
+ *
+ * The camera metadata worth keeping (see [PhotoMeta]) is read from the original before it
+ * is re-encoded, and written beside the photo as `<name>.meta.json`, where it stays until
+ * the photo is deleted. A file beside the photo rather than a Room column: a turn can sit
+ * unsent for days and be retried, the photo file is what the turn refers to, and every way
+ * a photo is deleted already goes through here, so the two cannot part.
+ *
+ * @param mayRecordLocation the app's location switch ([com.qualityverifier.data.location.LocationPreference.records]).
+ *   Read when a photo arrives, so GPS is never written while it is off, and again when the
+ *   metadata is sent, so a switch turned off before a queued turn goes keeps its GPS off
+ *   the server.
  */
-class ImageFileStore(private val context: Context) : ImageBytesSource, SessionImageStore {
+class ImageFileStore(
+    private val context: Context,
+    private val mayRecordLocation: () -> Boolean = { false },
+) : ImageBytesSource, SessionImageStore {
 
     private val root: File get() = File(context.filesDir, "images")
 
@@ -57,6 +77,7 @@ class ImageFileStore(private val context: Context) : ImageBytesSource, SessionIm
 
     override fun delete(file: File) {
         runCatching { file.delete() }
+        runCatching { metaFileOf(file).delete() }
     }
 
     /**
@@ -80,7 +101,10 @@ class ImageFileStore(private val context: Context) : ImageBytesSource, SessionIm
         val raw = context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
             ?: return null
         val normalised = normalise(raw) ?: return null
-        newImageFile(sessionId).apply { writeBytes(normalised) }
+        newImageFile(sessionId).apply {
+            writeBytes(normalised.jpeg)
+            writeMeta(this, normalised.meta)
+        }
     } catch (e: Exception) {
         Log.w(TAG, "Could not import image from $uri", e)
         null
@@ -97,7 +121,13 @@ class ImageFileStore(private val context: Context) : ImageBytesSource, SessionIm
      */
     override fun normaliseInPlace(file: File): Boolean = try {
         val normalised = normalise(file.readBytes())
-        if (normalised == null) false else { file.writeBytes(normalised); true }
+        if (normalised == null) {
+            false
+        } else {
+            file.writeBytes(normalised.jpeg)
+            writeMeta(file, normalised.meta)
+            true
+        }
     } catch (e: Exception) {
         Log.w(TAG, "Could not normalise ${file.name}", e)
         false
@@ -112,6 +142,34 @@ class ImageFileStore(private val context: Context) : ImageBytesSource, SessionIm
     } catch (e: Exception) {
         Log.w(TAG, "Could not read ${file.name}", e)
         null
+    }
+
+    /**
+     * The metadata written beside [file] when it arrived, without GPS if the location
+     * switch is off now. Null for a photo with none: one taken before v0.4.0, one restored
+     * from the server, or one whose file could not be read. The photo is sent either way.
+     */
+    override fun photoMetaFor(file: File): JsonObject? = try {
+        val meta = metaFileOf(file).takeIf { it.isFile }
+            ?.readText()
+            ?.let { Json.parseToJsonElement(it).jsonObject }
+        meta?.let { if (mayRecordLocation()) it else PhotoMeta.withoutGps(it) }
+    } catch (e: Exception) {
+        Log.w(TAG, "Could not read the metadata for ${file.name}", e)
+        null
+    }
+
+    /** `<uuid>.meta.json` beside `<uuid>.jpg`. */
+    private fun metaFileOf(file: File): File =
+        File(file.parentFile, "${file.nameWithoutExtension}.meta.json")
+
+    /**
+     * Written after the photo, and never allowed to cost it: a photo whose metadata could
+     * not be saved is still a photo, and is sent without any.
+     */
+    private fun writeMeta(file: File, meta: JsonObject) {
+        runCatching { metaFileOf(file).writeText(meta.toString()) }
+            .onFailure { Log.w(TAG, "Could not save the metadata for ${file.name}", it) }
     }
 
     /**
@@ -151,19 +209,33 @@ class ImageFileStore(private val context: Context) : ImageBytesSource, SessionIm
      * keeps its bytes, because its SHA-256 names it on the server and its bytes sit in
      * cached conversation prefixes.
      */
-    private fun normalise(raw: ByteArray): ByteArray? {
+    private fun normalise(raw: ByteArray): Normalised? {
         val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
         BitmapFactory.decodeByteArray(raw, 0, raw.size, bounds)
         if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return null
 
         // Read from the original bytes, before anything is decoded or re-encoded: the
-        // re-encoded file has no EXIF left to read. Any camera metadata kept with the
-        // photo (v0.4.0 PR 7) belongs here too, read from this same ExifInterface.
+        // re-encoded file has no EXIF left to read. The camera metadata kept with the
+        // photo comes from this same ExifInterface.
         val exif = runCatching { raw.inputStream().use { ExifInterface(it) } }.getOrNull()
         val orientation = exif?.getAttributeInt(
             ExifInterface.TAG_ORIENTATION,
             ExifInterface.ORIENTATION_NORMAL,
         ) ?: ExifInterface.ORIENTATION_NORMAL
+        val (originalWidth, originalHeight) = uprightSize(bounds.outWidth, bounds.outHeight, orientation)
+        // Never allowed to cost the photo: an EXIF block that throws while being read
+        // leaves the photo with only its size.
+        val meta = runCatching {
+            PhotoMetaReader.read(
+                exif = exif?.let(::ExifInterfaceSource),
+                width = originalWidth,
+                height = originalHeight,
+                includeGps = mayRecordLocation(),
+            )
+        }.getOrElse {
+            Log.w(TAG, "Could not read the camera metadata", it)
+            PhotoMetaReader.read(null, originalWidth, originalHeight, includeGps = false)
+        }
 
         val upright = decodeUpright(raw, bounds.outWidth, bounds.outHeight, orientation)
             ?: return null
@@ -178,8 +250,11 @@ class ImageFileStore(private val context: Context) : ImageBytesSource, SessionIm
             }
             out.toByteArray()
         }
-        return stripMetadata(encoded)
+        return Normalised(stripMetadata(encoded), meta)
     }
+
+    /** The photo as stored and sent, and the camera metadata kept beside it. */
+    private class Normalised(val jpeg: ByteArray, val meta: JsonObject)
 
     /**
      * Decodes at the coarsest power-of-two sampling that keeps the long edge at or above
@@ -309,6 +384,13 @@ class ImageFileStore(private val context: Context) : ImageBytesSource, SessionIm
         }
 
         private val UprightTurn.swapsSides: Boolean get() = degrees == 90f || degrees == 270f
+
+        /**
+         * A stored [width] x [height] frame's size once turned upright, uncapped: the
+         * original size kept in the metadata, so it compares with the photo as sent.
+         */
+        internal fun uprightSize(width: Int, height: Int, orientation: Int): Pair<Int, Int> =
+            if (uprightTurn(orientation).swapsSides) height to width else width to height
 
         /**
          * [jpeg] without its metadata segments: EXIF and XMP (APP1), IPTC (APP13), and
