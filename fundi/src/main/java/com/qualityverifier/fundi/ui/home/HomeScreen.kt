@@ -1,7 +1,10 @@
 package com.qualityverifier.fundi.ui.home
 
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -13,10 +16,16 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.lazy.items
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
@@ -41,6 +50,9 @@ import com.qualityverifier.domain.Worker
 import com.qualityverifier.domain.WorkerSlot
 import com.qualityverifier.fundi.ui.assess.WorkerPicker
 import com.qualityverifier.fundi.ui.fundiContainer
+import com.qualityverifier.fundi.ui.location.AssessmentLocationDialog
+import com.qualityverifier.fundi.ui.location.rememberAssessmentLocationAnswer
+import com.qualityverifier.text.FundiLabels
 import com.qualityverifier.text.UpdateLabels
 import com.qualityverifier.ui.update.UpdateBanner
 import java.text.SimpleDateFormat
@@ -83,6 +95,16 @@ fun HomeScreen(
     }
 
     var choosing by remember { mutableStateOf(pieces.isEmpty()) }
+
+    // Once, for a maker who reached Home without answering the location question: an
+    // install from before it existed, a skipped setup, or a sign-in on a new phone. Until
+    // they answer, assessments record no point (LocationPreference.records).
+    val locationPreference = container.locationPreference
+    var askLocation by remember { mutableStateOf(locationPreference.needsAnswer) }
+    val answerLocation = rememberAssessmentLocationAnswer(locationPreference) { askLocation = false }
+    if (askLocation) {
+        AssessmentLocationDialog(FundiLabels.ENGLISH, answerLocation)
+    }
 
     LazyColumn(
         // systemBarsPadding, because MainActivity draws edge to edge: without it the
@@ -183,6 +205,7 @@ fun HomeScreen(
     }
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun PieceRow(
     latest: SessionSummary,
@@ -199,8 +222,10 @@ private fun PieceRow(
 ) {
     var renaming by remember { mutableStateOf(false) }
     var editingWorkers by remember { mutableStateOf(false) }
+    var menuOpen by remember { mutableStateOf(false) }
     if (editingWorkers) {
         WorkersDialog(
+            itemType = latest.itemType,
             roster = roster,
             load = loadWorkers,
             onSave = { people ->
@@ -268,11 +293,46 @@ private fun PieceRow(
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                TextButton(onClick = onOpen) { Text("Open") }
-                TextButton(onClick = onReassess) { Text("Re-assess") }
-                TextButton(onClick = { renaming = true }) { Text("Rename") }
-                TextButton(onClick = { editingWorkers = true }) { Text("Workers") }
+            // Two buttons and a menu rather than four buttons: on a 360 dp phone four in a
+            // row squeezed "Workers" into a column one letter wide. Open and Re-assess are
+            // the loop, so they stay in sight; renaming and the workers are occasional.
+            Row(Modifier.fillMaxWidth()) {
+                // Wraps instead of squeezing: at the largest font size the two labels do
+                // not fit beside each other on a narrow phone, and a wrapped button is
+                // still readable where a squeezed one is not.
+                FlowRow(
+                    Modifier.weight(1f),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    TextButton(onClick = onOpen) { Text("Open") }
+                    TextButton(onClick = onReassess) { Text("Re-assess") }
+                }
+                // The menu is anchored to the button, so it opens on this card.
+                Box {
+                    IconButton(onClick = { menuOpen = true }) {
+                        Icon(
+                            Icons.Filled.MoreVert,
+                            contentDescription = "More options for this piece",
+                        )
+                    }
+                    DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
+                        DropdownMenuItem(
+                            text = { Text("Rename") },
+                            onClick = {
+                                menuOpen = false
+                                renaming = true
+                            },
+                        )
+                        // The dialog's own title, so the item says what it opens.
+                        DropdownMenuItem(
+                            text = { Text("Who worked on this?") },
+                            onClick = {
+                                menuOpen = false
+                                editingWorkers = true
+                            },
+                        )
+                    }
+                }
             }
         }
     }
@@ -284,6 +344,8 @@ private fun PieceRow(
  */
 @Composable
 private fun WorkersDialog(
+    /** The piece's type, so the parts offered match the intake's. */
+    itemType: ItemType,
     roster: List<Worker>,
     load: suspend () -> List<WorkerSlot>,
     onSave: (List<WorkerSlot>) -> Unit,
@@ -297,10 +359,11 @@ private fun WorkersDialog(
         onDismissRequest = onDismiss,
         title = { Text("Who worked on this?") },
         text = {
-            // Scrolls: several people with six part chips each outgrow a small phone,
+            // Scrolls: several people with up to seven chips each outgrow a small phone,
             // and the buttons below must stay reachable.
             Column(Modifier.verticalScroll(rememberScrollState())) {
                 WorkerPicker(
+                    itemType = itemType,
                     roster = roster,
                     slots = current,
                     onChange = { slots = it },

@@ -5,11 +5,13 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
+import com.qualityverifier.data.chat.ChatErrorKind
 import com.qualityverifier.data.chat.ChatResult
 import com.qualityverifier.data.chat.ChatService
 import com.qualityverifier.data.db.SessionImageStore
 import com.qualityverifier.data.fundi.FundiProfiles
 import com.qualityverifier.data.fundi.ProfileOutcome
+import com.qualityverifier.data.location.LocationSource
 import com.qualityverifier.data.session.SessionRepository
 import com.qualityverifier.data.workers.WorkerRepository
 import com.qualityverifier.di.AppContainer
@@ -20,11 +22,13 @@ import com.qualityverifier.domain.FundiIntake
 import com.qualityverifier.domain.FundiProfile
 import com.qualityverifier.domain.FundiPurpose
 import com.qualityverifier.domain.ItemType
+import com.qualityverifier.domain.LocationFix
 import com.qualityverifier.domain.PlanRun
 import com.qualityverifier.domain.PriorIssue
 import com.qualityverifier.domain.Role
 import com.qualityverifier.domain.Worker
 import com.qualityverifier.domain.WorkerSlot
+import com.qualityverifier.images.UNREADABLE_PHOTO
 import com.qualityverifier.text.FundiLabels
 import com.qualityverifier.text.ReportLabels
 import com.qualityverifier.text.buildFundiOpeningMessage
@@ -32,12 +36,15 @@ import com.qualityverifier.text.buildSubmissionText
 import com.qualityverifier.text.parseAssistantContent
 import com.qualityverifier.text.previousRecord
 import com.qualityverifier.text.priorIssues
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
@@ -46,8 +53,37 @@ import kotlinx.coroutines.withContext
 import java.io.File
 import java.util.UUID
 
-/** What went wrong, in words the maker can act on. */
-data class AssessError(val message: String)
+/**
+ * What went wrong, in words the maker can act on.
+ *
+ * [retryable] marks a turn that failed on its way to the model, which Retry resends. A
+ * photograph that would not process is not one, and nor is a sign-in failure: sending the
+ * same turn again cannot fix either.
+ */
+data class AssessError(val message: String, val retryable: Boolean = false)
+
+/** What a photograph being taken is for, so a kept one goes to the right place. */
+sealed interface PhotoTarget {
+    /**
+     * The opening photograph, sent with the intake once kept. It carries the intake
+     * because the intake is sent only then, and a photograph under review has not been
+     * kept yet.
+     */
+    data class Opening(
+        val intake: FundiIntake,
+        val pieceLabel: String?,
+        val workedOn: List<WorkerSlot>,
+    ) : PhotoTarget
+
+    data class PlanShot(val index: Int) : PhotoTarget
+}
+
+/**
+ * A photograph just taken and held back for the maker to look at, because the on-device
+ * check thinks it may be too dark or blurred to read. Kagua's `CaptureReview`, with
+ * Fundi Bora's targets.
+ */
+data class PhotoReview(val path: String, val warning: String, val target: PhotoTarget)
 
 /**
  * One assessment of one piece, from the opening photograph to the fix plan.
@@ -56,7 +92,8 @@ data class AssessError(val message: String)
  * also carries an intake questionnaire, comparisons between two pieces, the evaluator
  * questionnaire and sharing — none of which a maker standing over their own bench has any
  * use for. What the two genuinely share is already shared: the camera and plan runner are
- * `:capture`, and storage, upload dedup and the retry are `:core`.
+ * `:capture`, and storage, photo processing and its quality check, upload dedup and the
+ * retry are `:core`.
  *
  * The turn goes to `v1/fundi/chat`, chosen once in [AppContainer] rather than here,
  * because the endpoint is what selects the coaching prompt.
@@ -76,6 +113,11 @@ class AssessViewModel(
     private val images: SessionImageStore,
     private val profiles: FundiProfiles,
     private val workers: WorkerRepository,
+    /**
+     * The one location fix for a new assessment, as Kagua takes it. The default records
+     * nothing, so tests about conversations need not stub a GPS.
+     */
+    private val location: LocationSource = LocationSource.None,
     private val io: CoroutineDispatcher = Dispatchers.IO,
 ) : ViewModel() {
 
@@ -101,8 +143,56 @@ class AssessViewModel(
     private val _error = MutableStateFlow<AssessError?>(null)
     val error: StateFlow<AssessError?> = _error.asStateFlow()
 
+    /**
+     * True when the maker's last turn never got a reply, and nothing is in flight. Kagua's
+     * `ChatViewModel.unansweredTurn`, for the same reason: [error] lives only in this
+     * object, so a turn that failed before the app was closed, or the app killed mid-request,
+     * left nothing to say the turn was unanswered. The stored conversation still knows: a
+     * session whose last message is the maker's is an unfinished turn.
+     *
+     * Offered, never acted on. A plan's photographs cost money to send, and somebody
+     * reopening an assessment may only want to read it. [retry] is safe even if the turn
+     * did land: the server keys a turn on its message id and returns the stored reply.
+     */
+    val unansweredTurn: StateFlow<Boolean> =
+        combine(messages, _sending) { list, sending ->
+            // Not while a request is in flight: the turn is stored before it is sent, so
+            // during a normal send the conversation looks exactly like this failure.
+            !sending && list.lastOrNull()?.role == Role.USER
+        }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), false)
+
     private val _run = MutableStateFlow<PlanRun?>(null)
     val run: StateFlow<PlanRun?> = _run.asStateFlow()
+
+    /** A photograph the quality check flagged, until the maker keeps or retakes it. */
+    private val _review = MutableStateFlow<PhotoReview?>(null)
+    val review: StateFlow<PhotoReview?> = _review.asStateFlow()
+
+    /**
+     * Whether the intake has been sent, with the opening photograph if one was kept. The
+     * screen leaves the camera then, and never shows it again for this assessment. Its own
+     * flag rather than [sending]: a send that fails at once could rise and fall between two
+     * frames and never be seen. It is also what makes [start] happen once: the view model
+     * outlives the screen, so a rebuilt screen that walks the maker through the intake
+     * again cannot send a second one.
+     */
+    private val _openingSent = MutableStateFlow(false)
+    val openingSent: StateFlow<Boolean> = _openingSent.asStateFlow()
+
+    /**
+     * Whether a photograph just taken is still being processed. The camera keeps its
+     * shutter busy until it is not: `CaptureScreen` frees the shutter as soon as the file
+     * is saved, and a second photograph taken meanwhile raced the first. Two opening
+     * photographs could each send the intake.
+     */
+    private val _processing = MutableStateFlow(false)
+    val processing: StateFlow<Boolean> = _processing.asStateFlow()
+
+    /**
+     * The photograph being processed, or the last one. Kept after it is cancelled: a
+     * cancelled job still finishes the write it is in, and a new photograph waits for it.
+     */
+    private var preparing: Job? = null
 
     /** Plans already answered, so a sent run is never re-offered. */
     private val fulfilled = mutableSetOf<String>()
@@ -141,8 +231,24 @@ class AssessViewModel(
     private val _existing = MutableStateFlow<Boolean?>(null)
     val existing: StateFlow<Boolean?> = _existing.asStateFlow()
 
+    /**
+     * This assessment's point, once it has arrived, until there is a session row to put it
+     * in. The row is written only when the intake is sent, and a fix outdoors can arrive
+     * before that; written into no row it would be lost (`SessionDao.setLocation` is an
+     * update).
+     */
+    private var heldFix: LocationFix? = null
+    private var rowExists = false
+    private var pointWritten = false
+
     init {
-        viewModelScope.launch { _existing.value = sessions.sessionExists(sessionId) }
+        viewModelScope.launch {
+            val exists = sessions.sessionExists(sessionId)
+            _existing.value = exists
+            // Only for an assessment that is beginning. Reopening one from Home must not
+            // record where it was read, which would be both wrong and a second point.
+            if (!exists) captureLocation()
+        }
         viewModelScope.launch {
             sessions.startOf(sessionId)?.intakeCode?.let(FundiIntake::decode)?.let { (lang, why) ->
                 _language.value = lang
@@ -220,7 +326,10 @@ class AssessViewModel(
         /** Who worked on the piece, from the picker. Empty when skipped. */
         workedOn: List<WorkerSlot> = emptyList(),
     ) {
-        if (_sending.value || !intake.isComplete) return
+        // Once per assessment. A second intake would be a second opening turn in the same
+        // session, read by the model as the maker starting over mid-plan.
+        if (_openingSent.value || _sending.value || !intake.isComplete) return
+        _openingSent.value = true
         _sending.value = true
         _language.value = intake.language
         _purpose.value = intake.purpose
@@ -242,6 +351,10 @@ class AssessViewModel(
                     // server writes it when it creates the session.
                     workers.recordWorkersOf(sessionId, workedOn)
                 }
+                // Before the opening turn is stored, so a fix that has already arrived
+                // goes out with it: the point reaches the server only inside a turn.
+                rowExists = true
+                writePointIfReady()
                 sessions.appendUserMessage(
                     sessionId = sessionId,
                     text = buildFundiOpeningMessage(intake, profile, FundiLabels.ENGLISH, lastRecord),
@@ -273,6 +386,42 @@ class AssessViewModel(
     }
 
     /**
+     * Sends the last turn again, exactly as it is stored: Retry after a failure, and "Send
+     * again" on an assessment reopened with its last turn unanswered. Kagua's
+     * `ChatViewModel.retry`.
+     *
+     * Nothing is rebuilt and nothing is stored. The turn on the phone keeps its id, text,
+     * photographs and their metadata sidecars, and `ServerChatService` sends the newest
+     * user turn of what is stored, so the request carries the same `message_id` and the
+     * same photographs. Rebuilding would mint a new id, and the server would pay for a turn
+     * it may already have answered.
+     *
+     * That is also why the opening turn goes through here and not through [start]. The
+     * session row, the people and the location point were all written the first time, and
+     * the point reaches the server from the row with every turn; [start] stays once per
+     * assessment.
+     *
+     * Only a turn still waiting on its reply. Sent after a reply has landed, the server
+     * would return that reply again and it would be stored twice.
+     *
+     * Not guarded against a first attempt the server is still waiting on Claude for, after
+     * the phone timed out or was closed: with no reply stored yet the server attempts the
+     * turn again, and both attempts may be charged (F19, a known risk left for later).
+     */
+    fun retry() {
+        if (_sending.value) return
+        _sending.value = true
+        viewModelScope.launch {
+            _error.value = null
+            try {
+                if (sessions.messagesOnce(sessionId).lastOrNull()?.role == Role.USER) deliver()
+            } finally {
+                _sending.value = false
+            }
+        }
+    }
+
+    /**
      * Picks up a plan the assistant has just sent, unless it has already been answered.
      *
      * Driven from the message list rather than from the reply, so a plan survives the
@@ -283,6 +432,107 @@ class AssessViewModel(
         if (message.id in fulfilled || _run.value != null) return
         val plan = parseAssistantContent(message.text).plan ?: return
         _run.value = PlanRun(plan = plan, sourceMessageId = message.id)
+    }
+
+    /**
+     * Offers the plan in the conversation's newest message, if that is the assistant's.
+     *
+     * The newest message, not the newest assistant message: a plan with any turn after it
+     * has been answered. [fulfilled] knows that only for runs sent from this view model, so
+     * an assessment reopened on an unanswered run submission would otherwise offer the plan
+     * again, beside "Send again", and ask for photographs already on the stored turn. The
+     * rule Kagua's `ChatViewModel` keeps.
+     */
+    fun offerPlanFromLatest(conversation: List<ChatMessage>) {
+        conversation.lastOrNull()?.let(this::offerPlanFrom)
+    }
+
+    /**
+     * Prepares a photograph the camera has just written, then keeps it or holds it for
+     * review. The same path as Kagua's (`ChatViewModel.onPhotoCaptured`), so both apps
+     * send Claude the same kind of picture.
+     *
+     * The file is rewritten in place before anything else sees it. That file is what the
+     * turn attaches, what the upload hashes and what Claude is sent, so the SHA-256 is of
+     * the processed photograph. Until v0.4.0 Fundi Bora sent the camera's file as it was:
+     * full size, its rotation only an EXIF tag, and the camera's metadata still inside.
+     *
+     * The check is advisory, so it only interrupts: a photograph it cannot measure, or
+     * measures as fine, is kept without a tap, and the maker works through the shot list
+     * without confirming every frame.
+     *
+     * One photograph at a time. The shutter waits on [processing]; this is the backstop
+     * for a tap that landed before it did. A second photograph taken while the first is
+     * processed or under review is deleted, never kept: kept, it would land on whatever
+     * the camera shows next, an opening photograph on a plan shot.
+     */
+    fun onPhotoCaptured(file: File, target: PhotoTarget) {
+        if (preparing?.isCompleted == false || _review.value != null) {
+            viewModelScope.launch { withContext(io) { images.delete(file) } }
+            return
+        }
+        _processing.value = true
+        val job = viewModelScope.launch {
+            val prepared = withContext(io) { file.length() > 0 && images.normaliseInPlace(file) }
+            if (!prepared) {
+                withContext(io) { images.delete(file) }
+                _error.value = AssessError(UNREADABLE_PHOTO)
+                return@launch
+            }
+            val warning = withContext(io) { images.measureQuality(file)?.warning }
+            if (warning != null) {
+                _review.value = PhotoReview(file.absolutePath, warning, target)
+            } else {
+                accept(file.absolutePath, target)
+            }
+        }
+        preparing = job
+        // Runs once the processing has finished writing, so the delete cannot race it.
+        // The shutter is freed here too, and only here: a cancelled job is still writing.
+        job.invokeOnCompletion { cause ->
+            if (cause is CancellationException) images.delete(file)
+            _processing.value = false
+        }
+    }
+
+    /**
+     * The maker left the camera, or the screen moved to another stage. A photograph still
+     * being processed, or held for review, was never kept, so it is dropped. Without this,
+     * an opening photograph that finished processing after the maker went back to the
+     * intake would send the intake anyway.
+     */
+    fun leaveCamera() {
+        preparing?.cancel()
+        discardReviewedPhoto()
+    }
+
+    /** Keeps a photograph the check complained about. The maker has looked at it; they decide. */
+    fun keepReviewedPhoto() {
+        val reviewed = _review.value ?: return
+        _review.value = null
+        accept(reviewed.path, reviewed.target)
+    }
+
+    /** Retakes it: the file is deleted and nothing is attached. */
+    fun discardReviewedPhoto() {
+        val reviewed = _review.value ?: return
+        _review.value = null
+        viewModelScope.launch { withContext(io) { images.delete(File(reviewed.path)) } }
+    }
+
+    private fun accept(path: String, target: PhotoTarget) {
+        // An opening photograph that arrives once the intake is out has nothing to go
+        // with. Sent anyway, it would start the assessment a second time mid-plan.
+        if (target is PhotoTarget.Opening && _openingSent.value) {
+            viewModelScope.launch { withContext(io) { images.delete(File(path)) } }
+            return
+        }
+        // A retake that worked answers the earlier "could not be read".
+        if (_error.value?.message == UNREADABLE_PHOTO) _error.value = null
+        when (target) {
+            is PhotoTarget.Opening -> start(target.intake, path, target.pieceLabel, target.workedOn)
+            is PhotoTarget.PlanShot -> attachShot(target.index, path)
+        }
     }
 
     fun attachShot(index: Int, path: String) {
@@ -364,10 +614,46 @@ class AssessViewModel(
         viewModelScope.launch { withContext(io) { paths.forEach { images.delete(File(it)) } } }
     }
 
+    /**
+     * Starts the one fix for this assessment, if the maker agreed and Android allows it.
+     *
+     * [LocationSource.isAvailable] reads the switch, the maker's answer, the permission and
+     * the phone's location services, all silently: nothing here ever asks Android, so no
+     * assessment shows a permission prompt. A permission given "Only this time" and since
+     * lapsed reads as refused, and nothing is recorded.
+     *
+     * Its own coroutine, and nothing joins it, as in Kagua: the fix settles while the maker
+     * answers the intake and takes photographs. Failure is silence; an assessment must not
+     * stall or show an error because a GPS fix did not arrive.
+     */
+    private fun captureLocation() {
+        if (!location.isAvailable) return
+        viewModelScope.launch {
+            val fix = runCatching { location.capture() }.getOrNull() ?: return@launch
+            heldFix = fix
+            writePointIfReady()
+        }
+    }
+
+    /**
+     * Writes the point once both it and the row exist, and only once. The next turn sent
+     * reads it from the row (`ServerChatService`), which is how it reaches the server.
+     */
+    private suspend fun writePointIfReady() {
+        val fix = heldFix ?: return
+        if (!rowExists || pointWritten) return
+        pointWritten = true
+        runCatching { sessions.recordLocation(sessionId, fix) }
+    }
+
     private suspend fun deliver() {
         when (val result = chat.send(sessionId, itemType, sessions.messagesOnce(sessionId))) {
             is ChatResult.Success -> sessions.appendAssistantMessage(sessionId, result.text)
-            is ChatResult.Failure -> _error.value = AssessError(result.message)
+            // A sign-in failure is the one a resend cannot fix; Kagua offers Settings there.
+            is ChatResult.Failure -> _error.value = AssessError(
+                message = result.message,
+                retryable = result.kind != ChatErrorKind.AUTH,
+            )
         }
     }
 
@@ -390,6 +676,7 @@ class AssessViewModel(
                     images = container.images,
                     profiles = container.fundiProfiles,
                     workers = container.workerRepository,
+                    location = container.locationCapture,
                 )
             }
         }

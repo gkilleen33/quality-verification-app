@@ -1,5 +1,6 @@
 package com.qualityverifier.server
 
+import com.qualityverifier.data.chat.AnthropicRequest
 import com.qualityverifier.data.prompts.PromptRepository
 import com.qualityverifier.domain.AppId
 import com.qualityverifier.domain.AppVersionHeaders
@@ -36,6 +37,10 @@ import io.ktor.http.contentType
 import io.ktor.serialization.kotlinx.json.json
 import io.ktor.server.testing.ApplicationTestBuilder
 import io.ktor.server.testing.testApplication
+import kotlinx.coroutines.runBlocking
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -336,6 +341,163 @@ class ChatRouteTest {
         assertTrue("nothing should have been stored: ${store.locations}", store.locations.isEmpty())
     }
 
+    // ------------------------------------------------------------ photo metadata (V25)
+
+    /** A photo in a fresh blob store, so a turn naming it passes the missing-photo check. */
+    private fun storedPhoto(): Pair<BlobStore, String> {
+        val blobs = BlobStore(folder.newFolder())
+        val bytes = "a photograph of a chair leg".toByteArray()
+        val sha = BlobStore.hash(bytes)
+        runBlocking { blobs.put(sha, bytes) }
+        return blobs to sha
+    }
+
+    private fun cameraMeta() = buildJsonObject {
+        put("taken_at", "2026-11-10T14:03:22")
+        put("make", "samsung")
+        put("model", "SM-A145F")
+        put("iso", 200)
+        put("body_serial", "R58T90ABCDE")
+        put("gps_latitude", -1.2921)
+        put("gps_longitude", 36.8219)
+    }
+
+    @Test
+    fun `a photo's metadata reaches the store with its hash`() = testApplication {
+        val (blobs, sha) = storedPhoto()
+        val store = FakeChatStore()
+        val app = withChat(store, FakeClaude(ClaudeResult.Success("ok", TokenUsage(), "m")), blobs = blobs)
+
+        val response = app.post("/v1/chat") {
+            auth(); contentType(ContentType.Application.Json)
+            setBody(
+                request().copy(
+                    blobs = listOf(sha),
+                    // Upper case on the wire still names the same photo.
+                    photoMeta = buildJsonObject { put(sha.uppercase(), cameraMeta()) },
+                )
+            )
+        }
+
+        assertEquals(HttpStatusCode.OK, response.status)
+        assertEquals(mapOf(sha to cameraMeta()), store.sawPhotoMeta)
+    }
+
+    @Test
+    fun `a turn without metadata stores none`() = testApplication {
+        // Every v0.3.0 phone, and every turn with no photo.
+        val (blobs, sha) = storedPhoto()
+        val store = FakeChatStore()
+        val app = withChat(store, FakeClaude(ClaudeResult.Success("ok", TokenUsage(), "m")), blobs = blobs)
+
+        val response = app.post("/v1/chat") {
+            auth(); contentType(ContentType.Application.Json)
+            setBody(request().copy(blobs = listOf(sha)))
+        }
+
+        assertEquals(HttpStatusCode.OK, response.status)
+        assertEquals(emptyMap<String, JsonObject>(), store.sawPhotoMeta)
+    }
+
+    @Test
+    fun `bad metadata is dropped and the turn goes ahead`() = testApplication {
+        // Optional data on a turn somebody spent minutes on, as with the location: no shape
+        // of photo_meta may cost the assessment.
+        val (blobs, sha) = storedPhoto()
+        val store = FakeChatStore()
+        val claude = FakeClaude(ClaudeResult.Success("ok", TokenUsage(), "m"))
+        val app = withChat(store, claude, blobs = blobs)
+        val other = "b".repeat(64)
+        val cases = listOf(
+            "\"nonsense\"",                                          // not an object
+            "[1,2,3]",                                               // not an object either
+            """{"$sha":"samsung"}""",                                // a photo's entry not an object
+            """{"$sha":{"maker_note":"opaque"}}""",                  // only unknown keys
+            """{"$sha":{"iso":"two hundred"}}""",                    // the wrong kind
+            """{"$sha":{"artist":"${"x".repeat(5000)}"}}""",         // over the size bound
+            """{"$other":{"make":"samsung"}}""",                     // a photo not in this turn
+        )
+
+        for (meta in cases) {
+            val response = app.post("/v1/chat") {
+                auth(); contentType(ContentType.Application.Json)
+                setBody(TextContent(turnJson(sha, meta), ContentType.Application.Json))
+            }
+            assertEquals("photo_meta = ${meta.take(40)}", HttpStatusCode.OK, response.status)
+            assertEquals("photo_meta = ${meta.take(40)}", emptyMap<String, JsonObject>(), store.sawPhotoMeta)
+        }
+        assertEquals(cases.size, claude.calls)
+    }
+
+    @Test
+    fun `a value nested thousands deep is dropped and the turn goes ahead`() = testApplication {
+        // toString() on a value this deep overflows the stack. The reader parses it without
+        // recursing; nothing after it may recurse either, or the turn is a 500.
+        val (blobs, sha) = storedPhoto()
+        val store = FakeChatStore()
+        val claude = FakeClaude(ClaudeResult.Success("ok", TokenUsage(), "m"))
+        val app = withChat(store, claude, blobs = blobs)
+        val depth = 10_000
+        val deep = StringBuilder()
+        repeat(depth) { deep.append("{\"a\":") }
+        deep.append('1')
+        repeat(depth) { deep.append('}') }
+        val meta = """{"$sha":{"make":"samsung","a":$deep}}"""
+
+        val response = app.post("/v1/chat") {
+            auth(); contentType(ContentType.Application.Json)
+            setBody(TextContent(turnJson(sha, meta), ContentType.Application.Json))
+        }
+
+        assertEquals(HttpStatusCode.OK, response.status)
+        assertEquals(mapOf(sha to buildJsonObject { put("make", "samsung") }), store.sawPhotoMeta)
+        assertEquals(1, claude.calls)
+    }
+
+    @Test
+    fun `the request to Claude is the same bytes with and without metadata`() = testApplication {
+        // Prompt caching matches the request prefix byte for byte, and a broken cache raises
+        // no error. The metadata goes to the attachment row and nowhere else, so the same
+        // turn assembles to the same request whether or not the phone sent any.
+        val (blobs, sha) = storedPhoto()
+        val store = FakeChatStore(echoTurns = true)
+        val claude = FakeClaude(ClaudeResult.Success("ok", TokenUsage(), "m"))
+        val app = withChat(store, claude, blobs = blobs)
+        val turn = request().copy(
+            sessionId = "6f1c1c1e-0000-4000-8000-000000000001",
+            messageId = "6f1c1c1e-0000-4000-8000-000000000002",
+            blobs = listOf(sha),
+        )
+
+        app.post("/v1/chat") {
+            auth(); contentType(ContentType.Application.Json)
+            setBody(turn)
+        }
+        val withoutMeta = claude.lastRequestJson
+        app.post("/v1/chat") {
+            auth(); contentType(ContentType.Application.Json)
+            setBody(turn.copy(photoMeta = buildJsonObject { put(sha, cameraMeta()) }))
+        }
+        val withMeta = claude.lastRequestJson
+
+        assertEquals(cameraMeta(), store.sawPhotoMeta?.get(sha))
+        assertTrue("the photo must be in the request: $withoutMeta", withoutMeta.contains("base64:"))
+        assertEquals(withoutMeta, withMeta)
+        listOf("SM-A145F", "R58T90ABCDE", "36.8219", "2026-11-10T14").forEach {
+            assertTrue("$it reached the request", !withMeta.contains(it))
+        }
+    }
+
+    @Test
+    fun `an attachment carries only what a request is built from`() {
+        // The domain type every request is assembled from. A field added here is a field
+        // that can reach Claude; metadata belongs in the attachment row, not in this.
+        val fields = Attachment::class.java.declaredFields
+            .filterNot { java.lang.reflect.Modifier.isStatic(it.modifiers) }
+            .map { it.name }.toSet()
+        assertEquals(setOf("id", "path", "mimeType"), fields)
+    }
+
     @Test
     fun `a retried turn returns the stored reply without paying again`() = testApplication {
         // The phone retries when a response is lost. Calling upstream again would charge
@@ -457,6 +619,243 @@ class ChatRouteTest {
         // The headline is a better preview than the opening words of the prose.
         assertEquals("Imara kwa ujumla", store.lastPreview)
     }
+
+    // ----------------------------------------------------- the defect count (V15)
+
+    // Fundi Bora's replies come in two shapes: today's, where every problem is a finding
+    // and again a verdict defect, and one list, where the findings carry the consequence
+    // and the verdict lists no defects. The count is the problems of the session's newest
+    // diagnosis read with its newest verdict, so both shapes and both kinds of follow-up
+    // count right. Kagua's is the verdict's defects, untouched.
+
+    @Test
+    fun `Kagua's count is its verdict's defects`() = testApplication {
+        val store = FakeChatStore()
+        val app = withChat(store, FakeClaude(ClaudeResult.Success(todayShape, TokenUsage(), null)))
+
+        app.post("/v1/chat") { auth(); contentType(ContentType.Application.Json); setBody(request()) }
+
+        assertEquals(2, store.lastDefectCount)
+    }
+
+    @Test
+    fun `Fundi Bora's count in today's shape is the verdict's defects, as before`() = testApplication {
+        // Three findings beside two defects, so a count of the findings would show.
+        val store = FakeChatStore()
+        val app = fundiChat(store, todayShape)
+
+        app.post("/v1/fundi/chat") { auth(); contentType(ContentType.Application.Json); setBody(request()) }
+
+        assertEquals("fair", store.lastVerdictLevel)
+        assertEquals(2, store.lastDefectCount)
+    }
+
+    @Test
+    fun `Fundi Bora's count in the one-list shape is the findings`() = testApplication {
+        val store = FakeChatStore()
+        val app = fundiChat(store, oneListShape)
+
+        app.post("/v1/fundi/chat") { auth(); contentType(ContentType.Application.Json); setBody(request()) }
+
+        assertEquals("fair", store.lastVerdictLevel)
+        assertEquals(2, store.lastDefectCount)
+    }
+
+    @Test
+    fun `a follow-up that resends only the verdict keeps the count of the diagnosis before it`() = testApplication {
+        val store = FakeChatStore(storedHistory = earlierEvaluation())
+        val app = fundiChat(store, "```qv-verdict\n{\"verdict\":\"fair\",\"headline\":\"Still the joint\"}\n```")
+
+        app.post("/v1/fundi/chat") { auth(); contentType(ContentType.Application.Json); setBody(request()) }
+
+        assertEquals("fair", store.lastVerdictLevel)
+        assertEquals(2, store.lastDefectCount)
+    }
+
+    @Test
+    fun `a follow-up that resends only the diagnosis changes the count of the verdict before it`() = testApplication {
+        val store = FakeChatStore(storedHistory = earlierEvaluation())
+        val app = fundiChat(store, oneFindingDiagnosis)
+
+        app.post("/v1/fundi/chat") { auth(); contentType(ContentType.Application.Json); setBody(request()) }
+
+        // No verdict in the reply, so no level to write: the store updates the count of
+        // the one already recorded.
+        assertNull(store.lastVerdictLevel)
+        assertEquals(1, store.lastDefectCount)
+    }
+
+    @Test
+    fun `a session with a diagnosis and no verdict keeps no count`() = testApplication {
+        // Diagnose, a new problem, a fix check: partial checks stay out of the two rates.
+        val store = FakeChatStore()
+        val app = fundiChat(store, oneFindingDiagnosis)
+
+        app.post("/v1/fundi/chat") { auth(); contentType(ContentType.Application.Json); setBody(request()) }
+
+        assertEquals(1, store.assistantTurns)
+        assertNull(store.lastDefectCount)
+    }
+
+    @Test
+    fun `a sound verdict in today's shape counts the cosmetic finding beside it`() = testApplication {
+        // Cosmetic findings count against first time clean (Nathan, 11 November 2026).
+        val store = FakeChatStore()
+        val app = fundiChat(store, todaySoundShape)
+
+        app.post("/v1/fundi/chat") { auth(); contentType(ContentType.Application.Json); setBody(request()) }
+
+        assertEquals("sound", store.lastVerdictLevel)
+        assertEquals(1, store.lastDefectCount)
+    }
+
+    @Test
+    fun `a sound verdict-only follow-up in today's shape counts zero, not the old findings`() = testApplication {
+        // The diagnosis before it is older than this verdict, which cleared its problems,
+        // so its findings are not the count.
+        val store = FakeChatStore(
+            storedHistory = listOf(
+                ChatMessage("u1", Role.USER, "Evaluate this table."),
+                ChatMessage("a1", Role.ASSISTANT, todayShape),
+                ChatMessage("u2", Role.USER, "I closed the joint and sanded the top."),
+            ),
+        )
+        val app = fundiChat(store, "```qv-verdict\n{\"verdict\":\"sound\",\"headline\":\"All fixed\",\"defects\":[]}\n```")
+
+        app.post("/v1/fundi/chat") { auth(); contentType(ContentType.Application.Json); setBody(request()) }
+
+        assertEquals("sound", store.lastVerdictLevel)
+        assertEquals(0, store.lastDefectCount)
+    }
+
+    @Test
+    fun `a diagnosis that will not decode beside a verdict records the verdict with no count`() = testApplication {
+        // Not zero: the piece would join the first-time-clean rate with problems unread.
+        val store = FakeChatStore()
+        val app = fundiChat(store, unreadableDiagnosis + "\n\n```qv-verdict\n{\"verdict\":\"fair\",\"headline\":\"One joint to close\"}\n```")
+
+        app.post("/v1/fundi/chat") { auth(); contentType(ContentType.Application.Json); setBody(request()) }
+
+        assertEquals("fair", store.lastVerdictLevel)
+        assertTrue(store.counted)
+        assertNull(store.lastDefectCount)
+    }
+
+    @Test
+    fun `a diagnosis-only follow-up that will not decode makes the recorded count unknown`() = testApplication {
+        // Not the two findings before it, which the model has since rewritten.
+        val store = FakeChatStore(storedHistory = earlierEvaluation())
+        val app = fundiChat(store, unreadableDiagnosis)
+
+        app.post("/v1/fundi/chat") { auth(); contentType(ContentType.Application.Json); setBody(request()) }
+
+        assertNull(store.lastVerdictLevel)
+        assertTrue("the store is asked to write the count", store.counted)
+        assertNull(store.lastDefectCount)
+    }
+
+    @Test
+    fun `the count reads replies stored by an overlapping turn, not the history sent to Claude`() = testApplication {
+        // A double send (F19): while this turn waited on Claude, another turn of the session
+        // stored a diagnosis with one finding. This reply resends only the verdict, so its
+        // count is that diagnosis's, not the two findings of the history it was answered from.
+        val store = FakeChatStore(
+            storedHistory = earlierEvaluation(),
+            storedMeanwhile = listOf(
+                ChatMessage("u3", Role.USER, "And the front leg?"),
+                ChatMessage(
+                    "a3", Role.ASSISTANT,
+                    "```fb-diagnosis\n{\"findings\":[{\"title\":\"Split in the front leg\",\"severity\":\"serious\",\"what_i_see\":\"A split.\"}]}\n```",
+                ),
+            ),
+        )
+        val claude = FakeClaude(
+            ClaudeResult.Success("```qv-verdict\n{\"verdict\":\"fair\",\"headline\":\"Still the joint\"}\n```", TokenUsage(), null),
+        )
+        val app = withChat(store, claude, accountAudience = Audience.FUNDI)
+
+        app.post("/v1/fundi/chat") { auth(); contentType(ContentType.Application.Json); setBody(request()) }
+
+        assertTrue("Claude never saw the overlapping reply", !claude.lastHistoryText.contains("Split in the front leg"))
+        assertEquals(1, store.lastDefectCount)
+    }
+
+    @Test
+    fun `a reply with neither block asks for no count`() = testApplication {
+        val store = FakeChatStore(storedHistory = earlierEvaluation())
+        val app = fundiChat(store, "Hold the clamp for an hour before you test the joint.")
+
+        app.post("/v1/fundi/chat") { auth(); contentType(ContentType.Application.Json); setBody(request()) }
+
+        assertTrue(!store.counted)
+    }
+
+    private fun ApplicationTestBuilder.fundiChat(store: FakeChatStore, reply: String) = withChat(
+        store,
+        FakeClaude(ClaudeResult.Success(reply, TokenUsage(), null)),
+        accountAudience = Audience.FUNDI,
+    )
+
+    /** A session that has had one full evaluation in the one-list shape, then a question. */
+    private fun earlierEvaluation() = listOf(
+        ChatMessage("u1", Role.USER, "Evaluate this table."),
+        ChatMessage("a1", Role.ASSISTANT, oneListShape),
+        ChatMessage("u2", Role.USER, "I looked again at the joint."),
+    )
+
+    /** Today's shape: three findings, and two of them again as verdict defects. */
+    private val todayShape = """
+        ```fb-diagnosis
+        {"findings":[
+          {"title":"Gap at the back joint","area":"structural","severity":"moderate","dimension":"joint_fit"},
+          {"title":"Saw marks on the top","area":"surface","severity":"cosmetic","dimension":"finishing"},
+          {"title":"Glue left at the joint","area":"surface","severity":"cosmetic","dimension":"finishing"}]}
+        ```
+
+        ```qv-verdict
+        {"verdict":"fair","headline":"One joint to close","defects":[
+          {"title":"Gap at the back joint","severity":"moderate","what_i_see":"A gap."},
+          {"title":"Saw marks on the top","severity":"cosmetic","what_i_see":"Lines."}]}
+        ```
+    """.trimIndent()
+
+    /** One list: two findings with their consequence, and a verdict with no defects. */
+    private val oneListShape = """
+        ```fb-diagnosis
+        {"findings":[
+          {"title":"Gap at the back joint","area":"structural","severity":"moderate","dimension":"joint_fit","what_i_see":"A gap.","what_it_means":"It will loosen.","what_to_do":"Re-glue it."},
+          {"title":"Saw marks on the top","area":"surface","severity":"cosmetic","dimension":"finishing","what_i_see":"Lines.","what_it_means":"Looks only.","what_to_do":"Sand it."}]}
+        ```
+
+        ```qv-verdict
+        {"verdict":"fair","headline":"One joint to close"}
+        ```
+    """.trimIndent()
+
+    /** Today's shape for a piece the model calls sound: one cosmetic finding, no defects. */
+    private val todaySoundShape = """
+        ```fb-diagnosis
+        {"findings":[{"title":"Saw marks on the top","area":"surface","severity":"cosmetic","dimension":"finishing"}]}
+        ```
+
+        ```qv-verdict
+        {"verdict":"sound","headline":"Good work","defects":[]}
+        ```
+    """.trimIndent()
+
+    /** A diagnosis block cut off mid-object, which will not decode. */
+    private val unreadableDiagnosis = """
+        ```fb-diagnosis
+        {"findings":[{"title":"Gap at the back joint","severity":"moderate","what_i_see":"A gap
+        ```
+    """.trimIndent()
+
+    /** A diagnosis with one finding and no verdict beside it. */
+    private val oneFindingDiagnosis = """
+        ```fb-diagnosis
+        {"findings":[{"title":"Gap at the back joint","area":"structural","severity":"moderate","dimension":"joint_fit","what_i_see":"A gap."}]}
+        ```
+    """.trimIndent()
 
     @Test
     fun `a verdict starts the notes, and the next turn carries them instead of the photos`() = testApplication {
@@ -607,6 +1006,86 @@ class ChatRouteTest {
         assertEquals(HttpStatusCode.Forbidden, response.status)
         assertNull("no prompt was assembled", prompts.askedAudience)
         assertEquals("nothing was spent", 0, store.usageRows)
+    }
+
+    // Spend per app comes from usage_events.audience, whose column default is buyer (V14).
+    // Every call path therefore names the route's audience; one that forgot would bill
+    // Fundi Bora's spend to Kagua and raise no error. Compared as the stored ids, the
+    // values the insert writes.
+    @Test
+    fun `a Kagua turn is billed to buyer`() = testApplication {
+        val store = FakeChatStore()
+        val app = withChat(store, FakeClaude(ClaudeResult.Success("ok", TokenUsage(), null)))
+
+        app.post("/v1/chat") { auth(); contentType(ContentType.Application.Json); setBody(request()) }
+
+        assertEquals(listOf("turn" to "buyer"), store.usageAudiences.map { (kind, audience) -> kind to audience.id })
+    }
+
+    @Test
+    fun `a Fundi Bora turn is billed to fundi`() = testApplication {
+        val store = FakeChatStore()
+        val app = withChat(
+            store,
+            FakeClaude(ClaudeResult.Success("ok", TokenUsage(), null)),
+            accountAudience = Audience.FUNDI,
+        )
+
+        app.post("/v1/fundi/chat") {
+            auth(); contentType(ContentType.Application.Json); setBody(request())
+        }
+
+        assertEquals(listOf("turn" to "fundi"), store.usageAudiences.map { (kind, audience) -> kind to audience.id })
+    }
+
+    @Test
+    fun `a failed Fundi Bora call is still billed to fundi`() = testApplication {
+        // A failed call can have burned tokens, so it is billed too, and to the right app.
+        val store = FakeChatStore()
+        val app = withChat(
+            store,
+            FakeClaude(ClaudeResult.Failure(UpstreamError.TRUNCATED, "cut off", usage = TokenUsage(2, 4096, 0, 0))),
+            accountAudience = Audience.FUNDI,
+        )
+
+        app.post("/v1/fundi/chat") {
+            auth(); contentType(ContentType.Application.Json); setBody(request())
+        }
+
+        assertEquals(listOf("turn" to "fundi"), store.usageAudiences.map { (kind, audience) -> kind to audience.id })
+    }
+
+    @Test
+    fun `Fundi Bora's notes are billed to fundi, like the turn they follow`() = testApplication {
+        // The notes are a second Claude call per assessment, made from the compactor's
+        // own coroutine after the reply has gone back. It has no route of its own to read
+        // the audience from, so the route hands it down.
+        val store = FakeChatStore(
+            storedHistory = listOf(
+                ChatMessage("u1", Role.USER, "Check my stool.", listOf(Attachment("p1", "/blobs/abc.jpg"))),
+                ChatMessage("assistant-1", Role.ASSISTANT, "```qv-verdict\n{}\n```"),
+            ),
+        )
+        val reply = "```qv-verdict\n{\"verdict\":\"fair\",\"headline\":\"Sound\",\"defects\":[]}\n```"
+        val app = withChat(
+            store,
+            FakeClaude(ClaudeResult.Success(reply, TokenUsage(), null)),
+            accountAudience = Audience.FUNDI,
+        )
+
+        app.post("/v1/fundi/chat") {
+            auth(); contentType(ContentType.Application.Json); setBody(request())
+        }
+
+        // Billed in the background, after the notes are saved.
+        val deadline = System.currentTimeMillis() + 5_000
+        while (store.usageAudiences.none { it.first == "digest" } && System.currentTimeMillis() < deadline) {
+            Thread.sleep(20)
+        }
+        assertEquals(
+            listOf("turn" to "fundi", "digest" to "fundi"),
+            store.usageAudiences.map { (kind, audience) -> kind to audience.id },
+        )
     }
 
     // A re-assessment is a new session naming the same piece. The route's job is to hand
@@ -1034,6 +1513,7 @@ class ChatRouteTest {
         /** Which app the signed-in account belongs to. Kagua unless a test says otherwise. */
         accountAudience: Audience = Audience.BUYER,
         appVersions: AppVersions = AppVersions.UNCONFIGURED,
+        blobs: BlobStore = BlobStore(folder.newFolder()),
     ) = run {
         application {
             module(
@@ -1041,7 +1521,7 @@ class ChatRouteTest {
                 database = null,
                 auth = Auth(AccountStore(accountAudience), AccessTokens(KEY)),
                 chat = Chat(
-                    store, BlobStore(folder.newFolder()), claude, prompts, NoFeedback,
+                    store, blobs, claude, prompts, NoFeedback,
                     dailyAssessmentLimit = dailyLimit,
                     testerDailyAssessmentLimit = testerLimit,
                     fundiDailyAssessmentLimit = fundiLimit,
@@ -1056,6 +1536,13 @@ class ChatRouteTest {
     private fun requestJsonWith(extra: String) = """
         {"session_id":"${UUID.randomUUID()}","item_type_id":"wooden-table",
          "message_id":"${UUID.randomUUID()}","text":"hello","blobs":[]$extra}
+    """.trimIndent()
+
+    /** A valid turn carrying the photo [sha], with [photoMeta] spliced in as raw JSON. */
+    private fun turnJson(sha: String, photoMeta: String) = """
+        {"session_id":"${UUID.randomUUID()}","item_type_id":"wooden-table",
+         "message_id":"${UUID.randomUUID()}","text":"hello","blobs":["$sha"],
+         "photo_meta":$photoMeta}
     """.trimIndent()
 
     private class RecordingPrompts : PromptRepository {
@@ -1086,6 +1573,14 @@ class ChatRouteTest {
         var lastHistoryText: String = ""
             private set
 
+        /**
+         * The request AnthropicClient would send for the last call, as JSON text: the same
+         * assembly and the same serialiser, with base64 replaced by a length so the text
+         * stays short. What prompt caching matches against, byte for byte.
+         */
+        var lastRequestJson: String = ""
+            private set
+
         override suspend fun send(
             systemPrompt: String,
             history: List<ChatMessage>,
@@ -1096,6 +1591,14 @@ class ChatRouteTest {
             lastSystemPrompt = systemPrompt
             lastHistoryText = history.joinToString("\n") { it.text }
             lastPhotos = photos
+            lastRequestJson = AnthropicRequest.json.encodeToString(
+                AnthropicRequest.build(
+                    systemPrompt = systemPrompt,
+                    history = history,
+                    imageBytes = imageBytes,
+                    encodeBase64 = { bytes -> "base64:${bytes.size}:${bytes.contentHashCode()}" },
+                ),
+            )
             return result
         }
     }
@@ -1105,6 +1608,13 @@ class ChatRouteTest {
         private val turnAlreadyStored: Boolean = false,
         private val storedReply: StoredReply? = null,
         private val storedHistory: List<ChatMessage> = listOf(ChatMessage("m", Role.USER, "I am buying this.")),
+        /** Serve the posted turn back as the history, as the real store would. */
+        private val echoTurns: Boolean = false,
+        /**
+         * Replies another turn of the session stored after this one read its history: in
+         * the store when the count is taken, never in what Claude was sent (F19).
+         */
+        private val storedMeanwhile: List<ChatMessage> = emptyList(),
     ) : ChatStore {
         val savedDigests = java.util.concurrent.CopyOnWriteArrayList<com.qualityverifier.server.db.Digest>()
         var digestUsageRows = 0
@@ -1188,35 +1698,78 @@ class ChatRouteTest {
 
         override suspend fun appendUserTurn(
             sessionId: String, messageId: String, text: String, blobHashes: List<String>,
-            composed: Boolean,
-        ) = (!turnAlreadyStored).also { sawComposed = composed }
+            composed: Boolean, photoMeta: Map<String, JsonObject>,
+        ) = (!turnAlreadyStored).also {
+            sawComposed = composed
+            sawPhotoMeta = photoMeta
+            lastTurn = ChatMessage(messageId, Role.USER, text) to blobHashes
+        }
 
         /** Whether the route marked the stored turn as the app's own. */
         var sawComposed: Boolean? = null
             private set
 
+        /** The checked metadata the route handed down, by hash. */
+        var sawPhotoMeta: Map<String, JsonObject>? = null
+            private set
+
+        private var lastTurn: Pair<ChatMessage, List<String>>? = null
+
         override suspend fun replyAfter(sessionId: String, userMessageId: String) = storedReply
 
-        override suspend fun history(sessionId: String, blobPath: (String) -> String) = storedHistory
+        /**
+         * With [echoTurns], the stored turn as PostgresChatStore.history returns it: the
+         * message and one Attachment per hash, built from the columns that query selects.
+         * Ids are fixed per position, where Postgres makes random ones, so two runs compare.
+         */
+        override suspend fun history(sessionId: String, blobPath: (String) -> String): List<ChatMessage> {
+            val (message, hashes) = lastTurn?.takeIf { echoTurns } ?: return storedHistory
+            return listOf(
+                message.copy(
+                    attachments = hashes.mapIndexed { index, sha ->
+                        Attachment(id = "attachment-$index", path = blobPath(sha.lowercase()), mimeType = "image/jpeg")
+                    },
+                ),
+            )
+        }
 
+        /** Whether the route asked for a count, so a null result can be told from none asked. */
+        var counted = false
+            private set
+
+        /**
+         * Runs the route's counter over the replies PostgresChatStore would hand it: every
+         * stored assistant reply, newest first, the one just stored first of all.
+         */
         override suspend fun appendAssistantTurn(
             sessionId: String, text: String, preview: String,
-            verdictLevelId: String?, verdictLanguage: String?, defectCount: Int?,
+            verdictLevelId: String?, verdictLanguage: String?,
+            defectCount: ((List<String>) -> Int?)?,
         ): String {
             assistantTurns++
             lastPreview = preview
             lastVerdictLevel = verdictLevelId
             lastVerdictLanguage = verdictLanguage
-            lastDefectCount = defectCount
+            val stored = (storedHistory + storedMeanwhile).filter { it.role == Role.ASSISTANT }.map { it.text }
+            counted = defectCount != null
+            lastDefectCount = defectCount?.invoke(listOf(text) + stored.asReversed())
             return "assistant-1"
         }
 
         override suspend fun recordUsage(
             userId: String, sessionId: String?, model: String?, usage: TokenUsage?,
-            httpStatus: Int?, latencyMillis: Long, errorKind: String?, callKind: String,
+            httpStatus: Int?, latencyMillis: Long, errorKind: String?, audience: Audience,
+            callKind: String,
         ) {
+            usageAudiences += callKind to audience
             if (callKind == "digest") digestUsageRows++ else usageRows++
         }
+
+        /**
+         * The audience each usage row was billed to, with its call kind, in order. Thread-
+         * safe because notes are billed from the compactor's own coroutine.
+         */
+        val usageAudiences = java.util.concurrent.CopyOnWriteArrayList<Pair<String, Audience>>()
 
         override suspend fun saveDigest(sessionId: String, digest: com.qualityverifier.server.db.Digest) {
             savedDigests += digest

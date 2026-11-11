@@ -64,9 +64,15 @@ class LocationCapture(
      * nothing and log nothing.
      */
     override val isAvailable: Boolean
-        get() = preference.recordAtStart && hasPermission() && manager()?.let { m ->
-            runCatching { m.getProviders(true).isNotEmpty() }.getOrDefault(false)
-        } == true
+        get() = LocationRule.shouldCapture(
+            records = preference.records,
+            permitted = ::hasPermission,
+            providerOn = {
+                manager()?.let { m ->
+                    runCatching { m.getProviders(true).isNotEmpty() }.getOrDefault(false)
+                } == true
+            },
+        )
 
     /**
      * The best fix obtainable within the window, or null.
@@ -75,7 +81,7 @@ class LocationCapture(
      * forget about it — see the class comment.
      */
     override suspend fun capture(): LocationFix? {
-        if (!preference.recordAtStart) return null
+        if (!preference.records) return null
         return fix(WINDOW_MILLIS)
     }
 

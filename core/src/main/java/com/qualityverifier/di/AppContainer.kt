@@ -88,6 +88,12 @@ class AppContainer(
     versionCode: Int,
     /** False in debug builds, which send the headers but skip the update prompt. */
     checkForUpdates: Boolean,
+    /**
+     * Whether the location switch counts only once the person has answered the question
+     * (see [LocationPreference]). True in Fundi Bora, whose switch defaulted to on before
+     * makers were asked. Defaulted to false, Kagua's, so Kagua is unchanged.
+     */
+    locationAnswerRequired: Boolean = false,
 ) {
 
     private val appContext = context.applicationContext
@@ -118,7 +124,17 @@ class AppContainer(
         "quality_verifier.db",
     ).addMigrations(*AppDatabase.MIGRATIONS).build()
 
-    val images: ImageFileStore = ImageFileStore(appContext)
+    /**
+     * Whether assessments record where they were made. Chosen at sign-up, set in Settings.
+     * Declared before [images], which reads it, and [localAccount], whose clear forgets it.
+     */
+    val locationPreference = LocationPreference(appContext, locationAnswerRequired)
+
+    /**
+     * Photos, and the camera metadata kept beside them. The location switch also decides
+     * whether a photo's own GPS is kept: off means the camera's point is never sent either.
+     */
+    val images: ImageFileStore = ImageFileStore(appContext) { locationPreference.records }
 
     val tokenStore: TokenStore = EncryptedPrefsTokenStore(appContext)
 
@@ -126,23 +142,23 @@ class AppContainer(
      * Clears the local data when a different account signs in (see [LocalAccountGuard]).
      *
      * Every Room table and every photo: assessments, messages, pieces, the roster and all
-     * the pending queues belong to the account that made them. The location preference
-     * does not, and stays (see [LocationPreference]).
+     * the pending queues belong to the account that made them. In Fundi Bora the answer to
+     * the location question does too, so it is forgotten and the new maker is asked on the
+     * home screen; otherwise every assessment they made would record the previous maker's
+     * yes. Kagua's location preference stays, as before (see [LocationPreference]).
      */
     private val localAccount = LocalAccountGuard(
         owner = PrefsLocalAccountOwner(appContext),
         clearLocalData = {
             database.clearAllTables()
             images.deleteAll()
+            if (locationAnswerRequired) locationPreference.forget()
         },
     ).also {
         // An install from v0.3.0 still signed in: its tokens name the owner, so record it
         // now, before anybody can sign out and somebody else sign in.
         it.adoptIfUnrecorded(tokenStore::userId)
     }
-
-    /** Whether assessments record where they were made. Chosen at sign-up, set in Settings. */
-    val locationPreference = LocationPreference(appContext)
 
     /**
      * One fix per assessment, taken without the customer doing anything.

@@ -35,10 +35,12 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
+import com.qualityverifier.data.location.LocationPreference
 import com.qualityverifier.domain.FundiGoal
 import com.qualityverifier.domain.ToolKind
 import com.qualityverifier.domain.ToolOwnership
 import com.qualityverifier.domain.Workshop
+import com.qualityverifier.fundi.ui.location.AssessmentLocationQuestion
 import com.qualityverifier.text.FundiLabels
 import com.qualityverifier.ui.plan.WorkingText
 import androidx.core.content.ContextCompat
@@ -65,6 +67,8 @@ fun WorkshopScreen(
     onConsent: (Boolean) -> Unit = {},
     onLocate: () -> Unit = {},
     onPermission: (Boolean) -> Unit = {},
+    /** Where the answer to the per-assessment question goes. Null leaves it out. */
+    assessLocation: LocationPreference? = null,
 ) = SetupScaffold(
     title = labels.setupWorkshopTitle,
     blurb = labels.setupWorkshopBlurb,
@@ -106,6 +110,13 @@ fun WorkshopScreen(
         onChange { it.copy(piecesPerMonth = v) }
     }
     ShopLocationSection(labels, shop, onAtShop, onConsent, onLocate, onPermission)
+    // Its own question, after the shop's and not folded into it. The shop question is
+    // asked only of a maker standing in the shop, and is about one point; this one is
+    // about every assessment, wherever it is made, and is asked of everybody.
+    if (assessLocation != null) {
+        Spacer(Modifier.height(8.dp))
+        AssessmentLocationQuestion(labels, assessLocation)
+    }
 }
 
 /**

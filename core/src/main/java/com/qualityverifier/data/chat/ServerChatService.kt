@@ -14,6 +14,7 @@ import kotlinx.coroutines.withContext
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonObject
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -55,6 +56,12 @@ private data class ChatBody(
     val latitude: Double? = null,
     val longitude: Double? = null,
     @SerialName("accuracy_m") val accuracyMetres: Double? = null,
+    /**
+     * Each photo's camera metadata, keyed by its hash in [blobs] (v0.4.0, D3). Null, so not
+     * sent, when no photo in the turn has any. The server stores it on the attachment row
+     * and never puts it in the request to Claude.
+     */
+    @SerialName("photo_meta") val photoMeta: Map<String, JsonObject>? = null,
 )
 
 /** One slot as the server reads it: no id means the manager. */
@@ -137,8 +144,10 @@ class ServerChatService(
             ?: return@withContext ChatResult.Failure(ChatErrorKind.AUTH, "Please sign in again.")
 
         val hashes = mutableListOf<String>()
+        val photoMeta = mutableMapOf<String, JsonObject>()
         for (attachment in turn.attachments) {
-            val bytes = images.bytesForUpload(java.io.File(attachment.path))
+            val file = java.io.File(attachment.path)
+            val bytes = images.bytesForUpload(file)
             if (bytes == null) {
                 // Skipped rather than failing the turn, matching the server's own
                 // tolerance. A photo that cannot be read costs one image.
@@ -147,6 +156,9 @@ class ServerChatService(
             }
             val sha = sha256(bytes)
             hashes += sha
+            // Keyed by hash rather than by position, so a skipped photo above cannot shift
+            // one photo's metadata onto the next.
+            images.photoMetaFor(file)?.let { photoMeta[sha] = it }
             when (val upload = ensureUploaded(sha, bytes, token)) {
                 null -> Unit
                 else -> return@withContext upload
@@ -176,6 +188,7 @@ class ServerChatService(
                 latitude = start?.location?.latitude,
                 longitude = start?.location?.longitude,
                 accuracyMetres = start?.location?.accuracyMetres,
+                photoMeta = photoMeta.takeIf { it.isNotEmpty() },
             )
         )
         // One retry, and only for the two conditions a retry can actually fix: a token

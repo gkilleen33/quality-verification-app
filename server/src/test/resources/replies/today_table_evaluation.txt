@@ -1,0 +1,99 @@
+intake: fundi-en-evaluate
+--- reply ---
+Thank you for the photos. Before I give you the full picture, one more: the underside of the top where it meets the back rail.
+
+```qv-options
+["Here it is", "I cannot turn it over"]
+```
+--- reply ---
+This is a solid table with one joint to close and a top that needs flattening.
+
+```fb-diagnosis
+{
+  "language": "en",
+  "findings": [
+    {
+      "title": "Gap at the back left joint",
+      "area": "structural",
+      "severity": "moderate",
+      "dimension": "joint_fit",
+      "measured_value": 3,
+      "measured_unit": "mm",
+      "what_happened": "The end of the rail does not sit flat against the leg. There is a gap of about 3mm at the top of the joint.",
+      "manufacturing_cause": "The end of the rail was cut at a slight angle instead of straight across.",
+      "root_habit": "The cutting line is drawn on one side of the rail and the other sides are cut by eye."
+    },
+    {
+      "title": "Top not flat across the width",
+      "area": "level",
+      "severity": "minor",
+      "dimension": "frame_squareness",
+      "what_happened": "The straight edge rocks on the middle of the top.",
+      "manufacturing_cause": "The frame was glued up out of square, and the top was screwed down onto it.",
+      "root_habit": "The diagonals are not measured before the glue sets."
+    },
+    {
+      "title": "Saw marks on the top",
+      "area": "surface",
+      "severity": "cosmetic",
+      "dimension": "finishing",
+      "what_happened": "Lines across the top where the saw ran.",
+      "manufacturing_cause": "The top was varnished before it was sanded smooth.",
+      "root_habit": "Sanding stops at the coarse paper."
+    },
+    {
+      "title": "Glue left at the joint",
+      "area": "surface",
+      "severity": "cosmetic",
+      "dimension": "finishing",
+      "what_happened": "A line of dried glue beside the front right joint.",
+      "manufacturing_cause": "The squeeze-out was left to dry.",
+      "root_habit": "Glue is not wiped off while it is wet."
+    }
+  ]
+}
+```
+
+```qv-verdict
+{
+  "verdict": "fair",
+  "language": "en",
+  "headline": "Strong table, one joint to close",
+  "summary": "Close the back joint and flatten the top before it goes to the customer.",
+  "defects": [
+    {
+      "title": "Gap at the back left joint",
+      "area": "structural",
+      "severity": "moderate",
+      "what_i_see": "There is a gap at the back joint.",
+      "what_it_means": "The joint will loosen.",
+      "what_to_do": "Take it apart, glue it and clamp it."
+    },
+    {
+      "title": "Top not flat across the width",
+      "area": "level",
+      "severity": "minor",
+      "what_i_see": "The top rocks under a straight edge.",
+      "what_it_means": "Cups and plates will not sit flat.",
+      "what_to_do": "Plane the high middle down."
+    },
+    {
+      "title": "Saw marks on the top",
+      "area": "surface",
+      "severity": "cosmetic",
+      "what_i_see": "Lines across the top.",
+      "what_it_means": "Only the look of the table.",
+      "what_to_do": "Sand it again and re-varnish."
+    },
+    {
+      "title": "Knot near the front edge",
+      "area": "material",
+      "severity": "minor",
+      "what_i_see": "A dark knot close to the front edge.",
+      "what_it_means": "It may split there in time.",
+      "what_to_do": "Fill it with epoxy."
+    }
+  ],
+  "unverified": ["The inside of the joints"]
+}
+```
