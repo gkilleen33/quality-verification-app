@@ -150,9 +150,7 @@ class PostgresAuthStore(private val dataSource: DataSource) : AuthStore {
         // remember to tick anything at registration. The audience is the same shape of
         // fact: which of the two apps this account is for, decided by whoever handed the
         // code out rather than by the app doing the registering.
-        val grants = connection.prepareStatement(
-            "select grants_tester, audience from invite_codes where code = ? and revoked_at is null"
-        ).use { statement ->
+        val grants = connection.prepareStatement(REDEEMABLE_INVITE).use { statement ->
             statement.setString(1, registration.inviteCode)
             statement.executeQuery().use {
                 if (it.next()) it.getBoolean(1) to it.getString(2) else null
@@ -429,5 +427,22 @@ class PostgresAuthStore(private val dataSource: DataSource) : AuthStore {
                 statement.executeQuery().use { rows -> rows.next(); rows.getInt(1) }
             }
         }
+    }
+
+    internal companion object {
+        /**
+         * The grants of a code that can still register an account. No row for an unknown
+         * or revoked code, and register() answers no row with InviteUnusable.
+         *
+         * Revoked includes the code of a deleted account: anonymise_user revokes it (V26)
+         * before blanking users.invite_code, whose unique index is otherwise the only thing
+         * keeping a code single use. A constant so AuthTest can hold it to that.
+         *
+         * FOR SHARE closes the window while a delete is in flight: without it, a sign-up
+         * that read the code before anonymise_user committed would find the unique index
+         * free once it did. The lock makes the read wait and re-check revoked_at.
+         */
+        const val REDEEMABLE_INVITE =
+            "select grants_tester, audience from invite_codes where code = ? and revoked_at is null for share"
     }
 }
