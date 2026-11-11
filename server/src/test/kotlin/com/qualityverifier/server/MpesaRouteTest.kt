@@ -242,6 +242,27 @@ class MpesaRouteTest {
     }
 
     @Test
+    fun `an invalid copy of a code does not shadow a valid one, and a time out of range is refused alone`() =
+        testApplication {
+            val world = TermsWorld()
+            val client = world.mountMpesa(this)
+            client.agreeToBoth(world)
+
+            val response = Json.parseToJsonElement(
+                client.upload(
+                    world,
+                    transaction(code = "SKA1B2C3D4", type = "failed"),
+                    transaction(code = "SKA1B2C3D4"),
+                    transaction(code = "SKA1B2C3D5").replace("1762934400000", "9300000000000000"),
+                ).bodyAsText(),
+            ).jsonObject
+
+            assertEquals(listOf("SKA1B2C3D4"), response["accepted"]!!.jsonArray.map { it.jsonPrimitive.content })
+            assertEquals(listOf("SKA1B2C3D5"), response["rejected"]!!.jsonArray.map { it.jsonPrimitive.content })
+            assertEquals(1, store.transactions.size)
+        }
+
+    @Test
     fun `withdrawing the agreement to send stops uploads`() = testApplication {
         val world = TermsWorld()
         val client = world.mountMpesa(this)

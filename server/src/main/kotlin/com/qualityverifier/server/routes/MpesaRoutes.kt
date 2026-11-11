@@ -56,13 +56,16 @@ fun Route.mpesaRoutes(store: MpesaStore, coder: CounterpartyCoder, auth: AuthSto
                 return@post
             }
 
-            val rows = mutableListOf<MpesaTransactionRow>()
-            val rejected = mutableListOf<String>()
-            // First of each code wins, as the database would have it.
-            request.transactions.distinctBy { it.code.trim().uppercase() }.forEach { dto ->
-                val row = dto.toRow(appVersion, coder)
-                if (row == null) rejected += dto.code else rows += row
-            }
+            // Validated first, then the first valid row of each code kept, as the database
+            // would keep it. Deduplicating first would let an invalid copy shadow a valid one
+            // and send the code to `rejected`, which the phone never retries.
+            val checked = request.transactions.map { it to it.toRow(appVersion, coder) }
+            val rows = checked.mapNotNull { it.second }.distinctBy { it.code }
+            val held = rows.map { it.code }.toSet()
+            // As the phone sent them, so it can match them to its own rows.
+            val rejected = checked.filter { (dto, row) -> row == null && dto.code.trim().uppercase() !in held }
+                .map { it.first.code }
+                .distinct()
             val inserted = if (rows.isEmpty()) 0 else store.insertTransactions(userId, rows)
             log.info(
                 "M-Pesa upload for {}: {} new, {} already held, {} refused",
@@ -121,6 +124,7 @@ fun Route.mpesaRoutes(store: MpesaStore, coder: CounterpartyCoder, auth: AuthSto
             }
             val days = request.days.map { dto ->
                 val day = runCatching { LocalDate.parse(dto.day) }.getOrNull()
+                    ?.takeIf { it.year in FIRST_YEAR..LAST_YEAR }
                 if (day == null || dto.unread !in 0..MAX_UNREAD || dto.parserVersion <= 0) {
                     call.respond(HttpStatusCode.BadRequest, ErrorResponse("invalid_request", "bad day ${dto.day}"))
                     return@put
@@ -141,6 +145,12 @@ internal const val MAX_COMMENT = 500
 
 private const val MAX_UNREAD_DAYS = 62
 private const val MAX_UNREAD = 100_000
+
+/** The years a transaction or an unread day may fall in: M-Pesa existed, and PostgreSQL can store them. */
+private const val FIRST_YEAR = 2007
+private const val LAST_YEAR = 2100
+private val EARLIEST_MILLIS = LocalDate.of(FIRST_YEAR, 1, 1).atStartOfDay(java.time.ZoneOffset.UTC).toInstant().toEpochMilli()
+private val LATEST_MILLIS = LocalDate.of(LAST_YEAR, 12, 31).atStartOfDay(java.time.ZoneOffset.UTC).toInstant().toEpochMilli()
 
 /** Matches V29's `mpesa_transactions_code_shape`. */
 private val CODE = Regex("^[A-Z0-9]{8,12}$")
@@ -184,7 +194,9 @@ private fun MpesaTransactionDto.toRow(appVersion: Int, coder: CounterpartyCoder)
     val fee = feeKes?.let(::shillings)
     val balance = balanceAfterKes?.takeIf { it.isFinite() && kotlin.math.abs(it) < MAX_AMOUNT.toDouble() }
         ?.let { BigDecimal.valueOf(it).setScale(2, RoundingMode.HALF_UP) }
-    if (occurredAt <= 0 || parserVersion <= 0) return null
+    // Bounded so a phone with a broken clock or a units bug gets its row refused alone,
+    // rather than PostgreSQL refusing the whole batch for a time it cannot store.
+    if (occurredAt !in EARLIEST_MILLIS..LATEST_MILLIS || parserVersion <= 0) return null
     return MpesaTransactionRow(
         code = mpesaCode,
         direction = knownDirection,
