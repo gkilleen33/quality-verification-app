@@ -84,7 +84,8 @@ CREATE TABLE mpesa_transactions (
     -- A code is always a 64-character HMAC, and never without its basis.
     CONSTRAINT mpesa_transactions_counterparty_complete
         CHECK ((counterparty_code IS NULL AND counterparty_basis IS NULL)
-               OR (counterparty_code ~ '^[0-9a-f]{64}$' AND counterparty_basis IS NOT NULL)),
+               OR (counterparty_code IS NOT NULL AND counterparty_code ~ '^[0-9a-f]{64}$'
+                   AND counterparty_basis IS NOT NULL)),
     CONSTRAINT mpesa_transactions_category_known
         CHECK (category IS NULL
                OR category IN ('material_purchases', 'wages', 'machine_rental',
@@ -297,6 +298,19 @@ BEGIN
         END;
         IF NOT refused THEN
             RAISE EXCEPTION 'V29 self-test: mpesa_transactions accepted a counterparty code without its basis';
+        END IF;
+
+        refused := false;
+        BEGIN
+            INSERT INTO mpesa_transactions (
+                user_id, code, direction, tx_type, amount_kes, occurred_at,
+                counterparty_basis, parser_version, app_version
+            ) VALUES (probe, 'SKA1B2C3D5', 'out', 'send', 10, now(), 'phone', 2, 6);
+        EXCEPTION WHEN check_violation THEN
+            refused := true;
+        END;
+        IF NOT refused THEN
+            RAISE EXCEPTION 'V29 self-test: mpesa_transactions accepted a counterparty basis without its code';
         END IF;
 
         refused := false;
