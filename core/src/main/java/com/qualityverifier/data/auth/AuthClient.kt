@@ -69,6 +69,11 @@ class AuthClient(
     private val json: Json,
     private val deviceName: String,
     private val io: CoroutineDispatcher = Dispatchers.IO,
+    /**
+     * Called once a sign-in or registration has succeeded. The container uses it to ask
+     * the server about app versions again, as the build plan requires after sign-in.
+     */
+    private val onSignedIn: () -> Unit = {},
 ) {
 
     /**
@@ -194,6 +199,9 @@ class AuthClient(
                     // they were an evaluator, and never be asked for the review the
                     // walkthrough existed to produce.
                     fetchIsTester(decoded.accessToken)?.let(store::setTester)
+                    // Never allowed to fail the sign-in it follows.
+                    runCatching { onSignedIn() }
+                        .onFailure { Log.w(TAG, "Post-sign-in hook failed", it) }
                     AuthResult.Success
                 } else {
                     AuthResult.Failure(kindFor(response.code), messageFor(response.code, text))

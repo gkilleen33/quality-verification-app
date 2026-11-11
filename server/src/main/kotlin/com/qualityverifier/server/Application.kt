@@ -57,6 +57,7 @@ import com.qualityverifier.server.db.PostgresChatStore
 import com.qualityverifier.server.db.PostgresFundiStore
 import com.qualityverifier.server.db.PostgresAuthStore
 import com.qualityverifier.server.routes.ErrorResponse
+import com.qualityverifier.server.routes.appConfigRoutes
 import com.qualityverifier.server.routes.authRoutes
 import com.qualityverifier.server.routes.chatRoutes
 import com.qualityverifier.server.routes.fundiRoutes
@@ -185,6 +186,10 @@ fun main() {
     } else {
         log.warn("Daily assessment limit is DISABLED; every request is billed to us")
     }
+    com.qualityverifier.domain.AppId.entries.forEach { app ->
+        val policy = config.appVersions.policyFor(app)
+        log.info("App versions for {}: latest {}, minimum {}", app.id, policy.latest, policy.minimum)
+    }
 
     Runtime.getRuntime().addShutdownHook(
         Thread {
@@ -194,7 +199,7 @@ fun main() {
     )
 
     embeddedServer(Netty, port = config.port, host = config.host) {
-        module(config.version, database, auth, chat, fundi, admin)
+        module(config.version, database, auth, chat, fundi, admin, config.appVersions)
     }.start(wait = true)
 }
 
@@ -276,8 +281,12 @@ fun Application.module(
     chat: Chat? = null,
     fundi: Fundi? = null,
     admin: Admin? = null,
+    /** Each app's latest and minimum versionCode. Defaulted to 1 and 1 for tests. */
+    appVersions: AppVersions = AppVersions.UNCONFIGURED,
 ) {
     install(ContentNegotiation) { json() }
+    // Before routing, so it runs ahead of authentication. See installAppVersionGate.
+    installAppVersionGate(appVersions)
     if (admin != null) {
         install(Sessions) {
             cookie<AdminSession>("kagua_admin") {
@@ -346,6 +355,9 @@ fun Application.module(
     }
 
     routing {
+        // Outside the auth block: it needs no database and no key, and an app below the
+        // minimum has to be able to read it whatever else is mounted.
+        appConfigRoutes(appVersions)
         auth?.let { authRoutes(it.store, it.accessTokens) }
         // Chat needs auth: every route inside it authenticates, and mounting them
         // without the plugin installed would fail at request time rather than here.

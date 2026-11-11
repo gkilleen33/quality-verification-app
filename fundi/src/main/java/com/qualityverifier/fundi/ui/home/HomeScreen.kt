@@ -35,10 +35,13 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.qualityverifier.domain.ItemType
 import com.qualityverifier.domain.PieceNames
 import com.qualityverifier.domain.SessionSummary
+import com.qualityverifier.domain.UpdatePrompt
 import com.qualityverifier.domain.Worker
 import com.qualityverifier.domain.WorkerSlot
 import com.qualityverifier.fundi.ui.assess.WorkerPicker
 import com.qualityverifier.fundi.ui.fundiContainer
+import com.qualityverifier.text.UpdateLabels
+import com.qualityverifier.ui.update.UpdateBanner
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -66,6 +69,7 @@ fun HomeScreen(
     val model: PiecesViewModel = viewModel(factory = PiecesViewModel.factory(container))
     val sessions by model.pieces.collectAsState()
     val roster by model.roster.collectAsState()
+    val update by container.appVersionCheck.state.collectAsState()
     // One row per physical piece rather than per assessment. A stool assessed on Monday
     // and re-assessed on Tuesday is one stool, and listing it twice would make the maker
     // work out which row is the current one.
@@ -85,6 +89,18 @@ fun HomeScreen(
         Modifier.fillMaxSize().systemBarsPadding().padding(24.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
+        // Above everything, so it is seen; dismissible, so it is not in the way. English,
+        // like the rest of this app for now.
+        if (update.prompt == UpdatePrompt.AVAILABLE) {
+            item {
+                UpdateBanner(
+                    labels = UpdateLabels.ENGLISH,
+                    downloadUrl = update.downloadUrl,
+                    onDismiss = container.appVersionCheck::dismissBanner,
+                )
+            }
+        }
+
         item {
             Text("Fundi Bora", style = MaterialTheme.typography.displaySmall)
             Spacer(Modifier.height(8.dp))

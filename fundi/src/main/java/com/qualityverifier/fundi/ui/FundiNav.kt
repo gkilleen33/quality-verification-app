@@ -12,6 +12,7 @@ import androidx.navigation.NavType
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import com.qualityverifier.domain.ItemType
+import com.qualityverifier.domain.UpdatePrompt
 import com.qualityverifier.fundi.ui.assess.AssessScreen
 import com.qualityverifier.fundi.ui.home.HomeScreen
 import com.qualityverifier.fundi.ui.auth.FundiRegisterScreen
@@ -22,6 +23,8 @@ import com.qualityverifier.fundi.ui.setup.ToolsScreen
 import com.qualityverifier.fundi.ui.setup.WorkshopScreen
 import com.qualityverifier.fundi.ui.workers.WorkersScreen
 import com.qualityverifier.text.FundiLabels
+import com.qualityverifier.text.UpdateLabels
+import com.qualityverifier.ui.update.UpdateRequiredScreen
 import java.util.UUID
 
 private object Routes {
@@ -58,6 +61,15 @@ fun FundiNav() {
     // Swahili is unreviewed placeholder copy already (issue #20), and a producer-facing
     // app in Kenya needs that pass more than the buyer's app does, not less.
     val labels = FundiLabels.ENGLISH
+
+    // Below the minimum, nothing behind this would work: the server answers 426 to every
+    // route but sign-in and the config. So the update screen replaces the app outright.
+    // English, like the rest of this app for now.
+    val update by container.appVersionCheck.state.collectAsState()
+    if (update.prompt == UpdatePrompt.REQUIRED) {
+        UpdateRequiredScreen(UpdateLabels.ENGLISH, update.downloadUrl)
+        return
+    }
 
     NavHost(navController = navController, startDestination = start) {
 

@@ -2,6 +2,8 @@ package com.qualityverifier.ui.nav
 
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.navigation.NavHostController
 import androidx.navigation.NavType
@@ -10,9 +12,12 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import com.qualityverifier.domain.ItemType
+import com.qualityverifier.domain.UpdatePrompt
 import com.qualityverifier.text.decodeIntake
 import com.qualityverifier.text.encodeIntake
 import com.qualityverifier.ui.appContainer
+import com.qualityverifier.ui.rememberUpdateLabels
+import com.qualityverifier.ui.update.UpdateRequiredScreen
 import com.qualityverifier.ui.chat.ChatScreen
 import com.qualityverifier.ui.home.HomeScreen
 import com.qualityverifier.ui.main.MainScaffold
@@ -81,6 +86,14 @@ fun AppNav() {
     // Activity. This covers the same case for anyone who opens the app again.
     LaunchedEffect(Unit) {
         if (container.isSignedIn) runCatching { container.assessmentSync.pushReviews() }
+    }
+
+    // Below the minimum, nothing behind this would work: the server answers 426 to every
+    // route but sign-in and the config. So the update screen replaces the app outright.
+    val update by container.appVersionCheck.state.collectAsState()
+    if (update.prompt == UpdatePrompt.REQUIRED) {
+        UpdateRequiredScreen(rememberUpdateLabels(), update.downloadUrl)
+        return
     }
 
     NavHost(navController = navController, startDestination = start) {

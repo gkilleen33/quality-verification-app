@@ -83,6 +83,13 @@ data class ApiAssessment(
      * and a record that has to join to a profile to say what it was is a worse record.
      */
     val audience: String,
+    /**
+     * The versionCode of the app that started this assessment (V24).
+     *
+     * Null for an assessment made by v0.3.0 or older, which did not send its version:
+     * "not known", never "version 0". Defaulted so the field's arrival changes no caller.
+     */
+    @SerialName("app_version_code") val appVersionCode: Int? = null,
 )
 
 @Serializable

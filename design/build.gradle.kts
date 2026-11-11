@@ -17,6 +17,9 @@ plugins {
 //
 // No screens and no strings. Wording is fetched with the prompts and is not a
 // compile-time constant, so it arrives through ReportLabels rather than from resources.
+// One exception: ui/update holds the update banner and the update-required screen, which
+// both apps must draw identically. They take their wording from UpdateLabels and their
+// state from the caller, so this module still knows nothing about which app it is in.
 android {
     namespace = "com.qualityverifier.design"
     compileSdk = 36

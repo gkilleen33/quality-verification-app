@@ -168,8 +168,8 @@ class SyncClient(
      *
      * Returns true when the server has it, and **also** when the server refuses it as
      * unusable — a 400 or a 404 means this review will never be accepted, so retrying it on
-     * every sync forever would be a queue that never drains. Only a transport failure or a
-     * 5xx is worth keeping.
+     * every sync forever would be a queue that never drains. Only a transport failure, a
+     * 5xx, or a 426 (this build is below the server's minimum) is worth keeping.
      */
     suspend fun submitTesterFeedback(feedback: LocalTesterFeedback): Boolean = withContext(io) {
         val body = json.encodeToString(
@@ -188,6 +188,9 @@ class SyncClient(
         }?.use { response ->
             when {
                 response.isSuccessful -> true
+                // This build is below the server's minimum. Not a verdict on the review:
+                // kept, and sent by the updated app.
+                response.code == UPGRADE_REQUIRED -> false
                 // Permanently unacceptable. Dropped rather than retried for ever.
                 response.code in 400..499 -> {
                     Log.w(TAG, "Server refused evaluator feedback (${response.code}); dropping it")
@@ -215,6 +218,8 @@ class SyncClient(
         }?.use { response ->
             when {
                 response.isSuccessful -> true
+                // Below the minimum: kept for the updated app, as in submitTesterFeedback.
+                response.code == UPGRADE_REQUIRED -> false
                 response.code in 400..499 -> {
                     if (response.code != 404) {
                         Log.w(TAG, "Server refused a piece name (${response.code}); dropping it")
@@ -241,7 +246,8 @@ class SyncClient(
 
     /**
      * Adds, renames or archives a worker on the server. True when it has it, or will
-     * never take it (any 4xx); false for a transport failure or a 5xx, which retries.
+     * never take it (any 4xx but 426); false for a transport failure, a 5xx, or a 426,
+     * which retry.
      */
     suspend fun upsertWorker(workerId: String, name: String, archived: Boolean): Boolean = withContext(io) {
         val body = json.encodeToString(WorkerUpsertBody(name, archived)).toRequestBody(JSON)
@@ -251,6 +257,9 @@ class SyncClient(
         }?.use { response ->
             when {
                 response.isSuccessful -> true
+                // Below the minimum: kept. Marking it synced would leave the server without
+                // this worker, and every later session naming them would be refused.
+                response.code == UPGRADE_REQUIRED -> false
                 response.code in 400..499 -> {
                     Log.w(TAG, "Server refused a worker (${response.code}); dropping it")
                     true
@@ -277,6 +286,8 @@ class SyncClient(
                 when {
                     response.isSuccessful -> true
                     response.code == 404 -> false
+                    // Below the minimum: kept for the updated app.
+                    response.code == UPGRADE_REQUIRED -> false
                     response.code in 400..499 -> {
                         Log.w(TAG, "Server refused a session's workers (${response.code}); dropping them")
                         true
@@ -337,6 +348,13 @@ class SyncClient(
 
     private companion object {
         const val TAG = "SyncClient"
+
+        /**
+         * 426: this build is below the minimum the server serves. Every 4xx branch above
+         * checks it first, because the rest of that range means "never", and this one
+         * means "not from this build": the queued item has to survive until the update.
+         */
+        const val UPGRADE_REQUIRED = 426
         val JSON = "application/json; charset=utf-8".toMediaType()
     }
 }

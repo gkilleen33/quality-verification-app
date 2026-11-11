@@ -55,6 +55,11 @@ data class Config(
      * would tie their rotation together for no reason.
      */
     val adminSessionKey: String?,
+    /**
+     * Each app's latest and minimum versionCode, for `GET /v1/auth/config` and the 426
+     * rule. Set at each release's deploy; unset means 1 and 1, which prompts nobody.
+     */
+    val appVersions: AppVersions,
 ) {
     companion object {
         /**
@@ -115,6 +120,7 @@ data class Config(
                 fundiDailyAssessmentLimit = env("KAGUA_FUNDI_DAILY_ASSESSMENT_LIMIT")?.toIntOrNull()
                     ?: (customerLimit * FUNDI_LIMIT_MULTIPLE),
                 adminSessionKey = env("KAGUA_ADMIN_SESSION_KEY")?.takeIf { it.isNotBlank() },
+                appVersions = AppVersions.fromEnvironment(env),
             )
         }
     }

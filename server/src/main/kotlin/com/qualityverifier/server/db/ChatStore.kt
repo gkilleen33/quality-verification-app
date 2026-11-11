@@ -122,6 +122,11 @@ interface ChatStore {
          * dropped and logged, never linked.
          */
         workers: List<WorkerSlot> = emptyList(),
+        /**
+         * The versionCode of the app that started this assessment, from its X-App-Version
+         * header. Null for an app older than the header. Written once, at creation (V24).
+         */
+        appVersionCode: Int? = null,
     ): SessionAccess
 
     /**
@@ -259,6 +264,7 @@ class PostgresChatStore(private val dataSource: DataSource) : ChatStore {
         pieceId: String?,
         pieceLabel: String?,
         workers: List<WorkerSlot>,
+        appVersionCode: Int?,
     ): SessionAccess = tx { connection ->
         val owner = connection.prepareStatement(
             "select user_id::text from sessions where id = ?::uuid"
@@ -338,12 +344,13 @@ class PostgresChatStore(private val dataSource: DataSource) : ChatStore {
             """
             insert into sessions (
                 id, user_id, item_type_id, previous_session_id, intake_answers, prompt_sha,
-                audience, piece_id
+                audience, piece_id, app_version_code
             ) values (
                 ?::uuid, ?::uuid, ?, ?::uuid, ?, ?, ?,
                 -- Only this account's own piece. Somebody else's id resolves to null
                 -- rather than linking, so nobody can append to another maker's record.
-                (select p.id from pieces p where p.id = ?::uuid and p.user_id = ?::uuid)
+                (select p.id from pieces p where p.id = ?::uuid and p.user_id = ?::uuid),
+                ?
             )
             on conflict (id) do nothing
             """.trimIndent()
@@ -358,6 +365,11 @@ class PostgresChatStore(private val dataSource: DataSource) : ChatStore {
             statement.setString(7, audience.id)
             statement.setString(8, pieceId.takeIf { linkPiece })
             statement.setString(9, userId)
+            // Beside prompt_sha, and for the same reason: which build asked is part of
+            // what produced the assessment. Written once; a later turn from an updated
+            // app does not change it.
+            if (appVersionCode == null) statement.setNull(10, java.sql.Types.INTEGER)
+            else statement.setInt(10, appVersionCode)
             statement.executeUpdate()
         }
         // Fundi Bora only, like the piece. Kagua's endpoint never sends any.

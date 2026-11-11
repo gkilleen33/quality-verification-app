@@ -61,6 +61,20 @@ data class MeResponse(
 data class ErrorResponse(val error: String, val detail: String? = null)
 
 /**
+ * `GET /v1/auth/config`: one app's versions. Under `/v1/auth` because, like sign-in, the
+ * phone reads it before it has an account, so it takes no token.
+ */
+@Serializable
+data class AppConfigResponse(
+    /** The newest versionCode released. An older install shows the update banner. */
+    val latest: Int,
+    /** The oldest versionCode served. An older install is blocked and answered 426. */
+    val minimum: Int,
+    /** The release page the Download button opens. */
+    @SerialName("download_url") val downloadUrl: String,
+)
+
+/**
  * Validation, separated from the route so it can be tested without a server or a
  * database. Returns the first problem rather than collecting them: these are four
  * fields on a form the app itself controls, and a client that sends a bad one has a
