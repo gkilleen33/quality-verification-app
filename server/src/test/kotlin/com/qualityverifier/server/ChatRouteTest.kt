@@ -698,19 +698,21 @@ class ChatRouteTest {
     }
 
     @Test
-    fun `a sound verdict in today's shape counts zero beside a cosmetic finding, as before`() = testApplication {
+    fun `a sound verdict in today's shape counts the cosmetic finding beside it`() = testApplication {
+        // Cosmetic findings count against first time clean (Nathan, 11 November 2026).
         val store = FakeChatStore()
         val app = fundiChat(store, todaySoundShape)
 
         app.post("/v1/fundi/chat") { auth(); contentType(ContentType.Application.Json); setBody(request()) }
 
         assertEquals("sound", store.lastVerdictLevel)
-        assertEquals(0, store.lastDefectCount)
+        assertEquals(1, store.lastDefectCount)
     }
 
     @Test
-    fun `a sound verdict-only follow-up in today's shape counts zero, as before`() = testApplication {
-        // The diagnosis before it is in today's shape, so its findings are not the count.
+    fun `a sound verdict-only follow-up in today's shape counts zero, not the old findings`() = testApplication {
+        // The diagnosis before it is older than this verdict, which cleared its problems,
+        // so its findings are not the count.
         val store = FakeChatStore(
             storedHistory = listOf(
                 ChatMessage("u1", Role.USER, "Evaluate this table."),
