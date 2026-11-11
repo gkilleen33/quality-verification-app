@@ -312,8 +312,11 @@ fi
 
 echo "-- PostgreSQL and PostGIS packages (installed, then candidate if newer)"
 pg=0
+# The second status letter says whether a package is installed; the first is what apt
+# wants, which is "h" for a package held back with apt-mark hold. Held packages are the
+# ones waiting for a maintenance window, so they must stay in the report.
 pkgs=$(dpkg-query -W -f='${db:Status-Abbrev} ${Package}\n' 'postgresql*' 'postgis*' 2>/dev/null |
-    awk '$1 == "ii" { print $2 }')
+    awk 'substr($1, 2, 1) == "i" { print $2 }')
 if [ -z "$pkgs" ]; then
     echo "dpkg-query found no installed postgresql or postgis packages"
     pg=unknown
@@ -347,7 +350,7 @@ fi
 
 echo "-- unattended-upgrades"
 case "$(dpkg-query -W -f='${db:Status-Abbrev}' unattended-upgrades 2>&1)" in
-    ii*) uu_pkg=yes; echo "package installed" ;;
+    ?i*) uu_pkg=yes; echo "package installed" ;;
     *) uu_pkg=no; echo "package not installed" ;;
 esac
 [ -e /etc/apt/apt.conf.d/20auto-upgrades ] || echo "/etc/apt/apt.conf.d/20auto-upgrades is missing"
