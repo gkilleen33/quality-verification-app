@@ -19,18 +19,22 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import com.qualityverifier.domain.ItemType
 import com.qualityverifier.domain.WorkPart
 import com.qualityverifier.domain.Worker
 import com.qualityverifier.domain.WorkerNames
+import com.qualityverifier.domain.WorkerParts
 import com.qualityverifier.domain.WorkerSlot
 
 /**
  * "Who worked on this?": the roster as chips, "Me" first, and under each chosen person
- * the parts they did.
+ * "Whole piece" and the parts they did.
  *
- * A person with no part chosen worked on the piece as a whole, which is one slot with a
- * null part. A person with parts chosen is one slot per part. The whole answer is held
- * by the caller as a list of slots, so the intake and the card's edit share this.
+ * A person on the whole piece is one slot with a null part; a person with parts chosen is
+ * one slot per part. "Whole piece" puts on screen what the null part already meant, so a
+ * manager can see that choosing nobody's parts is an answer. The rules are
+ * [WorkerParts]'s; the whole answer is held by the caller as a list of slots, so the
+ * intake and the card's edit share this.
  *
  * Nothing here scores anybody: a chip says who was assigned a part, and the manager
  * decides what that means. Archived workers are not offered; they keep their names on
@@ -39,6 +43,8 @@ import com.qualityverifier.domain.WorkerSlot
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun WorkerPicker(
+    /** The piece's type, which decides the part chips (no upholstery on a table). */
+    itemType: ItemType,
     roster: List<Worker>,
     slots: List<WorkerSlot>,
     onChange: (List<WorkerSlot>) -> Unit,
@@ -56,19 +62,16 @@ fun WorkerPicker(
             people.forEach { (id, name) ->
                 FilterChip(
                     selected = id in chosen,
-                    onClick = {
-                        onChange(
-                            if (id in chosen) slots.filter { it.workerId != id }
-                            else slots + WorkerSlot(workerId = id, name = name.takeIf { id != null }),
-                        )
-                    },
+                    onClick = { onChange(WorkerParts.toggleWorker(slots, id, name.takeIf { id != null })) },
                     label = { Text(name) },
                 )
             }
         }
 
         people.filter { (id, _) -> id in chosen }.forEach { (id, name) ->
-            val parts = slots.filter { it.workerId == id }.mapNotNull { it.part }.toSet()
+            // The manager travels without a name: "Me" is a label, not somebody's name.
+            val slotName = name.takeIf { id != null }
+            val parts = WorkerParts.partsOf(slots, id)
             Column(Modifier.fillMaxWidth().padding(top = 4.dp)) {
                 Text(
                     "$name: which part?",
@@ -76,20 +79,19 @@ fun WorkerPicker(
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
                 FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    WorkPart.entries.forEach { part ->
+                    // First, and selected for a newly chosen worker, because it is what
+                    // they are recorded on until a part is chosen.
+                    FilterChip(
+                        selected = WorkerParts.isWholePiece(slots, id),
+                        onClick = { onChange(WorkerParts.wholePiece(slots, id, slotName)) },
+                        label = { Text("Whole piece") },
+                    )
+                    // A part this type does not offer, already held from an older assessment,
+                    // stays on screen and selected, so saving does not drop it unseen.
+                    WorkerParts.offered(itemType, parts).forEach { part ->
                         FilterChip(
                             selected = part in parts,
-                            onClick = {
-                                val others = slots.filter { it.workerId != id }
-                                val next = if (part in parts) parts - part else parts + part
-                                // No part chosen means the whole piece: one slot, null part.
-                                val mine = if (next.isEmpty()) {
-                                    listOf(WorkerSlot(id, name.takeIf { id != null }))
-                                } else {
-                                    next.map { WorkerSlot(id, name.takeIf { id != null }, it) }
-                                }
-                                onChange(others + mine)
-                            },
+                            onClick = { onChange(WorkerParts.togglePart(slots, id, slotName, part)) },
                             label = { Text(partName(part)) },
                         )
                     }
