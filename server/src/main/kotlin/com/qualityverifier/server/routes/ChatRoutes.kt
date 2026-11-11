@@ -13,6 +13,8 @@ import com.qualityverifier.server.chat.UpstreamError
 import com.qualityverifier.server.db.AuthStore
 import com.qualityverifier.server.db.ChatStore
 import com.qualityverifier.server.db.SessionAccess
+import com.qualityverifier.text.AssistantContent
+import com.qualityverifier.text.fundiDefectCount
 import com.qualityverifier.text.markdownToPlainText
 import com.qualityverifier.text.parseAssistantContent
 import io.ktor.http.HttpStatusCode
@@ -311,10 +313,14 @@ private suspend fun RoutingContext.assessmentTurn(
                             ?: markdownToPlainText(parsed.prose.ifBlank { result.text }),
                         verdictLevelId = parsed.verdict?.level?.id,
                         verdictLanguage = parsed.verdict?.language,
-                        // Already parsed, and until now thrown away. Null when there is
-                        // no verdict, which is not the same as a verdict that found
-                        // nothing wrong — see V15.
-                        defectCount = parsed.verdict?.defects?.size,
+                        // Counted by the store from the replies it has stored, not from
+                        // [history]: another turn of this session may have stored its
+                        // reply while this one waited on Claude.
+                        defectCount = when (audience) {
+                            // Kagua has no diagnosis; its verdict's defects are its list.
+                            Audience.BUYER -> parsed.verdict?.let { verdict -> { _: List<String> -> verdict.defects.size } }
+                            Audience.FUNDI -> fundiCounter(parsed)
+                        },
                     )
                     // The route's audience, so spend splits by app: the column defaults to
                     // buyer, and a Fundi Bora turn billed as Kagua's raises no error.
@@ -381,6 +387,27 @@ private suspend fun RoutingContext.requireAudience(
     log.warn("Account {} ({}) tried to use the {} assessment endpoint", userId, actual, audience)
     call.respond(HttpStatusCode.Forbidden, ErrorResponse("wrong_app"))
     return false
+}
+
+/**
+ * How the store counts Fundi Bora's defects once [reply] is stored, or null to leave the
+ * session's count alone.
+ *
+ * The count reads the session's newest verdict and newest diagnosis ([fundiDefectCount]),
+ * so a follow-up that resends one block and not the other still counts right. The store
+ * hands over every stored reply, this one included, from inside the transaction that
+ * stores it; the server keeps no other copy of the newest diagnosis.
+ *
+ * A reply with neither block changes nothing and is not worth parsing the session for.
+ * One with a diagnosis and no verdict gives a count only when an earlier reply had a
+ * verdict, and the store writes it only over a verdict already recorded. A diagnosis
+ * block that would not decode still counts as sent: it can make the count unknown.
+ */
+private fun fundiCounter(reply: AssistantContent): ((List<String>) -> Int?)? {
+    if (reply.verdict == null && !reply.sentDiagnosis) return null
+    return { storedRepliesNewestFirst ->
+        fundiDefectCount(storedRepliesNewestFirst.map(::parseAssistantContent))
+    }
 }
 
 private fun sha256Of(value: String): String =

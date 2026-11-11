@@ -36,7 +36,24 @@ data class AssistantContent(
      */
     val diagnosis: Diagnosis? = null,
     val fixPlan: FixPlan? = null,
+    /**
+     * True when the reply sent a diagnosis that parsed and found nothing: no findings and
+     * no question. [diagnosis] is null for it, since it has nothing to draw, but it is
+     * still the session's newest diagnosis, and a count read from an older one would
+     * bring back problems the model has since cleared. See [fundiDefectCount].
+     */
+    val cleanDiagnosis: Boolean = false,
+    /**
+     * True when the reply sent a diagnosis block that would not decode. [diagnosis] is null
+     * for it and [cleanDiagnosis] false, exactly as for a reply with no diagnosis at all,
+     * so without this a count would read past it to an older diagnosis, or to none, and
+     * record problems the model never wrote. See [fundiDefectCount].
+     */
+    val diagnosisUnreadable: Boolean = false,
 ) {
+    /** Whether the reply sent a diagnosis block of any kind: with findings, clean, or unreadable. */
+    val sentDiagnosis: Boolean get() = diagnosis != null || cleanDiagnosis || diagnosisUnreadable
+
     /**
      * What to put in the message bubble.
      *
@@ -115,6 +132,9 @@ fun parseAssistantContent(text: String): AssistantContent {
     var verdict: Verdict? = null
     var plan: AssessmentPlan? = null
     var diagnosis: Diagnosis? = null
+    // Whether a diagnosis block was sent at all, so one that will not decode is told apart
+    // from none. The last block wins, as it does for [diagnosis].
+    var sentDiagnosis = false
     var fixPlan: FixPlan? = null
 
     val lines = text.lines()
@@ -137,7 +157,10 @@ fun parseAssistantContent(text: String): AssistantContent {
                 val body = lines.subList(i + 1, unfenced.endExclusive).joinToString("\n")
                 when (unfenced.tag) {
                     PLAN_TAG -> plan = parsePlan(body)
-                    DIAGNOSIS_TAG -> diagnosis = decode<Diagnosis>(body)
+                    DIAGNOSIS_TAG -> {
+                        diagnosis = decode<Diagnosis>(body)
+                        sentDiagnosis = true
+                    }
                     FIX_PLAN_TAG -> fixPlan = decode<FixPlan>(body)
                     VERDICT_TAG -> verdict = parseVerdict(body)
                 }
@@ -170,6 +193,7 @@ fun parseAssistantContent(text: String): AssistantContent {
                 // is dropped, never printed. The prose alongside it carries the same
                 // finding in words.
                 diagnosis = decode<Diagnosis>(body.joinToString("\n"))
+                sentDiagnosis = true
             }
             FIX_PLAN_TAG -> {
                 fixPlan = decode<FixPlan>(body.joinToString("\n"))
@@ -208,6 +232,8 @@ fun parseAssistantContent(text: String): AssistantContent {
         plan = plan?.takeIf { it.isRunnable },
         diagnosis = diagnosis?.takeIf { it.isRenderable },
         fixPlan = fixPlan?.takeIf { it.isRunnable },
+        cleanDiagnosis = diagnosis?.isRenderable == false,
+        diagnosisUnreadable = sentDiagnosis && diagnosis == null,
     )
 }
 
