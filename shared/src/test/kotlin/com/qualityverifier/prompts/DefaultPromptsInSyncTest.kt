@@ -114,6 +114,12 @@ class DefaultPromptsInSyncTest {
             "the findings no longer carry the three consequence fields",
             fundi.contains("and what_i_see, what_it_means and what_to_do, as well as a title"),
         )
+        // The phone and the admin portal read a reply's problems from that reply alone, so
+        // a verdict sent without its diagnosis would show a grade with no problems under it.
+        assertTrue(
+            "a verdict may again arrive without the diagnosis it depends on",
+            fundi.contains("A new verdict always comes with the whole diagnosis again, in the same message"),
+        )
         assertFalse(
             "the verdict asks for defects again",
             fundi.contains("\"defects\"") || fundi.contains("using the same titles as your diagnosis"),
