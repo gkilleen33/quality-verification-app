@@ -58,14 +58,20 @@ class MpesaRepository(
     /**
      * Stores what one message amounts to. Returns true when it was a transaction this phone
      * did not hold yet, which is when a push is worth starting.
+     *
+     * Nothing is stored once reading is off, even by a scan or a receiver that started
+     * before the switch moved: the switch is read again here, for every message.
      */
-    suspend fun take(reading: MpesaReading): Boolean = when (reading) {
-        is MpesaReading.Read -> dao.insertIfNew(reading.record.toEntity(now())) != -1L
-        is MpesaReading.Unread -> {
-            dao.countUnread(reading.day.toString(), now())
-            false
+    suspend fun take(reading: MpesaReading): Boolean {
+        if (!prefs.switches.value.reading) return false
+        return when (reading) {
+            is MpesaReading.Read -> dao.insertIfNew(reading.record.toEntity(now())) != -1L
+            is MpesaReading.Unread -> {
+                dao.countUnread(reading.day.toString(), now())
+                false
+            }
+            MpesaReading.Ignored, MpesaReading.NotMoney -> false
         }
-        MpesaReading.Ignored, MpesaReading.NotMoney -> false
     }
 
     // ---- the screens
@@ -80,7 +86,10 @@ class MpesaRepository(
      * direction allows (MpesaCategory.choicesFor), which is the rule the server holds too.
      */
     suspend fun annotate(code: String, category: MpesaCategory?, pieceId: String?, comment: String?) {
-        val text = comment?.trim()?.takeIf { it.isNotEmpty() }?.take(MAX_COMMENT)
+        // Cut by characters as the server counts them (code points), never inside a pair.
+        val text = comment?.trim()?.takeIf { it.isNotEmpty() }?.let {
+            if (it.codePointCount(0, it.length) <= MAX_COMMENT) it else it.substring(0, it.offsetByCodePoints(0, MAX_COMMENT))
+        }
         dao.annotate(code, category?.id, pieceId, text, now())
     }
 
@@ -126,14 +135,17 @@ class MpesaRepository(
      * confirmed stays and is tried again at the next push, so a failure costs nothing.
      * One push at a time: the receiver and the sync can both start one.
      *
+     * The sending switch is read again before every request, so turning it off part-way
+     * through stops the push at the next request, whether or not the withdrawal has reached
+     * the server yet.
+     *
      * Returns how many rows the server confirmed.
      */
     suspend fun push(): Int = pushing.withLock {
         flushWithdrawals()
-        if (!prefs.sending) return@withLock 0
         var confirmed = 0
 
-        while (true) {
+        while (prefs.sending) {
             val batch = dao.notUploaded(BATCH)
             if (batch.isEmpty()) break
             when (val outcome = api.upload(batch)) {
@@ -153,26 +165,35 @@ class MpesaRepository(
         }
 
         for (row in dao.unsyncedAnnotations()) {
+            if (!prefs.sending) return@withLock confirmed
+            val annotatedAt = row.annotatedAt!!
             when (api.annotate(row)) {
                 NoteOutcome.SAVED -> {
-                    dao.markAnnotationSynced(row.code, row.annotatedAt!!)
+                    dao.markAnnotationSynced(row.code, annotatedAt)
                     confirmed++
                 }
-                NoteOutcome.DROPPED -> dao.markAnnotationSynced(row.code, row.annotatedAt!!)
+                NoteOutcome.DROPPED -> dao.markAnnotationSynced(row.code, annotatedAt)
+                // The piece's assessment usually reaches the server soon after. One that never
+                // does (deleted on the phone first) would be retried at every sync, so the
+                // note stops being sent once it is a week old; it stays on the phone.
+                NoteOutcome.NO_SUCH_PIECE ->
+                    if (now() - annotatedAt > PIECE_WAIT_MILLIS) dao.markAnnotationSynced(row.code, annotatedAt)
                 NoteOutcome.LATER -> Unit
                 NoteOutcome.SENDING_REFUSED -> return@withLock confirmed.also { serverRefusedSending() }
             }
         }
 
-        val days = dao.unsyncedUnreadDays()
-        if (days.isNotEmpty()) {
+        // In chunks the server takes (it refuses more than 62 days in one request), so a long
+        // spell with sending off cannot leave a backlog that is refused for ever.
+        for (days in dao.unsyncedUnreadDays().chunked(UNREAD_DAYS_PER_REQUEST)) {
+            if (!prefs.sending) break
             when (api.unread(days, MpesaIntake.PARSER_VERSION)) {
                 true -> {
                     days.forEach { dao.markUnreadDaySynced(it.day, it.updatedAt) }
                     confirmed += days.size
                 }
-                null -> serverRefusedSending()
-                false -> Unit
+                null -> return@withLock confirmed.also { serverRefusedSending() }
+                false -> break
             }
         }
         confirmed
@@ -203,6 +224,12 @@ class MpesaRepository(
 
         /** V29's mpesa_transactions_comment_length. */
         const val MAX_COMMENT = 500
+
+        /** Unread days per request. The server takes up to 62. */
+        const val UNREAD_DAYS_PER_REQUEST = 31
+
+        /** How long a note naming a piece the server lacks keeps being sent. */
+        const val PIECE_WAIT_MILLIS = 7L * 24 * 60 * 60 * 1000
     }
 }
 

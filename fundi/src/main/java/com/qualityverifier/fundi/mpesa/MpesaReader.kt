@@ -52,7 +52,8 @@ object MpesaReader {
      * Reads the M-Pesa messages received since the agreement, or since the last scan if
      * later, that the phone has not stored. A message already stored by the receiver is
      * stored once (by its code); a message the parser cannot read is counted here only,
-     * once, because the start moves past it. Returns how many transactions were new.
+     * once, because the start moves past it after each message. Turning reading off stops
+     * it storing at the next message (MpesaRepository.take). Returns how many were new.
      */
     suspend fun scan(context: Context, mpesa: MpesaRepository): Int = withContext(Dispatchers.IO) {
         val since = mpesa.scanFrom ?: return@withContext 0
@@ -95,10 +96,14 @@ object MpesaReader {
                     agreedAt = readingSince,
                 )
                 if (mpesa.take(reading)) stored++
-                if (received > newest) newest = received
+                // After each message, not once at the end: a scan cut short (the process
+                // killed, an error) must not count an unread message again next time.
+                if (received > newest) {
+                    newest = received
+                    mpesa.scannedUpTo(newest)
+                }
             }
         }
-        mpesa.scannedUpTo(newest)
         stored
     }
 

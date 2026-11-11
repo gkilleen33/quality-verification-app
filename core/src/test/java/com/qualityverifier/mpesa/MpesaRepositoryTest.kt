@@ -47,6 +47,7 @@ class MpesaRepositoryTest {
 
     @Test
     fun `a transaction read twice is stored once`() = runTest {
+        repo.agreeToReading(at = 500L)
         assertTrue(repo.take(MpesaReading.Read(record("SKA1B2C3D4"))))
         assertFalse(repo.take(MpesaReading.Read(record("SKA1B2C3D4"))))
         assertEquals(1, dao.rows.size)
@@ -54,6 +55,7 @@ class MpesaRepositoryTest {
 
     @Test
     fun `an unread message is counted by day, and nothing else is stored`() = runTest {
+        repo.agreeToReading(at = 500L)
         repo.take(MpesaReading.Unread(LocalDate.of(2026, 11, 12)))
         repo.take(MpesaReading.Unread(LocalDate.of(2026, 11, 12)))
         repo.take(MpesaReading.Ignored)
@@ -226,7 +228,77 @@ class MpesaRepositoryTest {
     }
 
     @Test
+    fun `nothing is stored once reading is off, even by a scan already running`() = runTest {
+        repo.agreeToReading(at = 500L)
+        repo.stopReading()
+
+        assertFalse(repo.take(MpesaReading.Read(record("SKA1B2C3D4"))))
+        repo.take(MpesaReading.Unread(LocalDate.of(2026, 11, 12)))
+
+        assertTrue(dao.rows.isEmpty())
+        assertTrue(dao.days.isEmpty())
+    }
+
+    @Test
+    fun `turning sending off during a push stops it at the next request`() = runTest {
+        readingAndSending()
+        (1..150).forEach { repo.take(MpesaReading.Read(record("SKA%07d".format(it)))) }
+        api.onUpload = { prefs.stopSending() }
+
+        repo.push()
+
+        assertEquals(1, api.uploads.size)
+        assertEquals(50, dao.rows.values.count { it.uploadedAt == null })
+    }
+
+    @Test
+    fun `a long backlog of unread days goes in chunks the server takes`() = runTest {
+        repo.agreeToReading(at = 500L)
+        val first = LocalDate.of(2026, 9, 1)
+        (0L until 70L).forEach { repo.take(MpesaReading.Unread(first.plusDays(it))) }
+        repo.agreeToSending()
+
+        repo.push()
+
+        assertEquals(listOf(31, 31, 8), api.unreadSent.map { it.size })
+        assertTrue(dao.days.values.all { it.syncedAt == it.updatedAt })
+    }
+
+    @Test
+    fun `a note on a row the server refused is dropped, and one on a missing piece stops after a week`() = runTest {
+        readingAndSending()
+        repo.take(MpesaReading.Read(record("SKA1B2C3D4")))
+        repo.take(MpesaReading.Read(record("SKA1B2C3D5")))
+        repo.annotate("SKA1B2C3D4", MpesaCategory.WAGES, null, null)
+        repo.annotate("SKA1B2C3D5", MpesaCategory.WAGES, "piece-gone", null)
+        api.noteFor = mapOf("SKA1B2C3D4" to NoteOutcome.DROPPED, "SKA1B2C3D5" to NoteOutcome.NO_SUCH_PIECE)
+
+        repo.push()
+        repo.push()
+        assertEquals(listOf("SKA1B2C3D4", "SKA1B2C3D5", "SKA1B2C3D5"), api.notes.map { it.code })
+
+        clock += 8L * 24 * 60 * 60 * 1000
+        repo.push()
+        repo.push()
+        assertEquals(4, api.notes.size)
+    }
+
+    @Test
+    fun `a comment is cut by characters, never inside one`() = runTest {
+        repo.agreeToReading(at = 500L)
+        repo.take(MpesaReading.Read(record("SKA1B2C3D4")))
+        val emoji = "🪵"          // one character, two UTF-16 units
+
+        repo.annotate("SKA1B2C3D4", null, null, emoji.repeat(600))
+
+        val comment = dao.rows.values.single().comment!!
+        assertEquals(500, comment.codePointCount(0, comment.length))
+        assertEquals(emoji.repeat(500), comment)
+    }
+
+    @Test
     fun `the screens see each transaction with its note`() = runTest {
+        repo.agreeToReading(at = 500L)
         repo.take(MpesaReading.Read(record("SKA1B2C3D4", MpesaDirection.IN)))
         repo.annotate("SKA1B2C3D4", MpesaCategory.CUSTOMER_PAYMENT, "piece-1", "deposit")
 
@@ -243,6 +315,8 @@ private class FakeMpesaApi : MpesaApi {
     var consent: ConsentOutcome = ConsentOutcome.Agreed
     var upload: UploadOutcome? = null
     var note: NoteOutcome = NoteOutcome.SAVED
+    var noteFor: Map<String, NoteOutcome> = emptyMap()
+    var onUpload: (() -> Unit)? = null
     val uploads = mutableListOf<List<MpesaTransactionEntity>>()
     val notes = mutableListOf<MpesaTransactionEntity>()
     val unreadSent = mutableListOf<List<MpesaUnreadDayEntity>>()
@@ -253,13 +327,14 @@ private class FakeMpesaApi : MpesaApi {
     override suspend fun upload(rows: List<MpesaTransactionEntity>): UploadOutcome {
         if (!reachable) return UploadOutcome.Later
         uploads += rows
+        onUpload?.invoke()
         return upload ?: UploadOutcome.Done(rows.map { it.code }, emptyList())
     }
 
     override suspend fun annotate(row: MpesaTransactionEntity): NoteOutcome {
         if (!reachable) return NoteOutcome.LATER
         notes += row
-        return note
+        return noteFor[row.code] ?: note
     }
 
     override suspend fun unread(days: List<MpesaUnreadDayEntity>, parserVersion: Int): Boolean? {

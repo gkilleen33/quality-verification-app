@@ -47,8 +47,10 @@ import com.qualityverifier.domain.MpesaCategory
 import com.qualityverifier.fundi.ui.fundiContainer
 import com.qualityverifier.mpesa.MpesaEntry
 import com.qualityverifier.text.MpesaLabels
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
@@ -84,7 +86,14 @@ class MpesaTransactionViewModel(
         }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
+    private val _saving = MutableStateFlow(false)
+
+    /** True from the first tap on Save: a second tap would pop a second screen. */
+    val saving: StateFlow<Boolean> = _saving.asStateFlow()
+
     fun save(code: String, category: MpesaCategory?, pieceId: String?, comment: String?, then: () -> Unit) {
+        if (_saving.value) return
+        _saving.value = true
         viewModelScope.launch {
             mpesa.annotate(code, category, pieceId, comment)
             then()
@@ -110,6 +119,7 @@ fun MpesaTransactionScreen(
     val model: MpesaTransactionViewModel = viewModel(factory = MpesaTransactionViewModel.factory(container, code))
     val entry by model.entry.collectAsState()
     val pieces by model.pieces.collectAsState()
+    val saving by model.saving.collectAsState()
 
     Column(
         Modifier.fillMaxSize().systemBarsPadding().verticalScroll(rememberScrollState()).padding(24.dp),
@@ -122,7 +132,7 @@ fun MpesaTransactionScreen(
             TextButton(onClick = onDone) { Text(labels.cancel) }
             return@Column
         }
-        TransactionForm(current, pieces, labels, onSave = { category, piece, comment ->
+        TransactionForm(current, pieces, labels, saving, onSave = { category, piece, comment ->
             model.save(code, category, piece, comment, then = onDone)
         }, onCancel = onDone)
     }
@@ -133,6 +143,7 @@ private fun TransactionForm(
     entry: MpesaEntry,
     pieces: List<PieceChoice>,
     labels: MpesaLabels,
+    saving: Boolean,
     onSave: (MpesaCategory?, String?, String?) -> Unit,
     onCancel: () -> Unit,
 ) {
@@ -203,9 +214,12 @@ private fun TransactionForm(
     )
 
     Row(Modifier.fillMaxWidth().padding(top = 12.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-        OutlinedButton(onClick = onCancel, modifier = Modifier.weight(1f).height(56.dp)) { Text(labels.cancel) }
+        OutlinedButton(onClick = onCancel, enabled = !saving, modifier = Modifier.weight(1f).height(56.dp)) {
+            Text(labels.cancel)
+        }
         Button(
             onClick = { onSave(MpesaCategory.fromId(category), pieceId, comment) },
+            enabled = !saving,
             modifier = Modifier.weight(1f).height(56.dp),
         ) { Text(labels.save) }
     }

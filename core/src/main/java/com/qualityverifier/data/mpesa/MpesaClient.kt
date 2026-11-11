@@ -34,10 +34,17 @@ sealed interface UploadOutcome {
 enum class NoteOutcome {
     SAVED,
 
-    /** Refused for good (a 400): sending it again would be refused again. */
+    /**
+     * Refused for good: a 400, or `404 no_such_transaction`, which for a row this phone
+     * has already uploaded means the server refused the row itself. Sending again would be
+     * refused again.
+     */
     DROPPED,
 
-    /** Offline, the transaction or piece not on the server yet, a 5xx: kept for next time. */
+    /** `404 no_such_piece`: the piece's assessment has not reached the server, or never will. */
+    NO_SUCH_PIECE,
+
+    /** Offline, a 5xx, a 426: kept for next time. */
     LATER,
     SENDING_REFUSED,
 }
@@ -112,6 +119,15 @@ class MpesaClient(
                 response.code == 400 -> {
                     Log.w(TAG, "Server refused a note (400); dropping it")
                     NoteOutcome.DROPPED
+                }
+                response.code == 404 -> {
+                    val error = response.peekBody(1024).string()
+                    when {
+                        error.contains("no_such_piece") -> NoteOutcome.NO_SUCH_PIECE
+                        error.contains("no_such_transaction") -> NoteOutcome.DROPPED
+                        // A bare 404: the routes are not mounted yet (no key on the server).
+                        else -> NoteOutcome.LATER
+                    }
                 }
                 else -> NoteOutcome.LATER
             }
