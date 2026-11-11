@@ -1,7 +1,7 @@
 package com.qualityverifier.server.admin
 
 import com.qualityverifier.domain.AssessmentPlan
-import com.qualityverifier.domain.Defect
+import com.qualityverifier.domain.Problem
 import com.qualityverifier.domain.Severity
 import com.qualityverifier.domain.Verdict
 import com.qualityverifier.domain.VerdictLevel
@@ -11,6 +11,7 @@ import com.qualityverifier.text.MdStyle
 import com.qualityverifier.text.ReportLabels
 import com.qualityverifier.text.parseAssistantContent
 import com.qualityverifier.text.parseMarkdown
+import com.qualityverifier.text.problemsOf
 import kotlinx.html.FlowContent
 import kotlinx.html.code
 import kotlinx.html.DL
@@ -59,7 +60,10 @@ fun FlowContent.assistantBody(text: String) {
     // The prompt writes both, and the prose duplicate exists only to cover a block that
     // will not parse — printing both would show the reviewer the assessment twice.
     if (verdict != null) {
-        verdictCards(verdict)
+        // The problems through problemsOf, not the verdict's defects: in Fundi Bora's
+        // one-list replies the verdict lists none and the findings carry them, and a
+        // reviewer shown only the defects would see a verdict with no problems.
+        verdictCards(verdict, problemsOf(content))
     } else {
         markdownBody(content.displayProse)
     }
@@ -81,7 +85,7 @@ fun FlowContent.assistantBody(text: String) {
 
 // ------------------------------------------------------------------ verdict
 
-private fun FlowContent.verdictCards(verdict: Verdict) {
+private fun FlowContent.verdictCards(verdict: Verdict, problems: List<Problem>) {
     // Headings follow the language of the assessment, not the reader's. A Swahili finding
     // under an English heading is the same half-finished look on a laptop as on a phone.
     val labels = ReportLabels.forLanguage(verdict.language)
@@ -91,7 +95,7 @@ private fun FlowContent.verdictCards(verdict: Verdict) {
             if (verdict.headline.isNotBlank()) div("vhead") { +verdict.headline }
             if (verdict.summary.isNotBlank()) p("vsum") { +verdict.summary }
         }
-        verdict.defects.forEach { defectCard(it, labels) }
+        problems.forEach { problemCard(it, labels) }
         if (verdict.unverified.isNotEmpty()) {
             div("vcard vquiet") {
                 div("vlabel") { +labels.couldNotVerifyHeading }
@@ -116,14 +120,14 @@ private fun FlowContent.verdictCards(verdict: Verdict) {
     }
 }
 
-private fun FlowContent.defectCard(defect: Defect, labels: ReportLabels) {
+private fun FlowContent.problemCard(problem: Problem, labels: ReportLabels) {
     div("vcard defect") {
-        severityChip(defect, labels)
-        if (defect.title.isNotBlank()) div("vhead small") { +defect.title }
+        severityChip(problem, labels)
+        if (problem.title.isNotBlank()) div("vhead small") { +problem.title }
         dl("field") {
-            field(labels.whatISeeHeading, defect.whatISee)
-            field(labels.whatItMeansHeading, defect.whatItMeans)
-            field(labels.whatToDoHeading, defect.whatToDo)
+            field(labels.whatISeeHeading, problem.whatISee)
+            field(labels.whatItMeansHeading, problem.whatItMeans)
+            field(labels.whatToDoHeading, problem.whatToDo)
         }
     }
 }
@@ -134,15 +138,15 @@ private fun DL.field(heading: String, value: String) {
     dd { +value }
 }
 
-private fun FlowContent.severityChip(defect: Defect, labels: ReportLabels) {
+private fun FlowContent.severityChip(problem: Problem, labels: ReportLabels) {
     val parts = listOfNotNull(
-        defect.area.takeIf { it.isNotBlank() }?.let(labels::area),
-        labels.severity(defect.severity).takeIf { it.isNotBlank() }?.uppercase(),
+        problem.area.takeIf { it.isNotBlank() }?.let(labels::area),
+        labels.severity(problem.severity).takeIf { it.isNotBlank() }?.uppercase(),
     )
     if (parts.isEmpty()) return
     // Severity borrows the verdict palette, as on the phone, so a serious defect under a
     // fair overall verdict still reads as serious.
-    val level = when (defect.severity) {
+    val level = when (problem.severity) {
         Severity.SERIOUS -> VerdictLevel.SERIOUS
         Severity.MODERATE -> VerdictLevel.FAIR
         else -> VerdictLevel.UNKNOWN

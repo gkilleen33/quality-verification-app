@@ -2,9 +2,13 @@ package com.qualityverifier.di
 
 import android.content.Context
 import android.os.Build
+import android.util.Log
 import androidx.room.Room
 import com.qualityverifier.data.auth.AuthClient
 import com.qualityverifier.data.auth.EncryptedPrefsTokenStore
+import com.qualityverifier.data.auth.HeldTokenStore
+import com.qualityverifier.data.auth.LocalAccountGuard
+import com.qualityverifier.data.auth.PrefsLocalAccountOwner
 import com.qualityverifier.data.auth.TokenProvider
 import com.qualityverifier.data.auth.TokenStore
 import com.qualityverifier.data.chat.ChatService
@@ -25,6 +29,13 @@ import com.qualityverifier.data.update.AppVersionCheck
 import com.qualityverifier.data.workers.RoomWorkerRepository
 import com.qualityverifier.data.workers.WorkerRepository
 import com.qualityverifier.domain.AppId
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.Json
 import okhttp3.OkHttpClient
 import java.util.concurrent.TimeUnit
@@ -77,6 +88,12 @@ class AppContainer(
     versionCode: Int,
     /** False in debug builds, which send the headers but skip the update prompt. */
     checkForUpdates: Boolean,
+    /**
+     * Whether the location switch counts only once the person has answered the question
+     * (see [LocationPreference]). True in Fundi Bora, whose switch defaulted to on before
+     * makers were asked. Defaulted to false, Kagua's, so Kagua is unchanged.
+     */
+    locationAnswerRequired: Boolean = false,
 ) {
 
     private val appContext = context.applicationContext
@@ -107,12 +124,41 @@ class AppContainer(
         "quality_verifier.db",
     ).addMigrations(*AppDatabase.MIGRATIONS).build()
 
-    val images: ImageFileStore = ImageFileStore(appContext)
+    /**
+     * Whether assessments record where they were made. Chosen at sign-up, set in Settings.
+     * Declared before [images], which reads it, and [localAccount], whose clear forgets it.
+     */
+    val locationPreference = LocationPreference(appContext, locationAnswerRequired)
+
+    /**
+     * Photos, and the camera metadata kept beside them. The location switch also decides
+     * whether a photo's own GPS is kept: off means the camera's point is never sent either.
+     */
+    val images: ImageFileStore = ImageFileStore(appContext) { locationPreference.records }
 
     val tokenStore: TokenStore = EncryptedPrefsTokenStore(appContext)
 
-    /** Whether assessments record where they were made. Chosen at sign-up, set in Settings. */
-    val locationPreference = LocationPreference(appContext)
+    /**
+     * Clears the local data when a different account signs in (see [LocalAccountGuard]).
+     *
+     * Every Room table and every photo: assessments, messages, pieces, the roster and all
+     * the pending queues belong to the account that made them. In Fundi Bora the answer to
+     * the location question does too, so it is forgotten and the new maker is asked on the
+     * home screen; otherwise every assessment they made would record the previous maker's
+     * yes. Kagua's location preference stays, as before (see [LocationPreference]).
+     */
+    private val localAccount = LocalAccountGuard(
+        owner = PrefsLocalAccountOwner(appContext),
+        clearLocalData = {
+            database.clearAllTables()
+            images.deleteAll()
+            if (locationAnswerRequired) locationPreference.forget()
+        },
+    ).also {
+        // An install from v0.3.0 still signed in: its tokens name the owner, so record it
+        // now, before anybody can sign out and somebody else sign in.
+        it.adoptIfUnrecorded(tokenStore::userId)
+    }
 
     /**
      * One fix per assessment, taken without the customer doing anything.
@@ -146,6 +192,16 @@ class AppContainer(
         // token is revoked. Model only; nothing that identifies a person.
         deviceName = "${Build.MANUFACTURER} ${Build.MODEL} (Android ${Build.VERSION.RELEASE})",
         onSignedIn = { appVersionCheck.check() },
+        beforeSaving = { userId ->
+            // A push from a sign-out moments ago may still be reading the queues. The clear
+            // below would delete what it has not sent yet, so it finishes first. Bounded:
+            // the push starts no request after SIGN_OUT_PUSH_MILLIS, and each request it
+            // makes gives up after PUSH_CALL_SECONDS.
+            signOutPush?.join()
+            if (localAccount.beforeSigningIn(userId)) {
+                Log.i(TAG, "A different account signed in; cleared the previous one's local data")
+            }
+        },
     )
 
     private val tokenProvider = TokenProvider(
@@ -178,15 +234,17 @@ class AppContainer(
     /** The manager's roster. Fundi Bora's; Kagua links it and never writes to it. */
     val workerRepository: WorkerRepository = RoomWorkerRepository(database.sessionDao())
 
+    // The endpoint is what an app *is* (see chatPath), so it also says whether the app has
+    // a roster.
+    private val rosterEnabled = chatPath.startsWith("v1/fundi")
+
     val assessmentSync: AssessmentSync = AssessmentSync(
         client = syncClient,
         sessions = sessionRepository,
         images = images,
         tokens = tokenStore,
         workers = workerRepository,
-        // The endpoint is what an app *is* (see chatPath), so it also says whether the
-        // app has a roster.
-        rosterEnabled = chatPath.startsWith("v1/fundi"),
+        rosterEnabled = rosterEnabled,
     )
 
     /** True when this account is one of our evaluators. Read from the cached profile. */
@@ -209,8 +267,97 @@ class AppContainer(
         json = json,
     )
 
-    /** Signs out locally. The refresh token stays revocable server-side regardless. */
-    fun signOut() = tokenProvider.signOut()
+    /**
+     * Signs out locally. The refresh token stays revocable server-side regardless.
+     *
+     * Clears the tokens at once. The local data stays for the same account signing back
+     * in, and is cleared at the next sign-in if that is somebody else (see [localAccount]).
+     * That clear takes the queues the server has not received: pending deletes, evaluator
+     * reviews, piece names, roster writes and session worker sets. So unless
+     * [pushPendingWork] is false, the account's queues are pushed first, best effort, with
+     * a copy of the tokens just cleared.
+     *
+     * The push runs in [background], not in the screen's scope: the caller navigates to
+     * sign-in straight away, which would cancel a screen-scoped push before it sent
+     * anything, and a busy spinner on Profile and Settings would keep somebody waiting on
+     * a slow connection for work they cannot see. It uses the copy rather than the stored
+     * tokens so that everything it sends goes as the account that made it, even if somebody
+     * else signs in meanwhile; that sign-in waits for it (see `beforeSaving`).
+     *
+     * @param pushPendingWork false after the account has been deleted. The server has
+     *   already revoked its refresh tokens, and its owner has just closed it: sending it
+     *   new names, roster entries and reviews afterwards is not what they asked for.
+     */
+    fun signOut(pushPendingWork: Boolean = true) {
+        val held = tokenProvider.signOutKeepingCopy() ?: return
+        if (!pushPendingWork) return
+        signOutPush = background.launch {
+            val pushed = try {
+                withTimeoutOrNull(SIGN_OUT_PUSH_MILLIS) { pushingAs(held).push() }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                // Never allowed to crash the app over work that stays on the phone anyway.
+                Log.w(TAG, "Push at sign-out failed", e)
+                return@launch
+            }
+            if (pushed == null) Log.i(TAG, "Push at sign-out ran out of time; the rest stays on the phone")
+            else Log.i(TAG, "Pushed before sign-out: $pushed")
+        }
+    }
+
+    /** Outlives every screen, so navigating away from sign-out does not cancel its push. */
+    private val background = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
+    /** The latest push at sign-out, which the next sign-in waits for. */
+    @Volatile private var signOutPush: Job? = null
+
+    /**
+     * Its own calls time out, unlike [httpClient]'s, which wait minutes for Claude.
+     * Coroutine cancellation cannot interrupt a blocking OkHttp call, so without this one
+     * slow request would hold the push, and a sign-in waiting on it, past its time limit.
+     * Built from [httpClient] so it keeps the app identity headers and the connection pool.
+     */
+    private val pushHttpClient: OkHttpClient by lazy {
+        httpClient.newBuilder().callTimeout(PUSH_CALL_SECONDS, TimeUnit.SECONDS).build()
+    }
+
+    /**
+     * An [AssessmentSync] that sends as [held], over [pushHttpClient].
+     *
+     * Its own token provider, so a refresh during the push saves into the copy and never
+     * into the stored tokens, which by then belong to nobody or to the next account. Its
+     * own refresh client too, used only for [AuthClient.refresh], so the refresh is bound
+     * by the same call timeout.
+     */
+    private fun pushingAs(held: HeldTokenStore): AssessmentSync {
+        val refresher = AuthClient(
+            client = pushHttpClient,
+            store = held,
+            baseUrl = baseUrl,
+            json = json,
+            deviceName = "",
+        )
+        val tokens = TokenProvider(store = held, refresher = refresher::refresh)
+        return AssessmentSync(
+            client = SyncClient(client = pushHttpClient, tokens = tokens, baseUrl = baseUrl, json = json),
+            sessions = sessionRepository,
+            images = images,
+            tokens = held,
+            workers = workerRepository,
+            rosterEnabled = rosterEnabled,
+        )
+    }
 
     val isSignedIn: Boolean get() = tokenStore.isSignedIn()
+
+    private companion object {
+        const val TAG = "AppContainer"
+
+        /** How long the push at sign-out may start new requests. */
+        const val SIGN_OUT_PUSH_MILLIS = 15_000L
+
+        /** Each request in that push, end to end. */
+        const val PUSH_CALL_SECONDS = 10L
+    }
 }

@@ -1,0 +1,9 @@
+# Today's shape. The verdict's defects, in order, each with the dimension of the finding
+# of the same title. "Knot near the front edge" has no finding: no dimension, and its
+# material area gives no part. "Glue left at the joint" is a finding with no defect, so it
+# is not a problem.
+# title | area | severity | dimension | default_part
+Gap at the back left joint | structural | moderate | joint_fit | joinery
+Top not flat across the width | level | minor | frame_squareness | frame
+Saw marks on the top | surface | cosmetic | finishing | finishing
+Knot near the front edge | material | minor | - | -

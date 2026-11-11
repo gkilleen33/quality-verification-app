@@ -16,6 +16,7 @@ import com.qualityverifier.domain.UpdatePrompt
 import com.qualityverifier.text.decodeIntake
 import com.qualityverifier.text.encodeIntake
 import com.qualityverifier.ui.appContainer
+import com.qualityverifier.ui.rememberAuthLabels
 import com.qualityverifier.ui.rememberUpdateLabels
 import com.qualityverifier.ui.update.UpdateRequiredScreen
 import com.qualityverifier.ui.chat.ChatScreen
@@ -96,6 +97,24 @@ fun AppNav() {
         return
     }
 
+    // Signing out and deleting the account end in the same place, so they share one path:
+    // a deleted account whose tokens were left on the handset would look signed in until
+    // the next request was refused. They differ only in the push: a sign-out sends the
+    // account's unsent work first, in the background; a deleted account sends nothing
+    // (see AppContainer.signOut).
+    val leave = { pushPendingWork: Boolean ->
+        container.signOut(pushPendingWork)
+        navController.navigate(Routes.SIGN_IN) {
+            // The whole back stack goes, so back from sign-in cannot reopen a signed-out
+            // account's screens. That is all this does. The assessments stay on the phone;
+            // they are cleared when a different account signs in (AppContainer's
+            // LocalAccountGuard), and kept when the same account signs back in.
+            popUpTo(0) { inclusive = true }
+        }
+    }
+    val signOut = { leave(true) }
+    val accountDeleted = { leave(false) }
+
     NavHost(navController = navController, startDestination = start) {
 
         composable(Routes.SIGN_IN) {
@@ -148,17 +167,24 @@ fun AppNav() {
             MainScaffold(MainTab.PROFILE, navController.tabSelector()) { padding ->
                 ProfileScreen(
                     contentPadding = padding,
-                    onOpenSettings = { navController.navigate(Routes.SETTINGS) },
-                    onSignOut = {
-                        container.signOut()
-                        navController.navigate(Routes.SIGN_IN) {
-                            // Everything goes: the next person to open the app must not
-                            // find another account's assessments behind the back button.
-                            popUpTo(0) { inclusive = true }
-                        }
-                    },
+                    onOpenSettings = { navController.navigate(Routes.SETTINGS) { launchSingleTop = true } },
+                    onSignOut = signOut,
                 )
             }
+        }
+
+        // Outside the tab scaffold, like the chat: Settings is somewhere you go from
+        // Profile and come back from, not a tab of its own, so it has a back arrow and no
+        // bottom bar.
+        composable(Routes.SETTINGS) {
+            SettingsScreen(
+                container = container,
+                labels = rememberAuthLabels(),
+                onBack = { navController.popBackStack() },
+                // The server has already deleted the account by the time this runs; the
+                // view model only reports success after DELETE /v1/account succeeds.
+                onAccountDeleted = accountDeleted,
+            )
         }
 
         composable(

@@ -22,8 +22,10 @@ import com.qualityverifier.fundi.ui.setup.SetupViewModel
 import com.qualityverifier.fundi.ui.setup.ToolsScreen
 import com.qualityverifier.fundi.ui.setup.WorkshopScreen
 import com.qualityverifier.fundi.ui.workers.WorkersScreen
+import com.qualityverifier.text.AuthLabels
 import com.qualityverifier.text.FundiLabels
 import com.qualityverifier.text.UpdateLabels
+import com.qualityverifier.ui.settings.SettingsScreen
 import com.qualityverifier.ui.update.UpdateRequiredScreen
 import java.util.UUID
 
@@ -35,6 +37,7 @@ private object Routes {
     const val SETUP_GOALS = "setup/goals"
     const val HOME = "home"
     const val WORKERS = "workers"
+    const val SETTINGS = "settings"
     const val ASSESS = "assess/{sessionId}/{itemTypeId}?piece={piece}&returning={returning}"
 
     /**
@@ -53,8 +56,8 @@ private object Routes {
 fun FundiNav() {
     val container = fundiContainer()
     val navController = rememberNavController()
-    // Evaluated once per process: signing in navigates onward itself, and nothing here
-    // signs out yet.
+    // Evaluated once per process. Signing in navigates onward itself, and signing out
+    // replaces the whole stack with sign-in, so this never needs re-reading.
     val start = remember { if (container.isSignedIn) Routes.HOME else Routes.SIGN_IN }
 
     // English only, and that is a gap rather than a decision — see FundiLabels. Kagua's
@@ -70,6 +73,24 @@ fun FundiNav() {
         UpdateRequiredScreen(UpdateLabels.ENGLISH, update.downloadUrl)
         return
     }
+
+    // Signing out and deleting the account end in the same place, as in Kagua: a deleted
+    // account whose tokens were left on the handset would look signed in until the next
+    // request was refused. They differ only in the push: a sign-out sends the maker's
+    // unsent names, roster and worker sets first, in the background; a deleted account
+    // sends nothing (see AppContainer.signOut).
+    val leave = { pushPendingWork: Boolean ->
+        container.signOut(pushPendingWork)
+        navController.navigate(Routes.SIGN_IN) {
+            // The whole back stack goes, so back from sign-in cannot reopen a signed-out
+            // maker's screens. That is all this does. The pieces and roster stay on the
+            // phone; they are cleared when a different account signs in (AppContainer's
+            // LocalAccountGuard), and kept when the same maker signs back in.
+            popUpTo(0) { inclusive = true }
+        }
+    }
+    val signOut = { leave(true) }
+    val accountDeleted = { leave(false) }
 
     NavHost(navController = navController, startDestination = start) {
 
@@ -117,6 +138,10 @@ fun FundiNav() {
                 onConsent = model::answerConsent,
                 onLocate = model::locateShop,
                 onPermission = model::onPermission,
+                // Written straight to the preference rather than held with the profile:
+                // it is a setting on this phone, not part of what the server is sent, and
+                // a maker who answers and then skips setup has still answered.
+                assessLocation = container.locationPreference,
                 onNext = { navController.navigate(Routes.SETUP_TOOLS) },
                 // Skipping lands on home with no profile at all. The coaching then runs
                 // tool-blind, which is worse advice but not broken advice, and setup can
@@ -195,11 +220,26 @@ fun FundiNav() {
                     )
                 },
                 onWorkers = { navController.navigate(Routes.WORKERS) },
+                onSettings = { navController.navigate(Routes.SETTINGS) { launchSingleTop = true } },
             )
         }
 
         composable(Routes.WORKERS) {
             WorkersScreen(onBack = { navController.popBackStack() })
+        }
+
+        // Kagua's screen, with Fundi Bora's wording where Kagua's would be wrong, and the
+        // sign-out button Kagua keeps on Profile. Fundi Bora has no Profile.
+        composable(Routes.SETTINGS) {
+            SettingsScreen(
+                container = container,
+                labels = remember(labels) { labels.onSettings(AuthLabels.ENGLISH) },
+                onBack = { navController.popBackStack() },
+                // The view model reports success only after DELETE /v1/account succeeds,
+                // so the server has already deleted the account by the time this runs.
+                onAccountDeleted = accountDeleted,
+                onSignOut = signOut,
+            )
         }
 
         composable(

@@ -22,6 +22,8 @@ import com.qualityverifier.server.db.StoredReply
 import com.qualityverifier.server.db.StoredRefresh
 import com.qualityverifier.server.db.UserRow
 import com.qualityverifier.server.routes.ChangePasswordRequest
+import com.qualityverifier.server.routes.TokenResponse
+import kotlinx.serialization.json.Json
 import io.ktor.client.plugins.contentnegotiation.ContentNegotiation as ClientContentNegotiation
 import io.ktor.client.request.delete
 import com.qualityverifier.server.db.TesterFeedback
@@ -267,6 +269,67 @@ class SyncRouteTest {
     fun `changing a password signs every other device out`() = testApplication {
         // A password change is usually a response to somebody else having had access.
         val auth = FakeAuth(currentPassword = "the real one")
+        val app = withSync(FakeChatStore(), auth)
+
+        val response = app.post("/v1/auth/password") {
+            this.auth(MINE); contentType(ContentType.Application.Json)
+            setBody(ChangePasswordRequest("the real one", "a new long password"))
+        }
+
+        assertEquals(HttpStatusCode.OK, response.status)
+        assertEquals(listOf(MINE), auth.passwordChanges)
+        assertEquals(listOf(MINE), auth.revoked)
+    }
+
+    @Test
+    fun `changing a password keeps the phone that changed it signed in`() = testApplication {
+        // The revocation takes this phone's own refresh token too. Without a new pair its
+        // next refresh is refused and it signs out with no explanation.
+        val auth = FakeAuth(currentPassword = "the real one")
+        val app = withSync(FakeChatStore(), auth)
+
+        val response = app.post("/v1/auth/password") {
+            this.auth(MINE); contentType(ContentType.Application.Json)
+            setBody(ChangePasswordRequest("the real one", "a new long password"))
+        }
+
+        assertEquals(HttpStatusCode.OK, response.status)
+        val tokens = Json { ignoreUnknownKeys = true }
+            .decodeFromString<TokenResponse>(response.bodyAsText())
+        assertEquals(MINE, tokens.userId)
+        assertTrue("a refresh token comes back", tokens.refreshToken.isNotBlank())
+        assertEquals(
+            "the access token is this account's",
+            MINE, AccessTokens(KEY).verifier.verify(tokens.accessToken).subject,
+        )
+        // Issued after the revocation, or the revocation would take it as well.
+        assertEquals(listOf("revoke $MINE", "issue $MINE"), auth.tokenEvents)
+    }
+
+    @Test
+    fun `a disabled account cannot change its password or get new tokens`() = testApplication {
+        // Its access token still verifies until it expires. Refresh refuses a disabled
+        // account; this route mints tokens too, so it must refuse it the same way, or a
+        // disable would never take effect.
+        val auth = FakeAuth(currentPassword = "the real one", disabled = true)
+        val app = withSync(FakeChatStore(), auth)
+
+        val response = app.post("/v1/auth/password") {
+            this.auth(MINE); contentType(ContentType.Application.Json)
+            setBody(ChangePasswordRequest("the real one", "a new long password"))
+        }
+
+        assertEquals(HttpStatusCode.Unauthorized, response.status)
+        assertTrue(response.bodyAsText().contains("invalid_token"))
+        assertTrue(auth.passwordChanges.isEmpty())
+        assertTrue(auth.tokenEvents.isEmpty())
+    }
+
+    @Test
+    fun `a password change whose new tokens fail still reports the change`() = testApplication {
+        // The password and the revocation are already committed. A 500 would tell the
+        // person nothing changed, and they would try the old password next.
+        val auth = FakeAuth(currentPassword = "the real one", issueFails = true)
         val app = withSync(FakeChatStore(), auth)
 
         val response = app.post("/v1/auth/password") {
@@ -579,7 +642,7 @@ class SyncRouteTest {
 
         override suspend fun appendUserTurn(
             sessionId: String, messageId: String, text: String, blobHashes: List<String>,
-            composed: Boolean,
+            composed: Boolean, photoMeta: Map<String, kotlinx.serialization.json.JsonObject>,
         ) = true
 
         /** What the last replacement carried, by session; null when refused. */
@@ -596,12 +659,14 @@ class SyncRouteTest {
         override suspend fun history(sessionId: String, blobPath: (String) -> String) = emptyList<com.qualityverifier.domain.ChatMessage>()
         override suspend fun appendAssistantTurn(
             sessionId: String, text: String, preview: String,
-            verdictLevelId: String?, verdictLanguage: String?, defectCount: Int?,
+            verdictLevelId: String?, verdictLanguage: String?,
+            defectCount: ((List<String>) -> Int?)?,
         ) = "a1"
 
         override suspend fun recordUsage(
             userId: String, sessionId: String?, model: String?, usage: TokenUsage?,
-            httpStatus: Int?, latencyMillis: Long, errorKind: String?, callKind: String,
+            httpStatus: Int?, latencyMillis: Long, errorKind: String?, audience: Audience,
+            callKind: String,
         ) = Unit
 
         override suspend fun saveDigest(sessionId: String, digest: com.qualityverifier.server.db.Digest) = Unit
@@ -626,22 +691,33 @@ class SyncRouteTest {
     private class FakeAuth(
         private val currentPassword: String? = null,
         private val isTester: Boolean = false,
+        private val disabled: Boolean = false,
+        /** Makes issuing a refresh token throw, as a dropped database connection would. */
+        private val issueFails: Boolean = false,
     ) : AuthStore {
         val passwordChanges = mutableListOf<String>()
         val accountsDeleted = mutableListOf<String>()
         val revoked = mutableListOf<String>()
 
+        /** Revocations and issues in the order they happened. */
+        val tokenEvents = mutableListOf<String>()
+
         override suspend fun register(registration: Registration) = RegisterOutcome.InviteUnusable
         override suspend fun findUser(userId: String) =
-            UserRow(userId, "Grady", "individual", null, disabled = false, isTester = isTester)
+            UserRow(userId, "Grady", "individual", null, disabled = disabled, isTester = isTester)
 
         override suspend fun issueRefresh(
             userId: String, token: String, expiresAt: Instant, userAgent: String?, replaces: String?,
-        ) = "r"
+        ): String {
+            if (issueFails) throw java.sql.SQLException("connection lost")
+            tokenEvents += "issue $userId"
+            return "r"
+        }
 
         override suspend fun findRefresh(token: String): StoredRefresh? = null
         override suspend fun revokeChain(userId: String): Int {
             revoked += userId
+            tokenEvents += "revoke $userId"
             return 1
         }
 

@@ -464,8 +464,8 @@ instruction means they come back with the wrong photo.
 The instruction shown is the assistant's last message, because the protocol asks for
 exactly one photo at a time — no extra prompt machinery, nothing to drift out of sync.
 
-Each capture is measured on-device for blur (variance of the Laplacian) and darkness
-(mean luma) before being attached. The check is advisory: a photo it dislikes is held up
+Each capture, in Kagua and in Fundi Bora, is measured on-device for blur (variance of
+the Laplacian) and darkness (mean luma) before being attached. The check is advisory: a photo it dislikes is held up
 with an explanation and a "use it anyway", and a photo it cannot measure is attached
 without comment. Both thresholds in
 [`ImageQuality.kt`](core/src/main/java/com/qualityverifier/images/ImageQuality.kt) are
@@ -638,10 +638,14 @@ re-writing the whole verdict was most of what made follow-ups slow.
 ## Images
 
 Photos are stored as files under `filesDir/images/<sessionId>/`, not as database blobs.
-On the way in, each image has its EXIF rotation applied, its long edge capped at 1568px,
-and is re-encoded as JPEG q80 — roughly a 10x smaller upload than a raw camera frame,
-which matters on metered mobile data. Rotation is applied for accuracy too: Claude
-cannot judge whether a table is level from a sideways photo.
+On the way in, each image has its EXIF rotation applied, its long edge capped at 2576px
+(the most `claude-sonnet-5-5` reads; 1568px before v0.4.0), and is re-encoded as JPEG
+q80 with no camera metadata left in the file — a several-times smaller upload than a raw
+camera frame, which matters on metered mobile data. Rotation is applied for accuracy
+too: Claude cannot judge whether a table is level from a sideways photo. Kagua and Fundi
+Bora share this processing (`ImageFileStore`) and the quality check below, and apply
+them only to photos as they arrive: a photo already stored keeps its bytes, and so its
+hash.
 
 Deleting a session deletes its photos. Photos attached to a conversation that was never
 sent are cleaned up on the next launch, from the home screen, which is the one

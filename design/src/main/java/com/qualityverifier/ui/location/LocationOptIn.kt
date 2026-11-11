@@ -25,21 +25,27 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
+import com.qualityverifier.data.location.LocationPreference
 import com.qualityverifier.text.AuthLabels
-import com.qualityverifier.ui.appContainer
 
 /**
  * The switch that decides whether assessments record where they were made.
  *
- * One composable for both places it appears — the sign-up form and Settings — because the
- * offer has to read the same in both. A customer who agreed to something at sign-up should
- * find that same sentence when they go looking for it later, not a differently worded
- * version that leaves them guessing whether it is the same setting.
+ * One composable for every place it appears — Kagua's sign-up form and both apps'
+ * Settings — because the offer has to read the same in each. A customer who agreed to
+ * something at sign-up should find that same sentence when they go looking for it later,
+ * not a differently worded version that leaves them guessing whether it is the same
+ * setting.
  *
- * Writes straight through to [com.qualityverifier.data.location.LocationPreference] on
- * every change rather than holding a draft. On the sign-up form that matters: somebody who
- * switches this off and then abandons the form at the password field has still said no,
- * and the next screen to ask should already know.
+ * The preference is passed in rather than looked up, because the lookup reads each app's
+ * own Application subclass and this module is shared by both. Each app's container holds
+ * its own [LocationPreference], in that app's own storage, so turning this off in one app
+ * leaves the other as it was.
+ *
+ * Writes straight through to [LocationPreference] on every change rather than holding a
+ * draft. On the sign-up form that matters: somebody who switches this off and then
+ * abandons the form at the password field has still said no, and the next screen to ask
+ * should already know.
  *
  * ## The permission is a separate question from the setting
  *
@@ -53,11 +59,16 @@ import com.qualityverifier.ui.appContainer
  * in front of a sentence they have not finished reading.
  */
 @Composable
-fun LocationOptIn(labels: AuthLabels, modifier: Modifier = Modifier) {
+fun LocationOptIn(
+    labels: AuthLabels,
+    preference: LocationPreference,
+    modifier: Modifier = Modifier,
+) {
     val context = LocalContext.current
-    val preference = appContainer().locationPreference
 
-    var enabled by remember { mutableStateOf(preference.recordAtStart) }
+    // What is recorded, not the stored switch alone: in Fundi Bora a switch nobody has
+    // answered records nothing, and drawing it on would say otherwise.
+    var enabled by remember { mutableStateOf(preference.records) }
     var granted by remember {
         mutableStateOf(
             ContextCompat.checkSelfPermission(
@@ -87,7 +98,8 @@ fun LocationOptIn(labels: AuthLabels, modifier: Modifier = Modifier) {
                 checked = enabled,
                 onCheckedChange = { next ->
                     enabled = next
-                    preference.recordAtStart = next
+                    // Moving the switch is an answer, so Fundi Bora stops asking.
+                    preference.answer(next)
                 },
             )
         }

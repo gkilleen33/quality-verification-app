@@ -93,6 +93,15 @@ private data class PasswordBody(
     @SerialName("new_password") val newPassword: String,
 )
 
+/** The token pair a password change returns, so the phone that made it stays signed in. */
+@Serializable
+private data class PasswordChangedBody(
+    @SerialName("access_token") val accessToken: String = "",
+    @SerialName("expires_in") val expiresIn: Long = 0,
+    @SerialName("refresh_token") val refreshToken: String = "",
+    @SerialName("user_id") val userId: String = "",
+)
+
 /**
  * Reading assessments back from the server, and the two account actions.
  *
@@ -311,6 +320,8 @@ class SyncClient(
 
     suspend fun changePassword(current: String, new: String): PasswordOutcome = withContext(io) {
         val body = json.encodeToString(PasswordBody(current, new))
+        // Noted before sending, so an answer that arrives after a sign-out is not saved.
+        val since = tokens.generation()
         val response = authenticated { token ->
             Request.Builder().url(baseUrl + "v1/auth/password")
                 .addHeader("Authorization", "Bearer $token")
@@ -319,12 +330,41 @@ class SyncClient(
 
         response.use {
             when {
-                it.isSuccessful -> PasswordOutcome.Changed
+                it.isSuccessful -> {
+                    adoptReplacementTokens(since, it.body?.string().orEmpty())
+                    PasswordOutcome.Changed
+                }
                 it.code == 401 -> PasswordOutcome.WrongPassword
                 it.code == 400 -> PasswordOutcome.TooShort
                 else -> PasswordOutcome.Unavailable
             }
         }
+    }
+
+    /**
+     * Saves the token pair a password change returns.
+     *
+     * The server revokes every refresh token the account holds, this phone's included, so
+     * without the new pair the next refresh is refused and the phone signs out with no
+     * explanation. A server from before the pair existed answers 204 with no body; the
+     * password has still changed, so that is still [PasswordOutcome.Changed], and the phone
+     * signs out at its next refresh as it always did.
+     */
+    private suspend fun adoptReplacementTokens(since: Long, text: String) {
+        if (text.isBlank()) return
+        val pair = runCatching { json.decodeFromString<PasswordChangedBody>(text) }
+            .onFailure { e -> Log.w(TAG, "Could not read the tokens after a password change", e) }
+            .getOrNull() ?: return
+        // The user id too, as AuthClient requires at sign-in: a pair saved without one
+        // leaves the phone unable to tell whose local data it holds.
+        if (pair.accessToken.isBlank() || pair.refreshToken.isBlank() || pair.userId.isBlank()) return
+        tokens.adopt(
+            since,
+            accessToken = pair.accessToken,
+            expiresInSeconds = pair.expiresIn,
+            refreshToken = pair.refreshToken,
+            userId = pair.userId,
+        )
     }
 
     suspend fun deleteAccount(): Boolean = withContext(io) {

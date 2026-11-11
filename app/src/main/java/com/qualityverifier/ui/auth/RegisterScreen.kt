@@ -219,7 +219,7 @@ fun RegisterScreen(onRegistered: () -> Unit, onSignIn: () -> Unit) {
         // Every account, not only businesses: the point above is about a business saving
         // its own premises, and this is about where an assessment happened, which applies
         // to somebody checking a chair in a market as much as to a workshop.
-        LocationOptIn(labels)
+        LocationOptIn(labels, container.locationPreference)
 
         Spacer(Modifier.height(20.dp))
         // Above the button that creates the account, not tucked into a settings screen

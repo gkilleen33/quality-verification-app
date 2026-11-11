@@ -33,6 +33,9 @@ class FundiBoraApp : Application() {
             versionCode = BuildConfig.VERSION_CODE,
             // A debug build sends its version but is not prompted to update.
             checkForUpdates = !BuildConfig.DEBUG,
+            // The switch shipped on before makers were asked about a point per
+            // assessment, so here it counts only once they have answered.
+            locationAnswerRequired = true,
         )
         // At start; a second check follows each sign-in. See AppContainer.
         container.appVersionCheck.check()

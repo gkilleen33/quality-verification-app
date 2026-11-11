@@ -45,6 +45,12 @@ data class ImageQuality(
 }
 
 /**
+ * What both apps say when a photo just taken could not be decoded or re-encoded. Beside
+ * the quality warnings so the two apps keep saying the same thing about the same photo.
+ */
+const val UNREADABLE_PHOTO = "That photo could not be read. Please take it again."
+
+/**
  * Measures [luma] (row-major, 0..255) laid out as [width] by [height].
  *
  * Sharpness is the variance of a 4-neighbour Laplacian over the interior pixels: an

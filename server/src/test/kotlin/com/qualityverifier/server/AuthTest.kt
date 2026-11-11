@@ -5,6 +5,7 @@ import com.qualityverifier.server.auth.Tokens
 import com.qualityverifier.server.auth.Passwords
 import com.qualityverifier.server.db.AuthStore
 import com.qualityverifier.server.db.Credentials
+import com.qualityverifier.server.db.PostgresAuthStore
 import com.qualityverifier.server.db.RegisterOutcome
 import com.qualityverifier.server.db.Registration
 import com.qualityverifier.server.db.StoredRefresh
@@ -185,6 +186,24 @@ class AuthTest {
         // cannot be used to test guessed codes.
         assertTrue(body, body.contains("invite_unusable"))
         assertTrue("must not distinguish the reason", !body.contains("redeem"))
+    }
+
+    @Test
+    fun `the sign-up check refuses a revoked invite code`() {
+        // A deleted account's code is revoked by anonymise_user (V26, held by
+        // MigrationsTest), and this filter is what then refuses it: a revoked code returns no
+        // row, register() answers no row with InviteUnusable, and the route answers that with
+        // 403 (the test above). Checked on the statement because these tests have no database.
+        val sql = PostgresAuthStore.REDEEMABLE_INVITE
+        assertTrue(
+            sql,
+            Regex("""(?i)\bfrom invite_codes where code = \? and revoked_at is null\b""")
+                .containsMatchIn(sql),
+        )
+        // Nothing after the filter that could let a revoked code back in.
+        assertTrue(sql, !Regex("""(?i)\bor\b""").containsMatchIn(sql))
+        // The row lock makes a sign-up wait for a delete in flight and re-check revoked_at.
+        assertTrue(sql, Regex("""(?i)\bfor share\s*$""").containsMatchIn(sql))
     }
 
     @Test

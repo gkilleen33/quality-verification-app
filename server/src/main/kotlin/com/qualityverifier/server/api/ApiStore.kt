@@ -1,7 +1,11 @@
 package com.qualityverifier.server.api
 
+import com.qualityverifier.domain.FundiIntake
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.jsonObject
 import java.sql.ResultSet
 import javax.sql.DataSource
 
@@ -139,6 +143,12 @@ class PostgresApiStore(private val dataSource: DataSource) : ApiStore {
                        (select array_agg(a.sha256 order by a.ordinal, a.id)
                           from attachments a where a.message_id = m.id),
                        '{}'
+                   ),
+                   -- Same order as the hashes, so entry n describes photo n.
+                   coalesce(
+                       (select array_agg(a.photo_meta::text order by a.ordinal, a.id)
+                          from attachments a where a.message_id = m.id),
+                       '{}'
                    )
               from messages m
              where m.session_id = ?::uuid
@@ -151,11 +161,14 @@ class PostgresApiStore(private val dataSource: DataSource) : ApiStore {
                 while (rows.next()) {
                     @Suppress("UNCHECKED_CAST")
                     val photos = (rows.getArray(4).array as Array<String>).toList()
+                    @Suppress("UNCHECKED_CAST")
+                    val meta = (rows.getArray(5).array as Array<String?>).map { photoMetaOf(it) }
                     out += ApiMessage(
                         role = rows.getString(1),
                         text = rows.getString(2),
                         createdAt = rows.getLong(3),
                         photos = photos,
+                        photoMeta = meta,
                     )
                 }
                 out
@@ -206,21 +219,28 @@ class PostgresApiStore(private val dataSource: DataSource) : ApiStore {
         }
     }
 
-    private fun ResultSet.toAssessment() = ApiAssessment(
-        id = getString(1),
-        userId = getString(2),
-        itemTypeId = getString(3),
-        createdAt = getLong(4),
-        updatedAt = getLong(5),
-        messageCount = getInt(6),
-        photoCount = getInt(7),
-        verdictLevelId = getString(8),
-        byTester = getBoolean(9),
-        hasTesterFeedback = getBoolean(10),
-        deletedByUser = getBoolean(11),
-        audience = getString(12),
-        appVersionCode = nullableInt(13),
-    )
+    private fun ResultSet.toAssessment(): ApiAssessment {
+        val intake = ApiIntake.of(getString(14))
+        return ApiAssessment(
+            id = getString(1),
+            userId = getString(2),
+            itemTypeId = getString(3),
+            createdAt = getLong(4),
+            updatedAt = getLong(5),
+            messageCount = getInt(6),
+            photoCount = getInt(7),
+            verdictLevelId = getString(8),
+            byTester = getBoolean(9),
+            hasTesterFeedback = getBoolean(10),
+            deletedByUser = getBoolean(11),
+            audience = getString(12),
+            appVersionCode = nullableInt(13),
+            purpose = intake.purpose,
+            language = intake.language,
+            pieceId = getString(15),
+            promptSha = getString(16),
+        )
+    }
 
     private fun ResultSet.toFeedback() = ApiTesterFeedback(
         sessionId = getString(1),
@@ -230,6 +250,14 @@ class PostgresApiStore(private val dataSource: DataSource) : ApiStore {
         itemQuality = getInt(5),
         extraFeedback = getString(6),
     )
+
+    /**
+     * One stored `photo_meta`, or null. A value that does not read as an object (V25's CHECK
+     * says it cannot happen) is reported as null rather than failing the whole assessment.
+     */
+    private fun photoMetaOf(text: String?): JsonObject? = text?.let {
+        runCatching { Json.parseToJsonElement(it).jsonObject }.getOrNull()
+    }
 
     /** getDouble returns 0.0 for SQL null, which would put a workshop off the Gulf of Guinea. */
     private fun ResultSet.nullableDouble(index: Int): Double? {
@@ -263,7 +291,29 @@ class PostgresApiStore(private val dataSource: DataSource) : ApiStore {
                    exists (select 1 from tester_feedback f where f.session_id = s.id),
                    (s.client_deleted_at is not null),
                    s.audience,
-                   s.app_version_code
+                   s.app_version_code,
+                   s.intake_answers,
+                   s.piece_id::text,
+                   s.prompt_sha
         """
+    }
+}
+
+/**
+ * The purpose and language of an assessment, out of `sessions.intake_answers`.
+ *
+ * Decoded here rather than published raw: the column holds two unrelated codes, Kagua's
+ * four-part one and Fundi Bora's `fundi-<language>-<purpose>` ([FundiIntake.encode]), and a
+ * consumer splitting strings would have to know both. Both null or both set, as
+ * [FundiIntake.decode] gives them: Kagua's code, an empty column, and a Fundi Bora code
+ * naming a language or purpose this server does not know all read as "not known".
+ */
+internal data class ApiIntake(val purpose: String?, val language: String?) {
+    companion object {
+        fun of(intakeAnswers: String?): ApiIntake {
+            val decoded = FundiIntake.decode(intakeAnswers) ?: return ApiIntake(null, null)
+            val (language, purpose) = decoded
+            return ApiIntake(purpose = purpose.id, language = language.code)
+        }
     }
 }

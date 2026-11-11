@@ -94,6 +94,18 @@ data class Finding(
     /** The measurement, where the photographs supported one. Null together with its unit. */
     @SerialName("measured_value") val measuredValue: Double? = null,
     @SerialName("measured_unit") val measuredUnit: String = "",
+    /**
+     * The problem's consequence, in the words [Defect] uses for it: what anybody can see,
+     * what it means for whoever uses the piece, and what putting it right involves.
+     *
+     * Written here once the prompt stops repeating each finding as a verdict defect, so
+     * every problem is written once. Replies from before that have these on the verdict's
+     * defects instead and blank here, which is why each defaults to empty; read problems
+     * through [com.qualityverifier.text.problemsOf], which knows both shapes.
+     */
+    @SerialName("what_i_see") val whatISee: String = "",
+    @SerialName("what_it_means") val whatItMeans: String = "",
+    @SerialName("what_to_do") val whatToDo: String = "",
 ) {
     val severity: Severity get() = Severity.fromId(severityId)
 
