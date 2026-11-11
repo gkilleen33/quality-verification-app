@@ -1,0 +1,8 @@
+# The one-list shape: the findings, in order, each with its own dimension. The first is
+# in the upholstery area, so it goes to upholstery although its dimension says frame. The
+# material finding gets no part; the level finding gives no dimension, and level gives none.
+# title | area | severity | dimension | default_part
+Kitambaa kimevutwa vibaya kwenye mkono wa kushoto | upholstery | moderate | frame_squareness | upholstery
+Kiungo cha reli ya nyuma kimefunguka | structural | serious | joint_fit | joinery
+Ufa kwenye reli ya kiti | material | minor | material | -
+Miguu haiko sawa | level | minor | - | -

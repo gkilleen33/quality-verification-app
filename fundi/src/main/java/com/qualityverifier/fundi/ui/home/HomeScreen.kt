@@ -225,6 +225,7 @@ private fun PieceRow(
     var menuOpen by remember { mutableStateOf(false) }
     if (editingWorkers) {
         WorkersDialog(
+            itemType = latest.itemType,
             roster = roster,
             load = loadWorkers,
             onSave = { people ->
@@ -343,6 +344,8 @@ private fun PieceRow(
  */
 @Composable
 private fun WorkersDialog(
+    /** The piece's type, so the parts offered match the intake's. */
+    itemType: ItemType,
     roster: List<Worker>,
     load: suspend () -> List<WorkerSlot>,
     onSave: (List<WorkerSlot>) -> Unit,
@@ -356,10 +359,11 @@ private fun WorkersDialog(
         onDismissRequest = onDismiss,
         title = { Text("Who worked on this?") },
         text = {
-            // Scrolls: several people with six part chips each outgrow a small phone,
+            // Scrolls: several people with up to seven chips each outgrow a small phone,
             // and the buttons below must stay reachable.
             Column(Modifier.verticalScroll(rememberScrollState())) {
                 WorkerPicker(
+                    itemType = itemType,
                     roster = roster,
                     slots = current,
                     onChange = { slots = it },

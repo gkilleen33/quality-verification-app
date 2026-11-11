@@ -131,8 +131,11 @@ fun fundiDefectCount(repliesNewestFirst: List<AssistantContent>): Int? {
  * Whether this diagnosis is in the one-list shape: a finding carries its consequence.
  * Today's prompt never asks for these fields on a finding, so they are blank on every
  * reply written before the change.
+ *
+ * Public so the server's session-level readers (`reports/DefectList.kt`, the coverage
+ * measure) tell the two shapes apart by this same test rather than a copy of it.
  */
-private val Diagnosis.writesConsequences: Boolean
+val Diagnosis.writesConsequences: Boolean
     get() = findings.any { finding ->
         finding.whatISee.isNotBlank() || finding.whatItMeans.isNotBlank() || finding.whatToDo.isNotBlank()
     }

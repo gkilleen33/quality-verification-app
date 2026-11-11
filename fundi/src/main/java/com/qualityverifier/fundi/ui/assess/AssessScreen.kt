@@ -151,6 +151,7 @@ fun AssessScreen(
             returning = returning,
             priorIssues = priorIssues,
             initialName = pieceName,
+            itemType = itemType,
             roster = roster,
             initialWorkers = previousWorkers,
             onAddWorker = viewModel::addWorker,
