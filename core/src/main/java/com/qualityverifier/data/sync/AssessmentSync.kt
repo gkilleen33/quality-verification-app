@@ -65,48 +65,7 @@ class AssessmentSync(
      * local work, and a failing pull should not strand them for another cycle.
      */
     suspend fun run(): Result = withContext(io) {
-        var deletes = 0
-        for (id in sessions.pendingRemoteDeletes()) {
-            if (client.deleteSession(id)) {
-                sessions.clearPendingRemoteDelete(id)
-                deletes++
-            }
-        }
-
-        // Reviews go up before anything comes down, same as deletes: they are the phone's
-        // own unsent work, and a pull failing should not strand them for another cycle.
-        val reviews = pushReviews()
-
-        // Names too, and before the pull for the same reason: a pull that landed first
-        // would write the server's older name over the one the maker just typed.
-        var names = 0
-        for (change in sessions.unsyncedPieceLabels()) {
-            if (client.renamePiece(change.pieceId, change.label)) {
-                sessions.markPieceLabelSynced(change)
-                names++
-            }
-        }
-
-        // The roster before any session that names it, so the server never meets a
-        // worker id it has no row for.
-        var rosterWrites = 0
-        var rosterAllSent = true
-        if (rosterEnabled) for (change in workers.unsynced()) {
-            if (client.upsertWorker(change.id, change.name, change.archived)) {
-                workers.markSynced(change)
-                rosterWrites++
-            } else {
-                rosterAllSent = false
-            }
-        }
-        // Only once every worker is there: a set naming a worker the server has not got
-        // would be refused for good, and the edit lost. Left pending, it goes next time.
-        if (rosterEnabled && rosterAllSent) for (pending in workers.pendingSessions()) {
-            if (client.replaceSessionWorkers(pending.sessionId, workers.workersOf(pending.sessionId))) {
-                workers.clearPending(pending)
-                rosterWrites++
-            }
-        }
+        val (deletes, reviews, names, rosterWrites) = push()
 
         // Refreshed here so a promotion in the portal reaches the phone without a
         // re-install. Null means the server was unreachable, in which case the cached
@@ -181,6 +140,71 @@ class AssessmentSync(
             fetched++
         }
         Result(fetched, deletes, reachedServer = true, reviews = reviews, names = names, rosterWrites = rosterWrites)
+    }
+
+    /** What one [push] sent, counted as [Result] counts it. */
+    data class Pushed(
+        val deletes: Int,
+        val reviews: Int,
+        val names: Int,
+        val rosterWrites: Int,
+    )
+
+    /**
+     * Sends everything the phone owes the server, and fetches nothing.
+     *
+     * The first half of [run], and on its own the push at sign-out (see
+     * `AppContainer.signOut`): the account's queues have to reach the server before a
+     * different account's sign-in clears them, and a pull then would only download photos
+     * for an account that is leaving.
+     *
+     * Unanswered turns are not in it. Resending one costs a model call, which is the
+     * customer's to choose with the retry on that conversation (see `ChatViewModel`).
+     */
+    suspend fun push(): Pushed = withContext(io) {
+        var deletes = 0
+        for (id in sessions.pendingRemoteDeletes()) {
+            if (client.deleteSession(id)) {
+                sessions.clearPendingRemoteDelete(id)
+                deletes++
+            }
+        }
+
+        // Reviews go up before anything comes down, same as deletes: they are the phone's
+        // own unsent work, and a pull failing should not strand them for another cycle.
+        val reviews = pushReviews()
+
+        // Names too, and before the pull for the same reason: a pull that landed first
+        // would write the server's older name over the one the maker just typed.
+        var names = 0
+        for (change in sessions.unsyncedPieceLabels()) {
+            if (client.renamePiece(change.pieceId, change.label)) {
+                sessions.markPieceLabelSynced(change)
+                names++
+            }
+        }
+
+        // The roster before any session that names it, so the server never meets a
+        // worker id it has no row for.
+        var rosterWrites = 0
+        var rosterAllSent = true
+        if (rosterEnabled) for (change in workers.unsynced()) {
+            if (client.upsertWorker(change.id, change.name, change.archived)) {
+                workers.markSynced(change)
+                rosterWrites++
+            } else {
+                rosterAllSent = false
+            }
+        }
+        // Only once every worker is there: a set naming a worker the server has not got
+        // would be refused for good, and the edit lost. Left pending, it goes next time.
+        if (rosterEnabled && rosterAllSent) for (pending in workers.pendingSessions()) {
+            if (client.replaceSessionWorkers(pending.sessionId, workers.workersOf(pending.sessionId))) {
+                workers.clearPending(pending)
+                rosterWrites++
+            }
+        }
+        Pushed(deletes = deletes, reviews = reviews, names = names, rosterWrites = rosterWrites)
     }
 
     /**

@@ -1,5 +1,6 @@
 package com.qualityverifier.data.chat
 
+import kotlinx.serialization.json.JsonObject
 import java.io.File
 
 /**
@@ -11,4 +12,10 @@ import java.io.File
  */
 interface ImageBytesSource {
     fun bytesForUpload(file: File): ByteArray?
+
+    /**
+     * The camera metadata kept with [file] (see [com.qualityverifier.domain.PhotoMeta]), as
+     * it may be sent now, or null. Defaulted so a source that keeps none needs no change.
+     */
+    fun photoMetaFor(file: File): JsonObject? = null
 }

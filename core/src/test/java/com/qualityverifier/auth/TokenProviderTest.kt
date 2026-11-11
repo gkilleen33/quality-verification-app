@@ -3,10 +3,12 @@ package com.qualityverifier.auth
 import com.qualityverifier.data.auth.RefreshOutcome
 import com.qualityverifier.data.auth.TokenProvider
 import com.qualityverifier.data.auth.TokenStore
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
@@ -148,6 +150,129 @@ class TokenProviderTest {
         clock += 120_000
         assertEquals("fresh-2", provider.accessToken())
         assertEquals(2, refreshes.get())
+    }
+
+    @Test
+    fun `a refresh that returns after sign-out does not sign the phone back in`() = runTest {
+        // Signing out while a refresh is in flight. Saving its answer afterwards would put
+        // the old account's tokens back, and the next person would find themselves in it.
+        val store = FakeStore(access = "expired", expiresAt = now() - 1)
+        val gate = CompletableDeferred<Unit>()
+        val provider = TokenProvider(
+            store,
+            { gate.await(); RefreshOutcome.Renewed("fresh-a", 900, "refresh-a", "user-a") },
+            ::now,
+        )
+
+        val pending = async { provider.accessToken() }
+        runCurrent() // the refresh is now waiting on the server
+        provider.signOut()
+        gate.complete(Unit)
+
+        assertNull("the caller gets no token for an account already left", pending.await())
+        assertNull(store.refreshToken())
+        assertTrue(!store.isSignedIn())
+    }
+
+    @Test
+    fun `a refusal that returns after sign-out leaves the next account signed in`() = runTest {
+        // The same window with the opposite answer: the old account's refresh is refused
+        // after somebody else has signed in. Clearing then would sign out the wrong person.
+        val store = FakeStore(access = "expired", expiresAt = now() - 1)
+        val gate = CompletableDeferred<Unit>()
+        val provider = TokenProvider(store, { gate.await(); RefreshOutcome.Rejected }, ::now)
+
+        val pending = async { provider.accessToken() }
+        runCurrent()
+        provider.signOut()
+        store.save("access-b", 900, "refresh-b", "user-b") // the next sign-in
+        gate.complete(Unit)
+
+        assertNull(pending.await())
+        assertEquals("refresh-b", store.refreshToken())
+        assertEquals("user-b", store.userId())
+    }
+
+    @Test
+    fun `tokens handed back by the server are adopted unless the phone signed out first`() =
+        runTest {
+            // The pair a password change returns. Adopted normally; refused if the answer
+            // arrives after a sign-out, which would otherwise sign the phone back in.
+            val store = FakeStore(access = "good", expiresAt = now() + HOUR)
+            val provider = TokenProvider(store, countingRefresher(AtomicInteger()), ::now)
+
+            val before = provider.generation()
+            assertTrue(provider.adopt(before, "after-change", 900, "refresh-new", "user-1"))
+            assertEquals("refresh-new", store.refreshToken())
+
+            val stale = provider.generation()
+            provider.signOut()
+            assertTrue(!provider.adopt(stale, "too-late", 900, "refresh-late", "user-1"))
+            assertNull(store.refreshToken())
+        }
+
+    @Test
+    fun `signing out keeping a copy clears the store and hands the tokens over`() = runTest {
+        // The copy is what the push at sign-out sends with. The store must be empty all the
+        // same: the phone is signed out the moment the button is pressed.
+        val store = FakeStore(access = null, refresh = null, expiresAt = 0)
+        store.save("good", 3600, "refresh-0", "user-0")
+        val provider = TokenProvider(store, countingRefresher(AtomicInteger()), ::now)
+
+        val copy = provider.signOutKeepingCopy()
+
+        assertNull(store.refreshToken())
+        assertTrue(!store.isSignedIn())
+        assertEquals("good", copy?.accessToken())
+        assertEquals("refresh-0", copy?.refreshToken())
+        assertEquals("user-0", copy?.userId())
+        assertEquals(now() + HOUR, copy?.accessTokenExpiresAt())
+    }
+
+    @Test
+    fun `a refresh using the copy never writes to the store`() = runTest {
+        // The store may already hold the next account's tokens.
+        val store = FakeStore(access = "expired", expiresAt = now() - 1)
+        val refreshes = AtomicInteger()
+        val copy = TokenProvider(store, countingRefresher(refreshes), ::now).signOutKeepingCopy()!!
+        store.save("access-b", 900, "refresh-b", "user-b") // the next sign-in
+
+        val pushing = TokenProvider(copy, countingRefresher(refreshes), ::now)
+
+        assertEquals("fresh-1", pushing.accessToken())
+        assertEquals("refresh-1", copy.refreshToken())
+        assertEquals("refresh-b", store.refreshToken())
+    }
+
+    @Test
+    fun `a copy taken during a refresh carries no refresh token`() = runTest {
+        // That refresh is about to spend the token. Presenting it again from the copy is
+        // what the server reads as theft, revoking the account on every phone.
+        val store = FakeStore(access = "expired", expiresAt = now() - 1)
+        val gate = CompletableDeferred<Unit>()
+        val provider = TokenProvider(
+            store,
+            { gate.await(); RefreshOutcome.Renewed("fresh-a", 900, "refresh-a", "user-a") },
+            ::now,
+        )
+
+        val pending = async { provider.accessToken() }
+        runCurrent() // the refresh holds the mutex and is waiting on the server
+        val copy = provider.signOutKeepingCopy()
+        gate.complete(Unit)
+
+        assertNull(copy?.refreshToken())
+        assertEquals("expired", copy?.accessToken())
+        assertNull(pending.await())
+        assertNull(store.refreshToken())
+    }
+
+    @Test
+    fun `with nothing signed in there is no copy`() = runTest {
+        val store = FakeStore(access = null, refresh = null, expiresAt = 0)
+        val provider = TokenProvider(store, countingRefresher(AtomicInteger()), ::now)
+
+        assertNull(provider.signOutKeepingCopy())
     }
 
     // ---------------------------------------------------------------- harness

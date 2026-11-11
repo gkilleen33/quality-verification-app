@@ -5,7 +5,6 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
-import com.qualityverifier.data.sync.AccountActions
 import com.qualityverifier.data.sync.PasswordOutcome
 import com.qualityverifier.di.AppContainer
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -13,7 +12,17 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 
-class SettingsViewModel(private val account: AccountActions) : ViewModel() {
+/**
+ * The two account calls behind [SettingsScreen], for both apps.
+ *
+ * Takes the calls as functions rather than [com.qualityverifier.data.sync.AccountActions]
+ * itself, so the tests can answer them without an HTTP client. The factory passes the
+ * container's, which is the only production wiring.
+ */
+class SettingsViewModel(
+    private val changePasswordOnServer: suspend (current: String, new: String) -> PasswordOutcome,
+    private val deleteAccountOnServer: suspend () -> Boolean,
+) : ViewModel() {
 
     private val _busy = MutableStateFlow(false)
     val busy: StateFlow<Boolean> = _busy.asStateFlow()
@@ -49,7 +58,7 @@ class SettingsViewModel(private val account: AccountActions) : ViewModel() {
             _busy.value = true
             _message.value = null
             try {
-                _message.value = when (account.changePassword(current, new)) {
+                _message.value = when (changePasswordOnServer(current, new)) {
                     PasswordOutcome.Changed -> {
                         _passwordChanged.value = true
                         null
@@ -70,7 +79,7 @@ class SettingsViewModel(private val account: AccountActions) : ViewModel() {
         viewModelScope.launch {
             _busy.value = true
             try {
-                if (account.deleteAccount()) {
+                if (deleteAccountOnServer()) {
                     _accountDeleted.value = true
                 } else {
                     // Not signed out locally on failure: doing so would leave somebody
@@ -85,7 +94,9 @@ class SettingsViewModel(private val account: AccountActions) : ViewModel() {
 
     companion object {
         fun factory(container: AppContainer): ViewModelProvider.Factory = viewModelFactory {
-            initializer { SettingsViewModel(container.account) }
+            initializer {
+                SettingsViewModel(container.account::changePassword, container.account::deleteAccount)
+            }
         }
     }
 }

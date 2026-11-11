@@ -23,6 +23,7 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
@@ -40,22 +41,36 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
-import com.qualityverifier.ui.appContainer
+import com.qualityverifier.di.AppContainer
+import com.qualityverifier.text.AuthLabels
 import com.qualityverifier.ui.location.LocationOptIn
-import com.qualityverifier.ui.rememberAuthLabels
 
 /**
- * Account settings: change a password, or delete the account.
+ * Account settings: change a password, the location switch, or delete the account; and
+ * in Fundi Bora, sign out.
  *
- * Both live behind Profile rather than on it, because both are rare and one is
- * irreversible — a destructive control on a screen somebody opens to check how many
- * assessments they have done is a control they will eventually hit by accident.
+ * Kagua reaches this from Profile rather than putting it there, because two of these are
+ * rare and one is irreversible — a destructive control on a screen somebody opens to check
+ * how many assessments they have done is a control they will eventually hit by accident.
+ * Fundi Bora reaches it from Home, which is the only screen it has to start from.
+ *
+ * Shared by both apps rather than copied, so the deletion flow and the guard on leaving
+ * mid-request are fixed once. Each app passes its own container and wording; nothing here
+ * knows which app it is in.
+ *
+ * @param onSignOut shows a sign-out button when set. Kagua leaves it null because Profile
+ *   already has one, and a second sign-out one screen away from the first would be two
+ *   controls for one action. Fundi Bora has no Profile, so this is its only sign-out.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun SettingsScreen(onBack: () -> Unit, onAccountDeleted: () -> Unit) {
-    val container = appContainer()
-    val labels = rememberAuthLabels()
+fun SettingsScreen(
+    container: AppContainer,
+    labels: AuthLabels,
+    onBack: () -> Unit,
+    onAccountDeleted: () -> Unit,
+    onSignOut: (() -> Unit)? = null,
+) {
     val viewModel: SettingsViewModel = viewModel(factory = SettingsViewModel.factory(container))
 
     val busy by viewModel.busy.collectAsState()
@@ -67,6 +82,7 @@ fun SettingsScreen(onBack: () -> Unit, onAccountDeleted: () -> Unit) {
     var next by remember { mutableStateOf("") }
     var repeat by remember { mutableStateOf("") }
     var confirmingDelete by remember { mutableStateOf(false) }
+    var confirmingSignOut by remember { mutableStateOf(false) }
 
     LaunchedEffect(deleted) { if (deleted) onAccountDeleted() }
     LaunchedEffect(changed) {
@@ -77,8 +93,8 @@ fun SettingsScreen(onBack: () -> Unit, onAccountDeleted: () -> Unit) {
 
     // No way off this screen while a request is in flight. Leaving clears the view
     // model, which cancels the coroutine but not the blocking HTTP call: the server
-    // still deletes the account, nothing signs out, and the user is left on Profile
-    // signed in to an account that no longer exists.
+    // still deletes the account, nothing signs out, and the user is left on the screen
+    // they came from, signed in to an account that no longer exists.
     BackHandler(enabled = busy) {}
 
     Scaffold(
@@ -160,7 +176,20 @@ fun SettingsScreen(onBack: () -> Unit, onAccountDeleted: () -> Unit) {
             // irreversible one.
             Text(labels.locationHeading, style = MaterialTheme.typography.titleMedium)
             Spacer(Modifier.height(8.dp))
-            LocationOptIn(labels)
+            LocationOptIn(labels, container.locationPreference)
+
+            // Above deletion, not beside it: signing out is undone by signing in again, and
+            // it should not sit where a thumb reaching for it lands on the red button.
+            if (onSignOut != null) {
+                Spacer(Modifier.height(28.dp))
+                OutlinedButton(
+                    onClick = { confirmingSignOut = true },
+                    enabled = !busy,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(56.dp),
+                ) { Text(labels.signOut) }
+            }
 
             Spacer(Modifier.height(28.dp))
             Text(labels.deleteAccount, style = MaterialTheme.typography.titleMedium)
@@ -201,6 +230,26 @@ fun SettingsScreen(onBack: () -> Unit, onAccountDeleted: () -> Unit) {
             },
             dismissButton = {
                 TextButton(onClick = { confirmingDelete = false }) { Text(labels.keepAccount) }
+            },
+        )
+    }
+
+    // The same dialog as Kagua's Profile, worded from the same labels. Confirmed rather
+    // than immediate: getting back in needs the password, and on a borrowed phone somebody
+    // may not have it to hand.
+    if (confirmingSignOut && onSignOut != null) {
+        AlertDialog(
+            onDismissRequest = { confirmingSignOut = false },
+            title = { Text(labels.signOut + "?") },
+            text = { Text(labels.signOutConfirmBody) },
+            confirmButton = {
+                TextButton(onClick = {
+                    confirmingSignOut = false
+                    onSignOut()
+                }) { Text(labels.signOut) }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirmingSignOut = false }) { Text(labels.staySignedIn) }
             },
         )
     }

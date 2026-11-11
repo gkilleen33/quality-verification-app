@@ -1,0 +1,54 @@
+intake: fundi-en-reevaluate
+--- reply ---
+Good progress since last time. Two things remain.
+
+```fb-diagnosis
+{
+  "language": "en",
+  "findings": [
+    {
+      "title": "Gap at the front right joint",
+      "area": "structural",
+      "severity": "minor",
+      "dimension": "joint_fit",
+      "what_happened": "A gap of about 1mm at the top of the joint.",
+      "manufacturing_cause": "The shoulder was pared by eye.",
+      "root_habit": "The shoulder line is not knifed."
+    },
+    {
+      "title": "Hinge screws standing proud",
+      "area": "hardware",
+      "severity": "cosmetic",
+      "dimension": "hardware",
+      "what_happened": "Two screw heads sit above the hinge leaf.",
+      "manufacturing_cause": "The holes were not countersunk.",
+      "root_habit": "No countersink bit in the kit."
+    }
+  ]
+}
+```
+
+```qv-verdict
+{
+  "verdict": "fair",
+  "language": "en",
+  "headline": "Nearly there",
+  "defects": [
+    {"title": "Gap at the front right joint", "area": "structural", "severity": "minor", "what_i_see": "A thin gap.", "what_it_means": "It may open further.", "what_to_do": "Glue and clamp."},
+    {"title": "Hinge screws standing proud", "area": "hardware", "severity": "cosmetic", "what_i_see": "Screw heads stick up.", "what_it_means": "They catch on cloth.", "what_to_do": "Countersink the holes."}
+  ]
+}
+```
+--- reply ---
+You are right, the screws are flush in the closer photo. Here is the corrected verdict.
+
+```qv-verdict
+{
+  "verdict": "fair",
+  "language": "en",
+  "headline": "One joint to close",
+  "defects": [
+    {"title": "gap at the front right joint ", "area": "Structural", "severity": "Minor", "what_i_see": "A thin gap.", "what_it_means": "It may open further.", "what_to_do": "Glue and clamp."}
+  ]
+}
+```

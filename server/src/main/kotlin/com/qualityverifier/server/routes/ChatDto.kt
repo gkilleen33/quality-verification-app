@@ -1,9 +1,13 @@
 package com.qualityverifier.server.routes
 
+import com.qualityverifier.domain.PhotoMeta
 import com.qualityverifier.domain.WorkPart
 import com.qualityverifier.domain.WorkerSlot
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonNull
+import kotlinx.serialization.json.JsonObject
 
 @Serializable
 data class ChatRequest(
@@ -58,7 +62,46 @@ data class ChatRequest(
     val latitude: Double? = null,
     val longitude: Double? = null,
     @SerialName("accuracy_m") val accuracyMetres: Double? = null,
+    /**
+     * Each photo's camera metadata, keyed by its hash in [blobs] (v0.4.0, D3). Absent from
+     * a v0.3.0 or older app, and from a photo whose camera wrote nothing.
+     *
+     * Read as any JSON at all, and checked in [photoMetaByHash]: a typed field would let the
+     * strict reader refuse the whole turn over one bad value in optional research data.
+     *
+     * Never reaches Claude, for the same reason as the location above: ChatStore.history
+     * selects id, message_id, sha256 and mime_type from `attachments`, and nothing else.
+     */
+    @SerialName("photo_meta") val photoMeta: JsonElement? = null,
 ) {
+    /**
+     * The checked metadata for each photo in [blobs], by lowercase hash, and the keys that
+     * were dropped. A hash not in [blobs] is ignored: the metadata describes this turn's
+     * photos, and the attachment rows are what it is stored on.
+     *
+     * Walks only the top level, and never prints, compares, or hashes [photoMeta] or this
+     * request: each recurses, and a value nested thousands deep would overflow the stack.
+     * [PhotoMeta.check] drops nested values the same way.
+     */
+    fun photoMetaByHash(): CheckedPhotoMeta {
+        val sent = photoMeta as? JsonObject
+        if (sent == null) {
+            val absent = photoMeta == null || photoMeta is JsonNull
+            return CheckedPhotoMeta(emptyMap(), if (absent) emptyList() else listOf("(not an object)"))
+        }
+        val wanted = blobs.map { it.lowercase() }.toSet()
+        val kept = mutableMapOf<String, JsonObject>()
+        val dropped = mutableListOf<String>()
+        for ((sha, raw) in sent) {
+            val hash = sha.lowercase()
+            if (hash !in wanted) continue
+            val checked = PhotoMeta.check(raw)
+            checked.meta?.let { kept[hash] = it }
+            dropped += checked.dropped
+        }
+        return CheckedPhotoMeta(kept, dropped)
+    }
+
     /**
      * The fix, if all three arrived and each is in range.
      *
@@ -88,6 +131,15 @@ data class ChatRequest(
  * reflection — which surfaces as every request to this route failing to decode.
  */
 private const val MAX_ACCURACY_METRES = 5000.0
+
+/**
+ * A turn's photo metadata after [com.qualityverifier.domain.PhotoMeta.check]: what to store
+ * on each attachment row, by lowercase hash, and the keys dropped on the way, for the log.
+ */
+data class CheckedPhotoMeta(
+    val byHash: Map<String, JsonObject>,
+    val dropped: List<String>,
+)
 
 /** A validated point, ready to store. */
 data class SessionLocation(
