@@ -43,8 +43,8 @@ milliseconds throughout.
 | Endpoint | Returns |
 |---|---|
 | `GET /users` | accounts, with phone, name, business, latitude/longitude and accuracy |
-| `GET /assessments` | assessments, newest last, each with the `app_version_code` that started it. Filters: `user`, `item`, `testers=1`, `updated_since` |
-| `GET /assessments/{id}` | one assessment with its messages, photo hashes in order, and the evaluator's critique if there is one |
+| `GET /assessments` | assessments, newest last, each with the `app_version_code` that started it, its `purpose`, `language`, `piece_id`, and `prompt_sha`. Filters: `user`, `item`, `testers=1`, `updated_since` |
+| `GET /assessments/{id}` | one assessment with its messages, photo hashes in order, each photo's camera metadata, its `problems`, and the evaluator's critique if there is one |
 | `GET /tester-feedback` | every evaluator critique, keyed on `session_id` |
 | `GET /photos/{sha256}` | the JPEG bytes |
 
@@ -76,11 +76,37 @@ A hash that no assessment refers to returns 404 even if the file is on disk. Tha
 deliberate: the path parameter becomes a filename, so "any 64 hex characters" would
 otherwise be a request for any file in the blob directory.
 
+### Camera metadata
+
+From v0.4.0 the phone reads chosen EXIF fields from each photo before it shrinks and
+re-encodes it, and the uploaded JPEG carries none. The fields are stored beside the photo
+(V25) and returned only by `GET /assessments/{id}`, as `messages[].photo_meta`: a list in
+the same order as `messages[].photos`, so entry n describes photo n. An entry is `null` for
+a photo sent without metadata, which is every photo from v0.3.0 or older and every photo of
+a deleted account. Within an entry, a key the camera did not fill is absent.
+
+| Key | Meaning |
+|---|---|
+| `taken_at`, `taken_at_offset` | when the photo was taken, by the camera's clock (`2026-11-10T14:03:22`), and its offset from UTC (`+03:00`) if recorded |
+| `make`, `model` | the phone |
+| `exposure_time_s`, `f_number`, `iso`, `flash`, `focal_length_mm`, `focal_length_35mm`, `white_balance` | camera settings. `flash` is the EXIF bit field (bit 0: fired); `white_balance` is 0 automatic, 1 manual |
+| `lens_make`, `lens_model`, `lens_specification` | the lens; the specification is up to four numbers: shortest and longest focal length, then the smallest F-number at each |
+| `body_serial`, `lens_serial`, `image_unique_id` | identifiers |
+| `owner_name`, `artist` | names the phone's owner set in the camera |
+| `original_width`, `original_height` | the photo's size before shrinking, upright |
+| `gps_latitude`, `gps_longitude`, `gps_altitude_m`, `gps_time` | the camera's GPS (`gps_time` is UTC), only while the app's location switch was on |
+
+Serial numbers, the unique ID, owner and artist names, and GPS identify a person or a
+handset: store them with the restricted identifiers. They are not the assessment's location
+(that is the session's own point), and many phones fill few of these fields.
+
 ## Joining it together
 
 - `assessments[].user_id` → `users[].id`
 - `tester_feedback[].session_id` → `assessments[].id` (one critique per assessment, at most)
 - `messages[].photos[]` → `/photos/{sha}`
+- `assessments[].piece_id` → the other assessments with the same `piece_id` (a piece and
+  its re-assessments)
 
 ## Which build made an assessment
 
@@ -91,6 +117,67 @@ Kagua and 4 in Fundi Bora are different builds. It is `null` for every assessmen
 v0.3.0 or older, which did not send the header; null means "not known" and stands for no
 particular version. A change to photo processing or to the intake ships in a build, so this is
 the column that separates assessments made before such a change from those made after.
+
+## Purpose, language, piece, and prompt
+
+Four more fields on every assessment, on both the list and the single route (v0.4.0):
+
+| Field | Type | Example | Meaning |
+|---|---|---|---|
+| `purpose` | string or null | `"evaluate"` | why the maker opened the assessment: `evaluate` and `reevaluate` are full assessments with a verdict; `diagnose`, `work_in_progress`, `verify_fix`, `new_issue`, `customer_return`, `learn`, and `other` are partial checks |
+| `language` | string or null | `"sw"` | the language the maker chose, `en` or `sw` |
+| `piece_id` | string or null | `"5b0c…"` | the piece the assessment is of; a re-assessment carries its piece's id, so the two join |
+| `prompt_sha` | string or null | `"9f2e…"` (64 hex characters) | SHA-256 of the full system prompt the server assembled when the assessment started |
+
+`purpose` and `language` are decoded from the intake code Fundi Bora stores with the
+session (`fundi-<language>-<purpose>`). Both are `null` for every Kagua assessment, and for
+a Fundi Bora code this server cannot read; they are never one set and the other null.
+Keep partial checks apart from full assessments in any rate: a clean check of one joint
+says nothing about the rest of the piece.
+
+`piece_id` is `null` for Kagua and for Fundi Bora assessments made before pieces existed.
+`prompt_sha` changes whenever any prompt file that builds the system prompt changes, which
+happens without an app release; the research team's translation table maps each value to
+the prompt-file versions that built it.
+
+## Problems
+
+`GET /assessments/{id}` returns `problems`, beside `assessment` and `messages`: the
+problems the assessment found, worst first, read from the stored replies on each request.
+The list route carries none, since that would mean reading every reply on a page of 200.
+
+```json
+"problems": [
+  {"title": "Gap at the back left joint", "area": "structural", "severity": "moderate",
+   "dimension": "joint_fit", "default_part": "joinery"},
+  {"title": "Fabric pulled unevenly over the arm", "area": "upholstery", "severity": "minor",
+   "dimension": "finishing", "default_part": "upholstery"}
+]
+```
+
+- Every purpose, not only full assessments: a diagnosis or a work-in-progress check lists
+  its findings. Read `problems` with the assessment's `purpose`.
+- The newest verdict and the newest diagnosis in the conversation decide, so a follow-up
+  that corrects either replaces the earlier list. For an assessment with a verdict, the
+  number of problems is the defect count the admin portal's quality rates use.
+- Replies written before the v0.4.0 prompt change list each problem twice: as a diagnosis
+  finding (the cause) and as a verdict defect (the consequence), linked by title. There the
+  verdict's defects are the problems, and each takes its `dimension` from the finding with
+  the same title, or `null` when no finding has that title. Replies written after list
+  each problem once, as a finding with its own `dimension`.
+- `default_part` is the part of the piece the server puts the problem down to, for linking
+  it to the workers named in "Who worked on this?". The rules, first match wins: area
+  `upholstery` → `upholstery`; then by dimension: `frame_squareness` → `frame`,
+  `joint_fit` → `joinery`, `finishing` and `surface` → `finishing`, `hardware` →
+  `assembly`, `material` → none; then by area: `surface` → `finishing`, `hardware` →
+  `assembly`, and `structural`, `level`, `material`, `other` → none. `null` means the
+  labels do not say whose work it was.
+- `area`, `severity`, and `dimension` are lowercased and `null` when the reply left them
+  out. The problems' wording (what I see, what it means, what to do, the cause) stays in
+  `messages[].text`.
+- `problems` is `[]` when the assessment found nothing or never reached a verdict or a
+  diagnosis, and `null` when the problems cannot be known: the newest diagnosis block would
+  not decode and no verdict defects stand in for it.
 
 ## Three things that will bite an analysis if nobody mentions them
 

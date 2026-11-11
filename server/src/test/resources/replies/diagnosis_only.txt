@@ -1,0 +1,30 @@
+intake: fundi-en-diagnose
+--- reply ---
+The drawer sticks because the opening is not square, and the runner is set low on one side.
+
+```fb-diagnosis
+{
+  "language": "en",
+  "findings": [
+    {
+      "title": "Drawer opening out of square",
+      "area": "structural",
+      "severity": "moderate",
+      "dimension": "frame_squareness",
+      "what_happened": "The diagonals of the opening differ by about 5mm.",
+      "manufacturing_cause": "The carcass was glued up without checking the diagonals.",
+      "root_habit": "Squareness is checked by eye."
+    },
+    {
+      "title": "Runner set low on the right",
+      "area": "hardware",
+      "severity": "minor",
+      "dimension": "hardware",
+      "what_happened": "The right runner sits about 2mm lower than the left.",
+      "manufacturing_cause": "The runners were screwed on without a spacer.",
+      "root_habit": "Runner height is marked from the bottom edge, which is not straight."
+    }
+  ],
+  "one_check": "Does the drawer stick all the way in, or only at the end?"
+}
+```

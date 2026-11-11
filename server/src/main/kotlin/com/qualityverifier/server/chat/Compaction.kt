@@ -2,6 +2,7 @@ package com.qualityverifier.server.chat
 
 import com.qualityverifier.data.prompts.PromptRepository
 import com.qualityverifier.domain.Attachment
+import com.qualityverifier.domain.Audience
 import com.qualityverifier.domain.ChatMessage
 import com.qualityverifier.domain.Role
 import com.qualityverifier.server.blobs.BlobStore
@@ -143,9 +144,19 @@ class Compactor(
     private val log = LoggerFactory.getLogger(Compactor::class.java)
     private val pending = ConcurrentHashMap<String, Deferred<Unit>>()
 
-    fun schedule(userId: String, sessionId: String, systemPrompt: String, replyMessageId: String) {
+    /**
+     * [audience] is the one the turn was taken as, passed on rather than looked up: the
+     * notes are spent on the same app's assessment, and billed to it.
+     */
+    fun schedule(
+        userId: String,
+        sessionId: String,
+        systemPrompt: String,
+        replyMessageId: String,
+        audience: Audience,
+    ) {
         val job = scope.async {
-            runCatching { compact(userId, sessionId, systemPrompt, replyMessageId) }
+            runCatching { compact(userId, sessionId, systemPrompt, replyMessageId, audience) }
                 .onFailure { log.warn("Could not write notes for session {}", sessionId, it) }
             Unit
         }
@@ -161,7 +172,13 @@ class Compactor(
         }
     }
 
-    private suspend fun compact(userId: String, sessionId: String, systemPrompt: String, replyMessageId: String) {
+    private suspend fun compact(
+        userId: String,
+        sessionId: String,
+        systemPrompt: String,
+        replyMessageId: String,
+        audience: Audience,
+    ) {
         val history = store.history(sessionId) { sha -> blobs.pathFor(sha).absolutePath }
         val upTo = history.indexOfFirst { it.id == replyMessageId }
         if (upTo < 0) return
@@ -181,14 +198,15 @@ class Compactor(
                 )
                 store.recordUsage(
                     userId, sessionId, result.model, result.usage,
-                    httpStatus = 200, latencyMillis = elapsed, errorKind = null, callKind = CALL_KIND,
+                    httpStatus = 200, latencyMillis = elapsed, errorKind = null,
+                    audience = audience, callKind = CALL_KIND,
                 )
                 log.info("Wrote notes for session {} in {} ms", sessionId, elapsed)
             }
             is ClaudeResult.Failure -> store.recordUsage(
                 userId, sessionId, null, result.usage,
                 httpStatus = result.httpStatus, latencyMillis = elapsed,
-                errorKind = result.error.name, callKind = CALL_KIND,
+                errorKind = result.error.name, audience = audience, callKind = CALL_KIND,
             )
         }
     }

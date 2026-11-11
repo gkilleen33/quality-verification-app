@@ -1,7 +1,9 @@
 package com.qualityverifier.server.api
 
+import com.qualityverifier.domain.FundiPurpose
 import com.qualityverifier.server.admin.AdminStore
 import com.qualityverifier.server.blobs.BlobStore
+import com.qualityverifier.server.reports.DefectList
 import io.ktor.http.ContentType
 import io.ktor.http.HttpStatusCode
 import io.ktor.server.application.ApplicationCall
@@ -116,7 +118,7 @@ fun Route.apiRoutes(
                 call.respond(HttpStatusCode.NotFound, ApiError("no_such_assessment"))
                 return@get
             }
-            call.respond(detail)
+            call.respond(detail.copy(problems = apiProblemsOf(detail)))
         }
 
         get("/tester-feedback") {
@@ -172,6 +174,33 @@ private fun ApplicationCall.apiKey(): String? {
         ?.let { return it }
     return request.headers["X-API-Key"]?.trim()?.takeIf { it.isNotEmpty() }
 }
+
+/**
+ * The assessment's problems, from the replies already read for [ApiAssessmentDetail.messages].
+ *
+ * Here rather than in the store so the store stays a reader of rows, and so the list route,
+ * which never reaches this, cannot carry problems by accident. Null when [DefectList] says
+ * the problems cannot be known.
+ */
+internal fun apiProblemsOf(detail: ApiAssessmentDetail): List<ApiProblem>? {
+    val list = DefectList.fromTexts(
+        detail.messages.filter { it.role == ASSISTANT_ROLE }.map { it.text },
+        detail.assessment.purpose?.let { FundiPurpose.fromId(it) },
+    )
+    if (list.unknown) return null
+    return list.problems.map { problem ->
+        ApiProblem(
+            title = problem.title,
+            area = problem.area.ifBlank { null },
+            severity = problem.severity.ifBlank { null },
+            dimension = problem.dimension.ifBlank { null },
+            defaultPart = problem.defaultPart?.id,
+        )
+    }
+}
+
+/** `messages.role`, as V1's CHECK spells it. */
+private const val ASSISTANT_ROLE = "ASSISTANT"
 
 private fun ApplicationCall.limit(): Int =
     request.queryParameters["limit"]?.toIntOrNull()?.coerceIn(1, MAX_LIMIT) ?: DEFAULT_LIMIT

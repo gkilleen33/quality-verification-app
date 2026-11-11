@@ -46,9 +46,11 @@ import com.qualityverifier.domain.WorkerSlot
 import com.qualityverifier.fundi.ui.coach.DiagnosisCard
 import com.qualityverifier.fundi.ui.coach.FixPlanCard
 import com.qualityverifier.fundi.ui.coach.VerdictCard
+import com.qualityverifier.fundi.ui.coach.verdictCardProblems
 import com.qualityverifier.fundi.ui.fundiContainer
 import com.qualityverifier.text.FundiLabels
 import com.qualityverifier.text.ReportLabels
+import com.qualityverifier.text.RetryLabels
 import com.qualityverifier.text.markdownToPlainText
 import com.qualityverifier.text.parseAssistantContent
 import com.qualityverifier.ui.capture.CaptureScreen
@@ -57,6 +59,8 @@ import com.qualityverifier.ui.plan.WorkingText
 import com.qualityverifier.ui.plan.PhysicalTestsScreen
 import com.qualityverifier.ui.plan.PlanActionBar
 import com.qualityverifier.ui.plan.PlanCard
+import com.qualityverifier.ui.turn.FailedTurnRow
+import com.qualityverifier.ui.turn.UnansweredTurnRow
 import java.io.File
 
 /** Which part of the loop the maker is in. */
@@ -92,6 +96,10 @@ fun AssessScreen(
     val pieceName by viewModel.pieceLabel.collectAsState()
     val roster by viewModel.roster.collectAsState()
     val previousWorkers by viewModel.previousWorkers.collectAsState()
+    val review by viewModel.review.collectAsState()
+    val openingSent by viewModel.openingSent.collectAsState()
+    val processing by viewModel.processing.collectAsState()
+    val unanswered by viewModel.unansweredTurn.collectAsState()
 
     val labels = FundiLabels.ENGLISH
     // The capture pipeline and the verdict speak ReportLabels, and follow the language
@@ -106,19 +114,34 @@ fun AssessScreen(
 
     // A finished assessment opens on its conversation; a new one on its intake. Decided
     // once it is known which this is, never from the message list, which arrives late.
-    LaunchedEffect(existing) {
-        when (existing) {
-            true -> if (stage == Stage.LOADING) stage = Stage.TALKING
-            false -> if (stage == Stage.LOADING) stage = Stage.INTAKE
-            null -> Unit
+    // An intake already sent counts as finished: `existing` is read once when the view
+    // model starts, and a screen rebuilt after the intake went out (a rotation resets
+    // `stage`) would otherwise walk the maker through the intake again.
+    LaunchedEffect(existing, openingSent) {
+        if (stage != Stage.LOADING) return@LaunchedEffect
+        when {
+            existing == true || openingSent -> stage = Stage.TALKING
+            existing == false -> stage = Stage.INTAKE
         }
     }
 
+    // The opening photograph is kept only after it is processed, and after the maker has
+    // answered a quality warning if there was one; the intake is sent then, and the
+    // conversation opens. Keyed on the stage too, not only the flag: a maker who reaches
+    // the opening camera with the intake already out must not be left on it.
+    LaunchedEffect(openingSent, stage) {
+        if (openingSent && stage == Stage.OPENING_PHOTO) stage = Stage.TALKING
+    }
+
+    // A photograph belongs to the stage it was taken in. Every change of stage leaves the
+    // camera, by a button or not: the last shot kept, the opening sent, or the screen
+    // rebuilt at LOADING. Finished on another stage, a dark opening photograph would come
+    // up for review on a plan shot's camera and send the intake a second time.
+    LaunchedEffect(stage) { viewModel.leaveCamera() }
+
     // A plan is picked up from the conversation rather than from the reply, so it
     // survives the screen being rebuilt.
-    LaunchedEffect(messages) {
-        messages.lastOrNull { it.role == Role.ASSISTANT }?.let(viewModel::offerPlanFrom)
-    }
+    LaunchedEffect(messages) { viewModel.offerPlanFromLatest(messages) }
 
     when (stage) {
         Stage.LOADING -> Box(Modifier.fillMaxSize())
@@ -128,6 +151,7 @@ fun AssessScreen(
             returning = returning,
             priorIssues = priorIssues,
             initialName = pieceName,
+            itemType = itemType,
             roster = roster,
             initialWorkers = previousWorkers,
             onAddWorker = viewModel::addWorker,
@@ -145,19 +169,30 @@ fun AssessScreen(
             val optional = answered.purpose.photoOptional
             CaptureScreen(
                 instruction = labels.photoInstructions[answered.purpose],
-                reviewPhotoPath = null,
-                warning = null,
+                reviewPhotoPath = review?.path,
+                warning = review?.warning,
+                processing = processing,
                 createFile = viewModel::newCaptureFile,
+                // Processed and checked first, as in Kagua. The screen leaves the camera
+                // when the photograph is kept and the intake goes with it (openingSent).
                 onCaptured = { file ->
-                    stage = Stage.TALKING
-                    viewModel.start(answered, file.absolutePath, name, workedOn)
+                    viewModel.onPhotoCaptured(
+                        file,
+                        PhotoTarget.Opening(answered, name, workedOn),
+                    )
                 },
-                onKeep = {},
-                onRetake = {},
-                onClose = { stage = Stage.INTAKE },
+                onKeep = viewModel::keepReviewedPhoto,
+                onRetake = viewModel::discardReviewedPhoto,
+                onClose = {
+                    // A photograph still processing or under review was never kept, and
+                    // must not send the intake after the maker has gone back to it.
+                    viewModel.leaveCamera()
+                    stage = Stage.INTAKE
+                },
                 skipLabel = labels.skipPhoto.takeIf { optional },
                 onSkip = if (optional) {
                     {
+                        viewModel.leaveCamera()
                         stage = Stage.TALKING
                         viewModel.start(answered, null, name, workedOn)
                     }
@@ -176,13 +211,19 @@ fun AssessScreen(
                 val shot = current.plan.photos[index]
                 CaptureScreen(
                     instruction = shot.instruction.ifBlank { shot.title },
-                    reviewPhotoPath = null,
-                    warning = null,
+                    reviewPhotoPath = review?.path,
+                    warning = review?.warning,
+                    processing = processing,
                     createFile = viewModel::newCaptureFile,
-                    onCaptured = { file -> viewModel.attachShot(index, file.absolutePath) },
-                    onKeep = {},
-                    onRetake = {},
-                    onClose = { stage = Stage.TALKING },
+                    onCaptured = { file ->
+                        viewModel.onPhotoCaptured(file, PhotoTarget.PlanShot(index))
+                    },
+                    onKeep = viewModel::keepReviewedPhoto,
+                    onRetake = viewModel::discardReviewedPhoto,
+                    onClose = {
+                        viewModel.leaveCamera()
+                        stage = Stage.TALKING
+                    },
                     counter = reportLabels.shotOf(index + 1, current.plan.photos.size),
                     skipLabel = reportLabels.cannotDoThis,
                     onSkip = { viewModel.skipShot(index) },
@@ -215,11 +256,14 @@ fun AssessScreen(
             messages = messages,
             run = run,
             sending = sending,
-            error = error?.message,
+            error = error,
+            unanswered = unanswered,
             purpose = purpose,
             labels = labels,
             reportLabels = reportLabels,
             onSend = viewModel::send,
+            onRetry = viewModel::retry,
+            onDismissError = viewModel::dismissError,
             onStartCamera = { stage = Stage.SHOOTING },
             onStartTests = { stage = Stage.TESTING },
             onSubmit = viewModel::submitRun,
@@ -234,11 +278,15 @@ private fun Conversation(
     messages: List<ChatMessage>,
     run: PlanRun?,
     sending: Boolean,
-    error: String?,
+    error: AssessError?,
+    /** The maker's last turn has no reply and nothing is in flight. */
+    unanswered: Boolean,
     purpose: FundiPurpose?,
     labels: FundiLabels,
     reportLabels: ReportLabels,
     onSend: (String) -> Unit,
+    onRetry: () -> Unit,
+    onDismissError: () -> Unit,
     onStartCamera: () -> Unit,
     onStartTests: () -> Unit,
     onSubmit: () -> Unit,
@@ -281,7 +329,23 @@ private fun Conversation(
                     )
                 }
             }
-            error?.let { item { Text(it, color = MaterialTheme.colorScheme.error) } }
+        }
+
+        // Below the conversation and above whatever answers it, as in Kagua. Retry only for
+        // a turn that failed on its way to the model; a photograph that would not process,
+        // or a sign-in failure, is not fixed by sending again.
+        error?.let {
+            FailedTurnRow(
+                message = it.message,
+                labels = RetryLabels.ENGLISH,
+                onRetry = if (it.retryable) onRetry else null,
+                onDismiss = onDismissError,
+            )
+        }
+        // Only when there is no live error: a turn that just failed already has a row with
+        // a Retry on it, and two prompts to do the same thing is worse than one.
+        if (error == null && unanswered) {
+            UnansweredTurnRow(RetryLabels.ENGLISH, onSend = onRetry)
         }
 
         when {
@@ -316,6 +380,11 @@ private fun Conversation(
                 onSubmit = onSubmit,
             )
 
+            // No new turn while the last one has no reply. Only the newest turn goes on
+            // the wire, so a reply typed over an unanswered opening turn would start the
+            // assessment with the opening turn's words and photograph never sent.
+            unanswered -> Unit
+
             else -> ReplyBar(
                 options = lastAssistant?.let { parseAssistantContent(it.text).options }.orEmpty(),
                 labels = labels,
@@ -334,8 +403,8 @@ private fun AssistantTurn(message: ChatMessage, labels: FundiLabels, reportLabel
         }
         // A verdict means a full assessment; drawn first because it is the answer the
         // maker came for.
-        content.verdict?.let { VerdictCard(it, reportLabels) }
-        content.diagnosis?.let { DiagnosisCard(it, labels, reportLabels::severity) }
+        content.verdict?.let { VerdictCard(it, verdictCardProblems(content), reportLabels) }
+        content.diagnosis?.let { DiagnosisCard(it, labels, reportLabels) }
         content.fixPlan?.let { FixPlanCard(it, labels) }
     }
 }
