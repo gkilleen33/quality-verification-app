@@ -31,7 +31,10 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.qualityverifier.domain.KenyanPhone
 import com.qualityverifier.fundi.ui.fundiContainer
+import com.qualityverifier.text.AuthLabels
+import com.qualityverifier.ui.phone.KenyanPhoneField
 
 /** The shortest password the server will take. Refused there too; this only saves a round trip. */
 private const val MIN_PASSWORD = 8
@@ -46,9 +49,10 @@ fun FundiSignInScreen(onSignedIn: () -> Unit, onRegister: () -> Unit) {
     val error by viewModel.error.collectAsState()
     val signedIn by viewModel.signedIn.collectAsState()
 
-    // Prefilled, and digits-only afterwards: the server requires international format,
-    // and rejecting "0700..." after the fact teaches the maker nothing.
-    var phone by remember { mutableStateOf("+254") }
+    // The nine digits after a fixed +254. A leading 0 cannot be typed, so the number on
+    // screen is the number the server stores; KenyanPhone.toE164 makes the one sent.
+    var phone by remember { mutableStateOf("") }
+    val e164 = KenyanPhone.toE164(phone)
     var password by remember { mutableStateOf("") }
 
     LaunchedEffect(signedIn) { if (signedIn) onSignedIn() }
@@ -65,8 +69,8 @@ fun FundiSignInScreen(onSignedIn: () -> Unit, onRegister: () -> Unit) {
         PrimaryButton(
             label = "Sign in",
             busy = busy,
-            enabled = !busy && phone.length > 6 && password.isNotBlank(),
-            onClick = { viewModel.signIn(phone, password) },
+            enabled = !busy && e164 != null && password.isNotBlank(),
+            onClick = { e164?.let { viewModel.signIn(it, password) } },
         )
         TextButton(onClick = onRegister, modifier = Modifier.fillMaxWidth()) {
             Text("I have an invite code")
@@ -94,7 +98,8 @@ fun FundiRegisterScreen(onRegistered: () -> Unit, onSignIn: () -> Unit) {
 
     var inviteCode by remember { mutableStateOf("") }
     var name by remember { mutableStateOf("") }
-    var phone by remember { mutableStateOf("+254") }
+    var phone by remember { mutableStateOf("") }
+    val e164 = KenyanPhone.toE164(phone)
     var password by remember { mutableStateOf("") }
 
     LaunchedEffect(signedIn) { if (signedIn) onRegistered() }
@@ -141,8 +146,8 @@ fun FundiRegisterScreen(onRegistered: () -> Unit, onSignIn: () -> Unit) {
             label = "Create account",
             busy = busy,
             enabled = !busy && inviteCode.isNotBlank() && name.isNotBlank() &&
-                phone.length > 6 && password.length >= MIN_PASSWORD,
-            onClick = { viewModel.register(inviteCode, phone, password, name) },
+                e164 != null && password.length >= MIN_PASSWORD,
+            onClick = { e164?.let { viewModel.register(inviteCode, it, password, name) } },
         )
         TextButton(onClick = onSignIn, modifier = Modifier.fillMaxWidth()) {
             Text("I already have an account")
@@ -167,18 +172,16 @@ private fun AuthColumn(content: @Composable () -> Unit) {
     ) { content() }
 }
 
+/**
+ * The phone field both apps share, with its English wording because the rest of these
+ * screens is in English. One copy of the rule and its messages serves both apps.
+ */
 @Composable
-private fun PhoneField(value: String, onChange: (String) -> Unit) {
-    OutlinedTextField(
-        value = value,
-        onValueChange = { onChange(it.filter { c -> c.isDigit() || c == '+' }) },
-        label = { Text("Phone number") },
-        supportingText = { Text("With the country code, like +254712345678") },
-        keyboardOptions = KeyboardOptions(
-            keyboardType = KeyboardType.Phone,
-            imeAction = ImeAction.Next,
-        ),
-        singleLine = true,
+private fun PhoneField(digits: String, onChange: (String) -> Unit) {
+    KenyanPhoneField(
+        labels = AuthLabels.ENGLISH,
+        digits = digits,
+        onDigitsChange = onChange,
         modifier = Modifier.fillMaxWidth(),
     )
 }

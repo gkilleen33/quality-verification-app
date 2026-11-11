@@ -45,8 +45,10 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.qualityverifier.domain.KenyanPhone
 import com.qualityverifier.ui.appContainer
 import com.qualityverifier.ui.location.LocationOptIn
+import com.qualityverifier.ui.phone.KenyanPhoneField
 import com.qualityverifier.ui.rememberAuthLabels
 
 /**
@@ -71,7 +73,9 @@ fun RegisterScreen(onRegistered: () -> Unit, onSignIn: () -> Unit) {
 
     var invite by remember { mutableStateOf("") }
     var name by remember { mutableStateOf("") }
-    var phone by remember { mutableStateOf("+254") }
+    // The nine digits after +254; KenyanPhone.toE164 makes the number that is sent.
+    var phone by remember { mutableStateOf("") }
+    val e164 = KenyanPhone.toE164(phone)
     var password by remember { mutableStateOf("") }
     var isBusiness by remember { mutableStateOf(false) }
     var businessName by remember { mutableStateOf("") }
@@ -137,16 +141,10 @@ fun RegisterScreen(onRegistered: () -> Unit, onSignIn: () -> Unit) {
             keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next),
             modifier = Modifier.fillMaxWidth(),
         )
-        OutlinedTextField(
-            value = phone,
-            onValueChange = { phone = it.filter { c -> c.isDigit() || c == '+' } },
-            label = { Text(labels.phoneLabel) },
-            supportingText = { Text(labels.phoneHint) },
-            keyboardOptions = KeyboardOptions(
-                keyboardType = KeyboardType.Phone,
-                imeAction = ImeAction.Next,
-            ),
-            singleLine = true,
+        KenyanPhoneField(
+            labels = labels,
+            digits = phone,
+            onDigitsChange = { phone = it },
             modifier = Modifier.fillMaxWidth(),
         )
         OutlinedTextField(
@@ -251,18 +249,20 @@ fun RegisterScreen(onRegistered: () -> Unit, onSignIn: () -> Unit) {
         Spacer(Modifier.height(8.dp))
         Button(
             onClick = {
-                viewModel.register(
-                    inviteCode = invite,
-                    phone = phone,
-                    password = password,
-                    name = name,
-                    isBusiness = isBusiness,
-                    businessName = businessName,
-                    location = location,
-                )
+                e164?.let {
+                    viewModel.register(
+                        inviteCode = invite,
+                        phone = it,
+                        password = password,
+                        name = name,
+                        isBusiness = isBusiness,
+                        businessName = businessName,
+                        location = location,
+                    )
+                }
             },
             enabled = !busy && invite.isNotBlank() && name.isNotBlank() &&
-                phone.length > 6 && password.length >= 8 &&
+                e164 != null && password.length >= 8 &&
                 (!isBusiness || businessName.isNotBlank()),
             modifier = Modifier
                 .fillMaxWidth()
