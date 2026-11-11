@@ -124,15 +124,19 @@ class AppContainer(
         "quality_verifier.db",
     ).addMigrations(*AppDatabase.MIGRATIONS).build()
 
-    val images: ImageFileStore = ImageFileStore(appContext)
-
-    val tokenStore: TokenStore = EncryptedPrefsTokenStore(appContext)
-
     /**
      * Whether assessments record where they were made. Chosen at sign-up, set in Settings.
-     * Declared before [localAccount], whose clear forgets it.
+     * Declared before [images], which reads it, and [localAccount], whose clear forgets it.
      */
     val locationPreference = LocationPreference(appContext, locationAnswerRequired)
+
+    /**
+     * Photos, and the camera metadata kept beside them. The location switch also decides
+     * whether a photo's own GPS is kept: off means the camera's point is never sent either.
+     */
+    val images: ImageFileStore = ImageFileStore(appContext) { locationPreference.records }
+
+    val tokenStore: TokenStore = EncryptedPrefsTokenStore(appContext)
 
     /**
      * Clears the local data when a different account signs in (see [LocalAccountGuard]).

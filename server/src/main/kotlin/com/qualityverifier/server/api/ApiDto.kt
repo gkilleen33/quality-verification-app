@@ -2,6 +2,7 @@ package com.qualityverifier.server.api
 
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.JsonObject
 
 /**
  * What the read-only API returns.
@@ -90,6 +91,57 @@ data class ApiAssessment(
      * "not known", never "version 0". Defaulted so the field's arrival changes no caller.
      */
     @SerialName("app_version_code") val appVersionCode: Int? = null,
+    /**
+     * Why the maker opened this assessment (`evaluate`, `reevaluate`, `diagnose`,
+     * `work_in_progress`, `verify_fix`, `new_issue`, `customer_return`, `learn`, `other`),
+     * decoded from the session's intake code. Only `evaluate` and `reevaluate` are full
+     * assessments with a verdict; the rest are partial checks, which analysis keeps apart.
+     *
+     * Null for Kagua, and for a Fundi Bora code this server cannot read: "not known".
+     */
+    val purpose: String? = null,
+    /** The language the maker chose for this assessment (`en`, `sw`), with [purpose]. */
+    val language: String? = null,
+    /**
+     * The piece this assessment is of, so a re-assessment joins to the first one. Null for
+     * Kagua, and for an assessment started before pieces existed or whose piece is gone.
+     */
+    @SerialName("piece_id") val pieceId: String? = null,
+    /**
+     * SHA-256 of the full system prompt the server assembled when the assessment started.
+     * The prompt files change without an app release, so this is what says which version
+     * of the protocol wrote the replies. Null where nothing recorded it.
+     */
+    @SerialName("prompt_sha") val promptSha: String? = null,
+)
+
+/**
+ * One problem an assessment found, on the single-assessment route only: listing them for a
+ * page of up to 200 assessments would mean reading every reply.
+ *
+ * Read from the stored replies on each request (`reports/DefectList.kt`), in the order the
+ * reply gave them, worst first. The wording stays in the messages; these are the labels.
+ */
+@Serializable
+data class ApiProblem(
+    val title: String,
+    /** structural, level, surface, material, upholstery, hardware, or other; null if not given. */
+    val area: String?,
+    /** serious, moderate, minor, or cosmetic; null if not given. */
+    val severity: String?,
+    /**
+     * The skill it belongs to (frame_squareness, joint_fit, finishing, surface, material,
+     * hardware). In replies written before the prompt wrote each problem once, a verdict
+     * defect takes it from the diagnosis finding with the same title, and is null when no
+     * finding has that title. Null for Kagua.
+     */
+    val dimension: String?,
+    /**
+     * The part of the piece the server puts it down to: frame, joinery, upholstery,
+     * finishing, or assembly. Null when the labels do not say whose work it was (material,
+     * structural or level with no dimension, other).
+     */
+    @SerialName("default_part") val defaultPart: String?,
 )
 
 @Serializable
@@ -99,6 +151,16 @@ data class ApiMessage(
     @SerialName("created_at") val createdAt: Long,
     /** SHA-256 hashes, in the order the customer took them. Fetch with /api/v1/photos. */
     val photos: List<String>,
+    /**
+     * Each photo's camera metadata (V25), in the same order as [photos]: the first entry
+     * belongs to the first hash. Null for a photo sent without any, which is every photo
+     * from v0.3.0 or older and every photo of a deleted account. Keys are
+     * `PhotoMeta.FIELDS`; a key the camera did not fill is absent.
+     *
+     * A list beside [photos] rather than objects in its place, so a consumer reading the
+     * hashes is unchanged. On this route only: the assessment list carries no messages.
+     */
+    @SerialName("photo_meta") val photoMeta: List<JsonObject?> = emptyList(),
 )
 
 @Serializable
@@ -106,6 +168,13 @@ data class ApiAssessmentDetail(
     val assessment: ApiAssessment,
     val messages: List<ApiMessage>,
     val feedback: ApiTesterFeedback?,
+    /**
+     * The assessment's problems, for every purpose. Empty when it found none or wrote no
+     * verdict or diagnosis; null when they cannot be known, because the newest diagnosis
+     * block would not decode (the stored defect count is null then too). Filled in by the
+     * route from [messages], not by the store.
+     */
+    val problems: List<ApiProblem>? = null,
 )
 
 @Serializable

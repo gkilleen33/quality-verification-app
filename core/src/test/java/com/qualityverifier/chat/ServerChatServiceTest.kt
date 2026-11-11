@@ -21,6 +21,9 @@ import com.qualityverifier.domain.WorkPart
 import com.qualityverifier.domain.WorkerSlot
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
 import okhttp3.OkHttpClient
 import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
@@ -60,6 +63,7 @@ class ServerChatServiceTest {
     private fun service(
         store: TokenStore = FakeStore(),
         chatPath: String = "v1/chat",
+        images: ImageBytesSource = FakeImages,
     ): ServerChatService {
         val client = OkHttpClient.Builder()
             .connectTimeout(2, TimeUnit.SECONDS)
@@ -68,7 +72,7 @@ class ServerChatServiceTest {
         return ServerChatService(
             client = client,
             tokens = TokenProvider(store, { RefreshOutcome.Renewed("refreshed", 900, "r2", "u") }),
-            images = FakeImages,
+            images = images,
             sessionStart = { sessionStart },
             baseUrl = server.url("/").toString(),
             json = Json { ignoreUnknownKeys = true },
@@ -467,6 +471,47 @@ class ServerChatServiceTest {
 
         val failure = service().send("s1", ItemType.WOODEN_TABLE, history()) as ChatResult.Failure
         assertTrue(failure.message.contains("sign in again"))
+    }
+
+    // v0.4.0, D3. Keyed by hash, so the server stores each photo's metadata on that photo's
+    // row even when an unreadable photo before it was skipped.
+    @Test
+    fun `each photo's camera metadata travels keyed by its hash`() = runTest {
+        server.enqueue(MockResponse().setResponseCode(200))   // HEAD: present
+        server.enqueue(json("""{"message_id":"m1","text":"ok"}"""))
+        val meta = buildJsonObject { put("make", "samsung"); put("iso", 200) }
+        val images = object : ImageBytesSource {
+            override fun bytesForUpload(file: File): ByteArray? =
+                if (file.name.contains("missing")) null else FAKE_BYTES
+            override fun photoMetaFor(file: File): JsonObject? = meta
+        }
+
+        service(images = images).send(
+            "s1", ItemType.WOODEN_STOOL,
+            history(Attachment("a0", "/x/missing.jpg"), Attachment("a1", "/x/p1.jpg")),
+        )
+
+        server.takeRequest() // HEAD
+        val body = server.takeRequest().body.readUtf8()
+        assertTrue(body, body.contains("\"blobs\":[\"$SHA_OF_FAKE_BYTES\"]"))
+        assertTrue(
+            body,
+            body.contains("\"photo_meta\":{\"$SHA_OF_FAKE_BYTES\":{\"make\":\"samsung\",\"iso\":200}}"),
+        )
+    }
+
+    // An old server refuses keys it does not know, and a turn with nothing to say sends
+    // nothing: the field is absent, not null or empty.
+    @Test
+    fun `a turn whose photos have no metadata sends no photo_meta`() = runTest {
+        server.enqueue(MockResponse().setResponseCode(200))
+        server.enqueue(json("""{"message_id":"m1","text":"ok"}"""))
+
+        service().send("s1", ItemType.WOODEN_STOOL, history(Attachment("a1", "/x/p1.jpg")))
+
+        server.takeRequest()
+        val body = server.takeRequest().body.readUtf8()
+        assertFalse(body, body.contains("photo_meta"))
     }
 
     @Test

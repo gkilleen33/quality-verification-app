@@ -104,6 +104,8 @@ class MigrationsTest {
         "pieces" to "label",
         // V23: a worker's nickname.
         "workers" to "name",
+        // V25: a photo's GPS point, serial numbers, and owner and artist names.
+        "attachments" to "photo_meta",
     )
 
     @Test
@@ -148,6 +150,50 @@ class MigrationsTest {
                 lost.isEmpty(),
             )
         }
+    }
+
+    /**
+     * A deleted account's tester invite code cannot register a second account (V26, D6).
+     *
+     * The unique index on users.invite_code is what makes a code single use, and
+     * anonymise_user blanks that column. So the function revokes the code, and does it
+     * before the UPDATE on users, while users.invite_code still names it. Revoked the other
+     * way round, the subquery finds NULL and nothing is revoked, with no error.
+     *
+     * Read from the migration because the server tests have no database; AuthTest holds
+     * register() to refusing a revoked code.
+     */
+    @Test
+    fun `anonymise_user revokes the account's invite code before blanking it`() {
+        val latest = files.last { it.readText().contains("FUNCTION anonymise_user") }
+        val body = latest.readText().substringAfter("FUNCTION anonymise_user")
+            .lines().joinToString(" ") { it.substringBefore("--") }
+            .replace(Regex("""\s+"""), " ")
+
+        val revoke = Regex("""(?i)UPDATE invite_codes SET revoked_at = now\(\) WHERE (.*?);""")
+            .find(body)
+        assertTrue(
+            "${latest.name} defines anonymise_user without revoking the account's invite code, " +
+                "so the code registers a new account once the account is deleted",
+            revoke != null,
+        )
+        val where = revoke!!.groupValues[1]
+        assertTrue(
+            "${latest.name} revokes invite codes without picking the target's own: $where",
+            Regex("""(?i)\binvite_code FROM users\b.*\bid = target\b""").containsMatchIn(where),
+        )
+        assertTrue(
+            "${latest.name} overwrites the date an admin already revoked the code on",
+            Regex("""(?i)\brevoked_at IS NULL\b""").containsMatchIn(where),
+        )
+
+        val blank = Regex("""(?i)UPDATE users SET\b""").find(body)
+        assertTrue("${latest.name} defines anonymise_user without an UPDATE on users", blank != null)
+        assertTrue(
+            "${latest.name} revokes the invite code after blanking users.invite_code, so the " +
+                "subquery finds nothing to revoke",
+            revoke.range.first < blank!!.range.first,
+        )
     }
 
     /** Every (table, column, value, where) of each UPDATE, and every DELETE whole. */

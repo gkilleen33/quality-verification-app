@@ -5,6 +5,7 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
+import com.qualityverifier.data.chat.ChatErrorKind
 import com.qualityverifier.data.chat.ChatResult
 import com.qualityverifier.data.chat.ChatService
 import com.qualityverifier.data.db.SessionImageStore
@@ -43,6 +44,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
@@ -51,8 +53,14 @@ import kotlinx.coroutines.withContext
 import java.io.File
 import java.util.UUID
 
-/** What went wrong, in words the maker can act on. */
-data class AssessError(val message: String)
+/**
+ * What went wrong, in words the maker can act on.
+ *
+ * [retryable] marks a turn that failed on its way to the model, which Retry resends. A
+ * photograph that would not process is not one, and nor is a sign-in failure: sending the
+ * same turn again cannot fix either.
+ */
+data class AssessError(val message: String, val retryable: Boolean = false)
 
 /** What a photograph being taken is for, so a kept one goes to the right place. */
 sealed interface PhotoTarget {
@@ -134,6 +142,24 @@ class AssessViewModel(
 
     private val _error = MutableStateFlow<AssessError?>(null)
     val error: StateFlow<AssessError?> = _error.asStateFlow()
+
+    /**
+     * True when the maker's last turn never got a reply, and nothing is in flight. Kagua's
+     * `ChatViewModel.unansweredTurn`, for the same reason: [error] lives only in this
+     * object, so a turn that failed before the app was closed, or the app killed mid-request,
+     * left nothing to say the turn was unanswered. The stored conversation still knows: a
+     * session whose last message is the maker's is an unfinished turn.
+     *
+     * Offered, never acted on. A plan's photographs cost money to send, and somebody
+     * reopening an assessment may only want to read it. [retry] is safe even if the turn
+     * did land: the server keys a turn on its message id and returns the stored reply.
+     */
+    val unansweredTurn: StateFlow<Boolean> =
+        combine(messages, _sending) { list, sending ->
+            // Not while a request is in flight: the turn is stored before it is sent, so
+            // during a normal send the conversation looks exactly like this failure.
+            !sending && list.lastOrNull()?.role == Role.USER
+        }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), false)
 
     private val _run = MutableStateFlow<PlanRun?>(null)
     val run: StateFlow<PlanRun?> = _run.asStateFlow()
@@ -360,6 +386,42 @@ class AssessViewModel(
     }
 
     /**
+     * Sends the last turn again, exactly as it is stored: Retry after a failure, and "Send
+     * again" on an assessment reopened with its last turn unanswered. Kagua's
+     * `ChatViewModel.retry`.
+     *
+     * Nothing is rebuilt and nothing is stored. The turn on the phone keeps its id, text,
+     * photographs and their metadata sidecars, and `ServerChatService` sends the newest
+     * user turn of what is stored, so the request carries the same `message_id` and the
+     * same photographs. Rebuilding would mint a new id, and the server would pay for a turn
+     * it may already have answered.
+     *
+     * That is also why the opening turn goes through here and not through [start]. The
+     * session row, the people and the location point were all written the first time, and
+     * the point reaches the server from the row with every turn; [start] stays once per
+     * assessment.
+     *
+     * Only a turn still waiting on its reply. Sent after a reply has landed, the server
+     * would return that reply again and it would be stored twice.
+     *
+     * Not guarded against a first attempt the server is still waiting on Claude for, after
+     * the phone timed out or was closed: with no reply stored yet the server attempts the
+     * turn again, and both attempts may be charged (F19, a known risk left for later).
+     */
+    fun retry() {
+        if (_sending.value) return
+        _sending.value = true
+        viewModelScope.launch {
+            _error.value = null
+            try {
+                if (sessions.messagesOnce(sessionId).lastOrNull()?.role == Role.USER) deliver()
+            } finally {
+                _sending.value = false
+            }
+        }
+    }
+
+    /**
      * Picks up a plan the assistant has just sent, unless it has already been answered.
      *
      * Driven from the message list rather than from the reply, so a plan survives the
@@ -370,6 +432,19 @@ class AssessViewModel(
         if (message.id in fulfilled || _run.value != null) return
         val plan = parseAssistantContent(message.text).plan ?: return
         _run.value = PlanRun(plan = plan, sourceMessageId = message.id)
+    }
+
+    /**
+     * Offers the plan in the conversation's newest message, if that is the assistant's.
+     *
+     * The newest message, not the newest assistant message: a plan with any turn after it
+     * has been answered. [fulfilled] knows that only for runs sent from this view model, so
+     * an assessment reopened on an unanswered run submission would otherwise offer the plan
+     * again, beside "Send again", and ask for photographs already on the stored turn. The
+     * rule Kagua's `ChatViewModel` keeps.
+     */
+    fun offerPlanFromLatest(conversation: List<ChatMessage>) {
+        conversation.lastOrNull()?.let(this::offerPlanFrom)
     }
 
     /**
@@ -574,7 +649,11 @@ class AssessViewModel(
     private suspend fun deliver() {
         when (val result = chat.send(sessionId, itemType, sessions.messagesOnce(sessionId))) {
             is ChatResult.Success -> sessions.appendAssistantMessage(sessionId, result.text)
-            is ChatResult.Failure -> _error.value = AssessError(result.message)
+            // A sign-in failure is the one a resend cannot fix; Kagua offers Settings there.
+            is ChatResult.Failure -> _error.value = AssessError(
+                message = result.message,
+                retryable = result.kind != ChatErrorKind.AUTH,
+            )
         }
     }
 
