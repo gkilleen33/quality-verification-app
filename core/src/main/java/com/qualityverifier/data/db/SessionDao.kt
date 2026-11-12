@@ -259,9 +259,12 @@ interface SessionDao {
     @Query("SELECT * FROM session_workers WHERE sessionId = :sessionId ORDER BY id")
     suspend fun sessionWorkers(sessionId: String): List<SessionWorkerEntity>
 
-    /** Every assessment one worker is named on, with the part, for the worker's page. */
+    /**
+     * Every assessment one worker is named on, with the part, for the worker's page. A
+     * flow, so the page follows an edit to "Who worked on this?" made while it is open.
+     */
     @Query("SELECT * FROM session_workers WHERE workerId = :workerId ORDER BY id")
-    suspend fun namingsOf(workerId: String): List<SessionWorkerEntity>
+    fun observeNamingsOf(workerId: String): Flow<List<SessionWorkerEntity>>
 
     @Query(
         """

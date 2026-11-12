@@ -47,27 +47,32 @@ class WorkerPageViewModel(
         workers.observeWorkers().map { roster -> roster.firstOrNull { it.id == workerId } }
             .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
 
-    private val all: Flow<List<WorkerPages.Piece>> = summaries.map { list ->
-        WorkerPages.build(list, workers.namedOn(workerId)) { summary ->
-            WorkerPages.Assessment(
-                summary = summary,
-                purpose = intakeCodeOf(summary.id)?.let(FundiIntake::decode)?.second,
-                problems = WorkerPages.problemsIn(messagesOf(summary.id)),
-            )
-        }
-    }
-
-    /** Every piece, unfiltered: what the piece filter offers to choose from. */
-    val pieces: StateFlow<List<WorkerPages.Piece>> =
-        all.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+    /**
+     * Every piece, unfiltered: what the piece filter offers to choose from. Null until the
+     * first read, so the page does not say "not named on any piece" while it loads.
+     *
+     * Built once per change to the summaries or to the worker's rows, and shared: the
+     * build reads every assessment's replies, and [shown] derives from this rather than
+     * reading them again.
+     */
+    val pieces: StateFlow<List<WorkerPages.Piece>?> =
+        combine(summaries, workers.observeNamedOn(workerId)) { list, namings ->
+            WorkerPages.build(list, namings) { summary ->
+                WorkerPages.Assessment(
+                    summary = summary,
+                    purpose = intakeCodeOf(summary.id)?.let(FundiIntake::decode)?.second,
+                    problems = WorkerPages.problemsIn(messagesOf(summary.id)),
+                )
+            }
+        }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
 
     private val _filter = MutableStateFlow(WorkerPages.Filter())
     val filter: StateFlow<WorkerPages.Filter> = _filter.asStateFlow()
 
-    /** What the page lists: [pieces] narrowed to [filter]. */
-    val shown: StateFlow<List<WorkerPages.Piece>> =
-        combine(all, _filter) { pieces, filter -> WorkerPages.filter(pieces, filter) }
-            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+    /** What the page lists: [pieces] narrowed to [filter]. Null while [pieces] loads. */
+    val shown: StateFlow<List<WorkerPages.Piece>?> =
+        combine(pieces, _filter) { pieces, filter -> pieces?.let { WorkerPages.filter(it, filter) } }
+            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
 
     fun setFilter(filter: WorkerPages.Filter) {
         _filter.value = filter

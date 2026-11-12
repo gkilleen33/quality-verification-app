@@ -74,8 +74,10 @@ fun WorkerPageScreen(
         factory = WorkerPageViewModel.factory(container, workerId),
     )
     val worker by model.worker.collectAsState()
-    val pieces by model.pieces.collectAsState()
-    val shown by model.shown.collectAsState()
+    // Null while the first read runs: nothing is said about the pieces until it is done.
+    val loaded by model.pieces.collectAsState()
+    val pieces = loaded.orEmpty()
+    val shown = model.shown.collectAsState().value.orEmpty()
     val filter by model.filter.collectAsState()
     val labels = FundiLabels.ENGLISH
 
@@ -145,7 +147,7 @@ fun WorkerPageScreen(
             }
         }
 
-        if (pieces.isEmpty()) {
+        if (loaded != null && pieces.isEmpty()) {
             item {
                 Text(
                     labels.workerPageNoPieces,
@@ -153,7 +155,7 @@ fun WorkerPageScreen(
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
-        } else if (shown.isEmpty()) {
+        } else if (loaded != null && shown.isEmpty()) {
             item {
                 Text(
                     labels.workerPageNoMatch,
@@ -234,10 +236,15 @@ private fun AssessmentLines(labels: FundiLabels, assessment: WorkerPages.Assessm
         ).joinToString(" · "),
         style = MaterialTheme.typography.bodyMedium,
     )
-    if (assessment.problems.isEmpty()) {
+    val problems = assessment.problems
+    if (problems == null) {
+        // The newest diagnosis would not decode: the problems are not known, which is
+        // not the same as none.
+        Text(labels.workerPageProblemsUnknown, style = MaterialTheme.typography.bodySmall, color = muted)
+    } else if (problems.isEmpty()) {
         Text(labels.workerPageNoProblems, style = MaterialTheme.typography.bodySmall, color = muted)
     } else {
-        assessment.problems.forEach { problem ->
+        problems.forEach { problem ->
             val severity = ReportLabels.ENGLISH.severity(problem.severity)
             Text(
                 "• " + problem.title + if (severity.isNotBlank()) " ($severity)" else "",
@@ -297,9 +304,13 @@ private fun Filters(
         }
     }
 
+    // The picker counts days at UTC midnight, so the bound it is opened on is handed
+    // back as the UTC midnight of its Nairobi calendar day; otherwise a From bound, which
+    // is 21:00 UTC the day before, would open on the wrong day and move back a day each
+    // time it was confirmed unchanged.
     if (pickingFrom) {
         DayPicker(
-            initial = filter.from,
+            initial = filter.from?.let(::utcDayOf),
             onPicked = { day ->
                 pickingFrom = false
                 onChange(filter.copy(from = day?.let(::startOfDay)))
@@ -309,7 +320,7 @@ private fun Filters(
     }
     if (pickingTo) {
         DayPicker(
-            initial = filter.to,
+            initial = filter.to?.let(::utcDayOf),
             onPicked = { day ->
                 pickingTo = false
                 onChange(filter.copy(to = day?.let(::endOfDay)))
@@ -350,6 +361,16 @@ private fun nairobiDay(utcMidnight: Long): Long {
         set(utc.get(java.util.Calendar.YEAR), utc.get(java.util.Calendar.MONTH), utc.get(java.util.Calendar.DAY_OF_MONTH))
     }
     return local.timeInMillis
+}
+
+/** The reverse: the UTC midnight of the Nairobi calendar day [instant] falls on. */
+private fun utcDayOf(instant: Long): Long {
+    val local = java.util.Calendar.getInstance(nairobi).apply { timeInMillis = instant }
+    val utc = java.util.Calendar.getInstance(TimeZone.getTimeZone("UTC")).apply {
+        clear()
+        set(local.get(java.util.Calendar.YEAR), local.get(java.util.Calendar.MONTH), local.get(java.util.Calendar.DAY_OF_MONTH))
+    }
+    return utc.timeInMillis
 }
 
 private const val DAY_MILLIS = 24L * 60 * 60 * 1000

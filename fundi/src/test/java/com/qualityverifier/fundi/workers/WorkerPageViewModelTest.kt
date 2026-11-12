@@ -89,13 +89,13 @@ class WorkerPageViewModelTest {
         assertEquals("Kamau", worker!!.name)
         assertTrue(worker.archived)
 
-        val pieces = model.shown.filter { it.isNotEmpty() }.first()
+        val pieces = model.shown.filter { !it.isNullOrEmpty() }.first()!!
         val piece = pieces.single()
         assertEquals("Hotel table", piece.latest.pieceLabel)
         assertEquals(listOf(WorkPart.JOINERY), piece.parts)
         val assessment = piece.assessments.single()
         assertEquals(FundiPurpose.EVALUATE, assessment.purpose)
-        assertEquals(listOf("Gap at the back joint"), assessment.problems.map { it.title })
+        assertEquals(listOf("Gap at the back joint"), assessment.problems!!.map { it.title })
     }
 
     @Test
@@ -105,13 +105,14 @@ class WorkerPageViewModelTest {
             namings = listOf(WorkerNaming("s1", null)),
         )
         val model = model(roster)
-        assertEquals(1, model.shown.filter { it.isNotEmpty() }.first().size)
+        assertEquals(1, model.shown.filter { !it.isNullOrEmpty() }.first()!!.size)
 
+        // Loaded and empty, as distinct from not loaded yet (null).
         model.setFilter(WorkerPages.Filter(pieceId = "other"))
-        assertTrue(model.shown.filter { it.isEmpty() }.first().isEmpty())
+        assertEquals(emptyList<WorkerPages.Piece>(), model.shown.filter { it != null && it.isEmpty() }.first())
 
         model.setFilter(WorkerPages.Filter())
-        assertEquals(1, model.shown.filter { it.isNotEmpty() }.first().size)
+        assertEquals(1, model.shown.filter { !it.isNullOrEmpty() }.first()!!.size)
     }
 
     @Test
@@ -137,7 +138,7 @@ class WorkerPageViewModelTest {
         private val stream = MutableStateFlow(workers.toList())
 
         override fun observeWorkers(): Flow<List<Worker>> = stream
-        override suspend fun namedOn(workerId: String): List<WorkerNaming> = namings
+        override fun observeNamedOn(workerId: String): Flow<List<WorkerNaming>> = MutableStateFlow(namings)
         override suspend fun edit(workerId: String, details: WorkerDetails) {
             replace(workerId) { it.copy(name = details.name, phone = details.phone, employment = details.employment) }
         }
