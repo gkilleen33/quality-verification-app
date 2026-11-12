@@ -437,8 +437,12 @@ class PostgresAuthStore(private val dataSource: DataSource) : AuthStore {
          * Revoked includes the code of a deleted account: anonymise_user revokes it (V26)
          * before blanking users.invite_code, whose unique index is otherwise the only thing
          * keeping a code single use. A constant so AuthTest can hold it to that.
+         *
+         * FOR SHARE closes the window while a delete is in flight: without it, a sign-up
+         * that read the code before anonymise_user committed would find the unique index
+         * free once it did. The lock makes the read wait and re-check revoked_at.
          */
         const val REDEEMABLE_INVITE =
-            "select grants_tester, audience from invite_codes where code = ? and revoked_at is null"
+            "select grants_tester, audience from invite_codes where code = ? and revoked_at is null for share"
     }
 }
