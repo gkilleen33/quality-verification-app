@@ -29,7 +29,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.qualityverifier.domain.Worker
-import com.qualityverifier.domain.WorkerDetails
 import com.qualityverifier.fundi.ui.fundiContainer
 import com.qualityverifier.text.FundiLabels
 
@@ -37,12 +36,13 @@ import com.qualityverifier.text.FundiLabels
  * "My workers": the roster, one card per person, archived ones last and greyed.
  *
  * Add opens the worker form ([WorkerForm]): name, a number from contacts or typed, and
- * employee or temporary. Tapping a card opens the same form to edit, with "Archive"
- * beside Save. There is no delete: a past piece keeps the name of whoever worked on it,
- * and an archived worker simply stops appearing in the picker.
+ * employee or temporary. Tapping a card opens the worker's page ([WorkerPageScreen]),
+ * where "Edit" opens the same form with "Archive" beside Save. There is no delete: a
+ * past piece keeps the name of whoever worked on it, and an archived worker simply stops
+ * appearing in the picker.
  */
 @Composable
-fun WorkersScreen(onBack: () -> Unit) {
+fun WorkersScreen(onBack: () -> Unit, onOpen: (Worker) -> Unit) {
     val container = fundiContainer()
     val model: WorkersViewModel = viewModel(factory = WorkersViewModel.factory(container))
     val roster by model.roster.collectAsState()
@@ -50,10 +50,8 @@ fun WorkersScreen(onBack: () -> Unit) {
     val labels = FundiLabels.ENGLISH
 
     // Saveable: the contacts app comes in front, and the form must come back with the
-    // activity. The edit holds the worker's id for the same reason.
+    // activity.
     var adding by rememberSaveable { mutableStateOf(false) }
-    var editingId by rememberSaveable { mutableStateOf<String?>(null) }
-    val editing = editingId?.let { id -> roster.firstOrNull { it.id == id } }
 
     if (adding) {
         WorkerForm(
@@ -65,26 +63,6 @@ fun WorkersScreen(onBack: () -> Unit) {
                 model.add(details)
             },
             onDismiss = { adding = false },
-        )
-    }
-    editing?.let { worker ->
-        val before = WorkerDetails(worker.name, worker.phone, worker.employment)
-        WorkerForm(
-            labels = labels,
-            current = before,
-            accepts = model::accepts,
-            onSave = { details ->
-                editingId = null
-                // Saved unchanged, nothing is written and nothing is sent.
-                if (details != before) model.edit(worker.id, details)
-            },
-            onArchive = if (worker.archived) null else {
-                {
-                    editingId = null
-                    model.archive(worker.id)
-                }
-            },
-            onDismiss = { editingId = null },
         )
     }
 
@@ -113,7 +91,7 @@ fun WorkersScreen(onBack: () -> Unit) {
             }
         }
         items(sorted, key = { it.id }) { worker ->
-            WorkerRow(worker, labels, onClick = { editingId = worker.id })
+            WorkerRow(worker, labels, onClick = { onOpen(worker) })
         }
         item {
             TextButton(onClick = onBack, modifier = Modifier.fillMaxWidth()) { Text("Back") }
@@ -140,8 +118,8 @@ private fun WorkerRow(worker: Worker, labels: FundiLabels, onClick: () -> Unit) 
                     style = MaterialTheme.typography.titleMedium,
                     color = if (worker.archived) muted else MaterialTheme.colorScheme.onSurface,
                 )
-                // The kind, and the number when there is one: what the form holds, so the
-                // card says what a tap will edit.
+                // The kind, and the number when there is one, so the list says what the
+                // roster holds without opening each page.
                 Text(
                     listOfNotNull(labels.nameOf(worker.employment), worker.phone).joinToString(" · "),
                     style = MaterialTheme.typography.bodySmall,

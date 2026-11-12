@@ -52,6 +52,13 @@ interface WorkerRepository {
     suspend fun workersOf(sessionId: String): List<WorkerSlot>
 
     /**
+     * Every assessment this worker is named on, with the part, as recorded on this phone,
+     * re-emitted on each change. The worker's page reads it; the pieces come from the
+     * session summaries.
+     */
+    fun observeNamedOn(workerId: String): Flow<List<WorkerNaming>>
+
+    /**
      * Replaces who worked on an assessment and queues the set for the server. Used by
      * the card's "Who worked on this?"; the opening turn carries the first set itself.
      */
@@ -102,6 +109,9 @@ data class ServerWorker(
 
 /** A session whose worker set is unsent. [asOf] is the phone's clock at the edit. */
 data class PendingSessionSet(val sessionId: String, val asOf: Long)
+
+/** One "who worked on this" row for a worker: the assessment, and the part or null for the whole piece. */
+data class WorkerNaming(val sessionId: String, val part: WorkPart?)
 
 class RoomWorkerRepository(
     private val dao: SessionDao,
@@ -186,6 +196,11 @@ class RoomWorkerRepository(
 
     override suspend fun workersOf(sessionId: String): List<WorkerSlot> =
         dao.sessionWorkers(sessionId).map { it.toSlot() }
+
+    override fun observeNamedOn(workerId: String): Flow<List<WorkerNaming>> =
+        dao.observeNamingsOf(workerId).map { rows ->
+            rows.map { WorkerNaming(it.sessionId, it.part?.let(WorkPart::fromId)) }
+        }
 
     override suspend fun setWorkersOf(sessionId: String, workers: List<WorkerSlot>) {
         dao.editSessionWorkers(

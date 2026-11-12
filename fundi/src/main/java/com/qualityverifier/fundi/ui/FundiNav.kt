@@ -52,6 +52,7 @@ import com.qualityverifier.fundi.ui.setup.GoalsScreen
 import com.qualityverifier.fundi.ui.setup.SetupViewModel
 import com.qualityverifier.fundi.ui.setup.ToolsScreen
 import com.qualityverifier.fundi.ui.setup.WorkshopScreen
+import com.qualityverifier.fundi.ui.workers.WorkerPageScreen
 import com.qualityverifier.fundi.ui.workers.WorkersScreen
 import com.qualityverifier.text.AuthLabels
 import com.qualityverifier.text.FundiLabels
@@ -71,7 +72,11 @@ private object Routes {
     const val SETUP_GOALS = "setup/goals"
     const val HOME = "home"
     const val WORKERS = "workers"
+    /** One worker's page (plan v7 §4.6), from a card on "My workers". */
+    const val WORKER_PAGE = "workers/{workerId}"
     const val SETTINGS = "settings"
+
+    fun workerPage(workerId: String) = "workers/$workerId"
     const val ASSESS = "assess/{sessionId}/{itemTypeId}?piece={piece}&returning={returning}"
 
     /**
@@ -418,7 +423,26 @@ fun FundiNav() {
         }
 
         composable(Routes.WORKERS) {
-            WorkersScreen(onBack = { navController.popBackStack() })
+            WorkersScreen(
+                onBack = { navController.popBackStack() },
+                onOpen = { worker -> navController.navigate(Routes.workerPage(worker.id)) },
+            )
+        }
+
+        composable(
+            Routes.WORKER_PAGE,
+            arguments = listOf(navArgument("workerId") { type = NavType.StringType }),
+        ) { entry ->
+            WorkerPageScreen(
+                workerId = entry.arguments?.getString("workerId").orEmpty(),
+                onBack = { navController.popBackStack() },
+                // The piece's newest assessment, as Home's "Open" opens it.
+                onOpenPiece = { latest ->
+                    navController.navigate(
+                        Routes.assess(latest.id, latest.itemType.id, piece = latest.piece),
+                    )
+                },
+            )
         }
 
         // Kagua's screen, with Fundi Bora's wording where Kagua's would be wrong, and the

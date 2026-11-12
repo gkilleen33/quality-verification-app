@@ -16,6 +16,7 @@ import com.qualityverifier.data.session.PieceLabelChange
 import com.qualityverifier.data.workers.PendingSessionSet
 import com.qualityverifier.data.workers.ServerWorker
 import com.qualityverifier.data.workers.WorkerChange
+import com.qualityverifier.data.workers.WorkerNaming
 import com.qualityverifier.data.workers.WorkerRepository
 import com.qualityverifier.domain.Attachment
 import com.qualityverifier.domain.SessionSummary
@@ -1082,6 +1083,7 @@ class AssessViewModelTest {
 
         override suspend fun edit(workerId: String, details: WorkerDetails) = no()
         override suspend fun archive(workerId: String) = no()
+        override fun observeNamedOn(workerId: String): Flow<List<WorkerNaming>> = no()
         override suspend fun unsynced(): List<WorkerChange> = no()
         override suspend fun markSynced(change: WorkerChange) = no()
         override suspend fun mergeFromServer(workers: List<ServerWorker>) = no()

@@ -3,6 +3,7 @@ package com.qualityverifier.fundi.workers
 import com.qualityverifier.data.workers.PendingSessionSet
 import com.qualityverifier.data.workers.ServerWorker
 import com.qualityverifier.data.workers.WorkerChange
+import com.qualityverifier.data.workers.WorkerNaming
 import com.qualityverifier.data.workers.WorkerRepository
 import com.qualityverifier.domain.Employment
 import com.qualityverifier.domain.Worker
@@ -110,6 +111,7 @@ class WorkersViewModelTest {
         override suspend fun markSynced(change: WorkerChange) = no()
         override suspend fun mergeFromServer(workers: List<ServerWorker>) = no()
         override suspend fun workersOf(sessionId: String): List<WorkerSlot> = no()
+        override fun observeNamedOn(workerId: String): Flow<List<WorkerNaming>> = no()
         override suspend fun setWorkersOf(sessionId: String, workers: List<WorkerSlot>) = no()
         override suspend fun recordWorkersOf(sessionId: String, workers: List<WorkerSlot>) = no()
         override suspend fun pendingSessions(): List<PendingSessionSet> = no()
