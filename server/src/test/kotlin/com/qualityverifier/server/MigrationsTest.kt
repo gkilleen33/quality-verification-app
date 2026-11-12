@@ -113,7 +113,27 @@ class MigrationsTest {
         "worker_studios" to "phone",
         // V25: a photo's GPS point, serial numbers, and owner and artist names.
         "attachments" to "photo_meta",
+        // V32: the worker names and the maker's name a report printed.
+        "reports" to "printed_names",
     )
+
+    /**
+     * A report's snapshot holds the names it printed beside the verdict text (V32), and is
+     * NOT NULL, so it is emptied rather than nulled; the personal-column test above cannot
+     * see that, so it is pinned here.
+     */
+    @Test
+    fun `anonymise_user empties the snapshot of the account's reports`() {
+        val latest = files.last { it.readText().contains("FUNCTION anonymise_user") }
+        val body = latest.readText().substringAfter("FUNCTION anonymise_user")
+            .lines().joinToString(" ") { it.substringBefore("--") }
+            .replace(Regex("""\s+"""), " ")
+        assertTrue(
+            "${latest.name} defines anonymise_user without emptying reports.defect_snapshot",
+            Regex("""(?i)UPDATE reports SET defect_snapshot = '\{\}'::jsonb, printed_names = NULL WHERE user_id = target;""")
+                .containsMatchIn(body),
+        )
+    }
 
     @Test
     fun `anonymise_user clears every named personal column`() {

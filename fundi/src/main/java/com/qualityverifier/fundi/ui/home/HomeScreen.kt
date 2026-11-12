@@ -84,6 +84,8 @@ fun HomeScreen(
     onStudios: () -> Unit,
     /** Password, the location switch, sign-out, and account deletion. */
     onSettings: () -> Unit,
+    /** "Send report" on a piece (plan v7 §5.4). */
+    onSendReport: (SessionSummary) -> Unit,
 ) {
     val container = fundiContainer()
     val model: PiecesViewModel = viewModel(factory = PiecesViewModel.factory(container))
@@ -203,6 +205,7 @@ fun HomeScreen(
                     onOpen = { onOpen(latest) },
                     onReassess = { onReassess(latest) },
                     onRename = { label -> model.rename(latest.piece, label) },
+                    onSendReport = { onSendReport(latest) },
                     roster = roster,
                     loadWorkers = { model.workersOf(latest.id) },
                     onSetWorkers = { people -> model.setWorkers(latest.id, people) },
@@ -223,6 +226,7 @@ private fun PieceRow(
     onReassess: () -> Unit,
     /** A new name for the piece, or null to clear it. */
     onRename: (String?) -> Unit,
+    onSendReport: () -> Unit,
     roster: List<Worker>,
     /** Who is recorded on the latest assessment, read when the edit opens. */
     loadWorkers: suspend () -> List<WorkerSlot>,
@@ -341,6 +345,15 @@ private fun PieceRow(
                             onClick = {
                                 menuOpen = false
                                 editingWorkers = true
+                            },
+                        )
+                        // A PDF of the piece's assessments, through the share sheet (plan
+                        // v7 §5). Needs a connection: the server renders it.
+                        DropdownMenuItem(
+                            text = { Text(FundiLabels.ENGLISH.reportMenuItem) },
+                            onClick = {
+                                menuOpen = false
+                                onSendReport()
                             },
                         )
                     }

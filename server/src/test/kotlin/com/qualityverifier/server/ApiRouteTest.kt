@@ -3,7 +3,10 @@ package com.qualityverifier.server
 import com.qualityverifier.server.api.ApiAssessmentDetail
 import com.qualityverifier.server.api.ApiIntake
 import com.qualityverifier.server.api.ApiMessage
+import com.qualityverifier.server.api.ApiPiece
 import com.qualityverifier.server.api.ApiProblem
+import com.qualityverifier.server.api.ApiReport
+import com.qualityverifier.server.api.snapshotWithoutNames
 import com.qualityverifier.server.api.ApiSessionWorker
 import com.qualityverifier.server.api.ApiTesterFeedback
 import com.qualityverifier.server.api.ApiWorkerLink
@@ -22,6 +25,7 @@ import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
@@ -53,6 +57,8 @@ class ApiRouteTest {
             "/api/v1/tester-feedback",
             "/api/v1/workers",
             "/api/v1/worker-links",
+            "/api/v1/pieces",
+            "/api/v1/reports",
             "/api/v1/photos/${"a".repeat(64)}",
         ).forEach { path ->
             assertEquals(path, HttpStatusCode.Unauthorized, app.get(path).status)
@@ -324,6 +330,60 @@ class ApiRouteTest {
         assertTrue(body, body.contains("\"has_more\":false"))
         assertEquals(11, store.lastLimit)
         assertEquals("/api/v1/workers", admin.audits.single().target)
+    }
+
+    @Test
+    fun `pieces and reports are listed, and a report carries ids and never a name`() = testApplication {
+        // V32. The snapshot is what the report printed; the names it printed stay in the
+        // row, as the roster's names stay out of the session rows: join worker_id.
+        val keys = FakeApiKeyStore()
+        val admin = RecordingAudit()
+        val piece = "c0ffee00-0000-4000-8000-00000000001a"
+        val store = FakeApiStore(
+            pieces = listOf(ApiPiece(piece, API_USER.id, "wooden-table", 1_700_000_000_000)),
+            reports = listOf(
+                ApiReport(
+                    id = "d0000000-0000-4000-8000-000000000001",
+                    pieceId = piece,
+                    userId = API_USER.id,
+                    kind = "part_issues",
+                    sessionIds = listOf(API_ASSESSMENT.id),
+                    parts = listOf("joinery"),
+                    workerId = null,
+                    defectRefs = listOf("m1:0"),
+                    defectSnapshot = snapshotWithoutNames(
+                        """{"assessments":[{"session_id":"${API_ASSESSMENT.id}","level":"fair","headline":"One joint"}],
+                            "problems":[{"session_id":"${API_ASSESSMENT.id}","message_id":"m1","ordinal":0,"title":"Gap","severity":"moderate","part":"joinery"}],
+                            "workers":[{"session_id":"${API_ASSESSMENT.id}","part":"joinery","worker_id":"${API_WORKER.id}","name":"Kamau"}],
+                            "made_by":"Wanjiru"}""",
+                    ),
+                    sha256 = "ab".repeat(32),
+                    byteSize = 123_456,
+                    issuedAt = 1_700_000_500_000,
+                ),
+            ),
+        )
+        val app = withApi(keys = keys, store = store, admin = admin)
+
+        val pieces = app.get("/api/v1/pieces") { key(keys.anyKey()) }.bodyAsText()
+        assertTrue(pieces, pieces.contains("\"id\":\"$piece\""))
+        assertTrue(pieces, pieces.contains("\"item_type_id\":\"wooden-table\""))
+        assertFalse("no label on the data API", pieces.contains("label"))
+
+        val body = app.get("/api/v1/reports?limit=10") { key(keys.anyKey()) }.bodyAsText()
+        assertTrue(body, body.contains("\"kind\":\"part_issues\""))
+        assertTrue(body, body.contains("\"parts\":[\"joinery\"]"))
+        assertTrue(body, body.contains("\"worker_id\":null"))
+        assertTrue(body, body.contains("\"defect_refs\":[\"m1:0\"]"))
+        assertTrue(body, body.contains("\"headline\":\"One joint\""))
+        assertTrue(body, body.contains("\"worker_id\":\"${API_WORKER.id}\""))
+        assertTrue(body, body.contains("\"sha256\":\"${"ab".repeat(32)}\""))
+        assertTrue(body, body.contains("\"byte_size\":123456"))
+        assertFalse(body, body.contains("Kamau"))
+        assertFalse(body, body.contains("Wanjiru"))
+        assertFalse(body, body.contains("made_by"))
+        assertEquals(11, store.lastLimit)
+        assertEquals("/api/v1/reports", admin.audits.last().target)
     }
 
     @Test

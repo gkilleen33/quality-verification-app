@@ -22,6 +22,8 @@ import com.qualityverifier.data.location.LocationPreference
 import com.qualityverifier.data.mpesa.MpesaClient
 import com.qualityverifier.data.mpesa.MpesaPreference
 import com.qualityverifier.data.mpesa.MpesaRepository
+import com.qualityverifier.data.reports.ReportApi
+import com.qualityverifier.data.reports.ReportClient
 import com.qualityverifier.data.session.RoomSessionRepository
 import com.qualityverifier.data.session.SessionRepository
 import com.qualityverifier.data.sync.AccountActions
@@ -325,6 +327,22 @@ class AppContainer(
     )
 
     /**
+     * Fundi Bora's PDF reports (plan v7 §5.4). Kagua links it and never calls it.
+     *
+     * On its own copy of the client with a 150-second call timeout: a call timeout bounds
+     * the whole call, where the shared client's 200-second read timeout restarts with every
+     * byte and never fires on a link that trickles. 150 is the server's 35 at most (the
+     * render wait and the render) plus about 102 for 500 KB at 40 kbps plus a margin, and
+     * under nginx's 180, so the phone ends a stalled request and shows its own message.
+     */
+    val reports: ReportApi = ReportClient(
+        client = httpClient.newBuilder().callTimeout(REPORT_CALL_SECONDS, TimeUnit.SECONDS).build(),
+        tokens = tokenProvider,
+        baseUrl = baseUrl,
+        json = json,
+    )
+
+    /**
      * Signs out locally. The refresh token stays revocable server-side regardless.
      *
      * Clears the tokens at once. The local data stays for the same account signing back
@@ -424,5 +442,8 @@ class AppContainer(
 
         /** Each request in that push, end to end. */
         const val PUSH_CALL_SECONDS = 10L
+
+        /** A report download, end to end. See [reports]. */
+        const val REPORT_CALL_SECONDS = 150L
     }
 }

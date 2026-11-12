@@ -4,6 +4,7 @@ import com.qualityverifier.domain.Employment
 import com.qualityverifier.domain.FixHorizon
 import com.qualityverifier.domain.FundiGoal
 import com.qualityverifier.domain.FundiPurpose
+import com.qualityverifier.domain.ReportKind
 import com.qualityverifier.domain.ToolKind
 import com.qualityverifier.domain.ToolOwnership
 
@@ -206,7 +207,46 @@ data class FundiLabels(
     val studioArchive: String,
     /** On a worker or studio card: the two-sided match holds. */
     val linkedTag: String,
+    // ---- "Send report" (plan v7 §5): the menu item, the first step, the preview, the wait
+    val reportMenuItem: String,
+    val reportTitle: String,
+    val reportWhoFor: String,
+    val reportForCustomer: String,
+    /** Under the customer choice: what that report carries and what it leaves out. */
+    val reportForCustomerHint: String,
+    val reportPreviewTitle: String,
+    val reportPreviewHint: String,
+    private val reportPhotosFormat: String,
+    val reportSend: String,
+    val reportBack: String,
+    val reportPreparing: String,
+    private val reportDownloadingFormat: String,
+    private val reportDownloadingOfFormat: String,
+    val reportUnavailable: String,
+    /** Another report was being made; the same words as the connection message, as §5.5 says. */
+    val reportBusy: String,
+    val reportRetry: String,
+    /** The share sheet's title. */
+    val reportShareWith: String,
 ) {
+    fun reportPhotos(n: Int) = reportPhotosFormat.replace("{n}", n.toString())
+
+    /** The "Who is this for?" choice for a kind. Only the customer's exists in this build. */
+    fun reportChoice(kind: ReportKind): String = when (kind) {
+        ReportKind.CUSTOMER -> reportForCustomer
+        else -> kind.id
+    }
+
+    fun reportChoiceHint(kind: ReportKind): String = when (kind) {
+        ReportKind.CUSTOMER -> reportForCustomerHint
+        else -> ""
+    }
+
+    /** "Downloading the report, 120 of 480 KB", or without the total when the server gave none. */
+    fun reportDownloading(receivedKb: Long, totalKb: Long?): String =
+        if (totalKb == null) reportDownloadingFormat.replace("{n}", receivedKb.toString())
+        else reportDownloadingOfFormat.replace("{n}", receivedKb.toString()).replace("{total}", totalKb.toString())
+
     fun nameOf(employment: Employment): String = employmentNames.getValue(employment)
 
     fun saysWorkInProgress(what: String) = saysWorkInProgressFormat.replace("{what}", what)
@@ -502,6 +542,24 @@ data class FundiLabels(
                 "is sent to them.",
             studioArchive = "I no longer work here",
             linkedTag = "Linked",
+            reportMenuItem = "Send report",
+            reportTitle = "Send report",
+            reportWhoFor = "Who is this for?",
+            reportForCustomer = "The customer",
+            reportForCustomerHint = "Every assessment of this piece, with photos: the verdict and " +
+                "what was found. No names of workers, and nothing written for you.",
+            reportPreviewTitle = "Check the report",
+            reportPreviewHint = "This is what the PDF will say.",
+            reportPhotosFormat = "{n} photos will be included.",
+            reportSend = "Send",
+            reportBack = "Back",
+            reportPreparing = "Preparing the report",
+            reportDownloadingFormat = "Downloading the report, {n} KB",
+            reportDownloadingOfFormat = "Downloading the report, {n} of {total} KB",
+            reportUnavailable = "Report unavailable. Check your connection and try again.",
+            reportBusy = "Report unavailable. Check your connection and try again.",
+            reportRetry = "Try again",
+            reportShareWith = "Send the report with",
         )
     }
 }

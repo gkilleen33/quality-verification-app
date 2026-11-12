@@ -46,6 +46,8 @@ milliseconds throughout.
 | `GET /assessments` | assessments, newest last, each with the `app_version_code` that started it, its `purpose`, `language`, `piece_id`, and `prompt_sha`. Filters: `user`, `item`, `testers=1`, `updated_since` |
 | `GET /assessments/{id}` | one assessment with its messages, photo hashes in order, each photo's camera metadata, its `problems`, and the evaluator's critique if there is one |
 | `GET /tester-feedback` | every evaluator critique, keyed on `session_id` |
+| `GET /pieces` | every piece a Fundi Bora maker has assessed: `id`, `user_id`, `item_type_id`, `created_at`. No label (see below) |
+| `GET /reports` | every PDF report the server issued (V32): `piece_id` or `worker_id`, `kind`, `session_ids`, `parts`, `defect_refs`, `defect_snapshot`, `sha256`, `byte_size`, `issued_at` |
 | `GET /photos/{sha256}` | the JPEG bytes |
 
 ### Pulling the whole thing
@@ -178,6 +180,36 @@ The list route carries none, since that would mean reading every reply on a page
 - `problems` is `[]` when the assessment found nothing or never reached a verdict or a
   diagnosis, and `null` when the problems cannot be known: the newest diagnosis block would
   not decode and no verdict defects stand in for it.
+
+## Pieces and reports
+
+`GET /pieces` is the grouping: a Fundi Bora assessment's `piece_id` points here, and a
+re-assessment of the same stool shares its piece with the first. It carries no label. What
+the maker calls a piece is often the customer's name, and whether it may leave the server is
+a question for the PIs (plan v7, section 9); the research team does not need it to join.
+
+`GET /reports` is one row per PDF report the server issued, written whether the file was
+freshly rendered or served from the day-long cache, so the rows count downloads started and
+a retry has the same `sha256` as the first attempt.
+
+- `kind` is one of `customer`, `part_issues`, `part_fixes`, `full`, `to_manager`, or
+  `worker_work`. A `customer` report covers every assessment of the piece and prints no
+  worker name and no part; the others cover one chosen assessment, except `worker_work`,
+  which is one roster worker's work across pieces and has `worker_id` set and `piece_id`
+  null.
+- `defect_refs` names each problem printed as `<message_id>:<ordinal>` in the reply the
+  problem list was read from (the newest reply of the session with a verdict or a
+  diagnosis). A corrected verdict is a newer reply, so its problems have new references.
+- `defect_snapshot` is what was printed, kept because a client-deleted assessment is purged
+  after seven days and the parser can change: `assessments` (each `session_id`, `level`,
+  `headline`), `problems` (each `session_id`, `message_id`, `ordinal`, `title`, `severity`,
+  and the `part` it was printed under, null on a customer report), and `workers` (each
+  `session_id`, `part`, `worker_id`). The row also holds the names the report printed, under
+  each part and of the account that made it; those are not carried here, as the roster's
+  names are not. Join `worker_id` to `/workers`.
+- `sha256` is the hash of the bytes the phone received, which is what a check of a PDF
+  somebody forwards would compare against.
+- A deleted account's reports stay, with their hashes; their snapshot is emptied to `{}`.
 
 ## Three things that will bite an analysis if nobody mentions them
 
