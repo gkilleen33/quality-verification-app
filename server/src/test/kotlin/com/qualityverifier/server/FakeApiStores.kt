@@ -8,6 +8,7 @@ import com.qualityverifier.server.api.ApiStore
 import com.qualityverifier.server.api.ApiTesterFeedback
 import com.qualityverifier.server.api.ApiUser
 import com.qualityverifier.server.api.ApiWorker
+import com.qualityverifier.server.api.ApiWorkerLink
 import com.qualityverifier.server.api.NewApiKey
 import com.qualityverifier.server.api.PostgresApiKeyStore
 import java.time.Instant
@@ -79,6 +80,7 @@ class FakeApiStore(
     private val feedback: List<ApiTesterFeedback> = emptyList(),
     private val photos: Set<String> = emptySet(),
     private val workers: List<ApiWorker> = emptyList(),
+    private val links: List<ApiWorkerLink> = emptyList(),
 ) : ApiStore {
     var lastLimit: Int? = null
         private set
@@ -116,6 +118,11 @@ class FakeApiStore(
     override suspend fun workers(limit: Int, offset: Int): List<ApiWorker> {
         lastLimit = limit
         return workers
+    }
+
+    override suspend fun workerLinks(limit: Int, offset: Int): List<ApiWorkerLink> {
+        lastLimit = limit
+        return links
     }
 
     override suspend fun photoExists(sha256: String): Boolean = sha256 in photos

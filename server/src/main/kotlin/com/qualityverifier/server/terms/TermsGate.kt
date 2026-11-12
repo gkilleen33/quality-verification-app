@@ -139,6 +139,8 @@ class TermsGate(
             HttpMethod.Head to "/v1/blobs/{}",
             HttpMethod.Get to "/v1/fundi/profile",
             HttpMethod.Get to "/v1/fundi/workers",
+            // One's own studio list (V31), read on every sync as the roster is.
+            HttpMethod.Get to "/v1/fundi/studios",
         ).map { (method, template) ->
             method to Regex("^" + template.split("{}").joinToString("[^/]+") { Regex.escape(it) } + "$")
         }

@@ -21,6 +21,7 @@ import com.qualityverifier.server.db.RecordedToolChange
 import com.qualityverifier.server.db.RegisterOutcome
 import com.qualityverifier.server.db.Registration
 import com.qualityverifier.server.db.StoredRefresh
+import com.qualityverifier.server.db.StudioRow
 import com.qualityverifier.server.db.UserRow
 import com.qualityverifier.server.db.WorkerRow
 import io.ktor.client.plugins.contentnegotiation.ContentNegotiation as ClientContentNegotiation
@@ -352,6 +353,144 @@ class FundiRouteTest {
         assertTrue(store.workers.isEmpty())
     }
 
+    // V31. The studios an account works at, and the two-sided match. The route says
+    // "linked" and nothing else about a number.
+    @Test
+    fun `a fundi can list the studios they work at, edit them, and see which are linked`() = testApplication {
+        val store = FakeFundiStore()
+        val app = withFundi(store, audience = Audience.FUNDI)
+
+        val added = app.put("/v1/fundi/studios/$STUDIO") {
+            auth(FUNDI); contentType(ContentType.Application.Json)
+            setBody("""{"name":"  Mama Njeri's workshop  ","phone":"0700 000 001"}""")
+        }
+        assertEquals(HttpStatusCode.NoContent, added.status)
+        assertEquals("Mama Njeri's workshop", store.studios.getValue(STUDIO).name)
+        assertEquals("+254700000001", store.studios.getValue(STUDIO).phone)
+
+        var list = app.get("/v1/fundi/studios") { auth(FUNDI) }.bodyAsText()
+        assertTrue(list, list.contains("\"id\":\"$STUDIO\""))
+        assertTrue(list, list.contains("\"phone\":\"+254700000001\""))
+        assertTrue(list, list.contains("\"linked\":false"))
+
+        // The other side lists us: linked, as the store computes it.
+        store.linkedStudios += STUDIO
+        store.linkedWorkers += WORKER
+        app.put("/v1/fundi/workers/$WORKER") {
+            auth(FUNDI); contentType(ContentType.Application.Json)
+            setBody("""{"name":"Kamau","phone":"+254712345678"}""")
+        }
+        list = app.get("/v1/fundi/studios") { auth(FUNDI) }.bodyAsText()
+        assertTrue(list, list.contains("\"linked\":true"))
+        val workers = app.get("/v1/fundi/workers") { auth(FUNDI) }.bodyAsText()
+        assertTrue(workers, workers.contains("\"linked\":true"))
+
+        // Archived, and sticky.
+        app.put("/v1/fundi/studios/$STUDIO") {
+            auth(FUNDI); contentType(ContentType.Application.Json)
+            setBody("""{"name":"Mama Njeri's workshop","phone":"+254700000001","archived":true}""")
+        }
+        app.put("/v1/fundi/studios/$STUDIO") {
+            auth(FUNDI); contentType(ContentType.Application.Json)
+            setBody("""{"name":"Renamed","phone":"+254700000001","archived":false}""")
+        }
+        assertEquals("Renamed", store.studios.getValue(STUDIO).name)
+        assertTrue(store.studios.getValue(STUDIO).archived)
+        list = app.get("/v1/fundi/studios") { auth(FUNDI) }.bodyAsText()
+        assertTrue("archived studios are listed, with their date", list.contains("\"archived_at\":3"))
+    }
+
+    @Test
+    fun `a studio entry needs a name and a number, and a stranger's id is 404`() = testApplication {
+        val store = FakeFundiStore().apply { strangers += STUDIO }
+        val app = withFundi(store, audience = Audience.FUNDI)
+
+        val noNumber = app.put("/v1/fundi/studios/$PIECE") {
+            auth(FUNDI); contentType(ContentType.Application.Json)
+            setBody("""{"name":"Workshop"}""")
+        }
+        assertEquals(HttpStatusCode.BadRequest, noNumber.status)
+        assertTrue(noNumber.bodyAsText().contains("invalid_phone"))
+
+        listOf("not a number", "+25401234567").forEach { phone ->
+            val bad = app.put("/v1/fundi/studios/$PIECE") {
+                auth(FUNDI); contentType(ContentType.Application.Json)
+                setBody("""{"name":"Workshop","phone":"$phone"}""")
+            }
+            assertEquals(phone, HttpStatusCode.BadRequest, bad.status)
+        }
+
+        val blank = app.put("/v1/fundi/studios/$PIECE") {
+            auth(FUNDI); contentType(ContentType.Application.Json)
+            setBody("""{"name":"  ","phone":"+254700000001"}""")
+        }
+        assertEquals(HttpStatusCode.BadRequest, blank.status)
+
+        val stranger = app.put("/v1/fundi/studios/$STUDIO") {
+            auth(FUNDI); contentType(ContentType.Application.Json)
+            setBody("""{"name":"Mine","phone":"+254700000001"}""")
+        }
+        assertEquals(HttpStatusCode.NotFound, stranger.status)
+        assertTrue(store.studios.isEmpty())
+    }
+
+    // Nobody can probe who uses the app: the answer for an unlinked number is the same
+    // whether or not that number has an account. The fake knows which numbers have one
+    // and the route never asks it.
+    @Test
+    fun `an unlinked entry reads the same whether or not its number has an account`() = testApplication {
+        val store = FakeFundiStore().apply { numbersWithAccounts += "+254700000001" }
+        val app = withFundi(store, audience = Audience.FUNDI)
+
+        app.put("/v1/fundi/studios/$STUDIO") {
+            auth(FUNDI); contentType(ContentType.Application.Json)
+            setBody("""{"name":"Has an account","phone":"+254700000001"}""")
+        }
+        app.put("/v1/fundi/studios/$PIECE") {
+            auth(FUNDI); contentType(ContentType.Application.Json)
+            setBody("""{"name":"Has none","phone":"+254700000002"}""")
+        }
+        app.put("/v1/fundi/workers/$WORKER") {
+            auth(FUNDI); contentType(ContentType.Application.Json)
+            setBody("""{"name":"With account","phone":"+254700000001"}""")
+        }
+        app.put("/v1/fundi/workers/$PIECE") {
+            auth(FUNDI); contentType(ContentType.Application.Json)
+            setBody("""{"name":"Without","phone":"+254700000002"}""")
+        }
+
+        val studios = app.get("/v1/fundi/studios") { auth(FUNDI) }.bodyAsText()
+        val workers = app.get("/v1/fundi/workers") { auth(FUNDI) }.bodyAsText()
+        assertEquals(2, Regex("\"linked\":false").findAll(studios).count())
+        assertEquals(2, Regex("\"linked\":false").findAll(workers).count())
+        assertFalse(studios.contains("\"linked\":true"))
+        assertFalse(workers.contains("\"linked\":true"))
+        // And the two entries are the same field for field once their own values are
+        // masked: nothing in the answer differs between them.
+        val entries = Regex("""\{[^{}]*\}""").findAll(studios).map { it.value }.toList()
+        assertEquals(2, entries.size)
+        val masked = entries.map {
+            it.replace("Has an account", "X").replace("Has none", "X")
+                .replace("+254700000001", "N").replace("+254700000002", "N")
+                .replace(STUDIO, "ID").replace(PIECE, "ID")
+        }
+        assertEquals(masked[0], masked[1])
+    }
+
+    @Test
+    fun `a Kagua account has no studio list`() = testApplication {
+        val store = FakeFundiStore()
+        val app = withFundi(store, audience = Audience.BUYER)
+
+        assertEquals(HttpStatusCode.Forbidden, app.get("/v1/fundi/studios") { auth(FUNDI) }.status)
+        val write = app.put("/v1/fundi/studios/$STUDIO") {
+            auth(FUNDI); contentType(ContentType.Application.Json)
+            setBody("""{"name":"Workshop","phone":"+254700000001"}""")
+        }
+        assertEquals(HttpStatusCode.Forbidden, write.status)
+        assertTrue(store.studios.isEmpty())
+    }
+
     @Test
     fun `a Kagua account has no roster`() = testApplication {
         val store = FakeFundiStore()
@@ -578,13 +717,36 @@ class FundiRouteTest {
         val phones = mutableMapOf<String, String?>()
         val employments = mutableMapOf<String, Employment>()
         val strangers = mutableSetOf<String>()
+        /** Which entries the two-sided match holds, as the real store reads it from the view. */
+        val linkedWorkers = mutableSetOf<String>()
+        val linkedStudios = mutableSetOf<String>()
+        /** Numbers that belong to an account. The route must never ask; nothing here reads it. */
+        val numbersWithAccounts = mutableSetOf<String>()
         override suspend fun listWorkers(userId: String) =
             workers.map { (id, row) ->
                 WorkerRow(
                     id, row.first, 1L, 2L, if (row.second) 3L else null,
                     phone = phones[id], employment = employments.getValue(id),
+                    linked = id in linkedWorkers && !row.second,
                 )
             }
+
+        /** The studio list this fake holds: id to (name, phone, archived). */
+        data class FakeStudio(val name: String, val phone: String, val archived: Boolean)
+        val studios = linkedMapOf<String, FakeStudio>()
+        override suspend fun listStudios(userId: String) =
+            studios.map { (id, row) ->
+                StudioRow(
+                    id, row.name, row.phone, 1L, 2L, if (row.archived) 3L else null,
+                    linked = id in linkedStudios && !row.archived,
+                )
+            }
+        override suspend fun upsertStudio(userId: String, studioId: String, name: String, phone: String, archived: Boolean): Boolean {
+            if (studioId in strangers) return false
+            val wasArchived = studios[studioId]?.archived ?: false
+            studios[studioId] = FakeStudio(name, phone, wasArchived || archived)
+            return true
+        }
         override suspend fun upsertWorker(
             userId: String,
             workerId: String,
@@ -650,5 +812,6 @@ class FundiRouteTest {
         const val FUNDI = "11111111-2222-3333-4444-555555555555"
         const val PIECE = "c0ffee00-0000-4000-8000-00000000001a"
         const val WORKER = "c0ffee00-0000-4000-8000-00000000001b"
+        const val STUDIO = "c0ffee00-0000-4000-8000-00000000001c"
     }
 }

@@ -102,10 +102,35 @@ data class WorkerDto(
     val phone: String? = null,
     /** `employee` or `temporary` (V30). Defaulted only so an older server's answer still reads. */
     val employment: String? = null,
+    /** The two-sided match (V31): this worker's own account lists this workshop too. */
+    val linked: Boolean = false,
 )
 
 @Serializable
 data class WorkerListDto(val workers: List<WorkerDto>)
+
+/** One studio this account works at (V31), as the phone reads it back. Archived ones are included. */
+@Serializable
+data class StudioDto(
+    val id: String,
+    val name: String? = null,
+    /** E.164; null only once the account is deleted. */
+    val phone: String? = null,
+    @SerialName("archived_at") val archivedAt: Long? = null,
+    /** The two-sided match: the studio's roster names this account's number too. */
+    val linked: Boolean = false,
+)
+
+@Serializable
+data class StudioListDto(val studios: List<StudioDto>)
+
+/** The body of PUT /v1/fundi/studios/{id}. Both fields on every write; archiving is sticky. */
+@Serializable
+data class StudioUpsertDto(
+    val name: String? = null,
+    val phone: String? = null,
+    val archived: Boolean = false,
+)
 
 /**
  * The body of PUT /v1/fundi/workers/{id}. Archiving is sticky: false never revives.

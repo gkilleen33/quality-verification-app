@@ -90,7 +90,32 @@ interface FundiStore {
         phone: PhoneChange = PhoneChange.Keep,
         employment: Employment? = null,
     ): Boolean
+
+    /** The studios this account says it works at (V31), archived ones included. */
+    suspend fun listStudios(userId: String): List<StudioRow>
+
+    /**
+     * Adds or edits one studio entry. Returns false when the id belongs to another account.
+     * Archiving is sticky, as for a worker. [phone] is E.164, checked by the route. The
+     * link record (V31) is brought up to date in the same transaction.
+     */
+    suspend fun upsertStudio(userId: String, studioId: String, name: String, phone: String, archived: Boolean): Boolean
 }
+
+/**
+ * A studio entry as the phone reads it back. [linked] is the two-sided match: true only
+ * when the studio's roster names this account's number too, so an unlinked entry reads the
+ * same whether or not its number has an account.
+ */
+data class StudioRow(
+    val id: String,
+    val name: String?,
+    val phone: String?,
+    val createdAt: Long,
+    val updatedAt: Long,
+    val archivedAt: Long?,
+    val linked: Boolean,
+)
 
 /**
  * What a roster write says about the worker's number.
@@ -121,6 +146,8 @@ data class WorkerRow(
     /** E.164, or null for an entry without a number. */
     val phone: String? = null,
     val employment: Employment = Employment.EMPLOYEE,
+    /** The two-sided match (V31): the worker's own account lists this workshop too. */
+    val linked: Boolean = false,
 )
 
 /** The one rule for a piece's name, shared by the turn and the rename endpoint. */
@@ -341,12 +368,20 @@ class PostgresFundiStore(private val dataSource: DataSource) : FundiStore {
     override suspend fun listWorkers(userId: String): List<WorkerRow> = tx { connection ->
         connection.prepareStatement(
             """
-            select id::text, name,
-                   (extract(epoch from created_at) * 1000)::bigint,
-                   (extract(epoch from updated_at) * 1000)::bigint,
-                   (extract(epoch from archived_at) * 1000)::bigint,
-                   phone, employment
-            from workers where user_id = ?::uuid order by created_at, id
+            select w.id::text, w.name,
+                   (extract(epoch from w.created_at) * 1000)::bigint,
+                   (extract(epoch from w.updated_at) * 1000)::bigint,
+                   (extract(epoch from w.archived_at) * 1000)::bigint,
+                   w.phone, w.employment,
+                   -- Linked when the match (worker_links, V31) holds a pair for this
+                   -- roster's account and the account the entry's number belongs to. By
+                   -- the pair rather than the entry id, so a second entry for one number
+                   -- reads as linked too.
+                   (w.archived_at is null and w.phone is not null and exists (
+                       select 1 from worker_links l join users u on u.id = l.worker_user_id
+                        where l.studio_user_id = w.user_id and u.phone = w.phone
+                   ))
+            from workers w where w.user_id = ?::uuid order by w.created_at, w.id
             """.trimIndent()
         ).use { statement ->
             statement.setString(1, userId)
@@ -363,10 +398,89 @@ class PostgresFundiStore(private val dataSource: DataSource) : FundiStore {
                         // The CHECK and the enum are held together by FundiVocabularyTest,
                         // so an unknown kind is only reachable across a downgrade.
                         employment = Employment.fromId(rows.getString(7)) ?: Employment.EMPLOYEE,
+                        linked = rows.getBoolean(8),
                     )
                 }
                 out
             }
+        }
+    }
+
+    override suspend fun listStudios(userId: String): List<StudioRow> = tx { connection ->
+        connection.prepareStatement(
+            """
+            select ws.id::text, ws.name, ws.phone,
+                   (extract(epoch from ws.created_at) * 1000)::bigint,
+                   (extract(epoch from ws.updated_at) * 1000)::bigint,
+                   (extract(epoch from ws.archived_at) * 1000)::bigint,
+                   -- Linked when the match holds a pair for this account and the account
+                   -- the entry's number belongs to: the studio's roster names us too.
+                   (ws.archived_at is null and ws.phone is not null and exists (
+                       select 1 from worker_links l join users s on s.id = l.studio_user_id
+                        where l.worker_user_id = ws.user_id and s.phone = ws.phone
+                   ))
+            from worker_studios ws where ws.user_id = ?::uuid order by ws.created_at, ws.id
+            """.trimIndent()
+        ).use { statement ->
+            statement.setString(1, userId)
+            statement.executeQuery().use { rows ->
+                val out = mutableListOf<StudioRow>()
+                while (rows.next()) {
+                    out += StudioRow(
+                        id = rows.getString(1),
+                        name = rows.getString(2),
+                        phone = rows.getString(3),
+                        createdAt = rows.getLong(4),
+                        updatedAt = rows.getLong(5),
+                        archivedAt = rows.getLong(6).takeUnless { rows.wasNull() },
+                        linked = rows.getBoolean(7),
+                    )
+                }
+                out
+            }
+        }
+    }
+
+    override suspend fun upsertStudio(
+        userId: String,
+        studioId: String,
+        name: String,
+        phone: String,
+        archived: Boolean,
+    ): Boolean = tx { connection ->
+        val written = connection.prepareStatement(
+            """
+            insert into worker_studios (id, user_id, name, phone, archived_at)
+            values (?::uuid, ?::uuid, ?, ?, case when ? then now() end)
+            on conflict (id) do update
+                set name        = excluded.name,
+                    phone       = excluded.phone,
+                    updated_at  = now(),
+                    -- Sticky: once archived, a later write cannot revive it.
+                    archived_at = coalesce(worker_studios.archived_at, excluded.archived_at)
+                -- Another account's id: no row changes, and the caller answers 404.
+                where worker_studios.user_id = excluded.user_id
+            """.trimIndent()
+        ).use { statement ->
+            statement.setString(1, studioId)
+            statement.setString(2, userId)
+            statement.setString(3, name)
+            statement.setString(4, phone)
+            statement.setBoolean(5, archived)
+            statement.executeUpdate() > 0
+        }
+        if (written) recordLinkChanges(connection)
+        written
+    }
+
+    /**
+     * Brings the link record (V31's worker_link_events) up to date with the match, in the
+     * caller's transaction, so an event follows every write that can make or end a link.
+     * Idempotent: writes nothing when nothing changed.
+     */
+    private fun recordLinkChanges(connection: Connection) {
+        connection.prepareStatement("select sync_worker_link_events()").use { statement ->
+            statement.executeQuery().use { it.next() }
         }
     }
 
@@ -407,6 +521,9 @@ class PostgresFundiStore(private val dataSource: DataSource) : FundiStore {
             statement.setBoolean(7, phone == PhoneChange.Keep)
             if (kind == null) statement.setNull(8, Types.VARCHAR) else statement.setString(8, kind)
             statement.executeUpdate() > 0
+        }.also { written ->
+            // A number set, changed, removed, or an entry archived can make or end a link.
+            if (written) recordLinkChanges(connection)
         }
     }
 

@@ -99,7 +99,10 @@ fun Route.fundiRoutes(store: FundiStore, auth: AuthStore) {
             call.respond(
                 WorkerListDto(
                     store.listWorkers(userId).map {
-                        WorkerDto(it.id, it.name, it.archivedAt, phone = it.phone, employment = it.employment.id)
+                        WorkerDto(
+                            it.id, it.name, it.archivedAt,
+                            phone = it.phone, employment = it.employment.id, linked = it.linked,
+                        )
                     },
                 ),
             )
@@ -161,6 +164,68 @@ fun Route.fundiRoutes(store: FundiStore, auth: AuthStore) {
                 // 404, never 403, as for a piece: the id is client-made and a different
                 // answer would say which ids exist.
                 call.respond(HttpStatusCode.NotFound, ErrorResponse("no_such_worker"))
+                return@put
+            }
+            call.respond(HttpStatusCode.NoContent)
+        }
+
+        // The studios this account works at (V31), archived ones included, each saying
+        // whether the two-sided match holds. "Linked" is the only thing a route ever says
+        // about a number: an unlinked entry reads the same whether or not its number has
+        // an account, so nobody can probe who uses the app.
+        get("/v1/fundi/studios") {
+            val userId = call.principal<JWTPrincipal>()?.subject
+                ?: return@get call.respond(
+                    HttpStatusCode.Unauthorized, ErrorResponse("invalid_token"),
+                )
+            if (!call.requireFundi(auth, userId)) return@get
+            call.respond(
+                StudioListDto(
+                    store.listStudios(userId).map {
+                        StudioDto(it.id, it.name, it.phone, it.archivedAt, linked = it.linked)
+                    },
+                ),
+            )
+        }
+
+        // Add, edit or archive one studio entry. The id is the phone's, as a roster id is.
+        // The number is required: an entry without one could never match.
+        put("/v1/fundi/studios/{id}") {
+            val userId = call.principal<JWTPrincipal>()?.subject
+                ?: return@put call.respond(
+                    HttpStatusCode.Unauthorized, ErrorResponse("invalid_token"),
+                )
+            if (!call.requireFundi(auth, userId)) return@put
+
+            val studioId = call.parameters["id"]?.takeIf(::isUuid)
+                ?: return@put call.respond(HttpStatusCode.NotFound, ErrorResponse("no_such_studio"))
+
+            val body = call.receive<StudioUpsertDto>()
+            val name = body.name?.trim().orEmpty()
+            if (!WorkerNames.valid(name)) {
+                call.respond(
+                    HttpStatusCode.BadRequest,
+                    ErrorResponse("invalid_request", "name must be 1 to ${WorkerNames.MAX_LENGTH} characters"),
+                )
+                return@put
+            }
+            val raw = body.phone?.trim().orEmpty()
+            if (raw.isEmpty()) {
+                call.respond(HttpStatusCode.BadRequest, ErrorResponse("invalid_phone", "phone is required"))
+                return@put
+            }
+            // Normalised and checked as the roster's number is, so the stored copy is the
+            // E.164 the match compares with users.phone.
+            val e164 = normalisePhone(raw)
+            val fault = validatePhone(e164)
+                ?: "phone is not a valid number".takeIf { e164.startsWith("+2540") }
+            if (fault != null) {
+                call.respond(HttpStatusCode.BadRequest, ErrorResponse("invalid_phone", fault))
+                return@put
+            }
+            if (!store.upsertStudio(userId, studioId, name, e164, body.archived)) {
+                // 404, never 403, as for a worker: the id is client-made.
+                call.respond(HttpStatusCode.NotFound, ErrorResponse("no_such_studio"))
                 return@put
             }
             call.respond(HttpStatusCode.NoContent)
