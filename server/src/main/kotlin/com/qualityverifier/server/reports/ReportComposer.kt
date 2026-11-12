@@ -18,6 +18,7 @@ import com.qualityverifier.server.db.ReportSession
 import com.qualityverifier.server.db.ReportWorker
 import com.qualityverifier.text.ReportLabels
 import com.qualityverifier.text.parseAssistantContent
+import com.qualityverifier.text.writesConsequences
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import java.time.Instant
@@ -39,9 +40,10 @@ data class ReportAssessment(
     val verdictLanguage: String?,
     val problems: DefectList,
     /**
-     * The newest reply that sent a verdict or a diagnosis: the one the problem list was
-     * read from, which names the problems in `reports.defect_refs`. A corrected verdict is
-     * a newer reply, so its problems get new references. Null when no reply sent either.
+     * The reply the problem list was read from, which names the problems in
+     * `reports.defect_refs`: the newest verdict's reply when its defects are the list, else
+     * the newest diagnosis's reply when its findings are. A corrected verdict is a newer
+     * reply, so its problems get new references. Null when the list is empty.
      */
     val sourceMessageId: String?,
     val photos: List<String>,
@@ -55,6 +57,7 @@ data class ReportAssessment(
             val parsedNewestFirst = session.replies.asReversed().map { it.messageId to parseAssistantContent(it.text) }
             val newest = NewestBlocks.of(parsedNewestFirst.map { it.second })
             val purpose = FundiIntake.decode(session.intakeAnswers)?.second
+            val problems = DefectList.fromReplies(parsedNewestFirst.map { it.second }, purpose)
             return ReportAssessment(
                 sessionId = session.id,
                 createdAt = session.createdAt,
@@ -64,13 +67,31 @@ data class ReportAssessment(
                 verdict = newest.verdict,
                 verdictLanguage = session.verdictLanguage?.takeIf { it.isNotBlank() }
                     ?: newest.verdict?.language?.takeIf { it.isNotBlank() },
-                problems = DefectList.fromReplies(parsedNewestFirst.map { it.second }, purpose),
-                sourceMessageId = parsedNewestFirst
-                    .firstOrNull { (_, reply) -> reply.verdict != null || reply.sentDiagnosis }
-                    ?.first,
+                problems = problems,
+                sourceMessageId = sourceOf(parsedNewestFirst, problems),
                 photos = session.photos,
                 workers = session.workers,
             )
+        }
+
+        /**
+         * Which reply [DefectList] took the list from, by its own rules (`DefectList.fromReplies`
+         * and `problemsOf`): a one-list diagnosis gives its findings; otherwise a verdict with
+         * defects gives those, and a verdict without gives the newest diagnosis's findings
+         * (which a newer-or-equal diagnosis supplies, and an older one does not). The ordinals
+         * in `defect_refs` index that reply's list.
+         */
+        private fun sourceOf(parsedNewestFirst: List<Pair<String, com.qualityverifier.text.AssistantContent>>, list: DefectList): String? {
+            if (list.unknown || list.problems.isEmpty()) return null
+            val verdictEntry = parsedNewestFirst.firstOrNull { it.second.verdict != null }
+            val diagnosisEntry = parsedNewestFirst.firstOrNull { it.second.sentDiagnosis }
+            val diagnosis = diagnosisEntry?.second?.diagnosis
+            val verdict = verdictEntry?.second?.verdict
+            return when {
+                diagnosis != null && diagnosis.writesConsequences -> diagnosisEntry.first
+                verdict != null && verdict.defects.isNotEmpty() -> verdictEntry.first
+                else -> diagnosisEntry?.first
+            }
         }
     }
 }
@@ -144,6 +165,7 @@ data class ReportContent(
     fun preview(): ReportPreview = ReportPreview(
         kind = kind.id,
         pieceName = pieceName,
+        language = labels.code,
         blocks = blocks,
         sessionIds = sessionIds,
         photoCount = photos.size,

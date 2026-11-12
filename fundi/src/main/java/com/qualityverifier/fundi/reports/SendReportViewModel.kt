@@ -12,11 +12,8 @@ import com.qualityverifier.di.AppContainer
 import com.qualityverifier.domain.ReportKind
 import com.qualityverifier.domain.ReportPreview
 import com.qualityverifier.domain.ReportRequest
-import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import java.io.File
@@ -53,27 +50,45 @@ class SendReportViewModel(
 
         /**
          * The preview or the download failed. [request] is what to retry with; null when the
-         * failure was the preview's, which goes back to the start.
+         * failure was the preview's, which goes back to the start. [busy] is a server
+         * rendering another report; [refused] is a 4xx, which no retry fixes.
          */
-        data class Failed(val request: ReportRequest?, val busy: Boolean = false) : Step
+        data class Failed(val request: ReportRequest?, val busy: Boolean = false, val refused: Boolean = false) : Step
     }
 
     private val _step = MutableStateFlow<Step>(Step.WhoFor)
     val step: StateFlow<Step> = _step.asStateFlow()
 
-    /** The file to hand to the share sheet, once a download is whole. */
-    private val _share = MutableSharedFlow<File>(extraBufferCapacity = 1)
-    val share: SharedFlow<File> = _share.asSharedFlow()
+    /**
+     * The file to hand to the share sheet, once a download is whole. Held until the screen
+     * takes it with [shared], so a file that finished while the screen was being recreated
+     * still opens the share sheet rather than sitting on disk unshared.
+     */
+    private val _share = MutableStateFlow<File?>(null)
+    val share: StateFlow<File?> = _share.asStateFlow()
+
+    /** The screen has opened the share sheet for [file]. */
+    fun shared(file: File) {
+        _share.compareAndSet(file, null)
+    }
 
     /** The kinds the first step offers. Only the customer report in this build. */
     val offered: List<ReportKind> = listOf(ReportKind.CUSTOMER)
 
+    /** Counts the times the flow was started over, so an answer to an earlier start is dropped. */
+    private var generation = 0
+
     fun choose(kind: ReportKind) {
         val request = ReportRequest(kind = kind.id)
+        val mine = ++generation
         _step.value = Step.LoadingPreview(kind)
         viewModelScope.launch {
-            _step.value = when (val outcome = reports.preview(pieceId, request)) {
+            val outcome = reports.preview(pieceId, request)
+            // "Back" while the preview loaded: the maker has left this step.
+            if (mine != generation) return@launch
+            _step.value = when (outcome) {
                 is PreviewOutcome.Loaded -> Step.Preview(request, outcome.preview)
+                is PreviewOutcome.Refused -> Step.Failed(request = null, refused = true)
                 else -> Step.Failed(request = null)
             }
         }
@@ -97,6 +112,7 @@ class SendReportViewModel(
     }
 
     fun back() {
+        generation++
         _step.value = Step.WhoFor
     }
 
@@ -111,9 +127,10 @@ class SendReportViewModel(
             when (outcome) {
                 is ReportOutcome.Done -> {
                     _step.value = lastPreview ?: Step.WhoFor
-                    _share.tryEmit(outcome.file)
+                    _share.value = outcome.file
                 }
                 ReportOutcome.Busy -> _step.value = Step.Failed(request, busy = true)
+                is ReportOutcome.Refused -> _step.value = Step.Failed(request, refused = true)
                 else -> _step.value = Step.Failed(request)
             }
         }

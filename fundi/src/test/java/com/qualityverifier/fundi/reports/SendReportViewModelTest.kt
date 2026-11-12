@@ -11,8 +11,6 @@ import com.qualityverifier.domain.ReportPreview
 import com.qualityverifier.domain.ReportRequest
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
-import kotlinx.coroutines.async
-import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.resetMain
@@ -100,14 +98,13 @@ class SendReportViewModelTest {
             },
         )
         model = SendReportViewModel("piece-1", api, fileFor = { file })
-        val shared = async { model.share.first() }
 
         model.choose(ReportKind.CUSTOMER)
         advanceUntilIdle()
         model.send()
         advanceUntilIdle()
 
-        assertEquals(file, shared.await())
+        assertEquals(file, model.share.value)
         assertEquals(listOf("piece-1" to ReportRequest(kind = "customer")), api.downloaded)
         val request = ReportRequest(kind = "customer")
         assertEquals(
@@ -137,7 +134,6 @@ class SendReportViewModelTest {
             },
         )
         val model = SendReportViewModel("piece-1", api, fileFor = { file })
-        val shared = async { model.share.first() }
 
         model.choose(ReportKind.CUSTOMER)
         advanceUntilIdle()
@@ -151,8 +147,11 @@ class SendReportViewModelTest {
 
         model.retry()
         advanceUntilIdle()
-        assertEquals(file, shared.await())
+        assertEquals(file, model.share.value)
         assertEquals(2, attempts)
+        // Taken by the screen once the share sheet has opened.
+        model.shared(file)
+        assertNull(model.share.value)
     }
 
     @Test
@@ -174,8 +173,25 @@ class SendReportViewModelTest {
         advanceUntilIdle()
         val noPreview = offline.step.value as SendReportViewModel.Step.Failed
         assertNull(noPreview.request)
+        assertFalse(noPreview.refused)
         offline.retry()
         assertEquals(SendReportViewModel.Step.WhoFor, offline.step.value)
+
+        // A 4xx is not a connection problem, and says so.
+        val refused = SendReportViewModel("piece-1", FakeApi(previewOutcome = PreviewOutcome.Refused(404)), fileFor = null)
+        refused.choose(ReportKind.CUSTOMER)
+        advanceUntilIdle()
+        assertTrue((refused.step.value as SendReportViewModel.Step.Failed).refused)
+    }
+
+    @Test
+    fun `back while the preview loads wins over the preview that then arrives`() = runTest {
+        val model = SendReportViewModel("piece-1", FakeApi(previewOutcome = PreviewOutcome.Loaded(preview)), fileFor = null)
+        model.choose(ReportKind.CUSTOMER)
+        assertTrue(model.step.value is SendReportViewModel.Step.LoadingPreview)
+        model.back()
+        advanceUntilIdle()
+        assertEquals(SendReportViewModel.Step.WhoFor, model.step.value)
     }
 
     private class FakeApi(

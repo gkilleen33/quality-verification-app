@@ -166,6 +166,35 @@ class ReportComposerTest {
     }
 
     @Test
+    fun `a problem's reference names the reply its list was read from`() {
+        // Today's shape with a later diagnosis-only reply: the verdict's defects are the
+        // list (problemsOf), so the references index the verdict's reply, not the newer one.
+        val diagnosisOnly = "```fb-diagnosis\n{\"findings\":[{\"title\":\"Gap at the back left joint\",\"area\":\"structural\",\"severity\":\"moderate\",\"dimension\":\"joint_fit\"}]}\n```"
+        val verdictThenDiagnosis = compose(
+            ReportKind.CUSTOMER,
+            listOf(session("s1", DAY_ONE, ReportFixtures.TABLE + diagnosisOnly)),
+        )
+        assertEquals(4, verdictThenDiagnosis.defectRefs.size)
+        assertTrue(verdictThenDiagnosis.defectRefs.all { it.startsWith("s1-r1:") })
+
+        // A one-list diagnosis after a verdict with defects: the findings are the list, so
+        // the references index the diagnosis's reply.
+        val oneList = "```fb-diagnosis\n{\"findings\":[{\"title\":\"Gap at the back left joint\",\"area\":\"structural\",\"severity\":\"moderate\",\"dimension\":\"joint_fit\",\"what_i_see\":\"A gap.\"}]}\n```"
+        val diagnosisWins = compose(ReportKind.CUSTOMER, listOf(session("s1", DAY_ONE, ReportFixtures.TABLE + oneList)))
+        assertEquals(listOf("s1-r2:0"), diagnosisWins.defectRefs)
+
+        // A sound verdict-only follow-up clears the list: nothing printed, no references.
+        val cleared = compose(ReportKind.CUSTOMER, listOf(session("s1", DAY_ONE, ReportFixtures.TABLE + ReportFixtures.ALL_FIXED)))
+        assertTrue(cleared.defectRefs.isEmpty())
+    }
+
+    @Test
+    fun `the preview carries the report's language`() {
+        val content = compose(ReportKind.CUSTOMER, listOf(session("s1", DAY_ONE, ReportFixtures.SOFA, verdictLanguage = "sw")))
+        assertEquals("sw", content.preview().language)
+    }
+
+    @Test
     fun `the report follows the language of the newest verdict`() {
         val content = compose(
             ReportKind.CUSTOMER,

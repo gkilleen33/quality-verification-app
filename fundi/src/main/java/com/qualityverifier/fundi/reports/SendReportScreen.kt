@@ -60,15 +60,24 @@ fun SendReportScreen(
 ) {
     val context = LocalContext.current
     val container = fundiContainer()
+    // The application context, not the activity: the view model keeps the lambda and
+    // outlives the activity across a rotation.
+    val appContext = context.applicationContext
     val model: SendReportViewModel = viewModel(
         key = "report-$pieceId",
-        factory = SendReportViewModel.factory(container, pieceId) { ReportFiles.newFile(context, pieceId) },
+        factory = SendReportViewModel.factory(container, pieceId) { ReportFiles.newFile(appContext, pieceId) },
     )
     val step by model.step.collectAsState()
+    val toShare by model.share.collectAsState()
     val labels = FundiLabels.ENGLISH
 
-    LaunchedEffect(Unit) {
-        model.share.collect { file -> ReportFiles.share(context, file, labels.reportShareWith) }
+    // Taken from the view model once opened, so a recreated screen does not open it twice
+    // and a file that finished while the screen was away still opens it once.
+    LaunchedEffect(toShare) {
+        toShare?.let { file ->
+            ReportFiles.share(context, file, labels.reportShareWith)
+            model.shared(file)
+        }
     }
 
     Column(Modifier.fillMaxSize().systemBarsPadding().padding(24.dp)) {
@@ -79,6 +88,8 @@ fun SendReportScreen(
             is SendReportViewModel.Step.LoadingPreview -> Waiting(labels.reportPreparing)
             is SendReportViewModel.Step.Preview -> Preview(
                 labels = labels,
+                // The problem headings follow the report's own language, as the PDF's do.
+                reportLabels = ReportLabels.forLanguage(current.preview.language),
                 blocks = current.preview.blocks,
                 photoCount = current.preview.photoCount,
                 onSend = model::send,
@@ -88,7 +99,11 @@ fun SendReportScreen(
             is SendReportViewModel.Step.Downloading -> Downloading(labels, current.received, current.total)
             is SendReportViewModel.Step.Failed -> Failed(
                 labels = labels,
-                message = if (current.busy) labels.reportBusy else labels.reportUnavailable,
+                message = when {
+                    current.refused -> labels.reportRefused
+                    current.busy -> labels.reportBusy
+                    else -> labels.reportUnavailable
+                },
                 onRetry = model::retry,
                 onBack = if (current.request == null) onBack else model::back,
             )
@@ -131,6 +146,7 @@ private fun WhoFor(
 @Composable
 private fun Preview(
     labels: FundiLabels,
+    reportLabels: ReportLabels,
     blocks: List<ReportBlock>,
     photoCount: Int,
     onSend: () -> Unit,
@@ -152,7 +168,7 @@ private fun Preview(
         }
         HorizontalDivider(Modifier.padding(vertical = 8.dp))
         LazyColumn(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            items(blocks) { block -> Block(block) }
+            items(blocks) { block -> Block(block, reportLabels) }
         }
         Row(Modifier.fillMaxWidth().padding(top = 12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             OutlinedButton(onClick = onBack, modifier = Modifier.weight(1f)) { Text(labels.reportBack) }
@@ -162,7 +178,7 @@ private fun Preview(
 }
 
 @Composable
-private fun Block(block: ReportBlock) {
+private fun Block(block: ReportBlock, labels: ReportLabels) {
     val muted = MaterialTheme.colorScheme.onSurfaceVariant
     when (block) {
         is HeadingBlock -> Text(
@@ -184,14 +200,14 @@ private fun Block(block: ReportBlock) {
             "${block.label} ${block.names.joinToString(", ")}",
             style = MaterialTheme.typography.bodyMedium,
         )
-        is ProblemBlock -> Problem(block)
+        is ProblemBlock -> Problem(block, labels)
         // Counted above the list; nothing to draw here.
         is PhotosBlock -> Unit
     }
 }
 
 @Composable
-private fun Problem(block: ProblemBlock, labels: ReportLabels = ReportLabels.ENGLISH) {
+private fun Problem(block: ProblemBlock, labels: ReportLabels) {
     val muted = MaterialTheme.colorScheme.onSurfaceVariant
     Card(
         Modifier.fillMaxWidth(),

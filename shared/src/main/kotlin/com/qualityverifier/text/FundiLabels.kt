@@ -225,6 +225,8 @@ data class FundiLabels(
     val reportUnavailable: String,
     /** Another report was being made; the same words as the connection message, as §5.5 says. */
     val reportBusy: String,
+    /** The server refused the request: not this account's piece, or a report that cannot be made. */
+    val reportRefused: String,
     val reportRetry: String,
     /** The share sheet's title. */
     val reportShareWith: String,
@@ -558,6 +560,8 @@ data class FundiLabels(
             reportDownloadingOfFormat = "Downloading the report, {n} of {total} KB",
             reportUnavailable = "Report unavailable. Check your connection and try again.",
             reportBusy = "Report unavailable. Check your connection and try again.",
+            reportRefused = "This report cannot be made for this piece. If the piece is new, " +
+                "open it once with a connection so the server has it, then try again.",
             reportRetry = "Try again",
             reportShareWith = "Send the report with",
         )

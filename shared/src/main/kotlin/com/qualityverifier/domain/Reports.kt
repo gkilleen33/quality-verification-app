@@ -125,6 +125,8 @@ data class ReportPreview(
     val kind: String,
     /** The piece's name as the report prints it: its label, else the kind of thing it is. */
     @SerialName("piece_name") val pieceName: String,
+    /** The language of the report's own lines (`en`, `sw`), so the phone's headings match the PDF's. */
+    val language: String = "en",
     val blocks: List<ReportBlock>,
     @SerialName("session_ids") val sessionIds: List<String>,
     @SerialName("photo_count") val photoCount: Int,
