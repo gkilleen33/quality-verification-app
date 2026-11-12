@@ -130,6 +130,34 @@ data class WorkerEntity(
      */
     @ColumnInfo(defaultValue = "employee")
     val employment: String = "employee",
+    /**
+     * The server's two-sided match (V31): the worker's own account lists this workshop
+     * too. Read at each sync and kept so the mark shows offline; never computed here.
+     */
+    @ColumnInfo(defaultValue = "0")
+    val linked: Boolean = false,
+)
+
+/**
+ * A studio this account says it works at (V31): the studio's name as typed or picked, and
+ * the studio account's number in E.164. Ids are made on the phone, as roster ids are, so
+ * the list works offline. [syncedAt] null means the server has not been told the current
+ * state; the next sync sends it before the pull, so the pull cannot overwrite it.
+ * [linked] is the server's match, read at each sync as [WorkerEntity.linked] is.
+ */
+@Entity(tableName = "worker_studios")
+data class StudioEntity(
+    @PrimaryKey val id: String,
+    /** Nullable only because the server clears it on account deletion. */
+    val name: String? = null,
+    /** Nullable only because the server clears it on account deletion. */
+    val phone: String? = null,
+    val archivedAt: Long? = null,
+    /** The phone's own clock, for ordering its own writes; never sent. */
+    val updatedAt: Long,
+    val syncedAt: Long? = null,
+    @ColumnInfo(defaultValue = "0")
+    val linked: Boolean = false,
 )
 
 /**

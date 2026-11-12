@@ -80,6 +80,8 @@ fun HomeScreen(
     onStart: (ItemType) -> Unit,
     /** The roster screen. */
     onWorkers: () -> Unit,
+    /** "Studios I work at" (V31): the other side of the roster. */
+    onStudios: () -> Unit,
     /** Password, the location switch, sign-out, and account deletion. */
     onSettings: () -> Unit,
 ) {
@@ -145,6 +147,13 @@ fun HomeScreen(
                 )
                 TextButton(onClick = onSettings) { Text("Settings") }
             }
+            // The two lists, under the wordmark rather than beside "My pieces": a worker
+            // who has assessed nothing still has studios to list, and a manager with no
+            // pieces still has workers to add. Both reachable from the first open.
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                TextButton(onClick = onWorkers) { Text("My workers") }
+                TextButton(onClick = onStudios) { Text(FundiLabels.ENGLISH.studiosTitle) }
+            }
             Spacer(Modifier.height(8.dp))
         }
 
@@ -180,17 +189,12 @@ fun HomeScreen(
                 ) { Text("Assess a new piece") }
             }
             item {
-                Row(
-                    Modifier.fillMaxWidth().padding(top = 8.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                ) {
-                    Text(
-                        "My pieces",
-                        style = MaterialTheme.typography.titleMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                    TextButton(onClick = onWorkers) { Text("My workers") }
-                }
+                Text(
+                    "My pieces",
+                    style = MaterialTheme.typography.titleMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(top = 8.dp),
+                )
             }
             items(pieces, key = { (latest, _) -> latest.piece }) { (latest, count) ->
                 PieceRow(

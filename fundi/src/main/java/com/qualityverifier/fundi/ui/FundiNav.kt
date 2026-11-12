@@ -52,6 +52,7 @@ import com.qualityverifier.fundi.ui.setup.GoalsScreen
 import com.qualityverifier.fundi.ui.setup.SetupViewModel
 import com.qualityverifier.fundi.ui.setup.ToolsScreen
 import com.qualityverifier.fundi.ui.setup.WorkshopScreen
+import com.qualityverifier.fundi.ui.workers.StudiosScreen
 import com.qualityverifier.fundi.ui.workers.WorkerPageScreen
 import com.qualityverifier.fundi.ui.workers.WorkersScreen
 import com.qualityverifier.text.AuthLabels
@@ -74,6 +75,8 @@ private object Routes {
     const val WORKERS = "workers"
     /** One worker's page (plan v7 §4.6), from a card on "My workers". */
     const val WORKER_PAGE = "workers/{workerId}"
+    /** "Studios I work at" (V31), the other side of the roster, from Home. */
+    const val STUDIOS = "studios"
     const val SETTINGS = "settings"
 
     fun workerPage(workerId: String) = "workers/$workerId"
@@ -410,6 +413,7 @@ fun FundiNav() {
                                 )
                             },
                             onWorkers = { navController.navigate(Routes.WORKERS) },
+                            onStudios = { navController.navigate(Routes.STUDIOS) },
                             onSettings = { navController.navigate(Routes.SETTINGS) { launchSingleTop = true } },
                         )
                     }
@@ -427,6 +431,10 @@ fun FundiNav() {
                 onBack = { navController.popBackStack() },
                 onOpen = { worker -> navController.navigate(Routes.workerPage(worker.id)) },
             )
+        }
+
+        composable(Routes.STUDIOS) {
+            StudiosScreen(onBack = { navController.popBackStack() })
         }
 
         composable(

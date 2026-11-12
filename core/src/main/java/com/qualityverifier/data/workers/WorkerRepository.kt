@@ -105,6 +105,8 @@ data class ServerWorker(
     val archivedAt: Long?,
     val phone: String? = null,
     val employment: Employment? = null,
+    /** The server's two-sided match (V31). False from a server before it. */
+    val linked: Boolean = false,
 )
 
 /** A session whose worker set is unsent. [asOf] is the phone's clock at the edit. */
@@ -188,7 +190,7 @@ class RoomWorkerRepository(
                 dao.applySyncedWorker(worker.id, worker.name, worker.archivedAt, syncedAt)
             } else {
                 dao.applySyncedWorkerDetails(
-                    worker.id, worker.name, worker.phone, employment.id, worker.archivedAt, syncedAt,
+                    worker.id, worker.name, worker.phone, employment.id, worker.linked, worker.archivedAt, syncedAt,
                 )
             }
         }
@@ -225,6 +227,7 @@ class RoomWorkerRepository(
 
     private fun WorkerEntity.toWorker() = Worker(
         id, name.orEmpty(), archived = archivedAt != null, phone = phone, employment = employmentOrDefault(),
+        linked = linked,
     )
 
     /** A kind this build does not know, from a newer server, reads as an employee rather than failing. */

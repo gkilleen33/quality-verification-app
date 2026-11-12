@@ -192,7 +192,7 @@ fun WorkerForm(
  * [onUnavailable] is called when no app answers the intent, or the row cannot be read.
  */
 @Composable
-private fun rememberContactNumberPicker(
+internal fun rememberContactNumberPicker(
     onPicked: (name: String?, number: String) -> Unit,
     onUnavailable: () -> Unit,
 ): () -> Unit {

@@ -126,8 +126,19 @@ private fun WorkerRow(worker: Worker, labels: FundiLabels, onClick: () -> Unit) 
                     color = muted,
                 )
             }
-            if (worker.archived) {
-                Text("Archived", style = MaterialTheme.typography.bodySmall, color = muted)
+            // "Linked" is the server's word (V31), from the last sync: this worker's own
+            // account lists this workshop too. "Archived" wins over it.
+            val tag = when {
+                worker.archived -> "Archived"
+                worker.linked -> labels.linkedTag
+                else -> null
+            }
+            tag?.let {
+                Text(
+                    it,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = if (worker.linked && !worker.archived) MaterialTheme.colorScheme.primary else muted,
+                )
             }
         }
     }

@@ -19,8 +19,9 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         PendingSessionWorkersEntity::class,
         MpesaTransactionEntity::class,
         MpesaUnreadDayEntity::class,
+        StudioEntity::class,
     ],
-    version = 14,
+    version = 15,
     exportSchema = true,
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -275,10 +276,29 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        /**
+         * Adds `worker_studios`, the studios this account says it works at, and
+         * `workers.linked` (server V31): the server's two-sided match, kept so the mark
+         * shows offline. Empty and false on an existing phone, which reads as it did:
+         * nothing is linked until the server says so. Kagua's database gains the same
+         * empty table, since the two apps share this class, and never writes to it.
+         */
+        val MIGRATION_14_15 = object : Migration(14, 15) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE workers ADD COLUMN linked INTEGER NOT NULL DEFAULT 0")
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `worker_studios` (" +
+                        "`id` TEXT NOT NULL, `name` TEXT, `phone` TEXT, `archivedAt` INTEGER, " +
+                        "`updatedAt` INTEGER NOT NULL, `syncedAt` INTEGER, " +
+                        "`linked` INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(`id`))"
+                )
+            }
+        }
+
         val MIGRATIONS = arrayOf(
             MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6,
             MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11,
-            MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14,
+            MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15,
         )
     }
 }

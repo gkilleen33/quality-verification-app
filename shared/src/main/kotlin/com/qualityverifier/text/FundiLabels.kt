@@ -194,6 +194,18 @@ data class FundiLabels(
     /** The newest diagnosis would not decode: not known, which is not the same as none. */
     val workerPageProblemsUnknown: String,
     val workerPagePurposeUnknown: String,
+    // ---- "Studios I work at" (V31), and the server's "Linked" mark on both lists
+    val studiosTitle: String,
+    val studiosEmpty: String,
+    val studioAddTitle: String,
+    val studioEditTitle: String,
+    val studioNameHint: String,
+    val studioPhoneLabel: String,
+    /** One line under the number saying why it is asked for. */
+    val studioPhoneWhy: String,
+    val studioArchive: String,
+    /** On a worker or studio card: the two-sided match holds. */
+    val linkedTag: String,
 ) {
     fun nameOf(employment: Employment): String = employmentNames.getValue(employment)
 
@@ -477,6 +489,19 @@ data class FundiLabels(
             workerPageNoProblems = "No problems found",
             workerPageProblemsUnknown = "The problems could not be read. Open the assessment.",
             workerPagePurposeUnknown = "Assessment",
+            studiosTitle = "Studios I work at",
+            studiosEmpty = "None yet. Add the workshops you work at. When a workshop also " +
+                "lists you, the app links you to it.",
+            studioAddTitle = "Add a studio",
+            studioEditTitle = "Edit studio",
+            studioNameHint = "Workshop or owner's name",
+            studioPhoneLabel = "Owner's phone number",
+            // The link needs both sides, and nothing is sent to the other side.
+            studioPhoneWhy = "The number the workshop owner uses for Fundi Bora. The app " +
+                "links you to the workshop only when they list your number too. Nothing " +
+                "is sent to them.",
+            studioArchive = "I no longer work here",
+            linkedTag = "Linked",
         )
     }
 }
