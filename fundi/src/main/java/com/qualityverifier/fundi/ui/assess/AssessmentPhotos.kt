@@ -66,7 +66,10 @@ fun assessmentPhotos(
             }
         }
     }
-    return photos
+    // The pager keys its pages on the path, and a repeated key is a crash. A path can
+    // repeat for a frame while a submitted run's shots are both on the run and on the
+    // new turn, and two identical photos on one turn share a file after a sync.
+    return photos.distinctBy { it.path }
 }
 
 /**

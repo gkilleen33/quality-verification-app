@@ -87,9 +87,12 @@ class AssessmentPhotosTest {
             labels = reportLabels,
         )
         // An intake turn whose photo was skipped: the opening turn is still the first one.
+        // A question between the plan and its answer does not replace the plan.
         val messages = listOf(
             user("m1", text = "intake"),
             assistant("m2", planText),
+            user("m2a", composed = false, text = "Can I skip the joint?"),
+            assistant("m2b", "Yes, skip it."),
             user("m3", "/p/1.jpg", "/p/3.jpg", "/p/4.jpg", text = submission),
         )
         val photos = assessmentPhotos(messages, run = null, FundiPurpose.EVALUATE, labels, reportLabels)
@@ -129,6 +132,20 @@ class AssessmentPhotosTest {
         val photos = assessmentPhotos(messages, run = null, FundiPurpose.EVALUATE, labels, reportLabels)
         assertEquals(listOf("/p/1.jpg", "/p/2.jpg"), photos.map { it.path })
         assertTrue(photos.all { it.caption == null })
+    }
+
+    @Test
+    fun `a photo on both the run and its turn is listed once`() {
+        // The frame between a submission being stored and the run being cleared.
+        val run = PlanRun(plan = plan, sourceMessageId = "m2", shots = mapOf(0 to "/p/1.jpg"))
+        val submission = buildSubmissionText(plan, mapOf(0 to "/p/1.jpg"), emptyMap(), reportLabels)
+        val messages = listOf(
+            user("m1", text = "intake"),
+            assistant("m2", planText),
+            user("m3", "/p/1.jpg", text = submission),
+        )
+        val photos = assessmentPhotos(messages, run, FundiPurpose.EVALUATE, labels, reportLabels)
+        assertEquals(listOf("/p/1.jpg"), photos.map { it.path })
     }
 
     @Test

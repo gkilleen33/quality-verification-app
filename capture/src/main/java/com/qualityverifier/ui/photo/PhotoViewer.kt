@@ -339,9 +339,14 @@ private fun ZoomablePhoto(
  * `transformable`'s own gesture loop, on the same foundation primitives, reporting the
  * centroid as well.
  *
- * Nothing is consumed until the gesture is past touch slop, and a drag only counts
+ * A one-finger drag consumes nothing until it is past touch slop, and only counts
  * towards that when [takesDrag] says the photo wants it; otherwise the pager, which
  * sees the same events after this node, takes the drag. Once consumed, the pager stops.
+ *
+ * Two fingers are the photo's from the first event. The pager watches one pointer, and
+ * a thumb held still while the index finger spreads moves that pointer past slop before
+ * the fingers' average movement, which is what the zoom test measures, gets there: the
+ * pager would start sliding the page and the pinch would be cancelled under it.
  */
 private suspend fun PointerInputScope.detectPhotoGestures(
     takesDrag: (Offset) -> Boolean,
@@ -358,6 +363,7 @@ private suspend fun PointerInputScope.detectPhotoGestures(
             val event = awaitPointerEvent()
             val canceled = event.changes.any { it.isConsumed }
             if (!canceled) {
+                if (event.changes.count { it.pressed } > 1) event.changes.forEach { it.consume() }
                 val zoomChange = event.calculateZoom()
                 val panChange = event.calculatePan()
                 if (!pastTouchSlop) {
