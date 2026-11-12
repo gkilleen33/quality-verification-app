@@ -54,10 +54,28 @@ data class RemoteWorker(
     val phone: String? = null,
     /** `employee` or `temporary`; absent from a server before V30, which is an employee. */
     val employment: String? = null,
+    /** The server's two-sided match (V31); absent from a server before it. */
+    val linked: Boolean = false,
 )
 
 @Serializable
 private data class WorkerListBody(val workers: List<RemoteWorker> = emptyList())
+
+/** One studio this account works at (V31), as the server holds it. */
+@Serializable
+data class RemoteStudio(
+    val id: String,
+    val name: String? = null,
+    val phone: String? = null,
+    @SerialName("archived_at") val archivedAt: Long? = null,
+    val linked: Boolean = false,
+)
+
+@Serializable
+private data class StudioListBody(val studios: List<RemoteStudio> = emptyList())
+
+@Serializable
+private data class StudioUpsertBody(val name: String, val phone: String, val archived: Boolean)
 
 /**
  * The number goes on every write, blank for none: the server keeps a stored number only
@@ -300,6 +318,47 @@ class SyncClient(
             }
         } ?: false
     }
+
+    /** The studios this account works at, as the server holds them. Null when it could not be fetched. */
+    suspend fun studios(): List<RemoteStudio>? = withContext(io) {
+        authenticated { token ->
+            Request.Builder().url(baseUrl + "v1/fundi/studios")
+                .addHeader("Authorization", "Bearer $token").get().build()
+        }?.use { response ->
+            // A server before V31 has no such route: a 404 reads as an empty list that
+            // must not be merged, so null, the same as unreachable.
+            if (!response.isSuccessful) return@use null
+            runCatching {
+                json.decodeFromString<StudioListBody>(response.body?.string().orEmpty()).studios
+            }.getOrNull()
+        }
+    }
+
+    /**
+     * Adds, edits or archives a studio entry on the server. True when it has it, or will
+     * never take it (any 4xx but 404 and 426); false for a transport failure, a 5xx, a
+     * 426, or a 404, which means a server before V31 and is worth keeping for the one
+     * that follows.
+     */
+    suspend fun upsertStudio(studioId: String, name: String, phone: String, archived: Boolean): Boolean =
+        withContext(io) {
+            val body = json.encodeToString(StudioUpsertBody(name, phone, archived)).toRequestBody(JSON)
+            authenticated { token ->
+                Request.Builder().url(baseUrl + "v1/fundi/studios/" + studioId)
+                    .addHeader("Authorization", "Bearer $token").put(body).build()
+            }?.use { response ->
+                when {
+                    response.isSuccessful -> true
+                    response.code == 404 -> false
+                    response.code == UPGRADE_REQUIRED -> false
+                    response.code in 400..499 -> {
+                        Log.w(TAG, "Server refused a studio entry (${response.code}); dropping it")
+                        true
+                    }
+                    else -> false
+                }
+            } ?: false
+        }
 
     /**
      * Replaces who worked on a session. The same retry rule as [upsertWorker], except a

@@ -107,6 +107,10 @@ class MigrationsTest {
         // V30: a worker's number. Found by the phone test above too; named here so the
         // UPDATE on workers is checked as a statement, not only as a column somewhere.
         "workers" to "phone",
+        // V31: a studio's name and its owner's number, on the worker's own list. Made with
+        // CREATE TABLE, which the phone-column pattern does not see.
+        "worker_studios" to "name",
+        "worker_studios" to "phone",
         // V25: a photo's GPS point, serial numbers, and owner and artist names.
         "attachments" to "photo_meta",
     )
@@ -264,7 +268,35 @@ class MigrationsTest {
         "V27__app_settings.sql" to "app_settings_history",
         // V28: each agreement to the terms, and each withdrawal.
         "V28__consents.sql" to "consents",
+        // V31: each link's start and end.
+        "V31__worker_studios.sql" to "worker_link_events",
     )
+
+    /**
+     * The match (V31) is a view, never a stored copy that can go stale, and nothing
+     * computes it by trigger: the record of starts and ends is written by a function the
+     * store calls in each write's transaction, and anonymise_user calls after clearing the
+     * numbers. Read from the file, as the other migration rules are.
+     */
+    @Test
+    fun `the worker match is a view, recorded by a function and not by a trigger`() {
+        val text = files.first { it.name == "V31__worker_studios.sql" }.readText()
+            .lines().joinToString(" ") { it.substringBefore("--") }.replace(Regex("""\s+"""), " ")
+        assertTrue("V31 has no worker_links view", Regex("""(?i)CREATE VIEW worker_links AS""").containsMatchIn(text))
+        assertTrue("V31 stores the match", !Regex("""(?i)CREATE TABLE worker_links\b""").containsMatchIn(text))
+        val triggers = Regex("""(?i)CREATE TRIGGER \w+ (BEFORE|AFTER) ([\w ]+?) ON (\w+)""").findAll(text)
+            .map { it.groupValues[3] to it.groupValues[2].trim() }.toList()
+        assertEquals(
+            "the only triggers are the append-only guards on the record",
+            listOf("worker_link_events" to "UPDATE OR DELETE", "worker_link_events" to "TRUNCATE"),
+            triggers,
+        )
+        val anonymise = text.substringAfter("FUNCTION anonymise_user")
+        assertTrue(
+            "anonymise_user must record the links that deletion ends",
+            Regex("""(?i)PERFORM sync_worker_link_events\(\);""").containsMatchIn(anonymise),
+        )
+    }
 
     /**
      * Each append-only table refuses UPDATE and DELETE row by row and TRUNCATE by statement.

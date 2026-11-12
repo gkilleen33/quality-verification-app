@@ -140,6 +140,16 @@ fun Route.apiRoutes(
             call.respond(ApiPage(rows.take(limit), rows.size > limit, limit, offset))
         }
 
+        // Who was linked to whom, and when (V31): from the append-only record, so a link
+        // that ended, or whose account was deleted, is still here with its end.
+        get("/worker-links") {
+            requireKey() ?: return@get
+            val limit = call.limit()
+            val offset = call.offset()
+            val rows = store.workerLinks(limit + 1, offset)
+            call.respond(ApiPage(rows.take(limit), rows.size > limit, limit, offset))
+        }
+
         /**
          * The photo bytes.
          *

@@ -195,9 +195,30 @@ data class ApiSessionWorker(
 )
 
 /**
+ * One link between a worker's account and a studio's account (V31), from the append-only
+ * record: made when both sides had listed each other, ended when either side archived its
+ * entry or an account was deleted. A pair that linked again after ending is two rows.
+ */
+@Serializable
+data class ApiWorkerLink(
+    /** The worker's account, as `/api/v1/users` lists it. */
+    @SerialName("worker_user_id") val workerUserId: String,
+    /** The studio's account: the manager whose roster named the worker. */
+    @SerialName("studio_user_id") val studioUserId: String,
+    /** The roster entry the link was made on, as `/api/v1/workers` lists it. */
+    @SerialName("worker_entry_id") val workerEntryId: String,
+    /** `employee` or `temporary`, as the roster entry said when the link was made. */
+    val employment: String,
+    /** The server's clock when the link was first recorded. */
+    @SerialName("linked_since") val linkedSince: Long,
+    /** When it ended, or null while it holds. */
+    @SerialName("ended_at") val endedAt: Long?,
+)
+
+/**
  * One roster entry (V23, V30), for the report that sets out each worker's work. The
- * manager is `user_id`; the worker has no account here, and [phone] is what will link one
- * once both sides have listed each other (V31).
+ * manager is `user_id`; the worker has no account here, and [phone] is what links one
+ * once both sides have listed each other (V31, `/api/v1/worker-links`).
  */
 @Serializable
 data class ApiWorker(

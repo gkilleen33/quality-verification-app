@@ -241,7 +241,7 @@ interface SessionDao {
      * number removed on another phone.
      */
     @Query(
-        "UPDATE workers SET name = :name, phone = :phone, employment = :employment, " +
+        "UPDATE workers SET name = :name, phone = :phone, employment = :employment, linked = :linked, " +
             "archivedAt = COALESCE(archivedAt, :archivedAt), " +
             "syncedAt = :syncedAt WHERE id = :workerId AND syncedAt IS NOT NULL"
     )
@@ -250,6 +250,46 @@ interface SessionDao {
         name: String?,
         phone: String?,
         employment: String,
+        linked: Boolean,
+        archivedAt: Long?,
+        syncedAt: Long,
+    )
+
+    // ---- the studios this account works at (V31)
+
+    @Query("SELECT * FROM worker_studios ORDER BY updatedAt")
+    fun observeStudios(): Flow<List<StudioEntity>>
+
+    @Query("SELECT * FROM worker_studios WHERE id = :studioId")
+    suspend fun findStudio(studioId: String): StudioEntity?
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsertStudio(studio: StudioEntity)
+
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
+    suspend fun insertStudioIfAbsent(studio: StudioEntity)
+
+    @Query("SELECT * FROM worker_studios WHERE syncedAt IS NULL ORDER BY updatedAt")
+    suspend fun unsyncedStudios(): List<StudioEntity>
+
+    /** Guarded on `updatedAt`, so an edit made while the send was in flight stays unsent. */
+    @Query("UPDATE worker_studios SET syncedAt = :syncedAt WHERE id = :studioId AND updatedAt = :asOf")
+    suspend fun markStudioSynced(studioId: String, asOf: Long, syncedAt: Long)
+
+    /**
+     * The server's copy, applied only where nothing is unsent. Archive is sticky in both
+     * directions, as for a worker; the match is the server's to say.
+     */
+    @Query(
+        "UPDATE worker_studios SET name = :name, phone = :phone, linked = :linked, " +
+            "archivedAt = COALESCE(archivedAt, :archivedAt), " +
+            "syncedAt = :syncedAt WHERE id = :studioId AND syncedAt IS NOT NULL"
+    )
+    suspend fun applySyncedStudio(
+        studioId: String,
+        name: String?,
+        phone: String?,
+        linked: Boolean,
         archivedAt: Long?,
         syncedAt: Long,
     )

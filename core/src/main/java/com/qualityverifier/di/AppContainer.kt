@@ -33,7 +33,9 @@ import com.qualityverifier.data.terms.TermsRequiredInterceptor
 import com.qualityverifier.data.terms.TermsSignal
 import com.qualityverifier.data.update.AppIdentityInterceptor
 import com.qualityverifier.data.update.AppVersionCheck
+import com.qualityverifier.data.workers.RoomStudioRepository
 import com.qualityverifier.data.workers.RoomWorkerRepository
+import com.qualityverifier.data.workers.StudioRepository
 import com.qualityverifier.data.workers.WorkerRepository
 import com.qualityverifier.domain.AppId
 import kotlinx.coroutines.CancellationException
@@ -256,6 +258,9 @@ class AppContainer(
     /** The manager's roster. Fundi Bora's; Kagua links it and never writes to it. */
     val workerRepository: WorkerRepository = RoomWorkerRepository(database.sessionDao())
 
+    /** The studios this account works at (V31). Fundi Bora's, as the roster is. */
+    val studioRepository: StudioRepository = RoomStudioRepository(database.sessionDao())
+
     // The endpoint is what an app *is* (see chatPath), so it also says whether the app has
     // a roster.
     private val rosterEnabled = chatPath.startsWith("v1/fundi")
@@ -277,6 +282,7 @@ class AppContainer(
         images = images,
         tokens = tokenStore,
         workers = workerRepository,
+        studios = studioRepository,
         rosterEnabled = rosterEnabled,
         // Same rule as the roster: an app on Fundi Bora's endpoint is the one that reads.
         mpesa = if (rosterEnabled) mpesa::push else null,
@@ -402,6 +408,7 @@ class AppContainer(
             images = images,
             tokens = held,
             workers = workerRepository,
+            studios = studioRepository,
             rosterEnabled = rosterEnabled,
             mpesa = if (rosterEnabled) mpesaAs::push else null,
         )

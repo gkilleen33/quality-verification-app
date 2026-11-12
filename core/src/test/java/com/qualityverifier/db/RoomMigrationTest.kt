@@ -84,7 +84,25 @@ class RoomMigrationTest {
         }
     }
 
+    @Test
+    fun `14 to 15 adds the studio list and the linked mark, as schema 15 has them`() {
+        val statements = statementsOf(AppDatabase.MIGRATION_14_15)
+        assertEquals(2, statements.size)
+        assertEquals("ALTER TABLE workers ADD COLUMN linked INTEGER NOT NULL DEFAULT 0", statements[0])
+        // The CREATE TABLE as Room exported it, so the migrated table and a fresh one are
+        // the same statement; Room's identity hash would otherwise refuse the database.
+        assertEquals(createSql(15, "worker_studios").replace("\${TABLE_NAME}", "worker_studios"), statements[1])
+
+        val before = createSql(14, "workers")
+        val after = createSql(15, "workers")
+        assertFalse(before, before.contains("`linked`"))
+        assertTrue(after, after.contains("`linked` INTEGER NOT NULL DEFAULT 0"))
+        listOf("sessions", "pieces", "session_workers", "mpesa_transactions").forEach { table ->
+            assertEquals(table, createSql(14, table), createSql(15, table))
+        }
+    }
+
     private companion object {
-        const val CURRENT = 14
+        const val CURRENT = 15
     }
 }

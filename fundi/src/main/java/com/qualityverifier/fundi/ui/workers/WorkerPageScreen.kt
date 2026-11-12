@@ -122,6 +122,7 @@ fun WorkerPageScreen(
                             listOfNotNull(
                                 labels.nameOf(person.employment),
                                 person.phone,
+                                labels.linkedTag.takeIf { person.linked && !person.archived },
                                 labels.workerPageArchived.takeIf { person.archived },
                             ).joinToString(" · "),
                             style = MaterialTheme.typography.bodyMedium,

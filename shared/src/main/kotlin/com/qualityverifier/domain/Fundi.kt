@@ -114,7 +114,29 @@ data class Worker(
     val archived: Boolean,
     val phone: String? = null,
     val employment: Employment = Employment.EMPLOYEE,
+    /**
+     * Whether the server has matched this entry to the worker's own account: the worker
+     * listed this workshop too (V31). Read from the server at each sync; never computed
+     * on the phone, which cannot see the other side.
+     */
+    val linked: Boolean = false,
 )
+
+/**
+ * A studio this account says it works at (V31): the studio's name as the person typed or
+ * picked it, and the studio account's number in E.164. Archived, not deleted, so a past
+ * link stays on record. [linked] is the server's two-sided match, as [Worker.linked] is.
+ */
+data class Studio(
+    val id: String,
+    val name: String,
+    val phone: String,
+    val archived: Boolean,
+    val linked: Boolean = false,
+)
+
+/** What the studio form hands over. [phone] is in E.164, already normalised by the form. */
+data class StudioDetails(val name: String, val phone: String)
 
 /**
  * Whether a roster entry is one of the workshop's own staff or somebody hired for a job.

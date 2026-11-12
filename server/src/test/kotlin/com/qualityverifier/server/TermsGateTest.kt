@@ -49,6 +49,7 @@ class TermsGateTest {
         HttpMethod.Put to "/v1/fundi/profile",
         HttpMethod.Put to "/v1/fundi/workshop-location",
         HttpMethod.Put to "/v1/fundi/workers/$uuid",
+        HttpMethod.Put to "/v1/fundi/studios/$uuid",
         HttpMethod.Put to "/v1/fundi/pieces/$uuid",
         HttpMethod.Put to "/v1/sessions/$uuid/workers",
         HttpMethod.Post to "/v1/tester-feedback",
@@ -68,6 +69,7 @@ class TermsGateTest {
         HttpMethod.Head to "/v1/blobs/$sha",
         HttpMethod.Get to "/v1/fundi/profile",
         HttpMethod.Get to "/v1/fundi/workers",
+        HttpMethod.Get to "/v1/fundi/studios",
     )
 
     private suspend fun HttpClient.hit(method: HttpMethod, path: String, user: UserRow): HttpResponse =
@@ -260,6 +262,7 @@ class TermsGateTest {
             "PUT" to "/v1/fundi/profile",
             "PUT" to "/v1/fundi/workshop-location",
             "PUT" to "/v1/fundi/workers/x",
+            "PUT" to "/v1/fundi/studios/x",
             "PUT" to "/v1/fundi/pieces/x",
             "PUT" to "/v1/sessions/x/workers",
             "POST" to "/v1/tester-feedback",

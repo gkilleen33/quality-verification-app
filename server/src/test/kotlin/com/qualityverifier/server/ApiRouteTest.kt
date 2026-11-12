@@ -6,6 +6,7 @@ import com.qualityverifier.server.api.ApiMessage
 import com.qualityverifier.server.api.ApiProblem
 import com.qualityverifier.server.api.ApiSessionWorker
 import com.qualityverifier.server.api.ApiTesterFeedback
+import com.qualityverifier.server.api.ApiWorkerLink
 import com.qualityverifier.server.api.PostgresApiKeyStore
 import com.qualityverifier.server.api.apiProblemsOf
 import com.qualityverifier.server.blobs.BlobStore
@@ -51,6 +52,7 @@ class ApiRouteTest {
             "/api/v1/assessments/${API_ASSESSMENT.id}",
             "/api/v1/tester-feedback",
             "/api/v1/workers",
+            "/api/v1/worker-links",
             "/api/v1/photos/${"a".repeat(64)}",
         ).forEach { path ->
             assertEquals(path, HttpStatusCode.Unauthorized, app.get(path).status)
@@ -322,6 +324,34 @@ class ApiRouteTest {
         assertTrue(body, body.contains("\"has_more\":false"))
         assertEquals(11, store.lastLimit)
         assertEquals("/api/v1/workers", admin.audits.single().target)
+    }
+
+    @Test
+    fun `links are listed with their start and end, paged and recorded like the rest`() = testApplication {
+        // V31. A link that ended is still here with its end, as an explicit null while it
+        // holds, so research can see who was linked when.
+        val keys = FakeApiKeyStore()
+        val admin = RecordingAudit()
+        val worker = "22222222-3333-4444-5555-666666666666"
+        val store = FakeApiStore(
+            links = listOf(
+                ApiWorkerLink(worker, API_USER.id, API_WORKER.id, "temporary", 1_700_000_400_000, null),
+                ApiWorkerLink(worker, API_USER.id, API_WORKER.id, "employee", 1_700_000_100_000, 1_700_000_300_000),
+            ),
+        )
+        val app = withApi(keys = keys, store = store, admin = admin)
+
+        val body = app.get("/api/v1/worker-links?limit=5") { key(keys.anyKey()) }.bodyAsText()
+
+        assertTrue(body, body.contains("\"worker_user_id\":\"$worker\""))
+        assertTrue(body, body.contains("\"studio_user_id\":\"${API_USER.id}\""))
+        assertTrue(body, body.contains("\"worker_entry_id\":\"${API_WORKER.id}\""))
+        assertTrue(body, body.contains("\"employment\":\"temporary\""))
+        assertTrue(body, body.contains("\"linked_since\":1700000400000"))
+        assertTrue(body, body.contains("\"ended_at\":null"))
+        assertTrue(body, body.contains("\"ended_at\":1700000300000"))
+        assertEquals(6, store.lastLimit)
+        assertEquals("/api/v1/worker-links", admin.audits.single().target)
     }
 
     @Test

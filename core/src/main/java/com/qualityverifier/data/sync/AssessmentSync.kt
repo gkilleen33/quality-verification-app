@@ -6,7 +6,9 @@ import com.qualityverifier.data.auth.TokenStore
 import com.qualityverifier.data.session.SessionRepository
 import com.qualityverifier.data.session.SyncedMessage
 import com.qualityverifier.data.session.SyncedSession
+import com.qualityverifier.data.workers.ServerStudio
 import com.qualityverifier.data.workers.ServerWorker
+import com.qualityverifier.data.workers.StudioRepository
 import com.qualityverifier.data.workers.WorkerRepository
 import com.qualityverifier.domain.Employment
 import com.qualityverifier.domain.ItemType
@@ -38,6 +40,8 @@ class AssessmentSync(
     private val tokens: TokenStore,
     /** The roster, pushed before the pull and merged after it. */
     private val workers: WorkerRepository,
+    /** The studios this account works at (V31), pushed and pulled with the roster. */
+    private val studios: StudioRepository,
     /**
      * Whether this app has a roster at all. Kagua does not: its account would get a 403
      * from the roster route on every sync, which is a request with no answer worth paying for.
@@ -88,8 +92,15 @@ class AssessmentSync(
                         // Null from a server before V30, which the repository reads as
                         // "no opinion"; a kind this build does not know reads the same way.
                         employment = it.employment?.let(Employment::fromId),
+                        linked = it.linked,
                     )
                 },
+            )
+        }
+        // The studio list too, with the server's word on which are linked.
+        if (rosterEnabled) client.studios()?.let { list ->
+            studios.mergeFromServer(
+                list.map { ServerStudio(it.id, it.name, it.phone, it.archivedAt, it.linked) },
             )
         }
 
@@ -212,6 +223,13 @@ class AssessmentSync(
                 rosterWrites++
             } else {
                 rosterAllSent = false
+            }
+        }
+        // The studio list, on the same footing as the roster: the phone's own unsent work.
+        if (rosterEnabled) for (change in studios.unsynced()) {
+            if (client.upsertStudio(change.id, change.name, change.phone, change.archived)) {
+                studios.markSynced(change)
+                rosterWrites++
             }
         }
         // Only once every worker is there: a set naming a worker the server has not got

@@ -40,6 +40,9 @@ interface ApiStore {
     /** Every roster entry of every manager, archived ones included, oldest first. */
     suspend fun workers(limit: Int, offset: Int): List<ApiWorker>
 
+    /** Every link ever made between two accounts (V31), with its end where it has one, oldest first. */
+    suspend fun workerLinks(limit: Int, offset: Int): List<ApiWorkerLink>
+
     /** Whether any assessment refers to this photo. Guards the bytes endpoint. */
     suspend fun photoExists(sha256: String): Boolean
 }
@@ -256,6 +259,41 @@ class PostgresApiStore(private val dataSource: DataSource) : ApiStore {
                 }
             }
         }
+
+    override suspend fun workerLinks(limit: Int, offset: Int): List<ApiWorkerLink> = query { connection ->
+        connection.prepareStatement(
+            """
+            select l.worker_user_id::text, l.studio_user_id::text, l.worker_entry_id::text, l.employment,
+                   (extract(epoch from l.at) * 1000)::bigint,
+                   -- The first 'ended' after this 'linked' for the same pair, or null.
+                   (select (extract(epoch from e.at) * 1000)::bigint
+                      from worker_link_events e
+                     where e.worker_user_id = l.worker_user_id
+                       and e.studio_user_id = l.studio_user_id
+                       and e.event = 'ended' and e.id > l.id
+                     order by e.id limit 1)
+              from worker_link_events l
+             where l.event = 'linked'
+             order by l.id
+             limit ? offset ?
+            """.trimIndent()
+        ).use { statement ->
+            statement.setInt(1, limit)
+            statement.setInt(2, offset)
+            statement.executeQuery().use { rows ->
+                val out = mutableListOf<ApiWorkerLink>()
+                while (rows.next()) out += ApiWorkerLink(
+                    workerUserId = rows.getString(1),
+                    studioUserId = rows.getString(2),
+                    workerEntryId = rows.getString(3),
+                    employment = rows.getString(4),
+                    linkedSince = rows.getLong(5),
+                    endedAt = rows.nullableLong(6),
+                )
+                out
+            }
+        }
+    }
 
     override suspend fun photoExists(sha256: String): Boolean = query { connection ->
         connection.prepareStatement(
