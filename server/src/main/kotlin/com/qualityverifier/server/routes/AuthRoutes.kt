@@ -1,5 +1,6 @@
 package com.qualityverifier.server.routes
 
+import com.qualityverifier.server.Terms
 import com.qualityverifier.server.auth.AccessTokens
 import com.qualityverifier.server.auth.Passwords
 import com.qualityverifier.server.auth.Tokens
@@ -34,7 +35,7 @@ private val REFRESH_LIFETIME: Duration = Duration.ofDays(60)
 private const val LOCKOUT_THRESHOLD = 10
 private val LOCKOUT: Duration = Duration.ofMinutes(15)
 
-fun Route.authRoutes(store: AuthStore, accessTokens: AccessTokens) {
+fun Route.authRoutes(store: AuthStore, accessTokens: AccessTokens, terms: Terms? = null) {
 
     route("/v1/auth") {
 
@@ -192,6 +193,9 @@ fun Route.authRoutes(store: AuthStore, accessTokens: AccessTokens) {
                 call.respond(HttpStatusCode.Unauthorized, ErrorResponse("invalid_token"))
                 return@get
             }
+            // Open before agreeing (TermsGate.OPEN): this is where the phone learns it has
+            // terms to agree to.
+            val status = terms?.gate?.statusFor(user.id, user.audience)
             call.respond(
                 MeResponse(
                     userId = user.id,
@@ -199,6 +203,9 @@ fun Route.authRoutes(store: AuthStore, accessTokens: AccessTokens) {
                     accountType = user.accountType,
                     businessName = user.businessName,
                     isTester = user.isTester,
+                    termsRequired = status?.required == true,
+                    terms = status?.version?.let { version -> terms?.describe(user.audience, version) },
+                    transferAgreed = status?.transferAgreed == true,
                 )
             )
         }

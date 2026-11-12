@@ -30,6 +30,19 @@ interface TokenStore {
 
     fun setTester(value: Boolean)
 
+    /**
+     * The server's last answer about this account's terms: true when it has terms to agree
+     * to, false when it has agreed to the current ones, null when the phone has not asked.
+     *
+     * Cached for the same reason as [isTester]: Fundi Bora chooses its first screen from it
+     * before any request can answer, and offline it keeps the last answer. Kagua never
+     * reads it. Defaulted so a store that never holds it (the push's copy, test fakes)
+     * reads as "not asked".
+     */
+    fun termsRequired(): Boolean? = null
+
+    fun setTermsRequired(value: Boolean?) = Unit
+
     fun clear()
 
     fun isSignedIn(): Boolean = refreshToken() != null

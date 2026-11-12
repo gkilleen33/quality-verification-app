@@ -55,7 +55,47 @@ data class MeResponse(
      * kept the old answer until their token expired.
      */
     @SerialName("is_tester") val isTester: Boolean = false,
+    /**
+     * True when the account has not agreed to both parts of its app's current terms.
+     * Reported whether or not the server refuses it yet, so a phone collects agreements
+     * before the gate goes on. Always false for an app with no terms (Kagua today).
+     */
+    @SerialName("terms_required") val termsRequired: Boolean = false,
+    /** The current terms and where to read each language. Null for an app with no terms. */
+    val terms: MeTerms? = null,
+    /** Whether the newest transfer row is an agreement. Settings offers withdrawal only then. */
+    @SerialName("transfer_agreed") val transferAgreed: Boolean = false,
 )
+
+/** The terms an account must agree to, on `/v1/me` rather than the config route, which uses no database. */
+@Serializable
+data class MeTerms(
+    val version: String,
+    /** English first. Each language's own file, with the hash the agreement must send back. */
+    val languages: List<MeTermsLanguage>,
+)
+
+@Serializable
+data class MeTermsLanguage(
+    val language: String,
+    val sha256: String,
+    /** Relative to the server's root, e.g. `terms/fundi/2026-11/en`. */
+    val path: String,
+)
+
+/** `POST /v1/me/consents`: both boxes, for the text that was shown. */
+@Serializable
+data class ConsentRequest(
+    val version: String = "",
+    val language: String = "",
+    @SerialName("text_sha256") val textSha256: String = "",
+    /** Exactly `terms` and `transfer`: the screen sends both or nothing. */
+    val kinds: List<String> = emptyList(),
+)
+
+/** `POST /v1/me/consents/withdrawal`. Only `transfer` can be withdrawn. */
+@Serializable
+data class WithdrawalRequest(val kind: String = "")
 
 @Serializable
 data class ErrorResponse(val error: String, val detail: String? = null)

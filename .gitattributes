@@ -1,0 +1,4 @@
+# The published terms texts are pinned by SHA-256 in terms/index.txt, and every agreement
+# records the hash of the text shown. A checkout that rewrote line endings would change
+# the bytes, and with them the hash, without changing a word.
+terms/** text eol=lf

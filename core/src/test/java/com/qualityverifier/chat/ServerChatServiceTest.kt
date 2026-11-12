@@ -448,6 +448,21 @@ class ServerChatServiceTest {
     // A 403 from an assessment endpoint means the account belongs to the other app.
     // Folded in with 401 it said "please sign in again", which is a loop: the credentials
     // are right and signing in again changes nothing.
+    // Agreeing fixes it, so the turn stays retryable and the message says what to do.
+    @Test
+    fun `terms_required asks for the terms, not a sign-in, and the turn can be retried`() = runTest {
+        server.enqueue(
+            MockResponse().setResponseCode(403).setBody("""{"error":"terms_required"}""")
+        )
+
+        val result = service().send("s1", ItemType.WOODEN_TABLE, history())
+
+        val failure = result as ChatResult.Failure
+        assertTrue(failure.message, failure.message.contains("agree to the terms"))
+        assertFalse(failure.message.contains("sign in again"))
+        assertTrue("AUTH would make the turn unretryable", failure.kind != ChatErrorKind.AUTH)
+    }
+
     @Test
     fun `an account for the other app is told so, not asked to sign in again`() = runTest {
         server.enqueue(

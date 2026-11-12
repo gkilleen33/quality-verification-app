@@ -309,7 +309,9 @@ class ServerChatService(
             .build()
         return runCatching {
             client.newCall(put).execute().use { response ->
-                if (response.isSuccessful) null else failureFor(response.code)
+                // The body too, so a refused upload says why (terms_required, wrong_app).
+                if (response.isSuccessful) null
+                else failureFor(response.code, response.body?.string().orEmpty())
             }
         }.getOrElse { networkFailure() }
     }
@@ -332,7 +334,17 @@ class ServerChatService(
         // "please sign in again" would send that person round a loop for ever: the
         // credentials are right, the account is simply not for this app. Nothing the
         // client can do fixes it, so the message says what happened instead.
-        403 -> if (body.contains(WRONG_APP)) {
+        //
+        // terms_required first: the account is fine and only has terms to agree to. A
+        // request kind rather than AUTH, so the turn stays retryable: the app opens the terms
+        // screen (TermsRequiredInterceptor), and after agreeing, Retry sends the same turn.
+        403 -> if (body.contains(TERMS_REQUIRED)) {
+            ChatResult.Failure(
+                ChatErrorKind.REQUEST,
+                "Please read and agree to the terms to continue. Your photos and answers " +
+                    "are saved — tap retry after agreeing.",
+            )
+        } else if (body.contains(WRONG_APP)) {
             ChatResult.Failure(
                 ChatErrorKind.AUTH,
                 "This account was created for the other app, so it cannot run " +
@@ -417,6 +429,9 @@ class ServerChatService(
 
         /** The server's error code for the per-account daily allowance. */
         const val WRONG_APP = "wrong_app"
+
+        /** The account has terms to agree to (see TermsGate on the server). */
+        const val TERMS_REQUIRED = "terms_required"
         const val DAILY_LIMIT = "daily_limit_reached"
         val JSON = "application/json; charset=utf-8".toMediaType()
         val JPEG = "image/jpeg".toMediaType()

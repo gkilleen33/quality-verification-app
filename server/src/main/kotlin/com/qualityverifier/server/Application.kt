@@ -58,12 +58,22 @@ import com.qualityverifier.server.db.FundiStore
 import com.qualityverifier.server.db.PostgresChatStore
 import com.qualityverifier.server.db.PostgresFundiStore
 import com.qualityverifier.server.db.PostgresAuthStore
+import com.qualityverifier.domain.Audience
 import com.qualityverifier.server.routes.ErrorResponse
+import com.qualityverifier.server.routes.MeTerms
+import com.qualityverifier.server.routes.MeTermsLanguage
 import com.qualityverifier.server.routes.appConfigRoutes
 import com.qualityverifier.server.routes.authRoutes
 import com.qualityverifier.server.routes.chatRoutes
+import com.qualityverifier.server.routes.consentRoutes
 import com.qualityverifier.server.routes.fundiRoutes
 import com.qualityverifier.server.routes.syncRoutes
+import com.qualityverifier.server.routes.termsTextRoutes
+import com.qualityverifier.server.terms.ConsentStore
+import com.qualityverifier.server.terms.PostgresConsentStore
+import com.qualityverifier.server.terms.TermsGate
+import com.qualityverifier.server.terms.TermsGatePlugin
+import com.qualityverifier.server.terms.TermsTexts
 import okhttp3.OkHttpClient
 import java.io.File
 import java.util.concurrent.TimeUnit
@@ -182,6 +192,15 @@ fun main() {
     val settings = database?.let { AppSettings(PostgresSettingsStore(it.source)) }
         ?: AppSettings.UNCONFIGURED
 
+    // The terms texts are read and checked against terms/index.txt here, before the server
+    // listens. A text whose bytes differ from its pinned hash throws, and the server does
+    // not start: serving it would make every agreement record a hash of unseen words.
+    val terms = database?.let {
+        val consents = PostgresConsentStore(it.source)
+        val texts = TermsTexts.fromClasspath()
+        Terms(gate = TermsGate(settings, consents, texts), consents = consents, texts = texts)
+    }
+
     log.info("Kagua server {} starting on {}:{}", config.version, config.host, config.port)
     if (config.dailyAssessmentLimit > 0) {
         log.info(
@@ -206,7 +225,7 @@ fun main() {
     )
 
     embeddedServer(Netty, port = config.port, host = config.host) {
-        module(config.version, database, auth, chat, fundi, admin, config.appVersions, settings)
+        module(config.version, database, auth, chat, fundi, admin, config.appVersions, settings, terms)
     }.start(wait = true)
 }
 
@@ -233,6 +252,28 @@ class Auth(val store: AuthStore, val accessTokens: AccessTokens)
  * Anthropic key that this has no use for.
  */
 class Fundi(val store: FundiStore)
+
+/**
+ * The terms: the published texts, the consent records, and the check that refuses an
+ * account without a current agreement. Needs a database; absent without one, and then no
+ * app has terms.
+ */
+class Terms(val gate: TermsGate, val consents: ConsentStore, val texts: TermsTexts) {
+
+    /** What `/v1/me` says about [audience]'s current terms at [version]: each language and its hash. */
+    fun describe(audience: Audience, version: String): MeTerms = MeTerms(
+        version = version,
+        languages = texts.languages(audience, version).mapNotNull { language ->
+            texts.file(audience, version, language)?.let { file ->
+                MeTermsLanguage(
+                    language = language.id,
+                    sha256 = file.sha256,
+                    path = "terms/${audience.id}/$version/${language.id}",
+                )
+            }
+        },
+    )
+}
 
 /** The admin portal. Absent when no session key is configured, so it simply is not mounted. */
 class Admin(
@@ -290,8 +331,10 @@ fun Application.module(
     admin: Admin? = null,
     /** Each app's latest and minimum versionCode. Defaulted to 1 and 1 for tests. */
     appVersions: AppVersions = AppVersions.UNCONFIGURED,
-    /** The settings table, cached. Defaulted to every setting off for tests. No route reads it yet. */
+    /** The settings table, cached. Defaulted to every setting off for tests. Read through [terms]. */
     settings: AppSettings = AppSettings.UNCONFIGURED,
+    /** The terms texts, records and gate. Null in tests that do not need them, and then no app has terms. */
+    terms: Terms? = null,
 ) {
     install(ContentNegotiation) { json() }
     // Before routing, so it runs ahead of authentication. See installAppVersionGate.
@@ -364,10 +407,22 @@ fun Application.module(
     }
 
     routing {
+        // Once, on the root, so it covers every authenticated route mounted below and any
+        // added later. It runs after authentication and ignores requests without a token.
+        // See TermsGatePlugin.
+        if (auth != null && terms != null) {
+            install(TermsGatePlugin) {
+                gate = terms.gate
+                users = auth.store
+            }
+        }
+
         // Outside the auth block: it needs no database and no key, and an app below the
         // minimum has to be able to read it whatever else is mounted.
         appConfigRoutes(appVersions)
-        auth?.let { authRoutes(it.store, it.accessTokens) }
+        auth?.let { authRoutes(it.store, it.accessTokens, terms) }
+        terms?.let { termsTextRoutes(it) }
+        if (auth != null) terms?.let { consentRoutes(auth.store, it) }
         // Chat needs auth: every route inside it authenticates, and mounting them
         // without the plugin installed would fail at request time rather than here.
         if (auth != null) chat?.let {
@@ -419,8 +474,21 @@ fun Application.module(
                 )
                 return@get
             }
+            // A terms_version with no text reads as "no terms" (TermsGate), so nobody is
+            // locked out by it; this is where the mistake shows instead.
+            val missingTerms = terms?.gate?.missingTexts().orEmpty()
             database.check().fold(
-                onSuccess = { call.respond(DeepHealth("ok", version, "ok", it)) },
+                onSuccess = {
+                    if (missingTerms.isEmpty()) {
+                        call.respond(DeepHealth("ok", version, "ok", it))
+                    } else {
+                        log.error("terms_version without a text: {}", missingTerms)
+                        call.respond(
+                            HttpStatusCode.ServiceUnavailable,
+                            DeepHealth("degraded", version, "ok", "$it; terms text missing: ${missingTerms.joinToString()}"),
+                        )
+                    }
+                },
                 onFailure = {
                     log.error("Database health check failed", it)
                     call.respond(

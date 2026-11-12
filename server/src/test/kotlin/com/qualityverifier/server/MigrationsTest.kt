@@ -235,6 +235,8 @@ class MigrationsTest {
     private val appendOnlyTables = listOf(
         // V27: who changed a setting, when, and why.
         "V27__app_settings.sql" to "app_settings_history",
+        // V28: each agreement to the terms, and each withdrawal.
+        "V28__consents.sql" to "consents",
     )
 
     /**
