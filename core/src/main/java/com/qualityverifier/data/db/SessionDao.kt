@@ -246,6 +246,10 @@ interface SessionDao {
     @Query("SELECT * FROM session_workers WHERE sessionId = :sessionId ORDER BY id")
     suspend fun sessionWorkers(sessionId: String): List<SessionWorkerEntity>
 
+    /** Every assessment one worker is named on, with the part, for the worker's page. */
+    @Query("SELECT * FROM session_workers WHERE workerId = :workerId ORDER BY id")
+    suspend fun namingsOf(workerId: String): List<SessionWorkerEntity>
+
     @Query(
         """
         SELECT sw.workerId AS workerId, w.name AS name, sw.part AS part

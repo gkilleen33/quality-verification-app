@@ -178,6 +178,20 @@ data class FundiLabels(
     val workerSave: String,
     val workerCancel: String,
     val workerArchive: String,
+    // ---- the worker's page: their pieces, and what each assessment found
+    val workerPageEdit: String,
+    val workerPageArchived: String,
+    val workerPageNoPieces: String,
+    val workerPageNoMatch: String,
+    val workerPageWholePiece: String,
+    val workerPageAllPieces: String,
+    val workerPageFrom: String,
+    val workerPageTo: String,
+    val workerPageClearFilters: String,
+    val workerPageOpen: String,
+    val workerPageNoVerdict: String,
+    val workerPageNoProblems: String,
+    val workerPagePurposeUnknown: String,
 ) {
     fun nameOf(employment: Employment): String = employmentNames.getValue(employment)
 
@@ -446,6 +460,20 @@ data class FundiLabels(
             workerSave = "Save",
             workerCancel = "Cancel",
             workerArchive = "Archive this worker",
+            workerPageEdit = "Edit",
+            workerPageArchived = "Archived",
+            workerPageNoPieces = "Not named on any piece yet. Name them in \"Who worked on " +
+                "this?\" when you assess a piece.",
+            workerPageNoMatch = "Nothing matches these filters.",
+            workerPageWholePiece = "Whole piece",
+            workerPageAllPieces = "All pieces",
+            workerPageFrom = "From",
+            workerPageTo = "To",
+            workerPageClearFilters = "Clear filters",
+            workerPageOpen = "Open",
+            workerPageNoVerdict = "No verdict",
+            workerPageNoProblems = "No problems found",
+            workerPagePurposeUnknown = "Assessment",
         )
     }
 }
