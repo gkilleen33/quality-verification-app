@@ -92,7 +92,8 @@ SELECT DISTINCT ON (u.id, s.id)
    AND u.deleted_at IS NULL
    AND u.id <> s.id
    AND ws.archived_at IS NULL
- ORDER BY u.id, s.id, w.created_at, w.id;
+ -- The oldest live entry on each side, so the row is the same on every read.
+ ORDER BY u.id, s.id, w.created_at, w.id, ws.created_at, ws.id;
 
 -- Each link's start and end, for research. Append-only.
 CREATE TABLE worker_link_events (
@@ -135,6 +136,11 @@ DECLARE
     opened integer;
     closed integer;
 BEGIN
+    -- One sync at a time. Two writes that complete a link together would otherwise each
+    -- read the newest events before the other's INSERT and both append 'linked', and the
+    -- record would hold one link twice. Held until the caller's transaction ends.
+    LOCK TABLE worker_link_events IN SHARE ROW EXCLUSIVE MODE;
+
     WITH latest AS (
         SELECT DISTINCT ON (worker_user_id, studio_user_id)
                worker_user_id, studio_user_id, event
@@ -172,7 +178,8 @@ $$;
 -- Self-test of the match, before anonymise_user is redefined below: MigrationsTest reads
 -- every UPDATE after that definition as part of the function, and this test archives
 -- entries with UPDATEs. Two throwaway accounts list each other; everything is rolled back
--- by the known error at the end.
+-- by the known error at the end. The numbers carry country code 999, which is assigned to
+-- nobody, so they cannot collide with a registered account's number (users_phone_key).
 DO $$
 DECLARE
     studio  uuid := '00000000-0000-4000-8000-0000000000e0';
@@ -185,14 +192,14 @@ DECLARE
     links   integer;
 BEGIN
     BEGIN
-        INSERT INTO users (id, audience, phone) VALUES (studio, 'fundi', '+254700000001');
-        INSERT INTO users (id, audience, phone) VALUES (worker, 'fundi', '+254700000002');
+        INSERT INTO users (id, audience, phone) VALUES (studio, 'fundi', '+999000000001');
+        INSERT INTO users (id, audience, phone) VALUES (worker, 'fundi', '+999000000002');
         -- An account nobody lists, with a number a roster will name: it must not show.
-        INSERT INTO users (id, audience, phone) VALUES (other, 'fundi', '+254700000003');
+        INSERT INTO users (id, audience, phone) VALUES (other, 'fundi', '+999000000003');
 
         -- One side: the studio lists the worker's number. No link.
         INSERT INTO workers (id, user_id, name, phone, employment)
-        VALUES (entry, studio, 'Kamau', '+254700000002', 'temporary');
+        VALUES (entry, studio, 'Kamau', '+999000000002', 'temporary');
         IF EXISTS (SELECT 1 FROM worker_links) THEN
             RAISE EXCEPTION 'V31 self-test: a one-sided roster entry made a link';
         END IF;
@@ -200,7 +207,7 @@ BEGIN
         -- The other side alone: the worker lists the studio's number. Still no link, once
         -- the roster entry is archived.
         INSERT INTO worker_studios (id, user_id, name, phone)
-        VALUES (listing, worker, 'Mama Njeri''s workshop', '+254700000001');
+        VALUES (listing, worker, 'Mama Njeri''s workshop', '+999000000001');
         UPDATE workers SET archived_at = now() WHERE id = entry;
         IF EXISTS (SELECT 1 FROM worker_links) THEN
             RAISE EXCEPTION 'V31 self-test: a one-sided studio listing made a link';
@@ -230,7 +237,7 @@ BEGIN
 
         -- A second roster entry with the same number: still one link.
         INSERT INTO workers (id, user_id, name, phone)
-        VALUES (entry2, studio, 'Kamau again', '+254700000002');
+        VALUES (entry2, studio, 'Kamau again', '+999000000002');
         IF (SELECT count(*) FROM worker_links) <> 1 THEN
             RAISE EXCEPTION 'V31 self-test: two roster entries for one number linked twice';
         END IF;
@@ -265,9 +272,9 @@ BEGIN
 
         -- An account listing its own number on both sides does not link to itself.
         INSERT INTO workers (id, user_id, name, phone)
-        VALUES ('00000000-0000-4000-8000-0000000000e6', studio, 'Me', '+254700000001');
+        VALUES ('00000000-0000-4000-8000-0000000000e6', studio, 'Me', '+999000000001');
         INSERT INTO worker_studios (id, user_id, name, phone)
-        VALUES ('00000000-0000-4000-8000-0000000000e7', studio, 'My own', '+254700000001');
+        VALUES ('00000000-0000-4000-8000-0000000000e7', studio, 'My own', '+999000000001');
         IF EXISTS (SELECT 1 FROM worker_links WHERE worker_user_id = studio_user_id) THEN
             RAISE EXCEPTION 'V31 self-test: an account linked to itself';
         END IF;
@@ -287,7 +294,7 @@ BEGIN
         refused := false;
         BEGIN
             INSERT INTO worker_studios (id, user_id, name, phone)
-            VALUES ('00000000-0000-4000-8000-0000000000e8', worker, '', '+254700000001');
+            VALUES ('00000000-0000-4000-8000-0000000000e8', worker, '', '+999000000001');
         EXCEPTION WHEN check_violation THEN
             refused := true;
         END;
@@ -439,12 +446,12 @@ DECLARE
     worker uuid := '00000000-0000-4000-8000-0000000000f1';
 BEGIN
     BEGIN
-        INSERT INTO users (id, audience, phone) VALUES (studio, 'fundi', '+254700000011');
-        INSERT INTO users (id, audience, phone) VALUES (worker, 'fundi', '+254700000012');
+        INSERT INTO users (id, audience, phone) VALUES (studio, 'fundi', '+999000000011');
+        INSERT INTO users (id, audience, phone) VALUES (worker, 'fundi', '+999000000012');
         INSERT INTO workers (id, user_id, name, phone)
-        VALUES ('00000000-0000-4000-8000-0000000000f2', studio, 'Kamau', '+254700000012');
+        VALUES ('00000000-0000-4000-8000-0000000000f2', studio, 'Kamau', '+999000000012');
         INSERT INTO worker_studios (id, user_id, name, phone)
-        VALUES ('00000000-0000-4000-8000-0000000000f3', worker, 'The workshop', '+254700000011');
+        VALUES ('00000000-0000-4000-8000-0000000000f3', worker, 'The workshop', '+999000000011');
         IF sync_worker_link_events() <> 1 THEN
             RAISE EXCEPTION 'V31 self-test: the two accounts did not link';
         END IF;

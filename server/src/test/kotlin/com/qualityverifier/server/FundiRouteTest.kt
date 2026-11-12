@@ -434,12 +434,13 @@ class FundiRouteTest {
         assertTrue(store.studios.isEmpty())
     }
 
-    // Nobody can probe who uses the app: the answer for an unlinked number is the same
-    // whether or not that number has an account. The fake knows which numbers have one
-    // and the route never asks it.
+    // Nobody can probe who uses the app. The store's answer says only whether the match
+    // holds (V31's view, proved by its self-test); this holds the route to passing that
+    // one bit through and nothing else, so two unlinked entries read alike field for
+    // field. The fake has no idea which numbers have accounts, and the route never asks.
     @Test
-    fun `an unlinked entry reads the same whether or not its number has an account`() = testApplication {
-        val store = FakeFundiStore().apply { numbersWithAccounts += "+254700000001" }
+    fun `the route says linked and nothing else about a number`() = testApplication {
+        val store = FakeFundiStore()
         val app = withFundi(store, audience = Audience.FUNDI)
 
         app.put("/v1/fundi/studios/$STUDIO") {
@@ -720,8 +721,6 @@ class FundiRouteTest {
         /** Which entries the two-sided match holds, as the real store reads it from the view. */
         val linkedWorkers = mutableSetOf<String>()
         val linkedStudios = mutableSetOf<String>()
-        /** Numbers that belong to an account. The route must never ask; nothing here reads it. */
-        val numbersWithAccounts = mutableSetOf<String>()
         override suspend fun listWorkers(userId: String) =
             workers.map { (id, row) ->
                 WorkerRow(

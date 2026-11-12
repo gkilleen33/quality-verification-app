@@ -46,9 +46,12 @@ fun StudioForm(
 ) {
     // Saveable, as the worker form's are: the contacts app comes in front of this
     // activity, and a low-memory phone recreates it on the way back.
+    // A number stored by some other client in a form this field cannot hold (not +254),
+    // kept unless replaced, as the worker form keeps one.
+    val foreign = current?.phone?.takeUnless { it.startsWith(KenyanPhone.COUNTRY_CODE) }
     var name by rememberSaveable { mutableStateOf(current?.name.orEmpty()) }
     var digits by rememberSaveable {
-        mutableStateOf(current?.phone?.removePrefix(KenyanPhone.COUNTRY_CODE).orEmpty())
+        mutableStateOf(if (foreign == null) current?.phone?.removePrefix(KenyanPhone.COUNTRY_CODE).orEmpty() else "")
     }
     var pickProblem by remember { mutableStateOf<KenyanPhone.Problem?>(null) }
     var pickerFailed by remember { mutableStateOf(false) }
@@ -68,7 +71,8 @@ fun StudioForm(
         AuthLabels.ENGLISH.copy(phoneLabel = labels.studioPhoneLabel, phoneHint = labels.workerPhoneHint)
     }
     val nameOk = WorkerNames.fits(name.trim()) && name.isNotBlank()
-    val number = KenyanPhone.toE164(digits)
+    // An empty field keeps a foreign number; anything typed replaces it.
+    val number = KenyanPhone.toE164(digits) ?: foreign.takeIf { digits.isEmpty() }
 
     AlertDialog(
         onDismissRequest = onDismiss,
