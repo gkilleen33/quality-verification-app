@@ -263,7 +263,10 @@ class ReportRouteTest {
         }
         assertEquals(HttpStatusCode.BadRequest, alone.status)
         assertTrue(alone.bodyAsText().contains("no_previous_assessment"))
+    }
 
+    @Test
+    fun `a fixes report cannot name the first assessment, and covers the second`() = testApplication {
         val two = withReports(FakeReportStore(sessions = listOf(table, fixed)))
         val onFirst = two.post("/v1/fundi/pieces/$PIECE_ID/reports") {
             auth(MAKER); contentType(ContentType.Application.Json)
@@ -276,7 +279,10 @@ class ReportRouteTest {
         }
         assertEquals(HttpStatusCode.Created, onSecond.status)
         assertTrue(ReportFixtures.text(onSecond.bodyAsBytes()).contains("Found this time"))
+    }
 
+    @Test
+    fun `a client-deleted assessment cannot be chosen and does not count as the previous one`() = testApplication {
         // The first assessment client-deleted: the second has nothing before it, and the
         // deleted one cannot be named.
         val deleted = withReports(FakeReportStore(sessions = listOf(table.copy(clientDeleted = true), fixed)))
