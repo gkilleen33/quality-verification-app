@@ -73,6 +73,12 @@ data class ReportLabels(
     val describeResult: String,
     val sendAnswer: String,
     val inThisInspection: String,
+    // The full-screen photo viewer, opened from a photo in the conversation.
+    /** The close button's spoken name; it is drawn as an icon. */
+    val closePhoto: String,
+    /** When the file on the phone will not decode. Drawn over the dark viewer with [tryAgain]. */
+    val photoCouldNotOpen: String,
+    val tryAgain: String,
     /**
      * What the waiting line cycles through — see `WorkingText`. Activities, never stages:
      * each has to be true for every moment of the wait it is shown during.
@@ -144,12 +150,17 @@ data class ReportLabels(
     private val shotOfFormat: String,
     private val testOfFormat: String,
     private val photosTakenFormat: String,
+    private val photoOfFormat: String,
     /** The PDF reports' own lines (plan v7 §5), in this language. */
     val pdf: ReportPdfLabels,
 ) {
     /** "Shot 3 of 6", above the viewfinder. */
     fun shotOf(index: Int, total: Int): String =
         shotOfFormat.replace("{n}", index.toString()).replace("{total}", total.toString())
+
+    /** "Photo 3 of 6", at the top of the viewer: where a swipe leads. */
+    fun photoOf(index: Int, total: Int): String =
+        photoOfFormat.replace("{n}", index.toString()).replace("{total}", total.toString())
 
     fun testOf(index: Int, total: Int): String =
         testOfFormat.replace("{n}", index.toString()).replace("{total}", total.toString())
@@ -294,6 +305,9 @@ data class ReportLabels(
             describeResult = "Say what you found",
             sendAnswer = "Send",
             inThisInspection = "In this inspection",
+            closePhoto = "Close",
+            photoCouldNotOpen = "This photo could not be opened.",
+            tryAgain = "Try again",
             workingPlan = listOf(
                 "Reading your answers",
                 "Analysing your furniture",
@@ -368,6 +382,7 @@ data class ReportLabels(
             shotOfFormat = "Shot {n} of {total}",
             testOfFormat = "Test {n} of {total}",
             photosTakenFormat = "{n} of {total} photos taken",
+            photoOfFormat = "Photo {n} of {total}",
             pdf = ReportPdfLabels.ENGLISH,
         )
 
@@ -429,6 +444,9 @@ data class ReportLabels(
             describeResult = "Eleza ulichoona",
             sendAnswer = "Tuma",
             inThisInspection = "Katika ukaguzi huu",
+            closePhoto = "Funga",
+            photoCouldNotOpen = "Picha hii haikuweza kufunguliwa.",
+            tryAgain = "Jaribu tena",
             workingPlan = listOf(
                 "Inasoma majibu yako",
                 "Inachambua samani yako",
@@ -503,6 +521,7 @@ data class ReportLabels(
             shotOfFormat = "Picha {n} ya {total}",
             testOfFormat = "Jaribio {n} la {total}",
             photosTakenFormat = "Picha {n} kati ya {total} zimepigwa",
+            photoOfFormat = "Picha {n} ya {total}",
             pdf = ReportPdfLabels.SWAHILI,
         )
 
