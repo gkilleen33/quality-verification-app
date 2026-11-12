@@ -60,6 +60,13 @@ data class Config(
      * rule. Set at each release's deploy; unset means 1 and 1, which prompts nobody.
      */
     val appVersions: AppVersions,
+    /**
+     * Keys the codes that stand in for M-Pesa counterparties (CounterpartyCoder). Absent
+     * means the M-Pesa upload routes are not mounted, so phones keep their data and retry;
+     * there is no unkeyed fallback. Optional in kagua-run, so a missing parameter does not
+     * stop the server starting.
+     */
+    val mpesaHmacKey: String? = null,
 ) {
     companion object {
         /**
@@ -121,6 +128,7 @@ data class Config(
                     ?: (customerLimit * FUNDI_LIMIT_MULTIPLE),
                 adminSessionKey = env("KAGUA_ADMIN_SESSION_KEY")?.takeIf { it.isNotBlank() },
                 appVersions = AppVersions.fromEnvironment(env),
+                mpesaHmacKey = env("KAGUA_MPESA_HMAC_KEY")?.trim()?.takeIf { it.isNotEmpty() },
             )
         }
     }

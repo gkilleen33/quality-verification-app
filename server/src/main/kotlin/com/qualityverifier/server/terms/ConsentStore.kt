@@ -6,17 +6,35 @@ import kotlinx.coroutines.withContext
 import java.sql.Connection
 import javax.sql.DataSource
 
-/** The two boxes on the terms screen. Mirrored by V28's `consents_kind_known`. */
+/**
+ * What an account can agree to. Mirrored by `consents_kind_known`, which V29 replaced to add
+ * the two M-Pesa questions.
+ */
 enum class ConsentKind(val id: String) {
+    /** The first box on the terms screen. */
     TERMS("terms"),
-    TRANSFER("transfer");
+
+    /** The second box: the transfer to the United States, section 14. */
+    TRANSFER("transfer"),
+
+    /** May Fundi Bora read M-Pesa messages and keep them on the phone (MpesaConsentText.READ). */
+    MPESA_READ("mpesa_read"),
+
+    /** May it send them to the server. Asked only after [MPESA_READ] (MpesaConsentText.SEND). */
+    MPESA_SEND("mpesa_send");
 
     companion object {
         fun fromId(id: String?): ConsentKind? = entries.firstOrNull { it.id == id }
+
+        /** The two boxes on the terms screen, agreed together, and what [TermsGate] checks. */
+        val TERMS_SCREEN: List<ConsentKind> = listOf(TERMS, TRANSFER)
+
+        /** The kinds that can be withdrawn. Withdrawing the terms is deleting the account. */
+        val WITHDRAWABLE: List<ConsentKind> = listOf(TRANSFER, MPESA_READ, MPESA_SEND)
     }
 }
 
-/** Mirrored by V28's `consents_action_known`. Only [ConsentKind.TRANSFER] can be withdrawn. */
+/** Mirrored by V28's `consents_action_known`. Only [ConsentKind.WITHDRAWABLE] kinds can be withdrawn. */
 enum class ConsentAction(val id: String) {
     AGREED("agreed"),
     WITHDRAWN("withdrawn");
@@ -48,8 +66,12 @@ interface ConsentStore {
     /** The newest row for each kind the account has any row for. */
     suspend fun current(userId: String): Map<ConsentKind, ConsentRecord>
 
-    /** Records agreement to both kinds, in one transaction, so an account never holds one without the other. */
-    suspend fun agree(userId: String, agreement: Agreement)
+    /**
+     * Records agreement to [kinds], in one transaction. The terms screen sends both of its
+     * boxes at once, so an account never holds one without the other; each M-Pesa question
+     * is its own agreement to its own text.
+     */
+    suspend fun agree(userId: String, agreement: Agreement, kinds: List<ConsentKind>)
 
     /**
      * Records a withdrawal of [kind] when the account's newest row for it is an agreement.
@@ -99,7 +121,7 @@ class PostgresConsentStore(private val dataSource: DataSource) : ConsentStore {
         }
     }
 
-    override suspend fun agree(userId: String, agreement: Agreement): Unit = tx { connection ->
+    override suspend fun agree(userId: String, agreement: Agreement, kinds: List<ConsentKind>): Unit = tx { connection ->
         connection.prepareStatement(
             """
             insert into consents (
@@ -107,7 +129,7 @@ class PostgresConsentStore(private val dataSource: DataSource) : ConsentStore {
             ) values (?::uuid, ?, 'agreed', ?, ?, ?, ?, ?)
             """.trimIndent()
         ).use { statement ->
-            ConsentKind.entries.forEach { kind ->
+            kinds.forEach { kind ->
                 statement.setString(1, userId)
                 statement.setString(2, kind.id)
                 statement.setString(3, agreement.version)

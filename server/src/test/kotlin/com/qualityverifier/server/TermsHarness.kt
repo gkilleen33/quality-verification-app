@@ -71,8 +71,8 @@ class FakeConsentStore : ConsentStore {
             .groupBy { it.kind }
             .mapValues { (_, list) -> list.last().let { ConsentRecord(it.action, it.agreement?.version) } }
 
-    override suspend fun agree(userId: String, agreement: Agreement) {
-        ConsentKind.entries.forEach { rows += Row(userId, it, ConsentAction.AGREED, agreement) }
+    override suspend fun agree(userId: String, agreement: Agreement, kinds: List<ConsentKind>) {
+        kinds.forEach { rows += Row(userId, it, ConsentAction.AGREED, agreement) }
     }
 
     override suspend fun withdraw(userId: String, audience: Audience, kind: ConsentKind, appVersion: Int): Boolean {
@@ -142,7 +142,7 @@ class TermsWorld {
         return this
     }
 
-    fun ApplicationTestBuilder.mount(blobsDir: File, withTerms: Boolean = true) = run {
+    fun ApplicationTestBuilder.mount(blobsDir: File, withTerms: Boolean = true, mpesa: Mpesa? = null) = run {
         application {
             module(
                 version = "test",
@@ -152,6 +152,7 @@ class TermsWorld {
                 fundi = Fundi(fundiStore.instance),
                 settings = settings,
                 terms = if (withTerms) terms else null,
+                mpesa = mpesa,
             )
         }
         createClient { install(ClientContentNegotiation) { json() } }

@@ -1,5 +1,6 @@
 package com.qualityverifier.server.routes
 
+import com.qualityverifier.domain.Audience
 import com.qualityverifier.server.Terms
 import com.qualityverifier.server.auth.AccessTokens
 import com.qualityverifier.server.auth.Passwords
@@ -7,6 +8,7 @@ import com.qualityverifier.server.auth.Tokens
 import com.qualityverifier.server.db.AuthStore
 import com.qualityverifier.server.db.RegisterOutcome
 import com.qualityverifier.server.db.Registration
+import com.qualityverifier.server.terms.ConsentKind
 import io.ktor.http.HttpStatusCode
 import io.ktor.server.auth.authenticate
 import io.ktor.server.auth.jwt.JWTPrincipal
@@ -196,6 +198,8 @@ fun Route.authRoutes(store: AuthStore, accessTokens: AccessTokens, terms: Terms?
             // Open before agreeing (TermsGate.OPEN): this is where the phone learns it has
             // terms to agree to.
             val status = terms?.gate?.statusFor(user.id, user.audience)
+            suspend fun fundiAgreed(kind: ConsentKind): Boolean =
+                user.audience == Audience.FUNDI && terms?.gate?.agreed(user.id, kind) == true
             call.respond(
                 MeResponse(
                     userId = user.id,
@@ -206,6 +210,8 @@ fun Route.authRoutes(store: AuthStore, accessTokens: AccessTokens, terms: Terms?
                     termsRequired = status?.required == true,
                     terms = status?.version?.let { version -> terms?.describe(user.audience, version) },
                     transferAgreed = status?.transferAgreed == true,
+                    mpesaReadAgreed = fundiAgreed(ConsentKind.MPESA_READ),
+                    mpesaSendAgreed = fundiAgreed(ConsentKind.MPESA_SEND),
                 )
             )
         }

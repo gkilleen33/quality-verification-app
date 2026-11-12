@@ -78,7 +78,7 @@ class TermsGate(
         val records = recordsFor(userId)
         fun agreedNow(kind: ConsentKind) =
             records[kind]?.let { it.action == ConsentAction.AGREED && it.version == version } == true
-        val required = !(agreedNow(ConsentKind.TERMS) && agreedNow(ConsentKind.TRANSFER))
+        val required = !ConsentKind.TERMS_SCREEN.all(::agreedNow)
         return TermsStatus(
             version = version,
             required = required,
@@ -86,6 +86,13 @@ class TermsGate(
             refuses = required && settings.termsGateOn(audience),
         )
     }
+
+    /**
+     * Whether [userId]'s newest row for [kind] is an agreement, of any version. The M-Pesa
+     * routes ask it on every upload, so it reads the same cache as [statusFor].
+     */
+    suspend fun agreed(userId: String, kind: ConsentKind): Boolean =
+        recordsFor(userId)[kind]?.action == ConsentAction.AGREED
 
     /** Whether any app's gate is on. Cached with the settings, so the common answer costs no query. */
     suspend fun anyGateOn(): Boolean = Audience.entries.any { settings.termsGateOn(it) }
