@@ -31,7 +31,33 @@ interface ReportStore {
 
     /** Writes the row for one report issued, cached or rendered, and returns its id. */
     suspend fun record(row: ReportRow): String
+
+    /** Whether this account is linked (V31's two-sided match) to at least one studio, so it can send "My manager". */
+    suspend fun hasLinkedStudio(userId: String): Boolean
+
+    /**
+     * The roster entry [workerId] of [userId]'s roster, with its name, when the entry is
+     * live and the match holds for the account its number belongs to. Null when the entry
+     * is not this account's (the route answers 404) or not linked (403): a report on a
+     * worker's work exists only while the link does.
+     */
+    suspend fun linkedWorker(userId: String, workerId: String): LinkedWorker?
+
+    /** Whether [workerId] is an entry on [userId]'s roster at all, linked or not. */
+    suspend fun ownsWorker(userId: String, workerId: String): Boolean
+
+    /**
+     * Every piece of [userId] with an assessment that names [workerId], each with every
+     * assessment of the piece (so a named one is placed among the others), oldest piece
+     * first by its first naming.
+     */
+    suspend fun piecesNaming(userId: String, workerId: String): List<PieceSessions>
 }
+
+/** A roster entry the match holds for. [name] is non-null: a cleared name's number is cleared too, which ends the link. */
+data class LinkedWorker(val workerId: String, val name: String)
+
+data class PieceSessions(val piece: ReportPiece, val sessions: List<ReportSession>)
 
 data class ReportPiece(
     val id: String,
@@ -229,5 +255,70 @@ class PostgresReportStore(private val dataSource: DataSource) : ReportStore {
             statement.setInt(11, row.byteSize)
             statement.executeQuery().use { rows -> rows.next(); rows.getString(1) }
         }
+    }
+
+    override suspend fun hasLinkedStudio(userId: String): Boolean = read { connection ->
+        connection.prepareStatement("select exists (select 1 from worker_links where worker_user_id = ?::uuid)").use { statement ->
+            statement.setString(1, userId)
+            statement.executeQuery().use { it.next() && it.getBoolean(1) }
+        }
+    }
+
+    override suspend fun linkedWorker(userId: String, workerId: String): LinkedWorker? = read { connection ->
+        // Linked by the pair, as FundiStore.listWorkers reads it: the match holds for this
+        // roster's account and the account the entry's number belongs to.
+        connection.prepareStatement(
+            """
+            select w.name from workers w
+             where w.id = ?::uuid and w.user_id = ?::uuid
+               and w.archived_at is null and w.phone is not null and w.name is not null
+               and exists (
+                   select 1 from worker_links l join users u on u.id = l.worker_user_id
+                    where l.studio_user_id = w.user_id and u.phone = w.phone
+               )
+            """.trimIndent()
+        ).use { statement ->
+            statement.setString(1, workerId)
+            statement.setString(2, userId)
+            statement.executeQuery().use { rows -> if (rows.next()) LinkedWorker(workerId, rows.getString(1)) else null }
+        }
+    }
+
+    override suspend fun ownsWorker(userId: String, workerId: String): Boolean = read { connection ->
+        connection.prepareStatement("select exists (select 1 from workers where id = ?::uuid and user_id = ?::uuid)").use { statement ->
+            statement.setString(1, workerId)
+            statement.setString(2, userId)
+            statement.executeQuery().use { it.next() && it.getBoolean(1) }
+        }
+    }
+
+    override suspend fun piecesNaming(userId: String, workerId: String): List<PieceSessions> {
+        val pieces = read { connection ->
+            connection.prepareStatement(
+                """
+                select p.id::text, p.user_id::text, p.item_type_id, p.label
+                  from pieces p
+                 where p.user_id = ?::uuid
+                   and exists (
+                       select 1 from sessions s join session_workers sw on sw.session_id = s.id
+                        where s.piece_id = p.id and sw.worker_id = ?::uuid
+                   )
+                 order by (
+                     select min(s.created_at) from sessions s join session_workers sw on sw.session_id = s.id
+                      where s.piece_id = p.id and sw.worker_id = ?::uuid
+                 ), p.id
+                """.trimIndent()
+            ).use { statement ->
+                statement.setString(1, userId)
+                statement.setString(2, workerId)
+                statement.setString(3, workerId)
+                statement.executeQuery().use { rows ->
+                    val out = mutableListOf<ReportPiece>()
+                    while (rows.next()) out += ReportPiece(rows.getString(1), rows.getString(2), rows.getString(3), rows.getString(4))
+                    out
+                }
+            }
+        }
+        return pieces.map { PieceSessions(it, sessionsOf(it.id)) }
     }
 }

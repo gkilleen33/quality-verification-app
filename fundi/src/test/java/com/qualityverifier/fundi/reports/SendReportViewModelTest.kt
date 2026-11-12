@@ -4,6 +4,7 @@ import com.qualityverifier.data.reports.DownloadProgress
 import com.qualityverifier.data.reports.PreviewOutcome
 import com.qualityverifier.data.reports.ReportApi
 import com.qualityverifier.data.reports.ReportOutcome
+import com.qualityverifier.data.reports.ReportTarget
 import com.qualityverifier.domain.HeadingBlock
 import com.qualityverifier.domain.ProblemBlock
 import com.qualityverifier.domain.ReportKind
@@ -60,9 +61,9 @@ class SendReportViewModelTest {
     @Test
     fun `choosing the customer opens the preview with its request`() = runTest {
         val api = FakeApi(previewOutcome = PreviewOutcome.Loaded(preview))
-        val model = SendReportViewModel("piece-1", api, fileFor = null)
+        val model = SendReportViewModel(ReportTarget.Piece("piece-1"), api, fileFor = null)
 
-        assertEquals(ReportKind.CUSTOMER, model.offered.first())
+        assertEquals(ReportKind.CUSTOMER, model.offered.value.first())
         assertEquals(SendReportViewModel.Step.WhoFor, model.step.value)
 
         model.choose(ReportKind.CUSTOMER)
@@ -97,7 +98,7 @@ class SendReportViewModelTest {
                 ReportOutcome.Done(into, "report-id")
             },
         )
-        model = SendReportViewModel("piece-1", api, fileFor = { file })
+        model = SendReportViewModel(ReportTarget.Piece("piece-1"), api, fileFor = { file })
 
         model.choose(ReportKind.CUSTOMER)
         advanceUntilIdle()
@@ -133,7 +134,7 @@ class SendReportViewModelTest {
                 }
             },
         )
-        val model = SendReportViewModel("piece-1", api, fileFor = { file })
+        val model = SendReportViewModel(ReportTarget.Piece("piece-1"), api, fileFor = { file })
 
         model.choose(ReportKind.CUSTOMER)
         advanceUntilIdle()
@@ -160,7 +161,7 @@ class SendReportViewModelTest {
             previewOutcome = PreviewOutcome.Loaded(preview),
             download = { _, _ -> ReportOutcome.Busy },
         )
-        val model = SendReportViewModel("piece-1", api, fileFor = { File(folder.newFolder(), "r.pdf") })
+        val model = SendReportViewModel(ReportTarget.Piece("piece-1"), api, fileFor = { File(folder.newFolder(), "r.pdf") })
         model.choose(ReportKind.CUSTOMER)
         advanceUntilIdle()
         model.send()
@@ -168,7 +169,7 @@ class SendReportViewModelTest {
         val failed = model.step.value as SendReportViewModel.Step.Failed
         assertTrue(failed.busy)
 
-        val offline = SendReportViewModel("piece-1", FakeApi(previewOutcome = PreviewOutcome.Unavailable), fileFor = null)
+        val offline = SendReportViewModel(ReportTarget.Piece("piece-1"), FakeApi(previewOutcome = PreviewOutcome.Unavailable), fileFor = null)
         offline.choose(ReportKind.CUSTOMER)
         advanceUntilIdle()
         val noPreview = offline.step.value as SendReportViewModel.Step.Failed
@@ -178,7 +179,7 @@ class SendReportViewModelTest {
         assertEquals(SendReportViewModel.Step.WhoFor, offline.step.value)
 
         // A 4xx is not a connection problem, and says so.
-        val refused = SendReportViewModel("piece-1", FakeApi(previewOutcome = PreviewOutcome.Refused(404)), fileFor = null)
+        val refused = SendReportViewModel(ReportTarget.Piece("piece-1"), FakeApi(previewOutcome = PreviewOutcome.Refused(404)), fileFor = null)
         refused.choose(ReportKind.CUSTOMER)
         advanceUntilIdle()
         assertTrue((refused.step.value as SendReportViewModel.Step.Failed).refused)
@@ -186,7 +187,7 @@ class SendReportViewModelTest {
 
     @Test
     fun `back while the preview loads wins over the preview that then arrives`() = runTest {
-        val model = SendReportViewModel("piece-1", FakeApi(previewOutcome = PreviewOutcome.Loaded(preview)), fileFor = null)
+        val model = SendReportViewModel(ReportTarget.Piece("piece-1"), FakeApi(previewOutcome = PreviewOutcome.Loaded(preview)), fileFor = null)
         model.choose(ReportKind.CUSTOMER)
         assertTrue(model.step.value is SendReportViewModel.Step.LoadingPreview)
         model.back()
@@ -201,18 +202,18 @@ class SendReportViewModelTest {
         val previewed = mutableListOf<Pair<String, ReportRequest>>()
         val downloaded = mutableListOf<Pair<String, ReportRequest>>()
 
-        override suspend fun preview(pieceId: String, request: ReportRequest): PreviewOutcome {
-            previewed += pieceId to request
+        override suspend fun preview(target: ReportTarget, request: ReportRequest): PreviewOutcome {
+            previewed += target.id to request
             return previewOutcome
         }
 
         override suspend fun download(
-            pieceId: String,
+            target: ReportTarget,
             request: ReportRequest,
             into: File,
             progress: DownloadProgress,
         ): ReportOutcome {
-            downloaded += pieceId to request
+            downloaded += target.id to request
             return download(into, progress)
         }
     }

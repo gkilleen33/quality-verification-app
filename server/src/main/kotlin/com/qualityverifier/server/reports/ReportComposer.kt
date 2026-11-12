@@ -118,6 +118,16 @@ data class ReportInput(
     val parts: List<WorkPart> = emptyList(),
 )
 
+/** What a linked-worker report is composed from: one roster worker's work across pieces. */
+data class WorkerWorkInput(
+    val workerId: String,
+    val workerName: String,
+    /** Every piece the worker was named on, oldest first, each with every assessment of the piece. */
+    val pieces: List<Pair<ReportPiece, List<ReportAssessment>>>,
+    val makerName: String?,
+    val madeAt: Long,
+)
+
 /**
  * What a report printed, for `reports.defect_snapshot`: each assessment's level and
  * headline, each problem's labels and part, the worker names under each part, and who made
@@ -201,8 +211,83 @@ class ReportComposer {
         ReportKind.CUSTOMER -> customer(input)
         ReportKind.PART_ISSUES -> partIssues(input)
         ReportKind.PART_FIXES -> partFixes(input)
-        ReportKind.FULL -> full(input)
-        else -> throw IllegalArgumentException("kind ${input.kind.id} is not composed yet")
+        // "My manager": the full report, sent from the worker's own account to a linked
+        // studio, with the sender's name at the top as every internal kind prints it.
+        ReportKind.FULL, ReportKind.TO_MANAGER -> full(input)
+        ReportKind.WORKER_WORK -> throw IllegalArgumentException("a worker-work report is composed by composeWorkerWork")
+    }
+
+    /**
+     * The linked-worker report (Nathan, 12 November 2026): one roster worker's work across
+     * pieces, for the worker or the studio. For each piece the worker was named on, in date
+     * order: the piece, then each assessment they were named on with its date and verdict,
+     * and for each part they did, under "Worked on this part: <name>", the problems placed
+     * on it, each with what was seen, what it means, and what to do. A whole-piece naming
+     * covers every part a problem was placed on. It prints no score, no count, and no
+     * rating, and never calls a problem the worker's fault.
+     */
+    fun composeWorkerWork(input: WorkerWorkInput): ReportContent {
+        val named = input.pieces.flatMap { it.second }
+            .filter { assessment -> assessment.listed && assessment.workers.any { it.workerId == input.workerId } }
+        val labels = labelsFor(named)
+        val pdf = labels.pdf
+        val record = Record()
+        val blocks = mutableListOf<ReportBlock>()
+        blocks += HeadingBlock(pdf.title(ReportKind.WORKER_WORK, input.workerName), level = 1)
+        input.makerName?.let { blocks += TextBlock(pdf.madeBy(it)) }
+        blocks += TextBlock(pdf.madeOn(day(input.madeAt)))
+        record.names += input.workerName
+
+        for ((piece, assessments) in input.pieces) {
+            val onPiece = assessments
+                .filter { it.listed && it.workers.any { row -> row.workerId == input.workerId } }
+                .sortedBy { it.createdAt }
+            if (onPiece.isEmpty()) continue
+            blocks += HeadingBlock(pieceName(piece, labels), level = 2)
+            for (assessment in onPiece) {
+                blocks += HeadingBlock(assessmentHeading(assessment, labels), level = 3)
+                blocks += verdictLine(assessment, labels)
+                val rows = assessment.workers.filter { it.workerId == input.workerId }
+                val wholePiece = rows.any { it.part == null }
+                if (wholePiece) blocks += LineBlock(pdf.workedOn, pdf.wholePiece)
+                if (assessment.problems.unknown) {
+                    blocks += TextBlock(pdf.problemsUnknown)
+                    continue
+                }
+                val placed = assessment.problems.problems.withIndex().groupBy { it.value.defaultPart }
+                // The parts they did; on the whole piece, every part a problem was placed on.
+                val parts = if (wholePiece) WorkPart.entries.filter { placed[it] != null }
+                else WorkPart.entries.filter { part -> rows.any { it.part == part } }
+                if (parts.isEmpty()) {
+                    if (assessment.verdict != null) blocks += TextBlock(pdf.noProblems)
+                    continue
+                }
+                for (part in parts) {
+                    blocks += HeadingBlock(pdf.part(part), level = 4)
+                    blocks += NamesBlock(pdf.workedOnThisPart, listOf(input.workerName))
+                    val row = SnapshotWorker(assessment.sessionId, if (wholePiece) null else part.id, input.workerId, input.workerName)
+                    if (row !in record.workers) record.workers += row
+                    blocks += partProblems(assessment, part, labels, record)
+                }
+            }
+        }
+        input.makerName?.let { blocks += TextBlock(pdf.madeBy(it)) }
+        blocks += TextBlock(pdf.madeWith)
+        return ReportContent(
+            kind = ReportKind.WORKER_WORK,
+            pieceName = input.workerName,
+            labels = labels,
+            blocks = blocks,
+            sessionIds = named.map { it.sessionId },
+            defectRefs = record.refs,
+            snapshot = ReportSnapshot(
+                assessments = named.map { it.snapshot() },
+                problems = record.problems,
+                workers = record.workers,
+                madeBy = input.makerName,
+            ),
+            printedNames = (record.names + listOfNotNull(input.makerName)).distinct(),
+        )
     }
 
     /**

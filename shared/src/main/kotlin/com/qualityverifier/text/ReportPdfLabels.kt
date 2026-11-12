@@ -59,7 +59,7 @@ data class ReportPdfLabels(
     val foundThisTime: String,
     /** Why a fixes report never marks a problem fixed. */
     val missingMayBeFixed: String,
-    /** On a worker-work report, before the parts the worker did on a piece. */
+    /** On a worker-work report, the label before "Whole piece" (the renderer adds the colon). */
     val workedOn: String,
     /** On a worker-work report, a piece the worker is recorded on as a whole. */
     val wholePiece: String,
@@ -110,7 +110,7 @@ data class ReportPdfLabels(
             foundThisTime = "Found this time",
             missingMayBeFixed = "An issue missing from this assessment may have been put right, " +
                 "or may not have been photographed.",
-            workedOn = "Worked on:",
+            workedOn = "Worked on",
             wholePiece = "Whole piece",
             partNames = mapOf(
                 WorkPart.FRAME to "Frame",
@@ -153,7 +153,7 @@ data class ReportPdfLabels(
             foundThisTime = "Yaliyoonekana safari hii",
             missingMayBeFixed = "Tatizo lisilokuwepo katika ukaguzi huu huenda limerekebishwa, " +
                 "au huenda halikupigwa picha.",
-            workedOn = "Alifanya:",
+            workedOn = "Alifanya",
             wholePiece = "Kipande kizima",
             partNames = mapOf(
                 WorkPart.FRAME to "Fremu",

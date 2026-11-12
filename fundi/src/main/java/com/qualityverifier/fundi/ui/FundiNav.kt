@@ -32,6 +32,7 @@ import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import com.qualityverifier.domain.ItemType
 import com.qualityverifier.domain.UpdatePrompt
+import com.qualityverifier.data.reports.ReportTarget
 import com.qualityverifier.fundi.reports.SendReportScreen
 import com.qualityverifier.fundi.ui.assess.AssessScreen
 import com.qualityverifier.fundi.ui.home.HomeScreen
@@ -81,9 +82,12 @@ private object Routes {
     const val SETTINGS = "settings"
     /** "Send report" on a piece (plan v7 §5.4): who for, the preview, the download, the share sheet. */
     const val SEND_REPORT = "pieces/{pieceId}/report"
+    /** "Send report" on a linked worker's page: the report of their work across pieces. */
+    const val WORKER_REPORT = "workers/{workerId}/report"
 
     fun workerPage(workerId: String) = "workers/$workerId"
     fun sendReport(pieceId: String) = "pieces/$pieceId/report"
+    fun workerReport(workerId: String) = "workers/$workerId/report"
     const val ASSESS = "assess/{sessionId}/{itemTypeId}?piece={piece}&returning={returning}"
 
     /**
@@ -447,7 +451,17 @@ fun FundiNav() {
             arguments = listOf(navArgument("pieceId") { type = NavType.StringType }),
         ) { entry ->
             SendReportScreen(
-                pieceId = entry.arguments?.getString("pieceId").orEmpty(),
+                target = ReportTarget.Piece(entry.arguments?.getString("pieceId").orEmpty()),
+                onBack = { navController.popBackStack() },
+            )
+        }
+
+        composable(
+            Routes.WORKER_REPORT,
+            arguments = listOf(navArgument("workerId") { type = NavType.StringType }),
+        ) { entry ->
+            SendReportScreen(
+                target = ReportTarget.Worker(entry.arguments?.getString("workerId").orEmpty()),
                 onBack = { navController.popBackStack() },
             )
         }
@@ -459,6 +473,7 @@ fun FundiNav() {
             WorkerPageScreen(
                 workerId = entry.arguments?.getString("workerId").orEmpty(),
                 onBack = { navController.popBackStack() },
+                onSendReport = { workerId -> navController.navigate(Routes.workerReport(workerId)) },
                 // The piece's newest assessment, as Home's "Open" opens it.
                 onOpenPiece = { latest ->
                     navController.navigate(
