@@ -100,7 +100,13 @@ fun SendReportScreen(
         Text(labels.reportTitle, style = MaterialTheme.typography.displaySmall)
         Spacer(Modifier.height(16.dp))
         when (val current = step) {
-            SendReportViewModel.Step.WhoFor -> WhoFor(labels, offered, onChoose = model::choose, onBack = onBack)
+            // On a worker this step is never reached in use; if it is, it only goes back.
+            SendReportViewModel.Step.WhoFor -> WhoFor(
+                labels,
+                if (target is ReportTarget.Worker) emptyList() else offered,
+                onChoose = model::choose,
+                onBack = onBack,
+            )
             is SendReportViewModel.Step.ChooseParts -> ChooseParts(
                 labels = labels,
                 step = current,
@@ -138,7 +144,8 @@ fun SendReportScreen(
                     else -> labels.reportUnavailable
                 },
                 onRetry = model::retry,
-                onBack = if (current.request == null) onBack else model::back,
+                // On a worker there is no first step to go back to, so Back leaves the screen.
+                onBack = if (current.request == null || target is ReportTarget.Worker) onBack else model::back,
             )
         }
     }

@@ -255,10 +255,13 @@ class ReportComposer {
                     continue
                 }
                 val placed = assessment.problems.problems.withIndex().groupBy { it.value.defaultPart }
-                // The parts they did; on the whole piece, every part a problem was placed on.
+                // The parts they did; on the whole piece, every part a problem was placed on,
+                // and the unplaced problems too, under "Part not given" as the full report
+                // prints them.
                 val parts = if (wholePiece) WorkPart.entries.filter { placed[it] != null }
                 else WorkPart.entries.filter { part -> rows.any { it.part == part } }
-                if (parts.isEmpty()) {
+                val unplaced = if (wholePiece) placed[null].orEmpty().map { it.index } else emptyList()
+                if (parts.isEmpty() && unplaced.isEmpty()) {
                     if (assessment.verdict != null) blocks += TextBlock(pdf.noProblems)
                     continue
                 }
@@ -268,6 +271,12 @@ class ReportComposer {
                     val row = SnapshotWorker(assessment.sessionId, if (wholePiece) null else part.id, input.workerId, input.workerName)
                     if (row !in record.workers) record.workers += row
                     blocks += partProblems(assessment, part, labels, record)
+                }
+                if (unplaced.isNotEmpty()) {
+                    blocks += HeadingBlock(pdf.partNotGiven, level = 4)
+                    val row = SnapshotWorker(assessment.sessionId, null, input.workerId, input.workerName)
+                    if (row !in record.workers) record.workers += row
+                    blocks += problemBlocks(assessment, unplaced, labels, forCustomer = false, record = record)
                 }
             }
         }

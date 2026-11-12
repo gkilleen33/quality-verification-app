@@ -320,6 +320,9 @@ class PartReportsTest {
         assertTrue(benchText, benchText.contains("Upholstery\nWorked on this part: Kamau"))
         assertTrue(benchText, benchText.contains("Joinery\nWorked on this part: Kamau"))
         assertFalse(benchText.contains("Otieno"))
+        // On the whole piece the unplaced problems are printed too, as the full report prints them.
+        assertTrue(benchText, benchText.substringAfter("Part not given").contains("Ufa kwenye reli ya kiti"))
+        assertEquals(4, content.blocks.filterIsInstance<ProblemBlock>().count { it.title.startsWith("Kiungo") || it.title.startsWith("Kitambaa") || it.title.startsWith("Ufa") || it.title.startsWith("Miguu") })
         assertEquals(listOf("s1", "s5"), content.sessionIds)
         assertEquals(setOf("joinery", null), content.snapshot.workers.map { it.part }.toSet())
         assertFalse(Regex("\\d+ (problems|issues)").containsMatchIn(text))

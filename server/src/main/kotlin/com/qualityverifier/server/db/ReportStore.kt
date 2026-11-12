@@ -301,11 +301,13 @@ class PostgresReportStore(private val dataSource: DataSource) : ReportStore {
                  where p.user_id = ?::uuid
                    and exists (
                        select 1 from sessions s join session_workers sw on sw.session_id = s.id
-                        where s.piece_id = p.id and sw.worker_id = ?::uuid
+                        where s.piece_id = p.id and sw.worker_id = ?::uuid and s.client_deleted_at is null
                    )
+                 -- By the first listed naming: a client-deleted one is not printed, so it
+                 -- must not place the piece either.
                  order by (
                      select min(s.created_at) from sessions s join session_workers sw on sw.session_id = s.id
-                      where s.piece_id = p.id and sw.worker_id = ?::uuid
+                      where s.piece_id = p.id and sw.worker_id = ?::uuid and s.client_deleted_at is null
                  ), p.id
                 """.trimIndent()
             ).use { statement ->
