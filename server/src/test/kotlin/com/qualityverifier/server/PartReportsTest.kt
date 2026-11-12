@@ -244,11 +244,44 @@ class PartReportsTest {
     }
 
     @Test
-    fun `a full report of an assessment whose problems cannot be read says so`() {
-        val unreadable = session("s3", DAY_ONE, listOf("```fb-diagnosis\n{\"findings\":[{\"title\":\"Gap"))
+    fun `a full report of an assessment whose problems cannot be read says so, and still names the parts' workers`() {
+        val unreadable = session(
+            "s3", DAY_ONE, listOf("```fb-diagnosis\n{\"findings\":[{\"title\":\"Gap"),
+            workers = listOf(worker(KAMAU, "Kamau", WorkPart.JOINERY)),
+        )
         val full = compose(ReportKind.FULL, listOf(unreadable), chosen = "s3")
-        assertTrue(full.text().contains("could not be read"))
+        val text = full.text()
+        assertTrue(text, text.contains("could not be read"))
+        assertTrue(text, text.contains("Worked on this part: Kamau"))
         assertTrue(full.defectRefs.isEmpty())
+    }
+
+    @Test
+    fun `an assessment with no verdict prints no record line under a part`() {
+        val unfinished = session("s3", DAY_ONE + 2 * A_DAY, listOf("Send me a photo of the underside."), messageCount = 1)
+        val issues = compose(ReportKind.PART_ISSUES, listOf(first, unfinished), chosen = "s3", parts = listOf(WorkPart.JOINERY))
+        val text = issues.text()
+        assertTrue(text, text.contains("No full verdict"))
+        assertFalse(text, text.contains("No issues recorded"))
+        val fixes = compose(ReportKind.PART_FIXES, listOf(first, unfinished), chosen = "s3", previous = "s1", parts = listOf(WorkPart.JOINERY))
+        assertFalse(fixes.text().substringAfter("Found this time").contains("No issues recorded"))
+    }
+
+    @Test
+    fun `a whole-piece worker printed under several parts is one snapshot row`() {
+        val wholePiece = first.copy(workers = listOf(worker("c0ffee00-0000-4000-8000-0000000000a4", "Achieng", null)))
+        val every = compose(
+            ReportKind.PART_ISSUES, listOf(wholePiece), chosen = "s1",
+            parts = listOf(WorkPart.FRAME, WorkPart.JOINERY, WorkPart.FINISHING, WorkPart.ASSEMBLY, WorkPart.OTHER),
+        )
+        assertEquals(1, every.snapshot.workers.size)
+        assertEquals(5, every.blocks.filterIsInstance<NamesBlock>().size)
+
+        // Two roster entries with one nickname on one part: printed once, recorded twice.
+        val twins = first.copy(workers = listOf(worker(KAMAU, "Otieno", WorkPart.JOINERY), worker(OTIENO, "Otieno", WorkPart.JOINERY)))
+        val report = compose(ReportKind.PART_ISSUES, listOf(twins), chosen = "s1", parts = listOf(WorkPart.JOINERY))
+        assertEquals(listOf("Otieno"), report.blocks.filterIsInstance<NamesBlock>().single().names)
+        assertEquals(setOf(KAMAU, OTIENO), report.snapshot.workers.map { it.workerId }.toSet())
     }
 
     @Test

@@ -117,6 +117,30 @@ class ReportStepsTest {
     }
 
     @Test
+    fun `fixes offers only assessments with an earlier verdict, the server's own rule`() = runTest {
+        // s0 unfinished, s1 and s2 with verdicts: fixes can be made on s2 only, not on s0,
+        // which the server would refuse with no_previous_assessment.
+        val api = FakeApi()
+        val model = model(listOf(summary("s0", 500, null)) + two, api = api)
+        model.choose(ReportKind.PART_ISSUES)
+        advanceUntilIdle()
+        model.partsChosen()
+        advanceUntilIdle()
+        model.chooseIssuesOrFixes(ReportKind.PART_FIXES)
+        advanceUntilIdle()
+        assertEquals("s2", api.previewed.single().second.sessionId)
+    }
+
+    @Test
+    fun `back while a step reads the phone wins over the step that then arrives`() = runTest {
+        val model = model(two)
+        model.choose(ReportKind.FULL)
+        model.back()
+        advanceUntilIdle()
+        assertEquals(SendReportViewModel.Step.WhoFor, model.step.value)
+    }
+
+    @Test
     fun `which assessment lists newest first with the newest selected, and issues keeps every assessment`() = runTest {
         val model = model(three)
         model.choose(ReportKind.FULL)

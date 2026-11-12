@@ -317,19 +317,23 @@ class ReportComposer {
         blocks += opening(input, input.kind, chosen, labels)
         blocks += namesBlock(pdf.alsoWorkedOn, chosen, part = null, wholePieceToo = false, input.makerName, record)
         val problems = chosen.problems
+        val partsNamed = chosen.workers.mapNotNull { it.part }.toSet()
         if (problems.unknown) {
+            // The names recorded on each part are still printed; only the problems are not known.
             blocks += TextBlock(pdf.problemsUnknown)
+            for (part in WorkPart.entries.filter { it in partsNamed }) {
+                blocks += HeadingBlock(pdf.part(part), level = 3)
+                blocks += namesBlock(pdf.workedOnThisPart, chosen, part, wholePieceToo = false, input.makerName, record)
+            }
         } else {
             val placed = problems.problems.withIndex().groupBy { it.value.defaultPart }
-            val partsNamed = chosen.workers.mapNotNull { it.part }.toSet()
             // Every part with a problem on it or a worker named on it, in the picker's order.
             for (part in WorkPart.entries) {
                 val onPart = placed[part].orEmpty()
                 if (onPart.isEmpty() && part !in partsNamed) continue
                 blocks += HeadingBlock(pdf.part(part), level = 3)
                 blocks += namesBlock(pdf.workedOnThisPart, chosen, part, wholePieceToo = false, input.makerName, record)
-                blocks += if (onPart.isEmpty()) listOf(TextBlock(pdf.noIssuesOnPart))
-                else problemBlocks(chosen, onPart.map { it.index }, labels, forCustomer = false, record = record)
+                blocks += partProblems(chosen, part, labels, record)
             }
             placed[null]?.let { unplaced ->
                 blocks += HeadingBlock(pdf.partNotGiven, level = 3)
@@ -415,10 +419,13 @@ class ReportComposer {
         val names = mutableListOf<String>()
         for (row in rows) {
             val name = row.name ?: (if (row.workerId == null) makerName else null) ?: continue
-            if (name in names) continue
-            names += name
-            record.workers += SnapshotWorker(assessment.sessionId, row.part?.id, row.workerId, name)
+            // Each row recorded once, even when a whole-piece worker is printed under
+            // several parts; a name printed once per line, even when two roster entries
+            // share it.
+            val snapshotRow = SnapshotWorker(assessment.sessionId, row.part?.id, row.workerId, name)
+            if (snapshotRow !in record.workers) record.workers += snapshotRow
             record.names += name
+            if (name !in names) names += name
         }
         return if (names.isEmpty()) emptyList() else listOf(NamesBlock(label, names))
     }
@@ -428,7 +435,9 @@ class ReportComposer {
         val list = assessment.problems
         if (list.unknown) return listOf(TextBlock(labels.pdf.problemsUnknown))
         val onPart = list.problems.withIndex().filter { it.value.defaultPart == part }.map { it.index }
-        if (onPart.isEmpty()) return listOf(TextBlock(labels.pdf.noIssuesOnPart))
+        // "No issues recorded" only under a verdict: an assessment without one has already
+        // said "No full verdict", and the record line would read as cleared.
+        if (onPart.isEmpty()) return if (assessment.verdict != null) listOf(TextBlock(labels.pdf.noIssuesOnPart)) else emptyList()
         return problemBlocks(assessment, onPart, labels, forCustomer = false, record = record)
     }
 

@@ -135,10 +135,32 @@ class SendReportViewModel(
     fun choose(kind: ReportKind) {
         when (kind) {
             ReportKind.CUSTOMER -> loadPreview(ReportRequest(kind = kind.id))
-            ReportKind.PART_ISSUES, ReportKind.PART_FIXES -> viewModelScope.launch { openParts() }
-            ReportKind.FULL -> viewModelScope.launch { openAssessments(ReportKind.FULL, emptyList()) }
+            ReportKind.PART_ISSUES, ReportKind.PART_FIXES -> step { openParts() }
+            ReportKind.FULL -> step { openAssessments(ReportKind.FULL, emptyList()) }
             else -> Unit
         }
+    }
+
+    /**
+     * Runs a step that reads the phone's tables, and applies its answer only if the flow
+     * was not started over ("Back") while it read. [block] returns the next step to show,
+     * or the request to preview.
+     */
+    private fun step(block: suspend () -> Next) {
+        val mine = ++generation
+        viewModelScope.launch {
+            val next = block()
+            if (mine != generation) return@launch
+            when (next) {
+                is Next.Show -> _step.value = next.step
+                is Next.Preview -> loadPreview(next.request)
+            }
+        }
+    }
+
+    private sealed interface Next {
+        data class Show(val step: Step) : Next
+        data class Preview(val request: ReportRequest) : Next
     }
 
     fun togglePart(part: WorkPart) {
@@ -151,9 +173,9 @@ class SendReportViewModel(
         val current = _step.value as? Step.ChooseParts ?: return
         if (current.chosen.isEmpty()) return
         val parts = WorkPart.entries.filter { it in current.chosen }
-        viewModelScope.launch {
+        step {
             // "Fixes" is offered only when the piece has two or more assessments with verdicts.
-            if (listed().count { it.verdictLevel != null } >= 2) _step.value = Step.IssuesOrFixes(parts)
+            if (listed().count { it.verdictLevel != null } >= 2) Next.Show(Step.IssuesOrFixes(parts))
             else openAssessments(ReportKind.PART_ISSUES, parts)
         }
     }
@@ -161,7 +183,7 @@ class SendReportViewModel(
     fun chooseIssuesOrFixes(kind: ReportKind) {
         val current = _step.value as? Step.IssuesOrFixes ?: return
         if (!kind.takesParts) return
-        viewModelScope.launch { openAssessments(kind, current.parts) }
+        step { openAssessments(kind, current.parts) }
     }
 
     fun selectAssessment(sessionId: String) {
@@ -205,32 +227,33 @@ class SendReportViewModel(
     private suspend fun listed(): List<SessionSummary> =
         summaries.first().filter { it.piece == pieceId }.sortedBy { it.createdAt }
 
-    private suspend fun openParts() {
+    private suspend fun openParts(): Next {
         val pieces = listed()
         val type = pieces.lastOrNull()?.itemType ?: ItemType.OTHER
         // The parts named on the piece's assessments first, selected; then the rest of the
         // type's list, so a part nobody was named on can still be chosen.
         val named = pieces.flatMap { workersOf(it.id) }.mapNotNull { it.part }.toSet()
         val offered = WorkerParts.offered(type, named).sortedBy { if (it in named) 0 else 1 }
-        _step.value = Step.ChooseParts(offered = offered, named = named, chosen = named)
+        return Next.Show(Step.ChooseParts(offered = offered, named = named, chosen = named))
     }
 
     /**
-     * "Which assessment?": newest first, the newest selected. For fixes the piece's first
-     * assessment with a verdict is left out, since a fixes report needs one before it. A
-     * single option skips the step.
+     * "Which assessment?": newest first, the newest selected. For fixes only the assessments
+     * with an earlier assessment with a verdict are offered, the server's own rule, so the
+     * piece's first assessment with a verdict and anything before it are left out. A single
+     * option skips the step.
      */
-    private suspend fun openAssessments(kind: ReportKind, parts: List<WorkPart>) {
+    private suspend fun openAssessments(kind: ReportKind, parts: List<WorkPart>): Next {
         var candidates = listed()
         if (kind == ReportKind.PART_FIXES) {
-            val first = candidates.firstOrNull { it.verdictLevel != null }
-            candidates = candidates.filter { it.id != first?.id }
+            val firstWithVerdict = candidates.indexOfFirst { it.verdictLevel != null }
+            candidates = if (firstWithVerdict < 0) emptyList() else candidates.drop(firstWithVerdict + 1)
         }
         val options = candidates.sortedByDescending { it.createdAt }.map { Option(it.id, it) }
-        when (options.size) {
-            0 -> _step.value = Step.Failed(request = null, refused = true)
-            1 -> loadPreview(request(kind, parts, options.single().sessionId))
-            else -> _step.value = Step.WhichAssessment(kind, parts, options, selected = options.first().sessionId)
+        return when (options.size) {
+            0 -> Next.Show(Step.Failed(request = null, refused = true))
+            1 -> Next.Preview(request(kind, parts, options.single().sessionId))
+            else -> Next.Show(Step.WhichAssessment(kind, parts, options, selected = options.first().sessionId))
         }
     }
 
@@ -295,9 +318,12 @@ class SendReportViewModel(
                         workersOf = workers::workersOf,
                         pushWorkers = {
                             // The sync's push sends roster writes, then session worker sets;
-                            // anything still pending afterwards did not reach the server.
-                            runCatching { container.assessmentSync.push() }
-                            workers.unsynced().isEmpty() && workers.pendingSessions().isEmpty()
+                            // anything still pending afterwards did not reach the server. A
+                            // failure anywhere reads as "not sent", never as a crash.
+                            runCatching {
+                                container.assessmentSync.push()
+                                workers.unsynced().isEmpty() && workers.pendingSessions().isEmpty()
+                            }.getOrDefault(false)
                         },
                     )
                 }
