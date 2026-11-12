@@ -1,5 +1,6 @@
 package com.qualityverifier.ui.plan
 
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -43,6 +44,11 @@ fun PlanCard(
     onRetakeShot: (Int) -> Unit,
     onChangeAnswer: (Int) -> Unit,
     modifier: Modifier = Modifier,
+    /**
+     * A tap on a shot's thumbnail, by plan index, to look at it large. Null leaves the
+     * thumbnails as they were, which is what Kagua passes.
+     */
+    onOpenShot: ((Int) -> Unit)? = null,
 ) {
     Card(modifier.fillMaxWidth()) {
         Column(Modifier.padding(16.dp)) {
@@ -65,6 +71,7 @@ fun PlanCard(
                         notDoneLabel = labels.notDone,
                         retakeLabel = labels.retake,
                         onRetake = { onRetakeShot(index) },
+                        onOpen = onOpenShot?.let { open -> { open(index) } },
                     )
                 }
             }
@@ -146,6 +153,7 @@ private fun ShotRow(
     notDoneLabel: String,
     retakeLabel: String,
     onRetake: () -> Unit,
+    onOpen: (() -> Unit)?,
 ) {
     Row(
         modifier = Modifier
@@ -153,10 +161,14 @@ private fun ShotRow(
             .padding(vertical = 5.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
+        // Only a thumbnail with a photo behind it opens; the numbered placeholder is
+        // not a photo to look at.
+        val opens = if (path != null && onOpen != null) Modifier.clickable(onClick = onOpen) else Modifier
         Box(
             modifier = Modifier
                 .size(46.dp)
-                .clip(RoundedCornerShape(8.dp)),
+                .clip(RoundedCornerShape(8.dp))
+                .then(opens),
             contentAlignment = Alignment.Center,
         ) {
             if (path != null) {
