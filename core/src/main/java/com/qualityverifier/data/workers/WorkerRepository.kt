@@ -89,13 +89,21 @@ data class WorkerChange(
     val employment: Employment = Employment.EMPLOYEE,
 )
 
-/** A roster row as the server sends it. */
+/**
+ * A roster row as the server sends it.
+ *
+ * [employment] null means the server predates V30 and sent neither a kind nor a number:
+ * a V30 server always sends the kind. The phone then keeps its own number and kind for
+ * the row, since the server has no opinion, rather than reading the absence as "none" and
+ * clearing a number the manager just added. A V30 server's null [phone] is a number
+ * removed on another phone, and is applied.
+ */
 data class ServerWorker(
     val id: String,
     val name: String?,
     val archivedAt: Long?,
     val phone: String? = null,
-    val employment: Employment = Employment.EMPLOYEE,
+    val employment: Employment? = null,
 )
 
 /** A session whose worker set is unsent. [asOf] is the phone's clock at the edit. */
@@ -166,15 +174,22 @@ class RoomWorkerRepository(
             // Two statements that each decide for themselves, so an edit made between
             // them is kept: the insert is a no-op on a known worker, and the update
             // touches only a row with nothing unsent.
+            val employment = worker.employment
             dao.insertWorkerIfAbsent(
                 WorkerEntity(
                     worker.id, worker.name, worker.archivedAt, updatedAt = syncedAt, syncedAt = syncedAt,
-                    phone = worker.phone, employment = worker.employment.id,
+                    phone = worker.phone, employment = (employment ?: Employment.EMPLOYEE).id,
                 ),
             )
-            dao.applySyncedWorker(
-                worker.id, worker.name, worker.phone, worker.employment.id, worker.archivedAt, syncedAt,
-            )
+            if (employment == null) {
+                // A server from before V30: it said nothing about the number or the kind,
+                // so the phone's stay (see ServerWorker).
+                dao.applySyncedWorker(worker.id, worker.name, worker.archivedAt, syncedAt)
+            } else {
+                dao.applySyncedWorkerDetails(
+                    worker.id, worker.name, worker.phone, employment.id, worker.archivedAt, syncedAt,
+                )
+            }
         }
     }
 

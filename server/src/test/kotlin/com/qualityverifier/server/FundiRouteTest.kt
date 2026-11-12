@@ -302,7 +302,9 @@ class FundiRouteTest {
         val store = FakeFundiStore()
         val app = withFundi(store, audience = Audience.FUNDI)
 
-        listOf("not a number", "+254", "12345", "+2547123456789012345").forEach { phone ->
+        // The last passes validatePhone and would fail V30's CHECK: refused here, so the
+        // client drops it instead of retrying a constraint violation on every sync.
+        listOf("not a number", "+254", "12345", "+2547123456789012345", "+25401234567").forEach { phone ->
             val response = app.put("/v1/fundi/workers/$WORKER") {
                 auth(FUNDI); contentType(ContentType.Application.Json)
                 setBody("""{"name":"Kamau","phone":"$phone"}""")

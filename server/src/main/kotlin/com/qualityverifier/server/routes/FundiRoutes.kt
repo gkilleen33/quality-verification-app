@@ -135,7 +135,12 @@ fun Route.fundiRoutes(store: FundiStore, auth: AuthStore) {
                 body.phone.isBlank() -> PhoneChange.Remove
                 else -> {
                     val e164 = normalisePhone(body.phone.trim())
+                    // The second clause of workers_phone_is_e164 (V21's rule), checked here
+                    // so it is a 400 the client drops rather than a constraint violation it
+                    // retries on every sync: normalisePhone rewrites +2540 only before
+                    // exactly nine digits, so "+25401234567" passes validatePhone.
                     val fault = validatePhone(e164)
+                        ?: "phone is not a valid number".takeIf { e164.startsWith("+2540") }
                     if (fault != null) {
                         call.respond(HttpStatusCode.BadRequest, ErrorResponse("invalid_phone", fault))
                         return@put

@@ -22,6 +22,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -62,10 +63,21 @@ fun WorkerForm(
     onDismiss: () -> Unit,
     onArchive: (() -> Unit)? = null,
 ) {
-    var name by remember { mutableStateOf(current?.name.orEmpty()) }
+    // A number stored by some other client in a form this field cannot hold (not +254).
+    // Kept as it is unless a number is typed or picked over it, since clearing it unseen
+    // would be a change the manager did not make.
+    val foreign = current?.phone?.takeUnless { it.startsWith(KenyanPhone.COUNTRY_CODE) }
+
+    // Saveable, not remembered: the contacts app comes in front of this activity, and a
+    // low-memory phone recreates it on the way back. The form and its picker launcher
+    // then have to come back with it, or the picked number is dropped unseen.
+    var name by rememberSaveable { mutableStateOf(current?.name.orEmpty()) }
     // The field holds the nine digits, as the sign-in field does; the entry holds E.164.
-    var digits by remember { mutableStateOf(current?.phone?.removePrefix(KenyanPhone.COUNTRY_CODE).orEmpty()) }
-    var employment by remember { mutableStateOf(current?.employment ?: Employment.EMPLOYEE) }
+    var digits by rememberSaveable {
+        mutableStateOf(if (foreign == null) current?.phone?.removePrefix(KenyanPhone.COUNTRY_CODE).orEmpty() else "")
+    }
+    var employmentId by rememberSaveable { mutableStateOf((current?.employment ?: Employment.EMPLOYEE).id) }
+    val employment = Employment.fromId(employmentId) ?: Employment.EMPLOYEE
     // Why the last picked number was not taken, shown until the number changes.
     var pickProblem by remember { mutableStateOf<KenyanPhone.Problem?>(null) }
     var pickerFailed by remember { mutableStateOf(false) }
@@ -147,7 +159,7 @@ fun WorkerForm(
                     Employment.entries.forEach { kind ->
                         FilterChip(
                             selected = employment == kind,
-                            onClick = { employment = kind },
+                            onClick = { employmentId = kind.id },
                             label = { Text(labels.nameOf(kind)) },
                         )
                     }
@@ -160,7 +172,9 @@ fun WorkerForm(
         confirmButton = {
             TextButton(
                 onClick = {
-                    onSave(WorkerDetails(name.trim(), KenyanPhone.toE164(digits), employment))
+                    // An empty field keeps a foreign number; anything typed replaces it.
+                    val phone = KenyanPhone.toE164(digits) ?: foreign.takeIf { digits.isEmpty() }
+                    onSave(WorkerDetails(name.trim(), phone, employment))
                 },
                 enabled = accepts(name) && numberOk,
             ) { Text(labels.workerSave) }

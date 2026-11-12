@@ -32,6 +32,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -78,7 +79,9 @@ fun WorkerPageScreen(
     val filter by model.filter.collectAsState()
     val labels = FundiLabels.ENGLISH
 
-    var editing by remember { mutableStateOf(false) }
+    // Saveable: the contacts app comes in front of the activity from the form, and the
+    // form must come back with it (see WorkerForm).
+    var editing by rememberSaveable { mutableStateOf(false) }
     val current = worker
     if (editing && current != null) {
         val before = WorkerDetails(current.name, current.phone, current.employment)
