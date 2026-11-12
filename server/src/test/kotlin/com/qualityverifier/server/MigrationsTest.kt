@@ -228,6 +228,40 @@ class MigrationsTest {
         return out
     }
 
+    /**
+     * Tables whose rows are a record and must never change, by the migration that makes them.
+     * Each PR that adds one adds it here.
+     */
+    private val appendOnlyTables = listOf(
+        // V27: who changed a setting, when, and why.
+        "V27__app_settings.sql" to "app_settings_history",
+    )
+
+    /**
+     * Each append-only table refuses UPDATE and DELETE row by row and TRUNCATE by statement.
+     *
+     * Row triggers do not fire on TRUNCATE, so a table with only the first is emptied by one
+     * statement. Read from the file because the tests have no database; the migration's own
+     * self-test proves the triggers fire, in the deploy rehearsal.
+     */
+    @Test
+    fun `append-only tables refuse update, delete and truncate`() {
+        appendOnlyTables.forEach { (name, table) ->
+            val file = files.firstOrNull { it.name == name } ?: error("no migration $name")
+            val text = file.readText().replace(Regex("""\s+"""), " ")
+            assertTrue(
+                "$name has no trigger refusing UPDATE and DELETE on $table",
+                Regex("""(?i)BEFORE UPDATE OR DELETE ON $table FOR EACH ROW EXECUTE FUNCTION refuse_row_change\(\)""")
+                    .containsMatchIn(text),
+            )
+            assertTrue(
+                "$name has no trigger refusing TRUNCATE on $table",
+                Regex("""(?i)BEFORE TRUNCATE ON $table FOR EACH STATEMENT EXECUTE FUNCTION refuse_row_change\(\)""")
+                    .containsMatchIn(text),
+            )
+        }
+    }
+
     @Test
     fun `versions are sequential with no gaps or repeats`() {
         // A gap usually means a file was renamed and the old version is still recorded in
