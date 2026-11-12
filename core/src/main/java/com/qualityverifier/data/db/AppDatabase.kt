@@ -20,7 +20,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         MpesaTransactionEntity::class,
         MpesaUnreadDayEntity::class,
     ],
-    version = 13,
+    version = 14,
     exportSchema = true,
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -257,10 +257,28 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        /**
+         * Adds `workers.phone` and `workers.employment` (server V30): a roster entry's
+         * number, and whether the person is an employee or temporary.
+         *
+         * Null and 'employee' on every existing row, which reads as it did: a worker added
+         * before this had no number and was the only kind the roster knew. The default on
+         * `employment` has to be spelled here and in the entity's ColumnInfo alike, or
+         * Room's schema check fails at startup.
+         */
+        val MIGRATION_13_14 = object : Migration(13, 14) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE workers ADD COLUMN phone TEXT")
+                db.execSQL(
+                    "ALTER TABLE workers ADD COLUMN employment TEXT NOT NULL DEFAULT 'employee'"
+                )
+            }
+        }
+
         val MIGRATIONS = arrayOf(
             MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6,
             MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11,
-            MIGRATION_11_12, MIGRATION_12_13,
+            MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14,
         )
     }
 }

@@ -15,6 +15,7 @@ import com.qualityverifier.data.workers.WorkerRepository
 import com.qualityverifier.di.AppContainer
 import com.qualityverifier.domain.SessionSummary
 import com.qualityverifier.domain.Worker
+import com.qualityverifier.domain.WorkerDetails
 import com.qualityverifier.domain.WorkerSlot
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -65,8 +66,8 @@ class PiecesViewModel(
         }
     }
 
-    fun addWorker(name: String, onAdded: (Worker) -> Unit) {
-        viewModelScope.launch { onAdded(workers.add(name)) }
+    fun addWorker(details: WorkerDetails, onAdded: (Worker) -> Unit) {
+        viewModelScope.launch { onAdded(workers.add(details)) }
     }
 
     val pieces: StateFlow<List<SessionSummary>> =

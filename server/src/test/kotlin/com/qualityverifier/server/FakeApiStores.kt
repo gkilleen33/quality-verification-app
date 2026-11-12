@@ -7,6 +7,7 @@ import com.qualityverifier.server.api.ApiKeyStore
 import com.qualityverifier.server.api.ApiStore
 import com.qualityverifier.server.api.ApiTesterFeedback
 import com.qualityverifier.server.api.ApiUser
+import com.qualityverifier.server.api.ApiWorker
 import com.qualityverifier.server.api.NewApiKey
 import com.qualityverifier.server.api.PostgresApiKeyStore
 import java.time.Instant
@@ -77,6 +78,7 @@ class FakeApiStore(
     private val detail: ApiAssessmentDetail? = null,
     private val feedback: List<ApiTesterFeedback> = emptyList(),
     private val photos: Set<String> = emptySet(),
+    private val workers: List<ApiWorker> = emptyList(),
 ) : ApiStore {
     var lastLimit: Int? = null
         private set
@@ -111,6 +113,11 @@ class FakeApiStore(
         return feedback
     }
 
+    override suspend fun workers(limit: Int, offset: Int): List<ApiWorker> {
+        lastLimit = limit
+        return workers
+    }
+
     override suspend fun photoExists(sha256: String): Boolean = sha256 in photos
 }
 
@@ -143,6 +150,18 @@ val API_ASSESSMENT = ApiAssessment(
     hasTesterFeedback = false,
     deletedByUser = false,
     audience = "buyer",
+)
+
+/** A roster entry of [API_USER]'s, with a number and a kind (V30). */
+val API_WORKER = ApiWorker(
+    id = "c0ffee00-0000-4000-8000-00000000001b",
+    userId = API_USER.id,
+    name = "Kamau",
+    phone = "+254712345678",
+    employment = "temporary",
+    archivedAt = null,
+    createdAt = 1_700_000_000_000,
+    updatedAt = 1_700_000_200_000,
 )
 
 /**

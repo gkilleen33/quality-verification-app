@@ -1,5 +1,6 @@
 package com.qualityverifier.server.db
 
+import com.qualityverifier.domain.Employment
 import com.qualityverifier.domain.FundiGoal
 import com.qualityverifier.domain.FundiProfile
 import com.qualityverifier.domain.OwnedTool
@@ -74,8 +75,40 @@ interface FundiStore {
      * Archiving is sticky: the first `archived = true` sets `archived_at`, and nothing
      * clears it, so a stale rename from a second phone cannot revive a worker the shop
      * has let go. The server stamps `updated_at` from its own clock (V18).
+     *
+     * The number and the kind are optional on the wire, so an app from before V30 keeps
+     * working: [phone] says whether the request named a number at all (see
+     * [PhoneChange]), and a null [employment] leaves the stored kind, or makes a new
+     * entry an employee. Both follow the name's rule otherwise: the last write received
+     * wins.
      */
-    suspend fun upsertWorker(userId: String, workerId: String, name: String, archived: Boolean): Boolean
+    suspend fun upsertWorker(
+        userId: String,
+        workerId: String,
+        name: String,
+        archived: Boolean,
+        phone: PhoneChange = PhoneChange.Keep,
+        employment: Employment? = null,
+    ): Boolean
+}
+
+/**
+ * What a roster write says about the worker's number.
+ *
+ * Three answers, because "absent" and "remove" must differ: an app from before V30 never
+ * sends the field, and reading that as "remove" would clear every number the moment a
+ * manager renamed a worker from an old phone. A new app sends the number it holds on every
+ * write, with blank for none, so a number removed on the phone is removed here.
+ */
+sealed interface PhoneChange {
+    /** The field was absent (or null): the stored number stays as it is. */
+    data object Keep : PhoneChange
+
+    /** The field was blank: the stored number is cleared. */
+    data object Remove : PhoneChange
+
+    /** A number in E.164, already normalised and checked by the route. */
+    data class Set(val e164: String) : PhoneChange
 }
 
 /** A roster row as the phone reads it back. Times in epoch millis. */
@@ -85,6 +118,9 @@ data class WorkerRow(
     val createdAt: Long,
     val updatedAt: Long,
     val archivedAt: Long?,
+    /** E.164, or null for an entry without a number. */
+    val phone: String? = null,
+    val employment: Employment = Employment.EMPLOYEE,
 )
 
 /** The one rule for a piece's name, shared by the turn and the rename endpoint. */
@@ -308,7 +344,8 @@ class PostgresFundiStore(private val dataSource: DataSource) : FundiStore {
             select id::text, name,
                    (extract(epoch from created_at) * 1000)::bigint,
                    (extract(epoch from updated_at) * 1000)::bigint,
-                   (extract(epoch from archived_at) * 1000)::bigint
+                   (extract(epoch from archived_at) * 1000)::bigint,
+                   phone, employment
             from workers where user_id = ?::uuid order by created_at, id
             """.trimIndent()
         ).use { statement ->
@@ -322,6 +359,10 @@ class PostgresFundiStore(private val dataSource: DataSource) : FundiStore {
                         createdAt = rows.getLong(3),
                         updatedAt = rows.getLong(4),
                         archivedAt = rows.getLong(5).takeUnless { rows.wasNull() },
+                        phone = rows.getString(6),
+                        // The CHECK and the enum are held together by FundiVocabularyTest,
+                        // so an unknown kind is only reachable across a downgrade.
+                        employment = Employment.fromId(rows.getString(7)) ?: Employment.EMPLOYEE,
                     )
                 }
                 out
@@ -334,13 +375,20 @@ class PostgresFundiStore(private val dataSource: DataSource) : FundiStore {
         workerId: String,
         name: String,
         archived: Boolean,
+        phone: PhoneChange,
+        employment: Employment?,
     ): Boolean = tx { connection ->
         connection.prepareStatement(
             """
-            insert into workers (id, user_id, name, archived_at)
-            values (?::uuid, ?::uuid, ?, case when ? then now() end)
+            insert into workers (id, user_id, name, archived_at, phone, employment)
+            values (?::uuid, ?::uuid, ?, case when ? then now() end, ?, coalesce(?, 'employee'))
             on conflict (id) do update
                 set name        = excluded.name,
+                    -- Keep: the request said nothing about the number (an app from before
+                    -- V30). Otherwise the number sent, which is null for Remove.
+                    phone       = case when ? then workers.phone else excluded.phone end,
+                    -- Null leaves the kind as it was, for the same reason.
+                    employment  = coalesce(?, workers.employment),
                     updated_at  = now(),
                     -- Sticky: once archived, a later write cannot revive it.
                     archived_at = coalesce(workers.archived_at, excluded.archived_at)
@@ -352,6 +400,12 @@ class PostgresFundiStore(private val dataSource: DataSource) : FundiStore {
             statement.setString(2, userId)
             statement.setString(3, name)
             statement.setBoolean(4, archived)
+            val number = (phone as? PhoneChange.Set)?.e164
+            if (number == null) statement.setNull(5, Types.VARCHAR) else statement.setString(5, number)
+            val kind = employment?.id
+            if (kind == null) statement.setNull(6, Types.VARCHAR) else statement.setString(6, kind)
+            statement.setBoolean(7, phone == PhoneChange.Keep)
+            if (kind == null) statement.setNull(8, Types.VARCHAR) else statement.setString(8, kind)
             statement.executeUpdate() > 0
         }
     }

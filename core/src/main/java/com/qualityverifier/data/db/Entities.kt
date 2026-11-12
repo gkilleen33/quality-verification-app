@@ -121,6 +121,15 @@ data class WorkerEntity(
     /** The phone's own clock, for ordering its own writes; never sent. */
     val updatedAt: Long,
     val syncedAt: Long? = null,
+    /** The worker's number in E.164, or null for an entry without one (V30). */
+    val phone: String? = null,
+    /**
+     * `employee` or `temporary` ([com.qualityverifier.domain.Employment]). The default
+     * has to be spelled here and in the migration alike, or Room's schema check fails at
+     * startup; every entry from before version 14 is an employee.
+     */
+    @ColumnInfo(defaultValue = "employee")
+    val employment: String = "employee",
 )
 
 /**

@@ -8,6 +8,7 @@ import com.qualityverifier.data.session.SyncedMessage
 import com.qualityverifier.data.session.SyncedSession
 import com.qualityverifier.data.workers.ServerWorker
 import com.qualityverifier.data.workers.WorkerRepository
+import com.qualityverifier.domain.Employment
 import com.qualityverifier.domain.ItemType
 import com.qualityverifier.domain.Role
 import com.qualityverifier.domain.WorkPart
@@ -80,7 +81,16 @@ class AssessmentSync(
 
         // The roster comes down before the sessions that refer to it.
         if (rosterEnabled) client.workers()?.let { roster ->
-            workers.mergeFromServer(roster.map { ServerWorker(it.id, it.name, it.archivedAt) })
+            workers.mergeFromServer(
+                roster.map {
+                    ServerWorker(
+                        it.id, it.name, it.archivedAt, phone = it.phone,
+                        // Null from a server before V30, which the repository reads as
+                        // "no opinion"; a kind this build does not know reads the same way.
+                        employment = it.employment?.let(Employment::fromId),
+                    )
+                },
+            )
         }
 
         val remote = client.sessions()
@@ -197,7 +207,7 @@ class AssessmentSync(
         var rosterWrites = 0
         var rosterAllSent = true
         if (rosterEnabled) for (change in workers.unsynced()) {
-            if (client.upsertWorker(change.id, change.name, change.archived)) {
+            if (client.upsertWorker(change.id, change.name, change.archived, change.phone, change.employment)) {
                 workers.markSynced(change)
                 rosterWrites++
             } else {

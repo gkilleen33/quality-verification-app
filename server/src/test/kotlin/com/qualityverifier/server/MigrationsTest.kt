@@ -104,6 +104,9 @@ class MigrationsTest {
         "pieces" to "label",
         // V23: a worker's nickname.
         "workers" to "name",
+        // V30: a worker's number. Found by the phone test above too; named here so the
+        // UPDATE on workers is checked as a statement, not only as a column somewhere.
+        "workers" to "phone",
         // V25: a photo's GPS point, serial numbers, and owner and artist names.
         "attachments" to "photo_meta",
     )

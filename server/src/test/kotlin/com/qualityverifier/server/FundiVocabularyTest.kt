@@ -2,6 +2,7 @@ package com.qualityverifier.server
 
 import com.qualityverifier.domain.Audience
 import com.qualityverifier.domain.Defect
+import com.qualityverifier.domain.Employment
 import com.qualityverifier.domain.FundiGoal
 import com.qualityverifier.domain.MeasurementUnit
 import com.qualityverifier.domain.SkillDimension
@@ -54,6 +55,9 @@ class FundiVocabularyTest {
     /** The roster, and the parts of a piece a worker can be named on. */
     private val workers: String by lazy { read("V23__workers.sql") }
 
+    /** A roster entry's number, and whether the person is an employee or temporary. */
+    private val workerPhone: String by lazy { read("V30__worker_phone.sql") }
+
     private fun assertAllAllowed(
         what: String,
         ids: List<String>,
@@ -92,6 +96,21 @@ class FundiVocabularyTest {
         assertAllAllowed(
             "work part", WorkPart.entries.map { it.id },
             sql = workers, where = "V23",
+        )
+    }
+
+    @Test
+    fun `every employment kind is allowed by the constraint`() {
+        assertAllAllowed(
+            "employment", Employment.entries.map { it.id },
+            sql = workerPhone, where = "V30",
+        )
+        // And the other way too, for this one: the default the column takes has to be a
+        // kind the app knows, or every entry from before V30 would read as unrecognised.
+        assertTrue(
+            "V30's default kind is not one the app knows",
+            Regex("""DEFAULT '(\w+)'""").find(workerPhone)?.groupValues?.get(1)
+                ?.let { Employment.fromId(it) } != null,
         )
     }
 

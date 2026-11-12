@@ -225,12 +225,34 @@ interface SessionDao {
     /**
      * The server's name and archive state, applied only where nothing is unsent. Archive
      * is sticky in both directions, so neither side can revive a worker the other let go.
+     *
+     * For a server from before V30, which sends no number or kind: those stay as the
+     * phone holds them rather than being read as "none".
      */
     @Query(
         "UPDATE workers SET name = :name, archivedAt = COALESCE(archivedAt, :archivedAt), " +
             "syncedAt = :syncedAt WHERE id = :workerId AND syncedAt IS NOT NULL"
     )
     suspend fun applySyncedWorker(workerId: String, name: String?, archivedAt: Long?, syncedAt: Long)
+
+    /**
+     * As [applySyncedWorker], plus the number and the kind, which follow the name's
+     * rule: the server's copy wins where nothing is unsent, and a null number is a
+     * number removed on another phone.
+     */
+    @Query(
+        "UPDATE workers SET name = :name, phone = :phone, employment = :employment, " +
+            "archivedAt = COALESCE(archivedAt, :archivedAt), " +
+            "syncedAt = :syncedAt WHERE id = :workerId AND syncedAt IS NOT NULL"
+    )
+    suspend fun applySyncedWorkerDetails(
+        workerId: String,
+        name: String?,
+        phone: String?,
+        employment: String,
+        archivedAt: Long?,
+        syncedAt: Long,
+    )
 
     // ---- who worked on a session
 

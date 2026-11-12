@@ -4,7 +4,9 @@ import com.qualityverifier.data.workers.PendingSessionSet
 import com.qualityverifier.data.workers.ServerWorker
 import com.qualityverifier.data.workers.WorkerChange
 import com.qualityverifier.data.workers.WorkerRepository
+import com.qualityverifier.domain.Employment
 import com.qualityverifier.domain.Worker
+import com.qualityverifier.domain.WorkerDetails
 import com.qualityverifier.domain.WorkerSlot
 import com.qualityverifier.fundi.ui.workers.WorkersViewModel
 import kotlinx.coroutines.Dispatchers
@@ -19,6 +21,7 @@ import kotlinx.coroutines.test.setMain
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -39,21 +42,27 @@ class WorkersViewModelTest {
     fun tearDown() = Dispatchers.resetMain()
 
     @Test
-    fun `adding, renaming and archiving reach the roster`() = runTest {
+    fun `adding, editing and archiving reach the roster`() = runTest {
         val roster = FakeRoster()
         val model = WorkersViewModel(roster, sync = null)
 
-        model.add("Kamau")
+        model.add(WorkerDetails("Kamau", "+254712345678", Employment.TEMPORARY))
         advanceUntilIdle()
         val kamau = roster.workers.single()
         assertEquals("Kamau", kamau.name)
+        assertEquals("+254712345678", kamau.phone)
+        assertEquals(Employment.TEMPORARY, kamau.employment)
 
-        model.rename(kamau.id, "Kamau Otieno")
+        // The number removed and the kind changed, in the one edit the form makes.
+        model.edit(kamau.id, WorkerDetails("Kamau Otieno", null, Employment.EMPLOYEE))
         model.archive(kamau.id)
         advanceUntilIdle()
 
-        assertEquals("Kamau Otieno", roster.workers.single().name)
-        assertTrue(roster.workers.single().archived)
+        val after = roster.workers.single()
+        assertEquals("Kamau Otieno", after.name)
+        assertNull(after.phone)
+        assertEquals(Employment.EMPLOYEE, after.employment)
+        assertTrue(after.archived)
     }
 
     // The same bound the server keeps (V23), so a name is never refused later.
@@ -72,14 +81,19 @@ class WorkersViewModelTest {
         private val stream = MutableStateFlow<List<Worker>>(emptyList())
 
         override fun observeWorkers(): Flow<List<Worker>> = stream
-        override suspend fun add(name: String): Worker {
-            val worker = Worker("w${workers.size + 1}", name, archived = false)
+        override suspend fun add(details: WorkerDetails): Worker {
+            val worker = Worker(
+                "w${workers.size + 1}", details.name, archived = false,
+                phone = details.phone, employment = details.employment,
+            )
             workers += worker
             stream.value = workers.toList()
             return worker
         }
-        override suspend fun rename(workerId: String, name: String) {
-            replace(workerId) { it.copy(name = name) }
+        override suspend fun edit(workerId: String, details: WorkerDetails) {
+            replace(workerId) {
+                it.copy(name = details.name, phone = details.phone, employment = details.employment)
+            }
         }
         override suspend fun archive(workerId: String) {
             replace(workerId) { it.copy(archived = true) }

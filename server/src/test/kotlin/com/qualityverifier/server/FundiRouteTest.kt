@@ -1,6 +1,7 @@
 package com.qualityverifier.server
 
 import com.qualityverifier.domain.Audience
+import com.qualityverifier.domain.Employment
 import com.qualityverifier.domain.FundiGoal
 import com.qualityverifier.domain.FundiProfile
 import com.qualityverifier.domain.OwnedTool
@@ -15,6 +16,7 @@ import com.qualityverifier.server.auth.Passwords
 import com.qualityverifier.server.db.AuthStore
 import com.qualityverifier.server.db.Credentials
 import com.qualityverifier.server.db.FundiStore
+import com.qualityverifier.server.db.PhoneChange
 import com.qualityverifier.server.db.RecordedToolChange
 import com.qualityverifier.server.db.RegisterOutcome
 import com.qualityverifier.server.db.Registration
@@ -236,6 +238,87 @@ class FundiRouteTest {
         assertTrue(body, body.contains("\"id\":\"$WORKER\""))
         assertTrue(body, body.contains("Kamau Otieno"))
         assertTrue("archived workers are listed, with their date", body.contains("\"archived_at\":3"))
+    }
+
+    // V30. The number is optional and travels with every write from a new app; an app
+    // from before V30 never sends the field, and its writes must leave the number alone.
+    @Test
+    fun `a worker's number is stored, returned, changed and removed`() = testApplication {
+        val store = FakeFundiStore()
+        val app = withFundi(store, audience = Audience.FUNDI)
+
+        val added = app.put("/v1/fundi/workers/$WORKER") {
+            auth(FUNDI); contentType(ContentType.Application.Json)
+            setBody("""{"name":"Kamau","phone":"+254712345678","employment":"temporary"}""")
+        }
+        assertEquals(HttpStatusCode.NoContent, added.status)
+        assertEquals("+254712345678", store.phones[WORKER])
+        assertEquals(Employment.TEMPORARY, store.employments[WORKER])
+
+        var list = app.get("/v1/fundi/workers") { auth(FUNDI) }.bodyAsText()
+        assertTrue(list, list.contains("\"phone\":\"+254712345678\""))
+        assertTrue(list, list.contains("\"employment\":\"temporary\""))
+
+        // Changed, in a form the phone would not send but a person might type: the server
+        // normalises as sign-in does, so the stored copy is always E.164.
+        val changed = app.put("/v1/fundi/workers/$WORKER") {
+            auth(FUNDI); contentType(ContentType.Application.Json)
+            setBody("""{"name":"Kamau","phone":"0722 000 111","employment":"employee"}""")
+        }
+        assertEquals(HttpStatusCode.NoContent, changed.status)
+        assertEquals("+254722000111", store.phones[WORKER])
+        assertEquals(Employment.EMPLOYEE, store.employments[WORKER])
+
+        // Omitted: an old app renaming the worker. The number and the kind stay.
+        val renamed = app.put("/v1/fundi/workers/$WORKER") {
+            auth(FUNDI); contentType(ContentType.Application.Json)
+            setBody("""{"name":"Kamau Otieno"}""")
+        }
+        assertEquals(HttpStatusCode.NoContent, renamed.status)
+        assertEquals("+254722000111", store.phones[WORKER])
+        assertEquals(Employment.EMPLOYEE, store.employments[WORKER])
+        assertEquals("Kamau Otieno" to false, store.workers[WORKER])
+
+        // Blank: removed.
+        val removed = app.put("/v1/fundi/workers/$WORKER") {
+            auth(FUNDI); contentType(ContentType.Application.Json)
+            setBody("""{"name":"Kamau Otieno","phone":""}""")
+        }
+        assertEquals(HttpStatusCode.NoContent, removed.status)
+        assertNull(store.phones[WORKER])
+        list = app.get("/v1/fundi/workers") { auth(FUNDI) }.bodyAsText()
+        assertTrue(list, list.contains("\"phone\":null"))
+
+        // A new entry sent without a kind is an employee.
+        app.put("/v1/fundi/workers/$PIECE") {
+            auth(FUNDI); contentType(ContentType.Application.Json)
+            setBody("""{"name":"Otieno"}""")
+        }
+        assertEquals(Employment.EMPLOYEE, store.employments[PIECE])
+    }
+
+    @Test
+    fun `a number that is not a number, or a kind that is not a kind, is refused`() = testApplication {
+        val store = FakeFundiStore()
+        val app = withFundi(store, audience = Audience.FUNDI)
+
+        // The last passes validatePhone and would fail V30's CHECK: refused here, so the
+        // client drops it instead of retrying a constraint violation on every sync.
+        listOf("not a number", "+254", "12345", "+2547123456789012345", "+25401234567").forEach { phone ->
+            val response = app.put("/v1/fundi/workers/$WORKER") {
+                auth(FUNDI); contentType(ContentType.Application.Json)
+                setBody("""{"name":"Kamau","phone":"$phone"}""")
+            }
+            assertEquals(phone, HttpStatusCode.BadRequest, response.status)
+            assertTrue(response.bodyAsText().contains("invalid_phone"))
+        }
+
+        val kind = app.put("/v1/fundi/workers/$WORKER") {
+            auth(FUNDI); contentType(ContentType.Application.Json)
+            setBody("""{"name":"Kamau","employment":"contractor"}""")
+        }
+        assertEquals(HttpStatusCode.BadRequest, kind.status)
+        assertTrue("nothing may be written", store.workers.isEmpty())
     }
 
     @Test
@@ -492,14 +575,36 @@ class FundiRouteTest {
 
         /** The roster this fake holds: id to (name, archived). Ids in [strangers] are another account's. */
         val workers = linkedMapOf<String, Pair<String?, Boolean>>()
+        val phones = mutableMapOf<String, String?>()
+        val employments = mutableMapOf<String, Employment>()
         val strangers = mutableSetOf<String>()
         override suspend fun listWorkers(userId: String) =
-            workers.map { (id, row) -> WorkerRow(id, row.first, 1L, 2L, if (row.second) 3L else null) }
-        override suspend fun upsertWorker(userId: String, workerId: String, name: String, archived: Boolean): Boolean {
+            workers.map { (id, row) ->
+                WorkerRow(
+                    id, row.first, 1L, 2L, if (row.second) 3L else null,
+                    phone = phones[id], employment = employments.getValue(id),
+                )
+            }
+        override suspend fun upsertWorker(
+            userId: String,
+            workerId: String,
+            name: String,
+            archived: Boolean,
+            phone: PhoneChange,
+            employment: Employment?,
+        ): Boolean {
             if (workerId in strangers) return false
             // Sticky, as the SQL is.
             val wasArchived = workers[workerId]?.second ?: false
             workers[workerId] = name to (wasArchived || archived)
+            // Keep leaves the number, Remove clears it, Set replaces it: the SQL's CASE.
+            when (phone) {
+                PhoneChange.Keep -> Unit
+                PhoneChange.Remove -> phones[workerId] = null
+                is PhoneChange.Set -> phones[workerId] = phone.e164
+            }
+            // Null leaves the kind, or makes a new entry an employee: the SQL's COALESCEs.
+            employments[workerId] = employment ?: employments[workerId] ?: Employment.EMPLOYEE
             return true
         }
 

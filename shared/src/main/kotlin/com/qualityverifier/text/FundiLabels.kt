@@ -1,5 +1,6 @@
 package com.qualityverifier.text
 
+import com.qualityverifier.domain.Employment
 import com.qualityverifier.domain.FixHorizon
 import com.qualityverifier.domain.FundiGoal
 import com.qualityverifier.domain.FundiPurpose
@@ -167,7 +168,25 @@ data class FundiLabels(
     private val sentPhotosFormat: String,
     /** A plan submission that carried answers but no photographs. */
     val sentAnswers: String,
+    // ---- the worker form (V30): name, number from contacts or typed, employee or temporary
+    val workerAddTitle: String,
+    val workerEditTitle: String,
+    val workerNameHint: String,
+    val workerChooseFromContacts: String,
+    /** The phone has no contacts app, or the picker would not open. */
+    val workerContactsUnavailable: String,
+    val workerPhoneLabel: String,
+    val workerPhoneHint: String,
+    /** One line under the number saying why it is asked for. */
+    val workerPhoneWhy: String,
+    val workerKindQuestion: String,
+    val employmentNames: Map<Employment, String>,
+    val workerSave: String,
+    val workerCancel: String,
+    val workerArchive: String,
 ) {
+    fun nameOf(employment: Employment): String = employmentNames.getValue(employment)
+
     fun saysWorkInProgress(what: String) = saysWorkInProgressFormat.replace("{what}", what)
     fun saysDiagnose(what: String) = saysDiagnoseFormat.replace("{what}", what)
     fun saysCustomerReturn(what: String) = saysCustomerReturnFormat.replace("{what}", what)
@@ -426,6 +445,25 @@ data class FundiLabels(
                 FundiGoal.MORE_ORDERS to "more orders",
                 FundiGoal.ZERO_COMEBACKS to "no pieces coming back for repair",
             ),
+            workerAddTitle = "Add a worker",
+            workerEditTitle = "Edit worker",
+            workerNameHint = "Name or nickname",
+            workerChooseFromContacts = "Choose from contacts",
+            workerContactsUnavailable = "Could not open your contacts. Type the number instead.",
+            workerPhoneLabel = "Phone number (optional)",
+            workerPhoneHint = "The 9 digits after +254, for example 712345678",
+            // Plain about what the number is for: nothing happens with it until the worker
+            // lists this workshop from their own account (V31).
+            workerPhoneWhy = "If this person also uses Fundi Bora, their number lets the app " +
+                "link them to your workshop later. Nothing is sent to them.",
+            workerKindQuestion = "Works here as",
+            employmentNames = mapOf(
+                Employment.EMPLOYEE to "Employee",
+                Employment.TEMPORARY to "Temporary",
+            ),
+            workerSave = "Save",
+            workerCancel = "Cancel",
+            workerArchive = "Archive this worker",
         )
     }
 }
