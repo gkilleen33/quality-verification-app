@@ -192,10 +192,12 @@ DECLARE
     links   integer;
 BEGIN
     BEGIN
-        INSERT INTO users (id, audience, phone) VALUES (studio, 'fundi', '+999000000001');
-        INSERT INTO users (id, audience, phone) VALUES (worker, 'fundi', '+999000000002');
+        -- A number needs a credential beside it (users_credentials_are_paired, V5); the hash
+        -- is any text, since nothing signs in as these accounts.
+        INSERT INTO users (id, audience, phone, password_hash) VALUES (studio, 'fundi', '+999000000001', 'self-test');
+        INSERT INTO users (id, audience, phone, password_hash) VALUES (worker, 'fundi', '+999000000002', 'self-test');
         -- An account nobody lists, with a number a roster will name: it must not show.
-        INSERT INTO users (id, audience, phone) VALUES (other, 'fundi', '+999000000003');
+        INSERT INTO users (id, audience, phone, password_hash) VALUES (other, 'fundi', '+999000000003', 'self-test');
 
         -- One side: the studio lists the worker's number. No link.
         INSERT INTO workers (id, user_id, name, phone, employment)
@@ -446,8 +448,9 @@ DECLARE
     worker uuid := '00000000-0000-4000-8000-0000000000f1';
 BEGIN
     BEGIN
-        INSERT INTO users (id, audience, phone) VALUES (studio, 'fundi', '+999000000011');
-        INSERT INTO users (id, audience, phone) VALUES (worker, 'fundi', '+999000000012');
+        -- Credentials paired, as in the first block (users_credentials_are_paired, V5).
+        INSERT INTO users (id, audience, phone, password_hash) VALUES (studio, 'fundi', '+999000000011', 'self-test');
+        INSERT INTO users (id, audience, phone, password_hash) VALUES (worker, 'fundi', '+999000000012', 'self-test');
         INSERT INTO workers (id, user_id, name, phone)
         VALUES ('00000000-0000-4000-8000-0000000000f2', studio, 'Kamau', '+999000000012');
         INSERT INTO worker_studios (id, user_id, name, phone)
