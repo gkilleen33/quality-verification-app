@@ -5,7 +5,11 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
+import com.qualityverifier.data.mpesa.MpesaRepository
 import com.qualityverifier.data.session.SessionRepository
+import com.qualityverifier.domain.MpesaCategory
+import com.qualityverifier.mpesa.MpesaSums
+import kotlinx.coroutines.flow.map
 import com.qualityverifier.data.sync.AssessmentSync
 import com.qualityverifier.data.workers.WorkerRepository
 import com.qualityverifier.di.AppContainer
@@ -34,7 +38,16 @@ class PiecesViewModel(
     private val sessions: SessionRepository,
     private val sync: AssessmentSync,
     private val workers: WorkerRepository,
+    mpesa: MpesaRepository,
 ) : ViewModel() {
+
+    /**
+     * What each piece cost, by category: M-Pesa money out the fundi assigned to it (Grady's
+     * description: a piece shows its expense breakdown). Empty while nothing is assigned.
+     */
+    val spending: StateFlow<Map<String, Map<MpesaCategory?, Double>>> =
+        mpesa.observeEntries().map(MpesaSums::expensesByPiece)
+            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyMap())
 
     /** The roster, for the card's "Who worked on this?" edit. */
     val roster: StateFlow<List<Worker>> =
@@ -102,7 +115,12 @@ class PiecesViewModel(
     companion object {
         fun factory(container: AppContainer): ViewModelProvider.Factory = viewModelFactory {
             initializer {
-                PiecesViewModel(container.sessionRepository, container.assessmentSync, container.workerRepository)
+                PiecesViewModel(
+                    container.sessionRepository,
+                    container.assessmentSync,
+                    container.workerRepository,
+                    container.mpesa,
+                )
             }
         }
     }

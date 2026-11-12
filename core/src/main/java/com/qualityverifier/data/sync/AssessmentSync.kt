@@ -12,6 +12,7 @@ import com.qualityverifier.domain.ItemType
 import com.qualityverifier.domain.Role
 import com.qualityverifier.domain.WorkPart
 import com.qualityverifier.domain.WorkerSlot
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -41,6 +42,11 @@ class AssessmentSync(
      * from the roster route on every sync, which is a request with no answer worth paying for.
      */
     private val rosterEnabled: Boolean,
+    /**
+     * Fundi Bora's M-Pesa push (MpesaRepository.push), last in [push]. Null in Kagua, which
+     * reads no messages. It sends nothing unless the fundi agreed to sending.
+     */
+    private val mpesa: (suspend () -> Int)? = null,
     private val io: CoroutineDispatcher = Dispatchers.IO,
 ) {
 
@@ -148,6 +154,8 @@ class AssessmentSync(
         val reviews: Int,
         val names: Int,
         val rosterWrites: Int,
+        /** M-Pesa transactions, notes and unread days the server confirmed. */
+        val mpesa: Int = 0,
     )
 
     /**
@@ -204,7 +212,20 @@ class AssessmentSync(
                 rosterWrites++
             }
         }
-        Pushed(deletes = deletes, reviews = reviews, names = names, rosterWrites = rosterWrites)
+        // Last, after the names: a note naming a piece is refused until the server has the
+        // piece, and an assessment's own turns are what put it there. A failure here leaves
+        // the rows on the phone for the next push, and costs the rest of this one nothing.
+        val mpesaSent = mpesa?.let {
+            try {
+                it()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Log.w(TAG, "M-Pesa push failed; kept for the next sync", e)
+                0
+            }
+        } ?: 0
+        Pushed(deletes = deletes, reviews = reviews, names = names, rosterWrites = rosterWrites, mpesa = mpesaSent)
     }
 
     /**

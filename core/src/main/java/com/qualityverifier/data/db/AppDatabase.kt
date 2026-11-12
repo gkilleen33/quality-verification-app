@@ -17,12 +17,16 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         WorkerEntity::class,
         SessionWorkerEntity::class,
         PendingSessionWorkersEntity::class,
+        MpesaTransactionEntity::class,
+        MpesaUnreadDayEntity::class,
     ],
-    version = 12,
+    version = 13,
     exportSchema = true,
 )
 abstract class AppDatabase : RoomDatabase() {
     abstract fun sessionDao(): SessionDao
+
+    abstract fun mpesaDao(): MpesaDao
 
     companion object {
         /**
@@ -219,10 +223,44 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        /**
+         * Adds Fundi Bora's M-Pesa tables: the transactions read from messages received
+         * after the fundi agreed, and the daily count of messages the parser could not
+         * read. Both empty on an existing phone, which reads as it did: nothing is read
+         * until the fundi says yes. Kagua's database gains the same two empty tables, since
+         * the two apps share this class, and never writes to them.
+         */
+        val MIGRATION_12_13 = object : Migration(12, 13) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `mpesa_transactions` (" +
+                        "`code` TEXT NOT NULL, `direction` TEXT NOT NULL, `type` TEXT NOT NULL, " +
+                        "`amountKes` REAL NOT NULL, `feeKes` REAL, `balanceAfterKes` REAL, " +
+                        "`occurredAt` INTEGER NOT NULL, `counterpartyName` TEXT, `counterpartyPhone` TEXT, " +
+                        "`parserVersion` INTEGER NOT NULL, `storedAt` INTEGER NOT NULL, `uploadedAt` INTEGER, " +
+                        "`category` TEXT, `pieceId` TEXT, `comment` TEXT, `annotatedAt` INTEGER, " +
+                        "`annotationSyncedAt` INTEGER, PRIMARY KEY(`code`))"
+                )
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS `index_mpesa_transactions_occurredAt` " +
+                        "ON `mpesa_transactions` (`occurredAt`)"
+                )
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS `index_mpesa_transactions_pieceId` " +
+                        "ON `mpesa_transactions` (`pieceId`)"
+                )
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `mpesa_unread_days` (" +
+                        "`day` TEXT NOT NULL, `unread` INTEGER NOT NULL, `updatedAt` INTEGER NOT NULL, " +
+                        "`syncedAt` INTEGER, PRIMARY KEY(`day`))"
+                )
+            }
+        }
+
         val MIGRATIONS = arrayOf(
             MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6,
             MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11,
-            MIGRATION_11_12,
+            MIGRATION_11_12, MIGRATION_12_13,
         )
     }
 }
