@@ -157,17 +157,18 @@ for f in $PENDING; do
 done
 
 echo "== upload"
-SIZE=0
+# SSM refuses a command document much over 64 KB, so each migration travels in a command
+# of its own: v0.5.0's six came to 121 KB in base64 together, and none is over 30 KB. They
+# land in the staging folder, and the checksums below are taken once all have arrived, so
+# a file that went missing or was cut short stops the deploy as before.
 for f in $PENDING; do
-    SIZE=$((SIZE + $(git -C "$ROOT" show "$SHA:server/db/migrations/$f" | base64 | wc -c)))
+    B64=$(git -C "$ROOT" show "$SHA:server/db/migrations/$f" | base64 | tr -d '\n')
+    [ "${#B64}" -lt 50000 ] || { echo "deploy: $f is too large to send in one command (${#B64} bytes in base64)" >&2; exit 1; }
+    echo "set -e; mkdir -p $STAGE; echo '$B64' | base64 -d > $STAGE/$f" | remote "upload $f" >/dev/null
+    echo "sent $f"
 done
-# SSM refuses a command document much over 64 KB. A long backlog needs several deploys.
-[ "$SIZE" -lt 50000 ] || { echo "deploy: pending migrations are too large to send at once ($SIZE bytes in base64)" >&2; exit 1; }
 {
     echo "set -e; mkdir -p $STAGE"
-    for f in $PENDING; do
-        echo "echo '$(git -C "$ROOT" show "$SHA:server/db/migrations/$f" | base64 | tr -d '\n')' | base64 -d > $STAGE/$f"
-    done
     echo "curl -fsSL --retry 3 -o $STAGE/kagua.jar '$JAR_URL'"
     echo "cd $STAGE && sha256sum kagua.jar$PENDING"
     # Anything in the migrations folder that is neither applied nor pending would be
