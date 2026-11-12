@@ -1083,7 +1083,7 @@ class AssessViewModelTest {
 
         override suspend fun edit(workerId: String, details: WorkerDetails) = no()
         override suspend fun archive(workerId: String) = no()
-        override suspend fun namedOn(workerId: String): List<WorkerNaming> = no()
+        override fun observeNamedOn(workerId: String): Flow<List<WorkerNaming>> = no()
         override suspend fun unsynced(): List<WorkerChange> = no()
         override suspend fun markSynced(change: WorkerChange) = no()
         override suspend fun mergeFromServer(workers: List<ServerWorker>) = no()

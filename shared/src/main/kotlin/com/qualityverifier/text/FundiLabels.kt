@@ -191,6 +191,8 @@ data class FundiLabels(
     val workerPageOpen: String,
     val workerPageNoVerdict: String,
     val workerPageNoProblems: String,
+    /** The newest diagnosis would not decode: not known, which is not the same as none. */
+    val workerPageProblemsUnknown: String,
     val workerPagePurposeUnknown: String,
 ) {
     fun nameOf(employment: Employment): String = employmentNames.getValue(employment)
@@ -473,6 +475,7 @@ data class FundiLabels(
             workerPageOpen = "Open",
             workerPageNoVerdict = "No verdict",
             workerPageNoProblems = "No problems found",
+            workerPageProblemsUnknown = "The problems could not be read. Open the assessment.",
             workerPagePurposeUnknown = "Assessment",
         )
     }

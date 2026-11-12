@@ -111,7 +111,7 @@ class WorkersViewModelTest {
         override suspend fun markSynced(change: WorkerChange) = no()
         override suspend fun mergeFromServer(workers: List<ServerWorker>) = no()
         override suspend fun workersOf(sessionId: String): List<WorkerSlot> = no()
-        override suspend fun namedOn(workerId: String): List<WorkerNaming> = no()
+        override fun observeNamedOn(workerId: String): Flow<List<WorkerNaming>> = no()
         override suspend fun setWorkersOf(sessionId: String, workers: List<WorkerSlot>) = no()
         override suspend fun recordWorkersOf(sessionId: String, workers: List<WorkerSlot>) = no()
         override suspend fun pendingSessions(): List<PendingSessionSet> = no()

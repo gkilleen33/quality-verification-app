@@ -9,6 +9,7 @@ import com.qualityverifier.domain.SessionSummary
 import com.qualityverifier.domain.WorkPart
 import com.qualityverifier.text.parseAssistantContent
 import com.qualityverifier.text.problemsOf
+import com.qualityverifier.text.writesConsequences
 
 /**
  * What one worker's page shows: every piece the worker was named on, newest first, with
@@ -43,8 +44,11 @@ object WorkerPages {
         val summary: SessionSummary,
         /** Why the manager opened it, from the intake code; null when not known. */
         val purpose: FundiPurpose?,
-        /** What it found, as [problemsOf] reads the stored replies. */
-        val problems: List<Problem>,
+        /**
+         * What it found, as [problemsIn] reads the stored replies. Empty when it found
+         * nothing or gave no verdict or diagnosis; null when they cannot be known.
+         */
+        val problems: List<Problem>?,
     )
 
     /** What the page is narrowed to: one piece, and assessments started within the days. */
@@ -108,16 +112,32 @@ object WorkerPages {
             .toList()
 
     /**
-     * The problems one assessment found, from its stored replies: the newest verdict and
-     * the newest diagnosis, read as [problemsOf] reads them. Empty for an assessment that
-     * gave no verdict or diagnosis, or found nothing.
+     * The problems one assessment found, from its stored replies, by the same rules as
+     * the stored defect count (`fundiDefectCount` in Problems.kt), so the page never lists problems the
+     * count says are gone. In order:
+     *  1. the newest diagnosis is in the one-list shape: its findings;
+     *  2. the newest verdict lists defects: those, with each finding's dimension;
+     *  3. the newest diagnosis would not decode: null, since the problems are not known;
+     *  4. the newest diagnosis is in the same reply as the newest verdict or a newer one,
+     *     or there is no verdict (a diagnose-only check): its findings;
+     *  5. otherwise none: a verdict-only follow-up with no defects cleared the diagnosis
+     *     before it.
      */
-    fun problemsIn(messages: List<ChatMessage>): List<Problem> {
-        val replies = messages.filter { it.role == Role.ASSISTANT }.map { parseAssistantContent(it.text) }
-        val verdict = replies.lastOrNull { it.verdict != null }?.verdict
-        // The newest reply that sent a diagnosis, clean or not: a clean one has no
-        // findings and must not read past itself to an older diagnosis (see fundiDefectCount).
-        val diagnosis = replies.lastOrNull { it.sentDiagnosis }?.diagnosis
-        return problemsOf(verdict, diagnosis)
+    fun problemsIn(messages: List<ChatMessage>): List<Problem>? {
+        val newestFirst = messages.filter { it.role == Role.ASSISTANT }
+            .map { parseAssistantContent(it.text) }
+            .asReversed()
+        val verdictIndex = newestFirst.indexOfFirst { it.verdict != null }
+        val diagnosisIndex = newestFirst.indexOfFirst { it.sentDiagnosis }
+        val verdict = newestFirst.getOrNull(verdictIndex)?.verdict
+        val diagnosisReply = newestFirst.getOrNull(diagnosisIndex)
+        val diagnosis = diagnosisReply?.diagnosis
+        return when {
+            diagnosis != null && diagnosis.writesConsequences -> problemsOf(verdict, diagnosis)
+            verdict != null && verdict.defects.isNotEmpty() -> problemsOf(verdict, diagnosis)
+            diagnosisReply?.diagnosisUnreadable == true -> null
+            diagnosis != null && (verdictIndex < 0 || diagnosisIndex <= verdictIndex) -> problemsOf(null, diagnosis)
+            else -> emptyList()
+        }
     }
 }

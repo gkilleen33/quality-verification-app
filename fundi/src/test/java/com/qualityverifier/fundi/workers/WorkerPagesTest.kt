@@ -4,6 +4,7 @@ import com.qualityverifier.data.workers.WorkerNaming
 import com.qualityverifier.domain.ChatMessage
 import com.qualityverifier.domain.FundiPurpose
 import com.qualityverifier.domain.ItemType
+import com.qualityverifier.domain.Problem
 import com.qualityverifier.domain.Role
 import com.qualityverifier.domain.SessionSummary
 import com.qualityverifier.domain.VerdictLevel
@@ -152,11 +153,39 @@ class WorkerPagesTest {
             ),
         )
 
-        assertEquals(listOf("Gap at the back joint", "Knot near the edge"), problems.map { it.title })
+        assertEquals(listOf("Gap at the back joint", "Knot near the edge"), problems!!.map { it.title })
         assertEquals("joint_fit", problems[0].dimension)
 
         // Nothing found, or no verdict and no diagnosis: an empty list, not an error.
-        assertTrue(WorkerPages.problemsIn(listOf(ChatMessage("a2", Role.ASSISTANT, "Send one more photo."))).isEmpty())
-        assertTrue(WorkerPages.problemsIn(emptyList()).isEmpty())
+        assertEquals(emptyList<Problem>(), WorkerPages.problemsIn(listOf(ChatMessage("a2", Role.ASSISTANT, "Send one more photo."))))
+        assertEquals(emptyList<Problem>(), WorkerPages.problemsIn(emptyList()))
+    }
+
+    // The same rules as the stored defect count (fundiDefectCount), so the page never lists
+    // problems the count says are gone.
+    @Test
+    fun `a verdict-only follow-up with no defects clears the diagnosis before it`() {
+        val diagnosed = ChatMessage(
+            "a1", Role.ASSISTANT,
+            "```fb-diagnosis\n{\"findings\":[{\"title\":\"Gap at the back joint\",\"area\":\"structural\",\"severity\":\"moderate\"}]}\n```\n" +
+                "```qv-verdict\n{\"verdict\":\"fair\",\"headline\":\"One joint\",\"defects\":[" +
+                "{\"title\":\"Gap at the back joint\",\"area\":\"structural\",\"severity\":\"moderate\"}]}\n```",
+        )
+        val fixed = ChatMessage(
+            "a2", Role.ASSISTANT,
+            "```qv-verdict\n{\"verdict\":\"sound\",\"headline\":\"All fixed\",\"defects\":[]}\n```",
+        )
+        assertEquals(emptyList<Problem>(), WorkerPages.problemsIn(listOf(diagnosed, fixed)))
+
+        // A diagnose-only check, with no verdict at all, lists its findings.
+        val diagnoseOnly = ChatMessage(
+            "a3", Role.ASSISTANT,
+            "```fb-diagnosis\n{\"findings\":[{\"title\":\"Drawer sticks\",\"area\":\"hardware\",\"severity\":\"minor\"}]}\n```",
+        )
+        assertEquals(listOf("Drawer sticks"), WorkerPages.problemsIn(listOf(diagnoseOnly))!!.map { it.title })
+
+        // A diagnosis that would not decode: not known, which is null rather than none.
+        val unreadable = ChatMessage("a4", Role.ASSISTANT, "```fb-diagnosis\n{\"findings\":[{\"title\":\"Gap\n```")
+        assertEquals(null, WorkerPages.problemsIn(listOf(unreadable)))
     }
 }

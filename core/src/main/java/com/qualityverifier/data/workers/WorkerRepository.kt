@@ -52,10 +52,11 @@ interface WorkerRepository {
     suspend fun workersOf(sessionId: String): List<WorkerSlot>
 
     /**
-     * Every assessment this worker is named on, with the part, as recorded on this phone.
-     * The worker's page reads it; the pieces come from the session summaries.
+     * Every assessment this worker is named on, with the part, as recorded on this phone,
+     * re-emitted on each change. The worker's page reads it; the pieces come from the
+     * session summaries.
      */
-    suspend fun namedOn(workerId: String): List<WorkerNaming>
+    fun observeNamedOn(workerId: String): Flow<List<WorkerNaming>>
 
     /**
      * Replaces who worked on an assessment and queues the set for the server. Used by
@@ -196,8 +197,10 @@ class RoomWorkerRepository(
     override suspend fun workersOf(sessionId: String): List<WorkerSlot> =
         dao.sessionWorkers(sessionId).map { it.toSlot() }
 
-    override suspend fun namedOn(workerId: String): List<WorkerNaming> =
-        dao.namingsOf(workerId).map { WorkerNaming(it.sessionId, it.part?.let(WorkPart::fromId)) }
+    override fun observeNamedOn(workerId: String): Flow<List<WorkerNaming>> =
+        dao.observeNamingsOf(workerId).map { rows ->
+            rows.map { WorkerNaming(it.sessionId, it.part?.let(WorkPart::fromId)) }
+        }
 
     override suspend fun setWorkersOf(sessionId: String, workers: List<WorkerSlot>) {
         dao.editSessionWorkers(
