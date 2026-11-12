@@ -99,7 +99,10 @@ exactly this.
 
 In `AuthStore.markAccountDeleted`, replace the `anonymise_user` call with what it was
 before: set `deleted_at`, then `revoke_refresh_chain`. The commit that introduced this
-change has the original in its diff.
+change has the original in its diff. Also revoke the account's invite code, with V26's
+`UPDATE invite_codes SET revoked_at = now() …` statement: `purge_deleted_accounts` deletes
+the `users` row thirty days later, which frees the code from the unique index without
+revoking it.
 
 The two must not both run. Anonymising *and* purging would work, but it would destroy the
 identifiers thirty days before the row goes, so anybody who asked "what do you still hold

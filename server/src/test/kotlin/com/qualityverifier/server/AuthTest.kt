@@ -202,6 +202,8 @@ class AuthTest {
         )
         // Nothing after the filter that could let a revoked code back in.
         assertTrue(sql, !Regex("""(?i)\bor\b""").containsMatchIn(sql))
+        // The row lock makes a sign-up wait for a delete in flight and re-check revoked_at.
+        assertTrue(sql, Regex("""(?i)\bfor share\s*$""").containsMatchIn(sql))
     }
 
     @Test
