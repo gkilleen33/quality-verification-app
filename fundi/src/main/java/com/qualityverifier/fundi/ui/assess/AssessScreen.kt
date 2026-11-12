@@ -1,5 +1,6 @@
 package com.qualityverifier.fundi.ui.assess
 
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -28,6 +29,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -54,6 +56,7 @@ import com.qualityverifier.text.RetryLabels
 import com.qualityverifier.text.markdownToPlainText
 import com.qualityverifier.text.parseAssistantContent
 import com.qualityverifier.ui.capture.CaptureScreen
+import com.qualityverifier.ui.photo.PhotoViewer
 import com.qualityverifier.ui.plan.InspectingScreen
 import com.qualityverifier.ui.plan.WorkingText
 import com.qualityverifier.ui.plan.PhysicalTestsScreen
@@ -143,133 +146,162 @@ fun AssessScreen(
     // survives the screen being rebuilt.
     LaunchedEffect(messages) { viewModel.offerPlanFromLatest(messages) }
 
-    when (stage) {
-        Stage.LOADING -> Box(Modifier.fillMaxSize())
+    // The photograph open in the viewer, by path, or null for none. Saved across a
+    // rotation, which rebuilds the screen through LOADING: the viewer should still be
+    // open afterwards, on the same photograph. The path rather than a position in the
+    // list, because the list grows as shots are taken.
+    var viewing by rememberSaveable { mutableStateOf<String?>(null) }
+    val photos = remember(messages, run, purpose, reportLabels) {
+        assessmentPhotos(messages, run, purpose, labels, reportLabels)
+    }
+    val viewingIndex = photos.indexOfFirst { it.path == viewing }
+    // A photograph deleted while open — a shot retaken from the plan card cannot be,
+    // but a list that no longer holds the path must close rather than show nothing.
+    LaunchedEffect(viewing, photos) {
+        if (viewing != null && viewingIndex < 0) viewing = null
+    }
 
-        Stage.INTAKE -> IntakeFlow(
-            labels = labels,
-            returning = returning,
-            priorIssues = priorIssues,
-            initialName = pieceName,
-            itemType = itemType,
-            roster = roster,
-            initialWorkers = previousWorkers,
-            onAddWorker = viewModel::addWorker,
-            onComplete = { answered, pieceLabel, people ->
-                intake = answered
-                name = pieceLabel
-                workedOn = people
-                stage = Stage.OPENING_PHOTO
-            },
-            onCancel = onDone,
-        )
+    // The viewer is drawn over the stage rather than navigated to, so closing it finds
+    // the conversation scrolled exactly where it was.
+    Box(Modifier.fillMaxSize()) {
+        when (stage) {
+            Stage.LOADING -> Box(Modifier.fillMaxSize())
 
-        Stage.OPENING_PHOTO -> {
-            val answered = intake ?: return
-            val optional = answered.purpose.photoOptional
-            CaptureScreen(
-                instruction = labels.photoInstructions[answered.purpose],
-                reviewPhotoPath = review?.path,
-                warning = review?.warning,
-                processing = processing,
-                createFile = viewModel::newCaptureFile,
-                // Processed and checked first, as in Kagua. The screen leaves the camera
-                // when the photograph is kept and the intake goes with it (openingSent).
-                onCaptured = { file ->
-                    viewModel.onPhotoCaptured(
-                        file,
-                        PhotoTarget.Opening(answered, name, workedOn),
-                    )
+            Stage.INTAKE -> IntakeFlow(
+                labels = labels,
+                returning = returning,
+                priorIssues = priorIssues,
+                initialName = pieceName,
+                itemType = itemType,
+                roster = roster,
+                initialWorkers = previousWorkers,
+                onAddWorker = viewModel::addWorker,
+                onComplete = { answered, pieceLabel, people ->
+                    intake = answered
+                    name = pieceLabel
+                    workedOn = people
+                    stage = Stage.OPENING_PHOTO
                 },
-                onKeep = viewModel::keepReviewedPhoto,
-                onRetake = viewModel::discardReviewedPhoto,
-                onClose = {
-                    // A photograph still processing or under review was never kept, and
-                    // must not send the intake after the maker has gone back to it.
-                    viewModel.leaveCamera()
-                    stage = Stage.INTAKE
-                },
-                skipLabel = labels.skipPhoto.takeIf { optional },
-                onSkip = if (optional) {
-                    {
-                        viewModel.leaveCamera()
-                        stage = Stage.TALKING
-                        viewModel.start(answered, null, name, workedOn)
-                    }
-                } else {
-                    null
-                },
+                onCancel = onDone,
             )
-        }
 
-        Stage.SHOOTING -> {
-            val current = run
-            val index = current?.nextShot
-            if (current == null || index == null) {
-                stage = Stage.TALKING
-            } else {
-                val shot = current.plan.photos[index]
+            Stage.OPENING_PHOTO -> {
+                val answered = intake ?: return
+                val optional = answered.purpose.photoOptional
                 CaptureScreen(
-                    instruction = shot.instruction.ifBlank { shot.title },
+                    instruction = labels.photoInstructions[answered.purpose],
                     reviewPhotoPath = review?.path,
                     warning = review?.warning,
                     processing = processing,
                     createFile = viewModel::newCaptureFile,
+                    // Processed and checked first, as in Kagua. The screen leaves the camera
+                    // when the photograph is kept and the intake goes with it (openingSent).
                     onCaptured = { file ->
-                        viewModel.onPhotoCaptured(file, PhotoTarget.PlanShot(index))
+                        viewModel.onPhotoCaptured(
+                            file,
+                            PhotoTarget.Opening(answered, name, workedOn),
+                        )
                     },
                     onKeep = viewModel::keepReviewedPhoto,
                     onRetake = viewModel::discardReviewedPhoto,
                     onClose = {
+                        // A photograph still processing or under review was never kept, and
+                        // must not send the intake after the maker has gone back to it.
                         viewModel.leaveCamera()
-                        stage = Stage.TALKING
+                        stage = Stage.INTAKE
                     },
-                    counter = reportLabels.shotOf(index + 1, current.plan.photos.size),
-                    skipLabel = reportLabels.cannotDoThis,
-                    onSkip = { viewModel.skipShot(index) },
-                    takenPaths = current.takenPaths,
+                    skipLabel = labels.skipPhoto.takeIf { optional },
+                    onSkip = if (optional) {
+                        {
+                            viewModel.leaveCamera()
+                            stage = Stage.TALKING
+                            viewModel.start(answered, null, name, workedOn)
+                        }
+                    } else {
+                        null
+                    },
                 )
             }
-        }
 
-        Stage.TESTING -> {
-            val current = run
-            val index = current?.nextTest
-            if (current == null || index == null) {
-                stage = Stage.TALKING
-            } else {
-                PhysicalTestsScreen(
-                    test = current.plan.tests[index],
-                    index = index,
-                    total = current.plan.tests.size,
-                    labels = reportLabels,
-                    onAnswer = { viewModel.answerTest(index, it) },
-                    onSkip = { viewModel.skipTest(index) },
-                    onBack = { stage = Stage.TALKING },
-                )
+            Stage.SHOOTING -> {
+                val current = run
+                val index = current?.nextShot
+                if (current == null || index == null) {
+                    stage = Stage.TALKING
+                } else {
+                    val shot = current.plan.photos[index]
+                    CaptureScreen(
+                        instruction = shot.instruction.ifBlank { shot.title },
+                        reviewPhotoPath = review?.path,
+                        warning = review?.warning,
+                        processing = processing,
+                        createFile = viewModel::newCaptureFile,
+                        onCaptured = { file ->
+                            viewModel.onPhotoCaptured(file, PhotoTarget.PlanShot(index))
+                        },
+                        onKeep = viewModel::keepReviewedPhoto,
+                        onRetake = viewModel::discardReviewedPhoto,
+                        onClose = {
+                            viewModel.leaveCamera()
+                            stage = Stage.TALKING
+                        },
+                        counter = reportLabels.shotOf(index + 1, current.plan.photos.size),
+                        skipLabel = reportLabels.cannotDoThis,
+                        onSkip = { viewModel.skipShot(index) },
+                        takenPaths = current.takenPaths,
+                    )
+                }
             }
+
+            Stage.TESTING -> {
+                val current = run
+                val index = current?.nextTest
+                if (current == null || index == null) {
+                    stage = Stage.TALKING
+                } else {
+                    PhysicalTestsScreen(
+                        test = current.plan.tests[index],
+                        index = index,
+                        total = current.plan.tests.size,
+                        labels = reportLabels,
+                        onAnswer = { viewModel.answerTest(index, it) },
+                        onSkip = { viewModel.skipTest(index) },
+                        onBack = { stage = Stage.TALKING },
+                    )
+                }
+            }
+
+            Stage.INSPECTING -> run?.let { InspectingScreen(it, reportLabels) }
+
+            Stage.TALKING -> Conversation(
+                messages = messages,
+                run = run,
+                sending = sending,
+                error = error,
+                unanswered = unanswered,
+                purpose = purpose,
+                labels = labels,
+                reportLabels = reportLabels,
+                onSend = viewModel::send,
+                onRetry = viewModel::retry,
+                onDismissError = viewModel::dismissError,
+                onStartCamera = { stage = Stage.SHOOTING },
+                onStartTests = { stage = Stage.TESTING },
+                onSubmit = viewModel::submitRun,
+                onRetakeShot = { viewModel.retakeShot(it); stage = Stage.SHOOTING },
+                onChangeAnswer = { viewModel.answerTest(it, ""); stage = Stage.TESTING },
+                onOpenPhoto = { viewing = it },
+            )
         }
 
-        Stage.INSPECTING -> run?.let { InspectingScreen(it, reportLabels) }
-
-        Stage.TALKING -> Conversation(
-            messages = messages,
-            run = run,
-            sending = sending,
-            error = error,
-            unanswered = unanswered,
-            purpose = purpose,
-            labels = labels,
-            reportLabels = reportLabels,
-            onSend = viewModel::send,
-            onRetry = viewModel::retry,
-            onDismissError = viewModel::dismissError,
-            onStartCamera = { stage = Stage.SHOOTING },
-            onStartTests = { stage = Stage.TESTING },
-            onSubmit = viewModel::submitRun,
-            onRetakeShot = { viewModel.retakeShot(it); stage = Stage.SHOOTING },
-            onChangeAnswer = { viewModel.answerTest(it, ""); stage = Stage.TESTING },
-        )
+        if (viewingIndex >= 0) {
+            PhotoViewer(
+                photos = photos,
+                initialIndex = viewingIndex,
+                labels = reportLabels,
+                onClose = { viewing = null },
+            )
+        }
     }
 }
 
@@ -292,6 +324,8 @@ private fun Conversation(
     onSubmit: () -> Unit,
     onRetakeShot: (Int) -> Unit,
     onChangeAnswer: (Int) -> Unit,
+    /** A tap on any photograph, by its path: opens it full screen. */
+    onOpenPhoto: (String) -> Unit,
 ) {
     val firstUserId = messages.firstOrNull { it.role == Role.USER }?.id
     val lastAssistant = messages.lastOrNull { it.role == Role.ASSISTANT }
@@ -315,8 +349,9 @@ private fun Conversation(
                             message.attachments.isNotEmpty() -> labels.sentPhotos(message.attachments.size)
                             else -> labels.sentAnswers
                         },
+                        onOpenPhoto = onOpenPhoto,
                     )
-                    else -> TypedTurn(message)
+                    else -> TypedTurn(message, onOpenPhoto)
                 }
             }
             run?.let {
@@ -326,6 +361,7 @@ private fun Conversation(
                         labels = reportLabels,
                         onRetakeShot = onRetakeShot,
                         onChangeAnswer = onChangeAnswer,
+                        onOpenShot = { index -> it.shots[index]?.let(onOpenPhoto) },
                     )
                 }
             }
@@ -410,13 +446,13 @@ private fun AssistantTurn(message: ChatMessage, labels: FundiLabels, reportLabel
 }
 
 @Composable
-private fun ComposedTurn(message: ChatMessage, caption: String) {
+private fun ComposedTurn(message: ChatMessage, caption: String, onOpenPhoto: (String) -> Unit) {
     Column(
         Modifier.fillMaxWidth(),
         horizontalAlignment = Alignment.End,
         verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
-        Thumbnails(message)
+        Thumbnails(message, onOpenPhoto)
         Text(
             caption,
             style = MaterialTheme.typography.bodyMedium,
@@ -426,9 +462,9 @@ private fun ComposedTurn(message: ChatMessage, caption: String) {
 }
 
 @Composable
-private fun TypedTurn(message: ChatMessage) {
+private fun TypedTurn(message: ChatMessage, onOpenPhoto: (String) -> Unit) {
     Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.End) {
-        Thumbnails(message)
+        Thumbnails(message, onOpenPhoto)
         Surface(
             color = MaterialTheme.colorScheme.primaryContainer,
             shape = RoundedCornerShape(16.dp),
@@ -443,8 +479,9 @@ private fun TypedTurn(message: ChatMessage) {
     }
 }
 
+/** A turn's photographs, small. A tap on one opens it full screen, where it can be read. */
 @Composable
-private fun Thumbnails(message: ChatMessage) {
+private fun Thumbnails(message: ChatMessage, onOpenPhoto: (String) -> Unit) {
     if (message.attachments.isEmpty()) return
     LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
         items(message.attachments, key = { it.id }) { attachment ->
@@ -452,7 +489,10 @@ private fun Thumbnails(message: ChatMessage) {
                 model = File(attachment.path),
                 contentDescription = "Photo of the piece",
                 contentScale = ContentScale.Crop,
-                modifier = Modifier.size(72.dp).clip(RoundedCornerShape(8.dp)),
+                modifier = Modifier
+                    .size(72.dp)
+                    .clip(RoundedCornerShape(8.dp))
+                    .clickable { onOpenPhoto(attachment.path) },
             )
         }
     }

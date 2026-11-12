@@ -128,6 +128,12 @@ data class FundiLabels(
     val intakeNoPriorIssues: String,
     val intakeContinue: String,
     val photoInstructions: Map<FundiPurpose, String>,
+    /**
+     * What the opening photograph shows, as a caption under it in the viewer. The
+     * instruction in [photoInstructions] asked for it; under the photo an instruction
+     * would read as asking for another one.
+     */
+    private val openingPhotoNames: Map<FundiPurpose, String>,
     val skipPhoto: String,
     /**
      * Shown the moment the intake is sent. The first reply builds a plan from scratch
@@ -172,6 +178,7 @@ data class FundiLabels(
     fun sentPhotos(n: Int) = sentPhotosFormat.replace("{n}", n.toString())
     fun setupLocated(metres: Int) = setupLocatedFormat.replace("{m}", metres.toString())
     fun nameOf(purpose: FundiPurpose): String = purposeNames.getValue(purpose)
+    fun openingPhotoName(purpose: FundiPurpose): String = openingPhotoNames.getValue(purpose)
 
     fun minutes(n: Int): String = minutesFormat.replace("{n}", n.toString())
 
@@ -374,6 +381,17 @@ data class FundiLabels(
                 FundiPurpose.VERIFY_FIX to "Take one photo of where the issue was.",
                 FundiPurpose.LEARN to "Take a photo if it helps, or skip.",
                 FundiPurpose.OTHER to "Take a photo if it helps, or skip.",
+            ),
+            openingPhotoNames = mapOf(
+                FundiPurpose.EVALUATE to "The whole piece",
+                FundiPurpose.WORK_IN_PROGRESS to "The piece as it is now",
+                FundiPurpose.CUSTOMER_RETURN to "The problem",
+                FundiPurpose.REEVALUATE to "The whole piece",
+                FundiPurpose.DIAGNOSE to "The problem",
+                FundiPurpose.NEW_ISSUE to "The problem",
+                FundiPurpose.VERIFY_FIX to "Where the issue was",
+                FundiPurpose.LEARN to "Your opening photo",
+                FundiPurpose.OTHER to "Your opening photo",
             ),
             skipPhoto = "Skip the photo",
             processing = "Processing your information. This may take a little while " +
