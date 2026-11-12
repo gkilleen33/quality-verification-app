@@ -285,6 +285,52 @@ class PartReportsTest {
     }
 
     @Test
+    fun `a linked-worker report sets out each piece, the parts done, and the problems on them, without a score`() {
+        // The sofa's verdict is Swahili; the stored language is English here so the report
+        // stays in one language the assertions can read.
+        val sofa = session(
+            "s5", DAY_ONE + 5 * A_DAY, ReportFixtures.SOFA, verdictLanguage = "en",
+            workers = listOf(worker(KAMAU, "Kamau", null)),
+        )
+        val bench = ReportFixtures.piece.copy(id = "c0ffee00-0000-4000-8000-00000000002a", label = "Hotel bench", itemTypeId = "upholstered-sofa")
+        val content = composer.composeWorkerWork(
+            com.qualityverifier.server.reports.WorkerWorkInput(
+                workerId = KAMAU,
+                workerName = "Kamau",
+                pieces = listOf(
+                    ReportFixtures.piece to listOf(first, second).map(ReportAssessment::of),
+                    bench to listOf(sofa).map(ReportAssessment::of),
+                ),
+                makerName = "Wanjirũ",
+                madeAt = DAY_ONE + 6 * A_DAY,
+            ),
+        )
+        val text = content.text()
+        assertTrue(text, text.startsWith("Report on the work of Kamau"))
+        assertTrue(text, text.contains("Report made by Wanjirũ"))
+        // The table: named on joinery of the first assessment only; the gap and nothing else.
+        val table = text.substringAfter("Kiti cha Wanjirũ").substringBefore("Hotel bench")
+        assertTrue(table, table.contains("Assessment of 12 Nov 2026"))
+        assertFalse(table, table.contains("Assessment of 13 Nov 2026"))
+        assertTrue(table, table.contains("Joinery\nWorked on this part: Kamau\nGap at the back left joint"))
+        assertFalse(table, table.contains("Saw marks"))
+        // The bench: the whole piece, so every part a problem was placed on.
+        val benchText = text.substringAfter("Hotel bench")
+        assertTrue(benchText, benchText.contains("Worked on: Whole piece"))
+        assertTrue(benchText, benchText.contains("Upholstery\nWorked on this part: Kamau"))
+        assertTrue(benchText, benchText.contains("Joinery\nWorked on this part: Kamau"))
+        assertFalse(benchText.contains("Otieno"))
+        // On the whole piece the unplaced problems are printed too, as the full report prints them.
+        assertTrue(benchText, benchText.substringAfter("Part not given").contains("Ufa kwenye reli ya kiti"))
+        assertEquals(4, content.blocks.filterIsInstance<ProblemBlock>().count { it.title.startsWith("Kiungo") || it.title.startsWith("Kitambaa") || it.title.startsWith("Ufa") || it.title.startsWith("Miguu") })
+        assertEquals(listOf("s1", "s5"), content.sessionIds)
+        assertEquals(setOf("joinery", null), content.snapshot.workers.map { it.part }.toSet())
+        assertFalse(Regex("\\d+ (problems|issues)").containsMatchIn(text))
+        assertFalse(text.lowercase().contains("fault"))
+        ReportFixtures.save("worker_work.pdf", PdfRenderer().render(content, PhotoSource { null }))
+    }
+
+    @Test
     fun `the three kinds render as PDFs with their headings`() {
         val renderer = PdfRenderer()
         listOf(

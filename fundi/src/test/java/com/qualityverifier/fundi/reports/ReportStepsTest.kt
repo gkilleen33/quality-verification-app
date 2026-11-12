@@ -4,6 +4,7 @@ import com.qualityverifier.data.reports.DownloadProgress
 import com.qualityverifier.data.reports.PreviewOutcome
 import com.qualityverifier.data.reports.ReportApi
 import com.qualityverifier.data.reports.ReportOutcome
+import com.qualityverifier.data.reports.ReportTarget
 import com.qualityverifier.domain.ItemType
 import com.qualityverifier.domain.ReportKind
 import com.qualityverifier.domain.ReportPreview
@@ -58,7 +59,7 @@ class ReportStepsTest {
         pushed: Boolean = true,
         api: ReportApi = FakeApi(),
     ) = SendReportViewModel(
-        pieceId = "piece-1",
+        target = ReportTarget.Piece("piece-1"),
         reports = api,
         fileFor = null,
         summaries = MutableStateFlow(summaries + summary("elsewhere", 5_000, VerdictLevel.FAIR).copy(pieceId = "piece-2")),
@@ -68,7 +69,7 @@ class ReportStepsTest {
 
     @Test
     fun `the first step offers the customer, a worker and me`() {
-        assertEquals(listOf(ReportKind.CUSTOMER, ReportKind.PART_ISSUES, ReportKind.FULL), model(one).offered)
+        assertEquals(listOf(ReportKind.CUSTOMER, ReportKind.PART_ISSUES, ReportKind.FULL), model(one).offered.value)
     }
 
     @Test
@@ -179,7 +180,7 @@ class ReportStepsTest {
         var pushed = false
         val api = FakeApi()
         val model = SendReportViewModel(
-            pieceId = "piece-1", reports = api, fileFor = null,
+            target = ReportTarget.Piece("piece-1"), reports = api, fileFor = null,
             summaries = MutableStateFlow(one), workersOf = { emptyList() }, pushWorkers = { pushed },
         )
         model.choose(ReportKind.FULL)
@@ -196,10 +197,50 @@ class ReportStepsTest {
     }
 
     @Test
+    fun `My manager is offered only to an account with a linked studio, and opens which assessment`() = runTest {
+        val api = FakeApi()
+        val unlinked = SendReportViewModel(
+            target = ReportTarget.Piece("piece-1"), reports = api, fileFor = null,
+            summaries = MutableStateFlow(two), linkedStudio = MutableStateFlow(false),
+        )
+        advanceUntilIdle()
+        assertEquals(listOf(ReportKind.CUSTOMER, ReportKind.PART_ISSUES, ReportKind.FULL), unlinked.offered.value)
+
+        val linked = SendReportViewModel(
+            target = ReportTarget.Piece("piece-1"), reports = api, fileFor = null,
+            summaries = MutableStateFlow(two), linkedStudio = MutableStateFlow(true),
+        )
+        advanceUntilIdle()
+        assertEquals(ReportKind.TO_MANAGER, linked.offered.value.last())
+
+        linked.choose(ReportKind.TO_MANAGER)
+        advanceUntilIdle()
+        val which = linked.step.value as SendReportViewModel.Step.WhichAssessment
+        assertEquals(ReportKind.TO_MANAGER, which.kind)
+        linked.assessmentChosen()
+        advanceUntilIdle()
+        assertEquals(ReportRequest(kind = "to_manager", sessionId = "s2"), api.previewed.single().second)
+    }
+
+    @Test
+    fun `on a worker the flow opens on the preview of their work, after the push`() = runTest {
+        var pushes = 0
+        val api = FakeApi()
+        val model = SendReportViewModel(
+            target = ReportTarget.Worker("w1"), reports = api, fileFor = null,
+            pushWorkers = { pushes++; true },
+        )
+        advanceUntilIdle()
+        assertTrue(model.step.value is SendReportViewModel.Step.Preview)
+        assertEquals("w1" to ReportRequest(kind = "worker_work"), api.previewed.single())
+        assertEquals(1, pushes)
+    }
+
+    @Test
     fun `the customer report sends nothing first`() = runTest {
         val api = FakeApi()
         val model = SendReportViewModel(
-            pieceId = "piece-1", reports = api, fileFor = null,
+            target = ReportTarget.Piece("piece-1"), reports = api, fileFor = null,
             summaries = MutableStateFlow(one), workersOf = { emptyList() }, pushWorkers = { false },
         )
         model.choose(ReportKind.CUSTOMER)
@@ -209,11 +250,11 @@ class ReportStepsTest {
 
     private class FakeApi : ReportApi {
         val previewed = mutableListOf<Pair<String, ReportRequest>>()
-        override suspend fun preview(pieceId: String, request: ReportRequest): PreviewOutcome {
-            previewed += pieceId to request
+        override suspend fun preview(target: ReportTarget, request: ReportRequest): PreviewOutcome {
+            previewed += target.id to request
             return PreviewOutcome.Loaded(ReportPreview(request.kind, "Hotel table", "en", emptyList(), listOfNotNull(request.sessionId), 0))
         }
-        override suspend fun download(pieceId: String, request: ReportRequest, into: File, progress: DownloadProgress): ReportOutcome =
+        override suspend fun download(target: ReportTarget, request: ReportRequest, into: File, progress: DownloadProgress): ReportOutcome =
             ReportOutcome.Unavailable
     }
 }

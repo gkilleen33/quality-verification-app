@@ -46,16 +46,25 @@ fun interface DownloadProgress {
     fun onProgress(received: Long, total: Long?)
 }
 
+/** What a report is about: a piece (every kind but one), or one linked roster worker. */
+sealed interface ReportTarget {
+    /** The id the file and the cache folder are named by. */
+    val id: String
+
+    data class Piece(override val id: String) : ReportTarget
+    data class Worker(override val id: String) : ReportTarget
+}
+
 /**
  * The preview and the download, as the screen's view model sees them. An interface for the
  * reason the profile client's is: what the flow does with a failure, a busy server or a
  * whole file is worth stating against a fake, not a server.
  */
 interface ReportApi {
-    suspend fun preview(pieceId: String, request: ReportRequest): PreviewOutcome
+    suspend fun preview(target: ReportTarget, request: ReportRequest): PreviewOutcome
 
     /** Downloads the report into [into]. On any failure, [into] does not exist afterwards. */
-    suspend fun download(pieceId: String, request: ReportRequest, into: File, progress: DownloadProgress): ReportOutcome
+    suspend fun download(target: ReportTarget, request: ReportRequest, into: File, progress: DownloadProgress): ReportOutcome
 }
 
 /**
@@ -78,9 +87,9 @@ class ReportClient(
 ) : ReportApi {
     private val http = AuthenticatedHttp(client, tokens, TAG)
 
-    override suspend fun preview(pieceId: String, request: ReportRequest): PreviewOutcome = withContext(io) {
+    override suspend fun preview(target: ReportTarget, request: ReportRequest): PreviewOutcome = withContext(io) {
         val response = http.send { token ->
-            Request.Builder().url(baseUrl + previewPath(pieceId, request))
+            Request.Builder().url(baseUrl + previewPath(target, request))
                 .addHeader("Authorization", "Bearer $token").get().build()
         } ?: return@withContext PreviewOutcome.Unavailable
         response.use {
@@ -102,14 +111,14 @@ class ReportClient(
      * replaced only on success; on any failure neither exists afterwards.
      */
     override suspend fun download(
-        pieceId: String,
+        target: ReportTarget,
         request: ReportRequest,
         into: File,
         progress: DownloadProgress,
     ): ReportOutcome = withContext(io) {
         val body = json.encodeToString(ReportRequest.serializer(), request).toRequestBody(JSON)
         val response = http.send { token ->
-            Request.Builder().url(baseUrl + "v1/fundi/pieces/$pieceId/reports")
+            Request.Builder().url(baseUrl + path(target))
                 .addHeader("Authorization", "Bearer $token").post(body).build()
         } ?: return@withContext ReportOutcome.Unavailable
         response.use {
@@ -163,8 +172,14 @@ class ReportClient(
         }
     }
 
-    private fun previewPath(pieceId: String, request: ReportRequest): String = buildString {
-        append("v1/fundi/pieces/").append(pieceId).append("/reports/preview?kind=").append(request.kind)
+    /** The route for the target: a piece's reports, or a linked worker's. */
+    private fun path(target: ReportTarget): String = when (target) {
+        is ReportTarget.Piece -> "v1/fundi/pieces/${target.id}/reports"
+        is ReportTarget.Worker -> "v1/fundi/workers/${target.id}/reports"
+    }
+
+    private fun previewPath(target: ReportTarget, request: ReportRequest): String = buildString {
+        append(path(target)).append("/preview?kind=").append(request.kind)
         request.parts?.takeIf { it.isNotEmpty() }?.let { append("&parts=").append(it.joinToString(",")) }
         request.sessionId?.let { append("&session_id=").append(it) }
     }
