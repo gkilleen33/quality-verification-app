@@ -58,11 +58,11 @@ class SendReportViewModelTest {
     )
 
     @Test
-    fun `only the customer report is offered, and choosing it opens the preview with its request`() = runTest {
+    fun `choosing the customer opens the preview with its request`() = runTest {
         val api = FakeApi(previewOutcome = PreviewOutcome.Loaded(preview))
         val model = SendReportViewModel("piece-1", api, fileFor = null)
 
-        assertEquals(listOf(ReportKind.CUSTOMER), model.offered)
+        assertEquals(ReportKind.CUSTOMER, model.offered.first())
         assertEquals(SendReportViewModel.Step.WhoFor, model.step.value)
 
         model.choose(ReportKind.CUSTOMER)

@@ -5,6 +5,8 @@ import com.qualityverifier.domain.FundiPurpose
 import com.qualityverifier.domain.HeadingBlock
 import com.qualityverifier.domain.ItemType
 import com.qualityverifier.domain.LineBlock
+import com.qualityverifier.domain.NamesBlock
+import com.qualityverifier.domain.NoteBlock
 import com.qualityverifier.domain.PhotosBlock
 import com.qualityverifier.domain.ProblemBlock
 import com.qualityverifier.domain.ReportBlock
@@ -13,6 +15,8 @@ import com.qualityverifier.domain.ReportPreview
 import com.qualityverifier.domain.Severity
 import com.qualityverifier.domain.TextBlock
 import com.qualityverifier.domain.Verdict
+import com.qualityverifier.domain.WorkPart
+import com.qualityverifier.domain.WorkerParts
 import com.qualityverifier.server.db.ReportPiece
 import com.qualityverifier.server.db.ReportSession
 import com.qualityverifier.server.db.ReportWorker
@@ -106,6 +110,12 @@ data class ReportInput(
     val makerName: String?,
     /** The server's clock when the report is made. */
     val madeAt: Long,
+    /** The assessment a one-assessment kind covers; null for the customer kind. */
+    val chosen: ReportAssessment? = null,
+    /** For a fixes report: the most recent earlier listed assessment with a verdict. */
+    val previous: ReportAssessment? = null,
+    /** The parts a part report covers, in [WorkPart] order. */
+    val parts: List<WorkPart> = emptyList(),
 )
 
 /**
@@ -158,6 +168,8 @@ data class ReportContent(
     val snapshot: ReportSnapshot,
     /** Every name printed: the workers under each part and the maker. Empty on a customer report. */
     val printedNames: List<String>,
+    /** The parts a part report covers, in order; empty for every other kind. */
+    val parts: List<WorkPart> = emptyList(),
 ) {
     /** The photos the report prints, in order: the first block's first, so dropping from the front drops the oldest. */
     val photos: List<String> get() = blocks.filterIsInstance<PhotosBlock>().flatMap { it.sha256 }
@@ -179,11 +191,17 @@ data class ReportContent(
  * rules of what each reader gets can be tested on made-up assessments with no database and
  * no PDF. The blocks it returns are the preview the phone shows and the input the renderer
  * draws, so the two cannot differ.
+ *
+ * No kind computes or prints a score, a count per worker, or a blame: a name sits beside a
+ * part's problems because that worker was recorded on the part, and the manager judges.
  */
 class ReportComposer {
 
     fun compose(input: ReportInput): ReportContent = when (input.kind) {
         ReportKind.CUSTOMER -> customer(input)
+        ReportKind.PART_ISSUES -> partIssues(input)
+        ReportKind.PART_FIXES -> partFixes(input)
+        ReportKind.FULL -> full(input)
         else -> throw IllegalArgumentException("kind ${input.kind.id} is not composed yet")
     }
 
@@ -203,24 +221,12 @@ class ReportComposer {
         blocks += TextBlock(pdf.madeOn(day(input.madeAt)))
 
         val photoPlan = PhotoPlan.of(input.assessments.map { it.photos })
-        val problems = mutableListOf<SnapshotProblem>()
-        val refs = mutableListOf<String>()
+        val record = Record()
         input.assessments.forEachIndexed { index, assessment ->
             blocks += HeadingBlock(assessmentHeading(assessment, labels), level = 2)
             blocks += verdictLine(assessment, labels)
             photoPlan.forAssessment(index).takeIf { it.isNotEmpty() }?.let { blocks += PhotosBlock(it) }
-            blocks += problemBlocks(assessment, labels, forCustomer = true)
-            assessment.problems.problems.forEachIndexed { ordinal, problem ->
-                problems += SnapshotProblem(
-                    sessionId = assessment.sessionId,
-                    messageId = assessment.sourceMessageId,
-                    ordinal = ordinal,
-                    title = problem.title,
-                    severity = problem.severity,
-                    part = null,
-                )
-                refs += "${assessment.sourceMessageId}:$ordinal"
-            }
+            blocks += problemBlocks(assessment, assessment.problems.problems.indices.toList(), labels, forCustomer = true, record = record)
         }
         input.assessments.lastOrNull { it.verdict != null }?.let { latest ->
             blocks += HeadingBlock(pdf.latestVerdict, level = 2)
@@ -234,10 +240,10 @@ class ReportComposer {
             labels = labels,
             blocks = blocks,
             sessionIds = input.assessments.map { it.sessionId },
-            defectRefs = refs,
+            defectRefs = record.refs,
             snapshot = ReportSnapshot(
                 assessments = input.assessments.map { it.snapshot() },
-                problems = problems,
+                problems = record.problems,
                 workers = emptyList(),
                 madeBy = null,
             ),
@@ -245,7 +251,201 @@ class ReportComposer {
         )
     }
 
+    /**
+     * The part report for a worker (plan v7 §5.2): the chosen assessment's problems on the
+     * chosen parts, each with what was seen, what it means, and what to do, and under each
+     * part the workers recorded on it. A re-assessment judges the whole piece afresh, so
+     * nothing is carried from earlier assessments.
+     */
+    private fun partIssues(input: ReportInput): ReportContent {
+        val chosen = requireNotNull(input.chosen) { "a part report needs its assessment" }
+        val labels = labelsFor(listOf(chosen))
+        val pdf = labels.pdf
+        val record = Record()
+        val blocks = mutableListOf<ReportBlock>()
+        blocks += opening(input, ReportKind.PART_ISSUES, chosen, labels)
+        val everyPart = coversEveryPart(input)
+        for (part in input.parts) {
+            blocks += HeadingBlock(pdf.part(part), level = 3)
+            blocks += namesBlock(pdf.workedOnThisPart, chosen, part, everyPart, input.makerName, record)
+            blocks += partProblems(chosen, part, labels, record)
+        }
+        blocks += closing(input, labels)
+        return content(input, ReportKind.PART_ISSUES, listOf(chosen), blocks, labels, record)
+    }
+
+    /**
+     * The fixes report (plan v7 §5.2): on a re-assessment, for each chosen part, last time's
+     * problems on the part and this time's. It never marks a problem fixed, because the
+     * verdict records no such judgement; the note at the end says what a missing problem
+     * can mean. The names are those recorded at the re-assessment, the people who did the
+     * fixes.
+     */
+    private fun partFixes(input: ReportInput): ReportContent {
+        val chosen = requireNotNull(input.chosen) { "a fixes report needs its assessment" }
+        val previous = requireNotNull(input.previous) { "a fixes report needs the assessment before" }
+        val labels = labelsFor(listOf(chosen))
+        val pdf = labels.pdf
+        val record = Record()
+        val blocks = mutableListOf<ReportBlock>()
+        blocks += opening(input, ReportKind.PART_FIXES, chosen, labels)
+        val everyPart = coversEveryPart(input)
+        for (part in input.parts) {
+            blocks += HeadingBlock(pdf.part(part), level = 3)
+            blocks += namesBlock(pdf.workedOnThisPartThisAssessment, chosen, part, everyPart, input.makerName, record)
+            blocks += HeadingBlock(pdf.foundInAssessmentOf(day(previous.createdAt)), level = 4)
+            blocks += partProblems(previous, part, labels, record)
+            blocks += HeadingBlock(pdf.foundThisTime, level = 4)
+            blocks += partProblems(chosen, part, labels, record)
+        }
+        blocks += NoteBlock(pdf.missingMayBeFixed)
+        blocks += closing(input, labels)
+        return content(input, ReportKind.PART_FIXES, listOf(previous, chosen), blocks, labels, record)
+    }
+
+    /**
+     * The full report (plan v7 §5.2): every problem of the chosen assessment, grouped by
+     * part with "Part not given" last, the workers recorded on each part under its heading,
+     * and the workers recorded on the whole piece once, above the first part.
+     */
+    private fun full(input: ReportInput): ReportContent {
+        val chosen = requireNotNull(input.chosen) { "a full report needs its assessment" }
+        val labels = labelsFor(listOf(chosen))
+        val pdf = labels.pdf
+        val record = Record()
+        val blocks = mutableListOf<ReportBlock>()
+        blocks += opening(input, input.kind, chosen, labels)
+        blocks += namesBlock(pdf.alsoWorkedOn, chosen, part = null, wholePieceToo = false, input.makerName, record)
+        val problems = chosen.problems
+        val partsNamed = chosen.workers.mapNotNull { it.part }.toSet()
+        if (problems.unknown) {
+            // The names recorded on each part are still printed; only the problems are not known.
+            blocks += TextBlock(pdf.problemsUnknown)
+            for (part in WorkPart.entries.filter { it in partsNamed }) {
+                blocks += HeadingBlock(pdf.part(part), level = 3)
+                blocks += namesBlock(pdf.workedOnThisPart, chosen, part, wholePieceToo = false, input.makerName, record)
+            }
+        } else {
+            val placed = problems.problems.withIndex().groupBy { it.value.defaultPart }
+            // Every part with a problem on it or a worker named on it, in the picker's order.
+            for (part in WorkPart.entries) {
+                val onPart = placed[part].orEmpty()
+                if (onPart.isEmpty() && part !in partsNamed) continue
+                blocks += HeadingBlock(pdf.part(part), level = 3)
+                blocks += namesBlock(pdf.workedOnThisPart, chosen, part, wholePieceToo = false, input.makerName, record)
+                blocks += partProblems(chosen, part, labels, record)
+            }
+            placed[null]?.let { unplaced ->
+                blocks += HeadingBlock(pdf.partNotGiven, level = 3)
+                blocks += problemBlocks(chosen, unplaced.map { it.index }, labels, forCustomer = false, record = record)
+            }
+            if (problems.problems.isEmpty() && chosen.verdict != null) blocks += TextBlock(pdf.noProblems)
+        }
+        blocks += closing(input, labels)
+        return content(input, input.kind, listOf(chosen), blocks, labels, record)
+    }
+
     // ------------------------------------------------------------ shared pieces
+
+    /** What every printed problem and name adds to the row: references, snapshot rows, names. */
+    private class Record {
+        val refs = mutableListOf<String>()
+        val problems = mutableListOf<SnapshotProblem>()
+        val workers = mutableListOf<SnapshotWorker>()
+        val names = linkedSetOf<String>()
+    }
+
+    /** The title, the piece, who made it, the date, and the chosen assessment's opening with its photos. */
+    private fun opening(input: ReportInput, kind: ReportKind, chosen: ReportAssessment, labels: ReportLabels): List<ReportBlock> {
+        val pdf = labels.pdf
+        val blocks = mutableListOf<ReportBlock>()
+        blocks += HeadingBlock(pdf.title(kind), level = 1)
+        blocks += LineBlock(pdf.piece, pieceName(input.piece, labels))
+        input.makerName?.let { blocks += TextBlock(pdf.madeBy(it)) }
+        blocks += TextBlock(pdf.madeOn(day(input.madeAt)))
+        blocks += HeadingBlock(assessmentHeading(chosen, labels), level = 2)
+        blocks += verdictLine(chosen, labels)
+        // The summary is written for the maker, so these kinds print it; the customer's does not.
+        chosen.verdict?.summary?.trim()?.takeIf { it.isNotEmpty() }?.let { blocks += LineBlock(pdf.summary, it) }
+        PhotoPlan.of(listOf(chosen.photos)).forAssessment(0).takeIf { it.isNotEmpty() }?.let { blocks += PhotosBlock(it) }
+        return blocks
+    }
+
+    private fun closing(input: ReportInput, labels: ReportLabels): List<ReportBlock> = buildList {
+        input.makerName?.let { add(TextBlock(labels.pdf.madeBy(it))) }
+        add(TextBlock(labels.pdf.madeWith))
+    }
+
+    private fun content(
+        input: ReportInput,
+        kind: ReportKind,
+        covered: List<ReportAssessment>,
+        blocks: List<ReportBlock>,
+        labels: ReportLabels,
+        record: Record,
+    ): ReportContent = ReportContent(
+        kind = kind,
+        pieceName = pieceName(input.piece, labels),
+        labels = labels,
+        blocks = blocks,
+        sessionIds = covered.map { it.sessionId },
+        defectRefs = record.refs,
+        snapshot = ReportSnapshot(
+            assessments = covered.map { it.snapshot() },
+            problems = record.problems,
+            workers = record.workers,
+            madeBy = input.makerName,
+        ),
+        printedNames = (record.names + listOfNotNull(input.makerName)).distinct(),
+        parts = input.parts,
+    )
+
+    /**
+     * The names recorded on [part] of [assessment] as a block, or nothing when none is
+     * recorded. A null [part] is the whole piece. [wholePieceToo] adds the whole-piece
+     * workers to a part's line: a part report that covers every part of the piece prints
+     * them, one that covers some parts does not. The manager's own row (no roster entry)
+     * prints the account's name. A roster entry whose name was cleared prints nothing.
+     */
+    private fun namesBlock(
+        label: String,
+        assessment: ReportAssessment,
+        part: WorkPart?,
+        wholePieceToo: Boolean,
+        makerName: String?,
+        record: Record,
+    ): List<ReportBlock> {
+        val rows = assessment.workers.filter { it.part == part || (wholePieceToo && it.part == null) }
+        val names = mutableListOf<String>()
+        for (row in rows) {
+            val name = row.name ?: (if (row.workerId == null) makerName else null) ?: continue
+            // Each row recorded once, even when a whole-piece worker is printed under
+            // several parts; a name printed once per line, even when two roster entries
+            // share it.
+            val snapshotRow = SnapshotWorker(assessment.sessionId, row.part?.id, row.workerId, name)
+            if (snapshotRow !in record.workers) record.workers += snapshotRow
+            record.names += name
+            if (name !in names) names += name
+        }
+        return if (names.isEmpty()) emptyList() else listOf(NamesBlock(label, names))
+    }
+
+    /** The problems of [assessment] on [part], or the one line that says there are none. */
+    private fun partProblems(assessment: ReportAssessment, part: WorkPart, labels: ReportLabels, record: Record): List<ReportBlock> {
+        val list = assessment.problems
+        if (list.unknown) return listOf(TextBlock(labels.pdf.problemsUnknown))
+        val onPart = list.problems.withIndex().filter { it.value.defaultPart == part }.map { it.index }
+        // "No issues recorded" only under a verdict: an assessment without one has already
+        // said "No full verdict", and the record line would read as cleared.
+        if (onPart.isEmpty()) return if (assessment.verdict != null) listOf(TextBlock(labels.pdf.noIssuesOnPart)) else emptyList()
+        return problemBlocks(assessment, onPart, labels, forCustomer = false, record = record)
+    }
+
+    /** True when the chosen parts cover every part the piece's type offers, so whole-piece workers belong on them. */
+    private fun coversEveryPart(input: ReportInput): Boolean {
+        val type = ItemType.fromId(input.piece.itemTypeId) ?: ItemType.OTHER
+        return input.parts.containsAll(WorkerParts.partsFor(type))
+    }
 
     /** "Assessment of 12 Nov 2026", with "Not finished" after one the maker never completed. */
     private fun assessmentHeading(assessment: ReportAssessment, labels: ReportLabels): String {
@@ -271,26 +471,40 @@ class ReportComposer {
     }
 
     /**
-     * The assessment's problems as blocks, or the one line that says why there are none.
-     * For a customer, what to do is left out and no part is printed.
+     * The problems of [assessment] at [ordinals] as blocks, recorded as printed, or the one
+     * line that says why there are none. For a customer, what to do is left out and no
+     * part is printed.
      */
     private fun problemBlocks(
         assessment: ReportAssessment,
+        ordinals: List<Int>,
         labels: ReportLabels,
         forCustomer: Boolean,
+        record: Record,
     ): List<ReportBlock> {
         val list = assessment.problems
         if (list.unknown) return listOf(TextBlock(labels.pdf.problemsUnknown))
-        if (list.problems.isEmpty()) {
+        if (ordinals.isEmpty()) {
             // Only an assessment with a verdict says "nothing recorded": one without has
             // already said "No full verdict", and a second line would overstate it.
             return if (assessment.verdict != null) listOf(TextBlock(labels.pdf.noProblems)) else emptyList()
         }
-        return list.problems.map { problem ->
+        return ordinals.map { ordinal ->
+            val problem = list.problems[ordinal]
+            val part = if (forCustomer) null else problem.defaultPart
+            record.refs += "${assessment.sourceMessageId}:$ordinal"
+            record.problems += SnapshotProblem(
+                sessionId = assessment.sessionId,
+                messageId = assessment.sourceMessageId,
+                ordinal = ordinal,
+                title = problem.title,
+                severity = problem.severity,
+                part = part?.id,
+            )
             ProblemBlock(
                 title = problem.title,
                 severity = labels.severity(Severity.fromId(problem.severity)),
-                part = if (forCustomer) null else problem.defaultPart?.let { labels.pdf.part(it) },
+                part = part?.let { labels.pdf.part(it) },
                 whatISee = problem.whatISee,
                 whatItMeans = problem.whatItMeans,
                 whatToDo = if (forCustomer) null else problem.whatToDo,

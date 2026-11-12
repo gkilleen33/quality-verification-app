@@ -236,17 +236,41 @@ data class FundiLabels(
     val reportRetry: String,
     /** The share sheet's title. */
     val reportShareWith: String,
+    // ---- the worker and Me reports (plan v7 PR 4): parts, issues or fixes, which assessment
+    val reportForWorker: String,
+    val reportForWorkerHint: String,
+    val reportForMe: String,
+    val reportForMeHint: String,
+    val reportWhichParts: String,
+    val reportWhichPartsHint: String,
+    val reportNext: String,
+    val reportIssuesOrFixes: String,
+    val reportIssues: String,
+    val reportIssuesHint: String,
+    val reportFixes: String,
+    val reportFixesHint: String,
+    val reportWhichAssessment: String,
+    /** The unsent worker edits did not reach the server, so the preview would print old names. */
+    val reportWorkersUnsent: String,
 ) {
     fun reportPhotos(n: Int) = reportPhotosFormat.replace("{n}", n.toString())
 
-    /** The "Who is this for?" choice for a kind. Only the customer's exists in this build. */
+    /**
+     * The "Who is this for?" choice for a kind. A worker's choice is listed under
+     * [ReportKind.PART_ISSUES]; issues or fixes is chosen later. "My manager" arrives with
+     * the linked-worker report.
+     */
     fun reportChoice(kind: ReportKind): String = when (kind) {
         ReportKind.CUSTOMER -> reportForCustomer
+        ReportKind.PART_ISSUES, ReportKind.PART_FIXES -> reportForWorker
+        ReportKind.FULL -> reportForMe
         else -> kind.id
     }
 
     fun reportChoiceHint(kind: ReportKind): String = when (kind) {
         ReportKind.CUSTOMER -> reportForCustomerHint
+        ReportKind.PART_ISSUES, ReportKind.PART_FIXES -> reportForWorkerHint
+        ReportKind.FULL -> reportForMeHint
         else -> ""
     }
 
@@ -582,6 +606,24 @@ data class FundiLabels(
                 "open it once with a connection so the server has it, then try again.",
             reportRetry = "Try again",
             reportShareWith = "Send the report with",
+            reportForWorker = "A worker",
+            reportForWorkerHint = "What one assessment found on the parts you choose, with what to " +
+                "do about it, and the names recorded on each part.",
+            reportForMe = "Me",
+            reportForMeHint = "Everything one assessment found, grouped by part, with the names " +
+                "recorded on each part. For your own records.",
+            reportWhichParts = "Which parts did they work on?",
+            reportWhichPartsHint = "The parts named on this piece come first.",
+            reportNext = "Next",
+            reportIssuesOrFixes = "What should the report show?",
+            reportIssues = "What was found",
+            reportIssuesHint = "The problems one assessment found on those parts.",
+            reportFixes = "What changed",
+            reportFixesHint = "The problems found on those parts last time and this time. " +
+                "Nothing is marked fixed: a problem missing this time may have been put right, " +
+                "or may not have been photographed.",
+            reportWhichAssessment = "Which assessment?",
+            reportWorkersUnsent = "Worker changes not yet sent. Connect and try again.",
         )
     }
 }
