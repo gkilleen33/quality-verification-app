@@ -211,6 +211,99 @@ class ReportRouteTest {
         assertTrue(store.rows.isEmpty())
     }
 
+    // The part and full kinds (plan v7 PR 4): what the request must carry, and which
+    // assessment it names.
+    @Test
+    fun `a part report needs parts and takes a session, and the row records both`() = testApplication {
+        val store = FakeReportStore(sessions = listOf(table, fixed))
+        val app = withReports(store)
+
+        val response = app.post("/v1/fundi/pieces/$PIECE_ID/reports") {
+            auth(MAKER); contentType(ContentType.Application.Json)
+            setBody("""{"kind":"part_issues","parts":["joinery"],"session_id":"s1"}""")
+        }
+        assertEquals(HttpStatusCode.Created, response.status)
+        val row = store.rows.single()
+        assertEquals("part_issues", row.kind)
+        assertEquals(listOf("joinery"), row.parts)
+        assertEquals(listOf("s1"), row.sessionIds)
+        assertTrue(row.printedNames.contains("Kamau"))
+        assertTrue(row.defectSnapshot.contains("\"name\":\"Kamau\""))
+        val text = ReportFixtures.text(response.bodyAsBytes())
+        assertTrue(text, text.contains("Worked on this part: Kamau"))
+
+        listOf(
+            """{"kind":"part_issues"}""" to "parts_required",
+            """{"kind":"part_issues","parts":[]}""" to "parts_required",
+            """{"kind":"part_issues","parts":["legs"]}""" to "invalid_part",
+            """{"kind":"full","parts":["joinery"]}""" to "parts_not_allowed",
+        ).forEach { (body, code) ->
+            val refused = app.post("/v1/fundi/pieces/$PIECE_ID/reports") {
+                auth(MAKER); contentType(ContentType.Application.Json); setBody(body)
+            }
+            assertEquals(body, HttpStatusCode.BadRequest, refused.status)
+            assertTrue(body, refused.bodyAsText().contains(code))
+        }
+        assertEquals(1, store.rows.size)
+
+        // The newest listed assessment by default; a session of another piece is 404.
+        val latest = app.get("/v1/fundi/pieces/$PIECE_ID/reports/preview?kind=full") { auth(MAKER) }.bodyAsText()
+        assertTrue(latest, latest.contains("\"session_ids\":[\"s2\"]"))
+        val other = app.get("/v1/fundi/pieces/$PIECE_ID/reports/preview?kind=full&session_id=elsewhere") { auth(MAKER) }
+        assertEquals(HttpStatusCode.NotFound, other.status)
+        assertTrue(other.bodyAsText().contains("no_such_assessment"))
+    }
+
+    @Test
+    fun `a fixes report needs an earlier assessment with a verdict, deleted ones not counting`() = testApplication {
+        val app = withReports(FakeReportStore(sessions = listOf(table)))
+        val alone = app.post("/v1/fundi/pieces/$PIECE_ID/reports") {
+            auth(MAKER); contentType(ContentType.Application.Json)
+            setBody("""{"kind":"part_fixes","parts":["joinery"]}""")
+        }
+        assertEquals(HttpStatusCode.BadRequest, alone.status)
+        assertTrue(alone.bodyAsText().contains("no_previous_assessment"))
+
+        val two = withReports(FakeReportStore(sessions = listOf(table, fixed)))
+        val onFirst = two.post("/v1/fundi/pieces/$PIECE_ID/reports") {
+            auth(MAKER); contentType(ContentType.Application.Json)
+            setBody("""{"kind":"part_fixes","parts":["joinery"],"session_id":"s1"}""")
+        }
+        assertEquals(HttpStatusCode.BadRequest, onFirst.status)
+        val onSecond = two.post("/v1/fundi/pieces/$PIECE_ID/reports") {
+            auth(MAKER); contentType(ContentType.Application.Json)
+            setBody("""{"kind":"part_fixes","parts":["joinery"],"session_id":"s2"}""")
+        }
+        assertEquals(HttpStatusCode.Created, onSecond.status)
+        assertTrue(ReportFixtures.text(onSecond.bodyAsBytes()).contains("Found this time"))
+
+        // The first assessment client-deleted: the second has nothing before it, and the
+        // deleted one cannot be named.
+        val deleted = withReports(FakeReportStore(sessions = listOf(table.copy(clientDeleted = true), fixed)))
+        val noPrevious = deleted.post("/v1/fundi/pieces/$PIECE_ID/reports") {
+            auth(MAKER); contentType(ContentType.Application.Json)
+            setBody("""{"kind":"part_fixes","parts":["joinery"],"session_id":"s2"}""")
+        }
+        assertEquals(HttpStatusCode.BadRequest, noPrevious.status)
+        val named = deleted.post("/v1/fundi/pieces/$PIECE_ID/reports") {
+            auth(MAKER); contentType(ContentType.Application.Json)
+            setBody("""{"kind":"full","session_id":"s1"}""")
+        }
+        assertEquals(HttpStatusCode.NotFound, named.status)
+        // And the customer report still shows the deleted one.
+        val customer = deleted.get("/v1/fundi/pieces/$PIECE_ID/reports/preview?kind=customer") { auth(MAKER) }.bodyAsText()
+        assertTrue(customer, customer.contains("\"session_ids\":[\"s1\",\"s2\"]"))
+    }
+
+    @Test
+    fun `the preview returns the names the report prints`() = testApplication {
+        val app = withReports(FakeReportStore(sessions = listOf(table)))
+        val body = app.get("/v1/fundi/pieces/$PIECE_ID/reports/preview?kind=part_issues&parts=joinery,finishing&session_id=s1") { auth(MAKER) }.bodyAsText()
+        assertTrue(body, body.contains("\"type\":\"names\""))
+        assertTrue(body, body.contains("\"names\":[\"Kamau\"]"))
+        assertTrue(body, body.contains("Report made by Wanjirũ"))
+    }
+
     @Test
     fun `no token is a 401`() = testApplication {
         val app = withReports(FakeReportStore(sessions = listOf(table)))

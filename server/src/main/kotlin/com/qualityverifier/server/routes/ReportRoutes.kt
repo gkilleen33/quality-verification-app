@@ -45,6 +45,8 @@ fun Route.reportRoutes(reports: ReportService, auth: AuthStore) {
                 is ReportService.PreviewOutcome.Ready -> call.respond(outcome.preview)
                 ReportService.PreviewOutcome.NoSuchPiece ->
                     call.respond(HttpStatusCode.NotFound, ErrorResponse("no_such_piece"))
+                ReportService.PreviewOutcome.NoSuchSession ->
+                    call.respond(HttpStatusCode.NotFound, ErrorResponse("no_such_assessment"))
                 is ReportService.PreviewOutcome.Invalid ->
                     call.respond(HttpStatusCode.BadRequest, ErrorResponse(outcome.code, outcome.detail))
             }
@@ -66,6 +68,10 @@ fun Route.reportRoutes(reports: ReportService, auth: AuthStore) {
                 }
                 ReportService.Outcome.NoSuchPiece ->
                     call.respond(HttpStatusCode.NotFound, ErrorResponse("no_such_piece"))
+                // A session_id that is not a listed assessment of this piece: 404, as a
+                // stranger's session is everywhere else.
+                ReportService.Outcome.NoSuchSession ->
+                    call.respond(HttpStatusCode.NotFound, ErrorResponse("no_such_assessment"))
                 is ReportService.Outcome.Invalid ->
                     call.respond(HttpStatusCode.BadRequest, ErrorResponse(outcome.code, outcome.detail))
                 // Another render is under way and did not finish in time. The phone shows

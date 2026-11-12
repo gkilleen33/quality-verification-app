@@ -3,6 +3,7 @@ package com.qualityverifier.server.reports
 import com.qualityverifier.domain.ReportKind
 import com.qualityverifier.domain.ReportPreview
 import com.qualityverifier.domain.ReportRequest
+import com.qualityverifier.domain.WorkPart
 import com.qualityverifier.server.db.ReportRow
 import com.qualityverifier.server.db.ReportStore
 import kotlinx.coroutines.Dispatchers
@@ -37,6 +38,8 @@ class ReportService(
     sealed interface Outcome {
         data class Issued(val bytes: ByteArray, val reportId: String, val sha256: String) : Outcome
         data object NoSuchPiece : Outcome
+        /** A `session_id` that is not a listed assessment of this piece. */
+        data object NoSuchSession : Outcome
         data class Invalid(val code: String, val detail: String? = null) : Outcome
         data object Busy : Outcome
     }
@@ -44,6 +47,7 @@ class ReportService(
     sealed interface PreviewOutcome {
         data class Ready(val preview: ReportPreview) : PreviewOutcome
         data object NoSuchPiece : PreviewOutcome
+        data object NoSuchSession : PreviewOutcome
         data class Invalid(val code: String, val detail: String? = null) : PreviewOutcome
     }
 
@@ -51,6 +55,7 @@ class ReportService(
         when (val prepared = prepare(userId, pieceId, request)) {
             is Prepared.Ready -> PreviewOutcome.Ready(prepared.content.preview())
             Prepared.NoSuchPiece -> PreviewOutcome.NoSuchPiece
+            Prepared.NoSuchSession -> PreviewOutcome.NoSuchSession
             is Prepared.Invalid -> PreviewOutcome.Invalid(prepared.code, prepared.detail)
         }
 
@@ -58,6 +63,7 @@ class ReportService(
         val content = when (val prepared = prepare(userId, pieceId, request)) {
             is Prepared.Ready -> prepared.content
             Prepared.NoSuchPiece -> return Outcome.NoSuchPiece
+            Prepared.NoSuchSession -> return Outcome.NoSuchSession
             is Prepared.Invalid -> return Outcome.Invalid(prepared.code, prepared.detail)
         }
         val key = cacheKey(content, request)
@@ -95,7 +101,7 @@ class ReportService(
                 sessionIds = content.sessionIds,
                 defectRefs = content.defectRefs,
                 defectSnapshot = json.encodeToString(ReportSnapshot.serializer(), content.snapshot),
-                parts = request.parts?.takeIf { content.kind.takesParts },
+                parts = content.parts.map { it.id }.takeIf { content.kind.takesParts },
                 workerId = null,
                 printedNames = content.printedNames,
                 sha256 = sha,
@@ -108,23 +114,61 @@ class ReportService(
     private sealed interface Prepared {
         data class Ready(val content: ReportContent) : Prepared
         data object NoSuchPiece : Prepared
+        data object NoSuchSession : Prepared
         data class Invalid(val code: String, val detail: String? = null) : Prepared
     }
 
-    /** Checks the request, reads the piece, and composes. Shared by the preview and the report. */
+    /**
+     * Checks the request, reads the piece, and composes. Shared by the preview and the
+     * report, so the preview is of exactly the report "Send" will fetch.
+     *
+     * The rules of plan v7 §5.4 and PR 4: `parts` on the two part kinds and no other;
+     * `session_id` on every kind but the customer's, naming a listed (not client-deleted)
+     * assessment of this piece, the newest by default; a fixes report needs an earlier
+     * listed assessment with a verdict, so the piece's first assessment with a verdict
+     * cannot be chosen for one.
+     */
     private suspend fun prepare(userId: String, pieceId: String, request: ReportRequest): Prepared {
         val kind = ReportKind.fromId(request.kind)
             ?: return Prepared.Invalid("invalid_kind", "kind must be one of ${ReportKind.entries.joinToString { it.id }}")
-        if (kind != ReportKind.CUSTOMER) {
-            // The other kinds arrive in later PRs; until then a request for one is a client bug.
-            return Prepared.Invalid("kind_not_available", "only the customer report exists yet")
+        if (kind !in BUILT) {
+            // The other kinds arrive in a later PR; until then a request for one is a client bug.
+            return Prepared.Invalid("kind_not_available", "the ${kind.id} report does not exist yet")
         }
-        if (request.parts != null) return Prepared.Invalid("parts_not_allowed", "a ${kind.id} report takes no parts")
-        if (request.sessionId != null) {
+        val parts = when {
+            kind.takesParts -> {
+                val given = request.parts.orEmpty().map { it.trim() }.filter { it.isNotEmpty() }
+                if (given.isEmpty()) return Prepared.Invalid("parts_required", "a ${kind.id} report names one or more parts")
+                val parsed = given.map { WorkPart.fromId(it) ?: return Prepared.Invalid("invalid_part", "unknown part $it") }
+                WorkPart.entries.filter { it in parsed }
+            }
+            request.parts != null -> return Prepared.Invalid("parts_not_allowed", "a ${kind.id} report takes no parts")
+            else -> emptyList()
+        }
+        if (kind == ReportKind.CUSTOMER && request.sessionId != null) {
             return Prepared.Invalid("session_not_allowed", "a customer report covers every assessment")
         }
         val piece = store.piece(userId, pieceId) ?: return Prepared.NoSuchPiece
         val assessments = store.sessionsOf(pieceId).map(ReportAssessment::of)
+
+        var chosen: ReportAssessment? = null
+        var previous: ReportAssessment? = null
+        if (kind.coversOneAssessment) {
+            // Only the assessments the phone lists: a client-deleted one cannot be chosen
+            // and does not count as the first, latest or previous.
+            val listed = assessments.filter { it.listed }
+            chosen = when (val id = request.sessionId) {
+                null -> listed.lastOrNull() ?: return Prepared.Invalid("no_assessment", "this piece has no assessment to report on")
+                else -> listed.firstOrNull { it.sessionId == id } ?: return Prepared.NoSuchSession
+            }
+            if (kind == ReportKind.PART_FIXES) {
+                previous = listed.take(listed.indexOf(chosen)).lastOrNull { it.verdict != null }
+                    ?: return Prepared.Invalid(
+                        "no_previous_assessment",
+                        "a fixes report needs an earlier assessment of the piece with a verdict",
+                    )
+            }
+        }
         val content = composer.compose(
             ReportInput(
                 kind = kind,
@@ -132,6 +176,9 @@ class ReportService(
                 assessments = assessments,
                 makerName = if (kind.isInternal) store.accountName(userId) else null,
                 madeAt = clock(),
+                chosen = chosen,
+                previous = previous,
+                parts = parts,
             ),
         )
         return Prepared.Ready(content)
@@ -147,7 +194,7 @@ class ReportService(
         listOf(
             BUILDER_VERSION,
             content.kind.id,
-            request.parts?.sorted()?.joinToString(",").orEmpty(),
+            content.parts.joinToString(",") { it.id },
             request.sessionId.orEmpty(),
             content.sessionIds.joinToString(","),
             content.photos.joinToString(","),
@@ -157,7 +204,10 @@ class ReportService(
 
     private companion object {
         /** Raised whenever the layout changes, so cached files from the old layout are not served. */
-        const val BUILDER_VERSION = "1"
+        const val BUILDER_VERSION = "2"
+
+        /** The kinds this build composes. */
+        val BUILT = setOf(ReportKind.CUSTOMER, ReportKind.PART_ISSUES, ReportKind.PART_FIXES, ReportKind.FULL)
 
         val json = Json { encodeDefaults = false }
     }

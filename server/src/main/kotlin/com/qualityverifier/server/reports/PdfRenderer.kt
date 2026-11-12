@@ -105,9 +105,18 @@ open class PdfRenderer(private val fonts: ReportFonts = ReportFonts.load()) {
         document.open()
         for (block in content.blocks) {
             when (block) {
+                // Level 1 the title, 2 an assessment, 3 a part, 4 a line within a part
+                // ("Found this time").
                 is HeadingBlock -> document.add(
-                    paragraph(block.text, if (block.level <= 1) fonts.title else if (block.level == 2) fonts.heading else fonts.subheading)
-                        .apply { spacingBefore = if (block.level <= 1) 0f else 10f; spacingAfter = 4f },
+                    paragraph(
+                        block.text,
+                        when {
+                            block.level <= 1 -> fonts.title
+                            block.level == 2 -> fonts.heading
+                            block.level == 3 -> fonts.subheading
+                            else -> fonts.bold
+                        },
+                    ).apply { spacingBefore = if (block.level <= 1) 0f else if (block.level >= 4) 6f else 10f; spacingAfter = 4f },
                 )
                 is TextBlock -> document.add(paragraph(block.text, fonts.body).apply { spacingAfter = 4f })
                 is NoteBlock -> document.add(paragraph(block.text, fonts.note).apply { spacingBefore = 4f; spacingAfter = 4f })

@@ -2,7 +2,20 @@ package com.qualityverifier.fundi.reports
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.selection.selectable
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.RadioButton
+import androidx.compose.ui.semantics.Role
+import com.qualityverifier.domain.WorkPart
+import com.qualityverifier.fundi.ui.assess.partName
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
+import java.util.TimeZone
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -85,6 +98,21 @@ fun SendReportScreen(
         Spacer(Modifier.height(16.dp))
         when (val current = step) {
             SendReportViewModel.Step.WhoFor -> WhoFor(labels, model.offered, onChoose = model::choose, onBack = onBack)
+            is SendReportViewModel.Step.ChooseParts -> ChooseParts(
+                labels = labels,
+                step = current,
+                onToggle = model::togglePart,
+                onNext = model::partsChosen,
+                onBack = model::back,
+            )
+            is SendReportViewModel.Step.IssuesOrFixes -> IssuesOrFixes(labels, onChoose = model::chooseIssuesOrFixes, onBack = model::back)
+            is SendReportViewModel.Step.WhichAssessment -> WhichAssessment(
+                labels = labels,
+                step = current,
+                onSelect = model::selectAssessment,
+                onNext = model::assessmentChosen,
+                onBack = model::back,
+            )
             is SendReportViewModel.Step.LoadingPreview -> Waiting(labels.reportPreparing)
             is SendReportViewModel.Step.Preview -> Preview(
                 labels = labels,
@@ -100,6 +128,7 @@ fun SendReportScreen(
             is SendReportViewModel.Step.Failed -> Failed(
                 labels = labels,
                 message = when {
+                    current.workersUnsent -> labels.reportWorkersUnsent
                     current.refused -> labels.reportRefused
                     current.busy -> labels.reportBusy
                     else -> labels.reportUnavailable
@@ -141,6 +170,106 @@ private fun WhoFor(
         TextButton(onClick = onBack, modifier = Modifier.fillMaxWidth()) { Text(labels.reportBack) }
     }
 }
+
+/** "Which parts did they work on?": the parts named on the piece first and selected, then the rest. */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun ChooseParts(
+    labels: FundiLabels,
+    step: SendReportViewModel.Step.ChooseParts,
+    onToggle: (WorkPart) -> Unit,
+    onNext: () -> Unit,
+    onBack: () -> Unit,
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        Text(labels.reportWhichParts, style = MaterialTheme.typography.titleMedium)
+        Text(
+            labels.reportWhichPartsHint,
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            step.offered.forEach { part ->
+                FilterChip(
+                    selected = part in step.chosen,
+                    onClick = { onToggle(part) },
+                    label = { Text(partName(part)) },
+                )
+            }
+        }
+        Row(Modifier.fillMaxWidth().padding(top = 12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            OutlinedButton(onClick = onBack, modifier = Modifier.weight(1f)) { Text(labels.reportBack) }
+            Button(onClick = onNext, enabled = step.chosen.isNotEmpty(), modifier = Modifier.weight(1f)) {
+                Text(labels.reportNext)
+            }
+        }
+    }
+}
+
+/** "What should the report show?": issues on one assessment, or last time against this time. */
+@Composable
+private fun IssuesOrFixes(labels: FundiLabels, onChoose: (ReportKind) -> Unit, onBack: () -> Unit) {
+    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        Text(labels.reportIssuesOrFixes, style = MaterialTheme.typography.titleMedium)
+        listOf(
+            Triple(ReportKind.PART_ISSUES, labels.reportIssues, labels.reportIssuesHint),
+            Triple(ReportKind.PART_FIXES, labels.reportFixes, labels.reportFixesHint),
+        ).forEach { (kind, title, hint) ->
+            Card(
+                Modifier.fillMaxWidth(),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
+            ) {
+                Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text(title, style = MaterialTheme.typography.titleMedium)
+                    Text(hint, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Button(onClick = { onChoose(kind) }, modifier = Modifier.fillMaxWidth()) { Text(title) }
+                }
+            }
+        }
+        TextButton(onClick = onBack, modifier = Modifier.fillMaxWidth()) { Text(labels.reportBack) }
+    }
+}
+
+/** "Which assessment?": newest first, with its date and verdict; the newest selected. */
+@Composable
+private fun WhichAssessment(
+    labels: FundiLabels,
+    step: SendReportViewModel.Step.WhichAssessment,
+    onSelect: (String) -> Unit,
+    onNext: () -> Unit,
+    onBack: () -> Unit,
+) {
+    Column(Modifier.fillMaxSize()) {
+        Text(labels.reportWhichAssessment, style = MaterialTheme.typography.titleMedium)
+        LazyColumn(Modifier.weight(1f).padding(top = 8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            items(step.options, key = { it.sessionId }) { option ->
+                val summary = option.summary
+                val verdict = summary.verdictLevel?.let { ReportLabels.ENGLISH.verdictWord(it, summary.anythingUnchecked) }
+                    ?: labels.workerPageNoVerdict
+                Row(
+                    Modifier.fillMaxWidth().selectable(
+                        selected = option.sessionId == step.selected,
+                        onClick = { onSelect(option.sessionId) },
+                        role = Role.RadioButton,
+                    ).padding(vertical = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    RadioButton(selected = option.sessionId == step.selected, onClick = null)
+                    Spacer(Modifier.width(8.dp))
+                    Text("${summary.createdAt.asDay()} · $verdict", style = MaterialTheme.typography.bodyLarge)
+                }
+            }
+        }
+        Row(Modifier.fillMaxWidth().padding(top = 12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            OutlinedButton(onClick = onBack, modifier = Modifier.weight(1f)) { Text(labels.reportBack) }
+            Button(onClick = onNext, modifier = Modifier.weight(1f)) { Text(labels.reportNext) }
+        }
+    }
+}
+
+/** Nairobi, like every other date in this project. */
+private fun Long.asDay(): String =
+    SimpleDateFormat("d MMM yyyy", Locale.UK).apply { timeZone = TimeZone.getTimeZone("Africa/Nairobi") }.format(Date(this))
 
 /** The report, block for block. Photos are counted rather than shown: the PDF carries them. */
 @Composable
