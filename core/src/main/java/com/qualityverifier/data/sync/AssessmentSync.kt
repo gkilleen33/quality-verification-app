@@ -85,8 +85,9 @@ class AssessmentSync(
                 roster.map {
                     ServerWorker(
                         it.id, it.name, it.archivedAt, phone = it.phone,
-                        // A server before V30 sends no kind; one is an employee, as its rows are.
-                        employment = it.employment?.let(Employment::fromId) ?: Employment.EMPLOYEE,
+                        // Null from a server before V30, which the repository reads as
+                        // "no opinion"; a kind this build does not know reads the same way.
+                        employment = it.employment?.let(Employment::fromId),
                     )
                 },
             )

@@ -23,6 +23,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
@@ -48,8 +49,11 @@ fun WorkersScreen(onBack: () -> Unit) {
     val sorted = remember(roster) { roster.sortedWith(compareBy({ it.archived }, { it.name.lowercase() })) }
     val labels = FundiLabels.ENGLISH
 
-    var adding by remember { mutableStateOf(false) }
-    var editing by remember { mutableStateOf<Worker?>(null) }
+    // Saveable: the contacts app comes in front, and the form must come back with the
+    // activity. The edit holds the worker's id for the same reason.
+    var adding by rememberSaveable { mutableStateOf(false) }
+    var editingId by rememberSaveable { mutableStateOf<String?>(null) }
+    val editing = editingId?.let { id -> roster.firstOrNull { it.id == id } }
 
     if (adding) {
         WorkerForm(
@@ -70,17 +74,17 @@ fun WorkersScreen(onBack: () -> Unit) {
             current = before,
             accepts = model::accepts,
             onSave = { details ->
-                editing = null
+                editingId = null
                 // Saved unchanged, nothing is written and nothing is sent.
                 if (details != before) model.edit(worker.id, details)
             },
             onArchive = if (worker.archived) null else {
                 {
-                    editing = null
+                    editingId = null
                     model.archive(worker.id)
                 }
             },
-            onDismiss = { editing = null },
+            onDismiss = { editingId = null },
         )
     }
 
@@ -109,7 +113,7 @@ fun WorkersScreen(onBack: () -> Unit) {
             }
         }
         items(sorted, key = { it.id }) { worker ->
-            WorkerRow(worker, labels, onClick = { editing = worker })
+            WorkerRow(worker, labels, onClick = { editingId = worker.id })
         }
         item {
             TextButton(onClick = onBack, modifier = Modifier.fillMaxWidth()) { Text("Back") }
