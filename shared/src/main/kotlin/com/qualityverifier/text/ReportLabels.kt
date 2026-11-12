@@ -151,6 +151,8 @@ data class ReportLabels(
     private val testOfFormat: String,
     private val photosTakenFormat: String,
     private val photoOfFormat: String,
+    /** The PDF reports' own lines (plan v7 §5), in this language. */
+    val pdf: ReportPdfLabels,
 ) {
     /** "Shot 3 of 6", above the viewfinder. */
     fun shotOf(index: Int, total: Int): String =
@@ -381,6 +383,7 @@ data class ReportLabels(
             testOfFormat = "Test {n} of {total}",
             photosTakenFormat = "{n} of {total} photos taken",
             photoOfFormat = "Photo {n} of {total}",
+            pdf = ReportPdfLabels.ENGLISH,
         )
 
         val SWAHILI = ReportLabels(
@@ -519,6 +522,7 @@ data class ReportLabels(
             testOfFormat = "Jaribio {n} la {total}",
             photosTakenFormat = "Picha {n} kati ya {total} zimepigwa",
             photoOfFormat = "Picha {n} ya {total}",
+            pdf = ReportPdfLabels.SWAHILI,
         )
 
         /**

@@ -96,6 +96,13 @@ data class ListedProblem(
     val dimension: String,
     /** The part of the piece this problem is put down to, or null for none ([DefaultParts]). */
     val defaultPart: WorkPart?,
+    /**
+     * The problem's consequence as the reply wrote it, for the PDF reports. Blank where the
+     * reply gave none. The data API does not carry these; the wording stays in the messages.
+     */
+    val whatISee: String = "",
+    val whatItMeans: String = "",
+    val whatToDo: String = "",
 ) {
     companion object {
         fun of(problem: Problem): ListedProblem = ListedProblem(
@@ -104,6 +111,9 @@ data class ListedProblem(
             severity = problem.severityId.trim().lowercase(),
             dimension = problem.dimension.trim().lowercase(),
             defaultPart = DefaultParts.of(area = problem.area, dimension = problem.dimension),
+            whatISee = problem.whatISee.trim(),
+            whatItMeans = problem.whatItMeans.trim(),
+            whatToDo = problem.whatToDo.trim(),
         )
     }
 }

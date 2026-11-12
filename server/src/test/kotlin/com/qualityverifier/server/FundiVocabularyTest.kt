@@ -5,6 +5,7 @@ import com.qualityverifier.domain.Defect
 import com.qualityverifier.domain.Employment
 import com.qualityverifier.domain.FundiGoal
 import com.qualityverifier.domain.MeasurementUnit
+import com.qualityverifier.domain.ReportKind
 import com.qualityverifier.domain.SkillDimension
 import com.qualityverifier.domain.ToolChangeReason
 import com.qualityverifier.domain.ToolKind
@@ -57,6 +58,9 @@ class FundiVocabularyTest {
 
     /** A roster entry's number, and whether the person is an employee or temporary. */
     private val workerPhone: String by lazy { read("V30__worker_phone.sql") }
+
+    /** The PDF reports: their kinds, and the parts a part report can cover. */
+    private val reports: String by lazy { read("V32__reports.sql") }
 
     private fun assertAllAllowed(
         what: String,
@@ -111,6 +115,20 @@ class FundiVocabularyTest {
             "V30's default kind is not one the app knows",
             Regex("""DEFAULT '(\w+)'""").find(workerPhone)?.groupValues?.get(1)
                 ?.let { Employment.fromId(it) } != null,
+        )
+    }
+
+    @Test
+    fun `every report kind and every work part is allowed by the reports constraints`() {
+        assertAllAllowed(
+            "report kind", ReportKind.entries.map { it.id },
+            sql = reports, where = "V32",
+        )
+        // V32 restates the parts for reports.parts: a part added to V23 and not here would
+        // store on a session and fail the first part report that named it.
+        assertAllAllowed(
+            "work part", WorkPart.entries.map { it.id },
+            sql = reports, where = "V32",
         )
     }
 

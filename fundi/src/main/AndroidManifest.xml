@@ -36,6 +36,19 @@
             </intent-filter>
         </activity>
 
+        <!-- Serves a downloaded report to the share sheet (plan v7 PR 3c). Not exported:
+             only an app granted a URI by the share intent can read the one file it names,
+             and only the reports folder under the cache directory is reachable. -->
+        <provider
+            android:name=".reports.ReportFileProvider"
+            android:authorities="com.qualityverifier.fundibora.files"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths" />
+        </provider>
+
         <!-- Off until the fundi agrees to reading; MpesaReader.applySwitch turns it on and
              off with the switch. Only the system, holding BROADCAST_SMS, can call it. -->
         <receiver

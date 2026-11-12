@@ -46,6 +46,7 @@ dependencies {
     implementation(libs.hikaricp)
     implementation(libs.bouncycastle)
     implementation(libs.zxing)
+    implementation(libs.openpdf)
 
     testImplementation(libs.junit)
     testImplementation(libs.ktor.server.test.host)

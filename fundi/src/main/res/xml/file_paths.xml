@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- What ReportFileProvider may serve: only the reports folder under the cache directory,
+     where a downloaded PDF lives until the next report or the next app start. -->
+<paths>
+    <cache-path name="reports" path="reports/" />
+</paths>

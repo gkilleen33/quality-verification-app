@@ -71,8 +71,13 @@ import com.qualityverifier.server.routes.mpesaRoutes
 import com.qualityverifier.server.mpesa.CounterpartyCoder
 import com.qualityverifier.server.mpesa.MpesaStore
 import com.qualityverifier.server.mpesa.PostgresMpesaStore
+import com.qualityverifier.server.routes.reportRoutes
 import com.qualityverifier.server.routes.syncRoutes
 import com.qualityverifier.server.routes.termsTextRoutes
+import com.qualityverifier.server.db.PostgresReportStore
+import com.qualityverifier.server.reports.PdfRenderer
+import com.qualityverifier.server.reports.ReportCache
+import com.qualityverifier.server.reports.ReportService
 import com.qualityverifier.server.terms.ConsentStore
 import com.qualityverifier.server.terms.PostgresConsentStore
 import com.qualityverifier.server.terms.TermsGate
@@ -191,6 +196,29 @@ fun main() {
         }
     }
 
+    // The PDF reports (V32). Need the database for the piece and the row, and the blob
+    // store for the photos; no Anthropic key, since a report is built from stored replies.
+    // The fonts load here, so a missing resource stops the boot rather than the first report.
+    val reports = database?.let {
+        val cache = ReportCache(File(config.dataDirectory, "report-cache"))
+        sweepScope.launch {
+            delay(SWEEP_START_DELAY)
+            while (true) {
+                runCatching { cache.sweep() }
+                    .onFailure { log.error("Report cache sweep failed; will try again in an hour", it) }
+                delay(REPORT_SWEEP_INTERVAL)
+            }
+        }
+        Reports(
+            ReportService(
+                store = PostgresReportStore(it.source),
+                photos = BlobStore(File(config.dataDirectory, "blobs"))::read,
+                cache = cache,
+                renderer = PdfRenderer(),
+            ),
+        )
+    }
+
     // The settings the server reads while it runs (V27). Without a database every setting
     // is at its default, which leaves the terms gate off.
     val settings = database?.let { AppSettings(PostgresSettingsStore(it.source)) }
@@ -242,7 +270,7 @@ fun main() {
     )
 
     embeddedServer(Netty, port = config.port, host = config.host) {
-        module(config.version, database, auth, chat, fundi, admin, config.appVersions, settings, terms, mpesa)
+        module(config.version, database, auth, chat, fundi, admin, config.appVersions, settings, terms, mpesa, reports)
     }.start(wait = true)
 }
 
@@ -257,6 +285,9 @@ private val SWEEP_START_DELAY = 5.minutes
 
 /** Daily, matching the SQL purge it complements. */
 private val SWEEP_INTERVAL = 24.hours
+
+/** Hourly, so a cached report lives at most about a day (plan v7 §5.4). */
+private val REPORT_SWEEP_INTERVAL = 1.hours
 
 /** Every M-Pesa route starts with this. Their unreadable bodies are logged without the parser's message. */
 internal const val MPESA_PATH_PREFIX = "/v1/fundi/mpesa"
@@ -300,6 +331,9 @@ class Terms(val gate: TermsGate, val consents: ConsentStore, val texts: TermsTex
  * a code before anything is stored. Absent without the HMAC key, and then not mounted.
  */
 class Mpesa(val store: MpesaStore, val coder: CounterpartyCoder)
+
+/** Fundi Bora's PDF reports (V32). Absent without a database, and then not mounted. */
+class Reports(val service: ReportService)
 
 /** The admin portal. Absent when no session key is configured, so it simply is not mounted. */
 class Admin(
@@ -363,6 +397,8 @@ fun Application.module(
     terms: Terms? = null,
     /** The M-Pesa uploads. Mounted only with auth and terms too: the routes check the mpesa_send agreement. */
     mpesa: Mpesa? = null,
+    /** The PDF reports. Mounted only with auth, which every report route needs. */
+    reports: Reports? = null,
 ) {
     install(ContentNegotiation) { json() }
     // Before routing, so it runs ahead of authentication. See installAppVersionGate.
@@ -484,6 +520,10 @@ fun Application.module(
         // Needs the terms bundle as well as auth: whether an account may upload is its
         // mpesa_send agreement, which lives in the consent records.
         if (auth != null && terms != null) mpesa?.let { mpesaRoutes(it.store, it.coder, auth.store, terms) }
+
+        // The reports, beside the other Fundi Bora routes and for the same reason outside
+        // the chat block: they read stored replies and need no Anthropic key.
+        if (auth != null) reports?.let { reportRoutes(it.service, auth.store) }
 
         admin?.let {
             adminRoutes(it.store, it.blobs, it.feedback, it.apiKeys, it.secureCookie)

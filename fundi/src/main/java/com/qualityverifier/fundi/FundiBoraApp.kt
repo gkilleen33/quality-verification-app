@@ -5,6 +5,7 @@ import android.util.Log
 import com.qualityverifier.di.AppContainer
 import com.qualityverifier.domain.AppId
 import com.qualityverifier.fundi.mpesa.MpesaReader
+import com.qualityverifier.fundi.reports.ReportFiles
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -45,6 +46,10 @@ class FundiBoraApp : Application() {
         )
         // At start; a second check follows each sign-in. See AppContainer.
         container.appVersionCheck.check()
+
+        // Any report left from the last session goes now, so no PDF outlives one app
+        // session on the phone (plan v7 §5.4). Also cleared before each new report.
+        background.launch { ReportFiles.clear(this@FundiBoraApp) }
 
         // The M-Pesa receiver follows the reading switch for as long as the process lives,
         // so turning reading off in Settings disables it at once.

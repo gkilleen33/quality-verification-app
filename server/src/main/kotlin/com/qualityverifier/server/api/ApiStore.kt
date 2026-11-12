@@ -4,7 +4,9 @@ import com.qualityverifier.domain.FundiIntake
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import java.sql.ResultSet
 import javax.sql.DataSource
@@ -42,6 +44,12 @@ interface ApiStore {
 
     /** Every link ever made between two accounts (V31), with its end where it has one, oldest first. */
     suspend fun workerLinks(limit: Int, offset: Int): List<ApiWorkerLink>
+
+    /** Every piece (V14), oldest first. */
+    suspend fun pieces(limit: Int, offset: Int): List<ApiPiece>
+
+    /** Every report issued (V32), oldest first, with the names it printed left out. */
+    suspend fun reports(limit: Int, offset: Int): List<ApiReport>
 
     /** Whether any assessment refers to this photo. Guards the bytes endpoint. */
     suspend fun photoExists(sha256: String): Boolean
@@ -295,6 +303,74 @@ class PostgresApiStore(private val dataSource: DataSource) : ApiStore {
         }
     }
 
+    override suspend fun pieces(limit: Int, offset: Int): List<ApiPiece> = query { connection ->
+        connection.prepareStatement(
+            """
+            select p.id::text, p.user_id::text, p.item_type_id,
+                   (extract(epoch from p.created_at) * 1000)::bigint
+              from pieces p
+             order by p.created_at, p.id
+             limit ? offset ?
+            """.trimIndent()
+        ).use { statement ->
+            statement.setInt(1, limit)
+            statement.setInt(2, offset)
+            statement.executeQuery().use { rows ->
+                val out = mutableListOf<ApiPiece>()
+                while (rows.next()) out += ApiPiece(
+                    id = rows.getString(1),
+                    userId = rows.getString(2),
+                    itemTypeId = rows.getString(3),
+                    createdAt = rows.getLong(4),
+                )
+                out
+            }
+        }
+    }
+
+    override suspend fun reports(limit: Int, offset: Int): List<ApiReport> = query { connection ->
+        connection.prepareStatement(
+            """
+            select r.id::text, r.piece_id::text, r.user_id::text, r.kind,
+                   r.session_ids::text[], r.parts, r.worker_id::text, r.defect_refs,
+                   r.defect_snapshot::text, r.sha256, r.byte_size,
+                   (extract(epoch from r.issued_at) * 1000)::bigint
+              from reports r
+             order by r.issued_at, r.id
+             limit ? offset ?
+            """.trimIndent()
+        ).use { statement ->
+            statement.setInt(1, limit)
+            statement.setInt(2, offset)
+            statement.executeQuery().use { rows ->
+                val out = mutableListOf<ApiReport>()
+                while (rows.next()) {
+                    @Suppress("UNCHECKED_CAST")
+                    val sessionIds = (rows.getArray(5).array as Array<String>).toList()
+                    @Suppress("UNCHECKED_CAST")
+                    val parts = rows.getArray(6)?.let { (it.array as Array<String>).toList() }
+                    @Suppress("UNCHECKED_CAST")
+                    val refs = (rows.getArray(8).array as Array<String>).toList()
+                    out += ApiReport(
+                        id = rows.getString(1),
+                        pieceId = rows.getString(2),
+                        userId = rows.getString(3),
+                        kind = rows.getString(4),
+                        sessionIds = sessionIds,
+                        parts = parts,
+                        workerId = rows.getString(7),
+                        defectRefs = refs,
+                        defectSnapshot = snapshotWithoutNames(rows.getString(9)),
+                        sha256 = rows.getString(10),
+                        byteSize = rows.getInt(11),
+                        issuedAt = rows.getLong(12),
+                    )
+                }
+                out
+            }
+        }
+    }
+
     override suspend fun photoExists(sha256: String): Boolean = query { connection ->
         connection.prepareStatement(
             "select exists (select 1 from attachments where sha256 = ?)"
@@ -388,6 +464,26 @@ class PostgresApiStore(private val dataSource: DataSource) : ApiStore {
                    s.prompt_sha
         """
     }
+}
+
+/**
+ * A report's snapshot with every name taken out: `made_by`, and `name` on each worker row.
+ * The data API carries worker ids and never worker names (plan v7 §PR 2); the row keeps
+ * them. A snapshot that does not read as an object, which V32 does not allow, is reported
+ * empty rather than failing the page.
+ */
+internal fun snapshotWithoutNames(text: String?): JsonObject {
+    val snapshot = text?.let { runCatching { Json.parseToJsonElement(it).jsonObject }.getOrNull() }
+        ?: return JsonObject(emptyMap())
+    val workers = snapshot["workers"]?.let { element ->
+        runCatching {
+            JsonArray(element.jsonArray.map { worker -> JsonObject(worker.jsonObject.filterKeys { it != "name" }) })
+        }.getOrNull()
+    }
+    return JsonObject(
+        snapshot.filterKeys { it != "made_by" && it != "workers" } +
+            (if (workers != null) mapOf("workers" to workers) else emptyMap()),
+    )
 }
 
 /**

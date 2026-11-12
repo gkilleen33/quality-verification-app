@@ -249,5 +249,52 @@ data class ApiTesterFeedback(
     @SerialName("extra_feedback") val extraFeedback: String?,
 )
 
+/**
+ * One piece (V14): what groups a maker's assessments. No label: what the maker calls a
+ * piece can be a customer's name, and the PIs have not yet said whether it may leave the
+ * server (plan v7 section 9). Assessments join on `piece_id`.
+ */
+@Serializable
+data class ApiPiece(
+    val id: String,
+    /** The maker's account, as `/api/v1/users` lists it. */
+    @SerialName("user_id") val userId: String,
+    @SerialName("item_type_id") val itemTypeId: String,
+    @SerialName("created_at") val createdAt: Long,
+)
+
+/**
+ * One PDF report the server issued (V32): which piece or worker, which kind, which
+ * assessments and problems it printed, and the hash of the file that left the server.
+ *
+ * `defect_snapshot` is what was printed, kept for when the replies are purged or the parser
+ * changes: each assessment's level and headline, each problem's labels and the part it was
+ * printed under, and each worker row's part and `worker_id`. The names the report printed
+ * stay in the database row and are not carried here, as the roster's names are not: join
+ * `worker_id` to `/api/v1/workers`.
+ */
+@Serializable
+data class ApiReport(
+    val id: String,
+    /** The piece, or null for a `worker_work` report, which spans pieces. */
+    @SerialName("piece_id") val pieceId: String?,
+    /** The account that issued it. */
+    @SerialName("user_id") val userId: String,
+    /** customer, part_issues, part_fixes, full, to_manager, or worker_work. */
+    val kind: String,
+    /** Every assessment the report covered. */
+    @SerialName("session_ids") val sessionIds: List<String>,
+    /** The parts a part report covered; null for every other kind. */
+    val parts: List<String>?,
+    /** The roster worker a `worker_work` report is about; null for every other kind. */
+    @SerialName("worker_id") val workerId: String?,
+    /** Every problem printed, as `<message_id>:<ordinal>` in the reply the list was read from. */
+    @SerialName("defect_refs") val defectRefs: List<String>,
+    @SerialName("defect_snapshot") val defectSnapshot: JsonObject,
+    val sha256: String,
+    @SerialName("byte_size") val byteSize: Int,
+    @SerialName("issued_at") val issuedAt: Long,
+)
+
 @Serializable
 data class ApiError(val error: String, val detail: String? = null)

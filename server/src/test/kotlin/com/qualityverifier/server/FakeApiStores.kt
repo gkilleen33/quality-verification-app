@@ -4,6 +4,8 @@ import com.qualityverifier.server.api.ApiAssessment
 import com.qualityverifier.server.api.ApiAssessmentDetail
 import com.qualityverifier.server.api.ApiKeyRow
 import com.qualityverifier.server.api.ApiKeyStore
+import com.qualityverifier.server.api.ApiPiece
+import com.qualityverifier.server.api.ApiReport
 import com.qualityverifier.server.api.ApiStore
 import com.qualityverifier.server.api.ApiTesterFeedback
 import com.qualityverifier.server.api.ApiUser
@@ -81,6 +83,8 @@ class FakeApiStore(
     private val photos: Set<String> = emptySet(),
     private val workers: List<ApiWorker> = emptyList(),
     private val links: List<ApiWorkerLink> = emptyList(),
+    private val pieces: List<ApiPiece> = emptyList(),
+    private val reports: List<ApiReport> = emptyList(),
 ) : ApiStore {
     var lastLimit: Int? = null
         private set
@@ -123,6 +127,16 @@ class FakeApiStore(
     override suspend fun workerLinks(limit: Int, offset: Int): List<ApiWorkerLink> {
         lastLimit = limit
         return links
+    }
+
+    override suspend fun pieces(limit: Int, offset: Int): List<ApiPiece> {
+        lastLimit = limit
+        return pieces
+    }
+
+    override suspend fun reports(limit: Int, offset: Int): List<ApiReport> {
+        lastLimit = limit
+        return reports
     }
 
     override suspend fun photoExists(sha256: String): Boolean = sha256 in photos
