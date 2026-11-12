@@ -252,6 +252,11 @@ data class FundiLabels(
     val reportWhichAssessment: String,
     /** The unsent worker edits did not reach the server, so the preview would print old names. */
     val reportWorkersUnsent: String,
+    // ---- "My manager" and the linked-worker report (Nathan, 12 November 2026)
+    val reportForManager: String,
+    val reportForManagerHint: String,
+    /** On a linked worker's page: the report of their work across pieces. */
+    val workerPageSendReport: String,
 ) {
     fun reportPhotos(n: Int) = reportPhotosFormat.replace("{n}", n.toString())
 
@@ -264,6 +269,7 @@ data class FundiLabels(
         ReportKind.CUSTOMER -> reportForCustomer
         ReportKind.PART_ISSUES, ReportKind.PART_FIXES -> reportForWorker
         ReportKind.FULL -> reportForMe
+        ReportKind.TO_MANAGER -> reportForManager
         else -> kind.id
     }
 
@@ -271,6 +277,7 @@ data class FundiLabels(
         ReportKind.CUSTOMER -> reportForCustomerHint
         ReportKind.PART_ISSUES, ReportKind.PART_FIXES -> reportForWorkerHint
         ReportKind.FULL -> reportForMeHint
+        ReportKind.TO_MANAGER -> reportForManagerHint
         else -> ""
     }
 
@@ -624,6 +631,10 @@ data class FundiLabels(
                 "or may not have been photographed.",
             reportWhichAssessment = "Which assessment?",
             reportWorkersUnsent = "Worker changes not yet sent. Connect and try again.",
+            reportForManager = "My manager",
+            reportForManagerHint = "The full report on one assessment of a piece you assessed, with " +
+                "your name on it, to send to a workshop you are linked to.",
+            workerPageSendReport = "Send report",
         )
     }
 }

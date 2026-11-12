@@ -6,6 +6,7 @@ import com.qualityverifier.server.ReportFixtures.A_DAY
 import com.qualityverifier.server.ReportFixtures.DAY_ONE
 import com.qualityverifier.server.ReportFixtures.KAMAU
 import com.qualityverifier.server.ReportFixtures.MAKER
+import com.qualityverifier.server.ReportFixtures.OTIENO
 import com.qualityverifier.server.ReportFixtures.PIECE_ID
 import com.qualityverifier.server.ReportFixtures.session
 import com.qualityverifier.server.ReportFixtures.sha
@@ -13,6 +14,8 @@ import com.qualityverifier.server.ReportFixtures.worker
 import com.qualityverifier.server.auth.AccessTokens
 import com.qualityverifier.server.db.AuthStore
 import com.qualityverifier.server.db.Credentials
+import com.qualityverifier.server.db.LinkedWorker
+import com.qualityverifier.server.db.PieceSessions
 import com.qualityverifier.server.db.RegisterOutcome
 import com.qualityverifier.server.db.Registration
 import com.qualityverifier.server.db.ReportPiece
@@ -310,6 +313,95 @@ class ReportRouteTest {
         assertTrue(body, body.contains("Report made by Wanjirũ"))
     }
 
+    // Part 3: "My manager" and the linked-worker report.
+    @Test
+    fun `a My manager report needs a linked studio, and is the full report with the sender's name`() = testApplication {
+        val store = FakeReportStore(sessions = listOf(table, fixed))
+        val app = withReports(store)
+
+        val refused = app.post("/v1/fundi/pieces/$PIECE_ID/reports") {
+            auth(MAKER); contentType(ContentType.Application.Json); setBody("""{"kind":"to_manager"}""")
+        }
+        assertEquals(HttpStatusCode.Forbidden, refused.status)
+        assertTrue(refused.bodyAsText().contains("no_linked_studio"))
+        assertTrue(store.rows.isEmpty())
+
+        store.studioLinked = true
+        val sent = app.post("/v1/fundi/pieces/$PIECE_ID/reports") {
+            auth(MAKER); contentType(ContentType.Application.Json); setBody("""{"kind":"to_manager","session_id":"s1"}""")
+        }
+        assertEquals(HttpStatusCode.Created, sent.status)
+        val text = ReportFixtures.text(sent.bodyAsBytes())
+        assertTrue(text, text.contains("Report for my manager"))
+        assertTrue(text, text.contains("Report made by Wanjirũ"))
+        assertTrue(text, text.contains("Worked on this part: Kamau"))
+        assertEquals("to_manager", store.rows.single().kind)
+        assertEquals(listOf("s1"), store.rows.single().sessionIds)
+    }
+
+    @Test
+    fun `a worker-work report is refused for a worker who is not linked, 404 for one not on the roster`() = testApplication {
+        val store = FakeReportStore(sessions = listOf(table)).apply { workers[KAMAU] = "Kamau" }
+        val app = withReports(store)
+
+        val unlinked = app.post("/v1/fundi/workers/$KAMAU/reports") {
+            auth(MAKER); contentType(ContentType.Application.Json); setBody("""{"kind":"worker_work"}""")
+        }
+        assertEquals(HttpStatusCode.Forbidden, unlinked.status)
+        assertTrue(unlinked.bodyAsText().contains("worker_not_linked"))
+
+        val stranger = app.post("/v1/fundi/workers/$OTIENO/reports") {
+            auth(MAKER); contentType(ContentType.Application.Json); setBody("""{"kind":"worker_work"}""")
+        }
+        assertEquals(HttpStatusCode.NotFound, stranger.status)
+        assertEquals(
+            HttpStatusCode.Forbidden,
+            app.get("/v1/fundi/workers/$KAMAU/reports/preview?kind=worker_work") { auth(MAKER) }.status,
+        )
+        // The kinds do not cross: a piece kind on a worker, a worker kind on a piece.
+        val crossed = app.post("/v1/fundi/workers/$KAMAU/reports") {
+            auth(MAKER); contentType(ContentType.Application.Json); setBody("""{"kind":"full"}""")
+        }
+        assertEquals(HttpStatusCode.BadRequest, crossed.status)
+        val onPiece = app.post("/v1/fundi/pieces/$PIECE_ID/reports") {
+            auth(MAKER); contentType(ContentType.Application.Json); setBody("""{"kind":"worker_work"}""")
+        }
+        assertEquals(HttpStatusCode.BadRequest, onPiece.status)
+        assertTrue(store.rows.isEmpty())
+    }
+
+    @Test
+    fun `a worker-work report for a linked worker lists only the pieces they were named on`() = testApplication {
+        val otherPiece = ReportFixtures.piece.copy(id = "c0ffee00-0000-4000-8000-00000000002a", label = "Hotel bench")
+        val store = FakeReportStore(sessions = listOf(table, fixed)).apply {
+            workers[KAMAU] = "Kamau"
+            linked += KAMAU
+            morePieces += PieceSessions(
+                otherPiece,
+                listOf(session("s9", DAY_ONE + 5 * A_DAY, ReportFixtures.TABLE, workers = listOf(worker(OTIENO, "Otieno", WorkPart.FINISHING)))),
+            )
+        }
+        val app = withReports(store)
+
+        val response = app.post("/v1/fundi/workers/$KAMAU/reports") {
+            auth(MAKER); contentType(ContentType.Application.Json); setBody("""{"kind":"worker_work"}""")
+        }
+        assertEquals(HttpStatusCode.Created, response.status)
+        val text = ReportFixtures.text(response.bodyAsBytes())
+        assertTrue(text, text.contains("Report on the work of Kamau"))
+        assertTrue(text, text.contains("Kiti cha Wanjirũ"))
+        assertFalse("a piece the worker was not named on", text.contains("Hotel bench"))
+        assertTrue(text, text.contains("Worked on this part: Kamau"))
+        assertTrue(text, text.contains("Gap at the back left joint"))
+        assertFalse("an assessment the worker was not named on", text.contains("All put right"))
+        val row = store.rows.single()
+        assertEquals("worker_work", row.kind)
+        assertEquals(KAMAU, row.workerId)
+        assertEquals(null, row.pieceId)
+        assertEquals(listOf("s1"), row.sessionIds)
+        assertTrue(row.printedNames.contains("Kamau"))
+    }
+
     @Test
     fun `no token is a 401`() = testApplication {
         val app = withReports(FakeReportStore(sessions = listOf(table)))
@@ -408,6 +500,21 @@ class ReportRouteTest {
             sessions.filter { pieceId == piece.id }.sortedBy { it.createdAt }
 
         override suspend fun accountName(userId: String): String? = name
+
+        /** The roster this fake holds: id to name; ids in [linked] hold the match; [studioLinked] is the other side. */
+        val workers = mutableMapOf<String, String>()
+        val linked = mutableSetOf<String>()
+        var studioLinked = false
+        /** The pieces a worker is named on, beyond [piece]: each with its sessions. */
+        val morePieces = mutableListOf<PieceSessions>()
+
+        override suspend fun hasLinkedStudio(userId: String): Boolean = studioLinked
+        override suspend fun linkedWorker(userId: String, workerId: String): LinkedWorker? =
+            workers[workerId]?.takeIf { workerId in linked }?.let { LinkedWorker(workerId, it) }
+        override suspend fun ownsWorker(userId: String, workerId: String): Boolean = workerId in workers
+        override suspend fun piecesNaming(userId: String, workerId: String): List<PieceSessions> =
+            (listOf(PieceSessions(piece, sessions)) + morePieces)
+                .filter { each -> each.sessions.any { s -> s.workers.any { it.workerId == workerId } } }
 
         override suspend fun record(row: ReportRow): String {
             rows += row

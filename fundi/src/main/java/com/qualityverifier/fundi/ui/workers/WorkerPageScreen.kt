@@ -67,6 +67,8 @@ fun WorkerPageScreen(
     onBack: () -> Unit,
     /** Opens a piece's newest assessment, as Home's "Open" does. */
     onOpenPiece: (SessionSummary) -> Unit,
+    /** "Send report": the worker's work across pieces, offered only while the link holds. */
+    onSendReport: (workerId: String) -> Unit = {},
 ) {
     val container = fundiContainer()
     val model: WorkerPageViewModel = viewModel(
@@ -132,6 +134,13 @@ fun WorkerPageScreen(
                 }
                 TextButton(onClick = { editing = true }, enabled = current != null) {
                     Text(labels.workerPageEdit)
+                }
+            }
+            // The report of this worker's work across pieces (Nathan, 12 November 2026),
+            // only while the two-sided match holds: the server refuses it otherwise.
+            if (current != null && current.linked && !current.archived) {
+                OutlinedButton(onClick = { onSendReport(current.id) }, modifier = Modifier.fillMaxWidth()) {
+                    Text(labels.workerPageSendReport)
                 }
             }
             Spacer(Modifier.height(8.dp))

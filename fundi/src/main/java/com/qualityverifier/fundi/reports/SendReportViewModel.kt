@@ -8,6 +8,7 @@ import androidx.lifecycle.viewmodel.viewModelFactory
 import com.qualityverifier.data.reports.PreviewOutcome
 import com.qualityverifier.data.reports.ReportApi
 import com.qualityverifier.data.reports.ReportOutcome
+import com.qualityverifier.data.reports.ReportTarget
 import com.qualityverifier.di.AppContainer
 import com.qualityverifier.domain.ItemType
 import com.qualityverifier.domain.ReportKind
@@ -19,28 +20,34 @@ import com.qualityverifier.domain.WorkerParts
 import com.qualityverifier.domain.WorkerSlot
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import java.io.File
 
 /**
- * "Send report" on a piece (plan v7 §5.4 to §5.7 and PR 4): who it is for, the steps that
- * choose what the report covers, the preview, the download with progress, then the share
- * sheet.
+ * "Send report" on a piece or on a linked worker (plan v7 §5.4 to §5.7 and PR 4; Nathan,
+ * 12 November 2026): who it is for, the steps that choose what the report covers, the
+ * preview, the download with progress, then the share sheet.
  *
  * Every report is previewed before it is sent, and the preview is what the server will
  * print: the same blocks, from the same request. "Send" asks for the report with that
  * request, so the file covers what the maker saw even if a newer assessment syncs between.
  *
- * The worker and Me reports read the piece's assessments and the parts named on them from
- * the phone (Room), and send any unsent worker edits before asking for the preview, so the
- * names the preview shows are the names the report will print.
+ * The worker, Me and My manager reports read the piece's assessments and the parts named
+ * on them from the phone (Room), and send any unsent worker edits before asking for the
+ * preview, so the names the preview shows are the names the server prints. On a worker
+ * (from the worker's page) there is one report, the worker's work across pieces, so the
+ * flow opens on its preview.
  */
 class SendReportViewModel(
-    private val pieceId: String,
+    private val target: ReportTarget,
     private val reports: ReportApi,
     /** Where the next report goes: the cleared reports folder. Null in tests, which share nothing. */
     private val fileFor: (() -> File)?,
@@ -54,13 +61,15 @@ class SendReportViewModel(
      * names the maker has since changed.
      */
     private val pushWorkers: suspend () -> Boolean = { true },
+    /** Whether this account is linked to at least one studio, which is what "My manager" is for. */
+    linkedStudio: Flow<Boolean> = flowOf(false),
 ) : ViewModel() {
 
     /** One of the piece's assessments, as "Which assessment?" lists it. */
     data class Option(val sessionId: String, val summary: SessionSummary)
 
     sealed interface Step {
-        /** The first step: who the report is for. */
+        /** The first step on a piece: who the report is for. */
         data object WhoFor : Step
 
         /** For a worker: which parts. The parts named on the piece come first, selected. */
@@ -125,19 +134,30 @@ class SendReportViewModel(
 
     /**
      * The kinds the first step offers, in the order shown. [ReportKind.PART_ISSUES] stands
-     * for "A worker"; issues or fixes is chosen later.
+     * for "A worker"; issues or fixes is chosen later. "My manager" is offered only to an
+     * account with a linked studio; the share sheet picks the recipient, which the app
+     * cannot restrict (plan v7).
      */
-    val offered: List<ReportKind> = listOf(ReportKind.CUSTOMER, ReportKind.PART_ISSUES, ReportKind.FULL)
+    val offered: StateFlow<List<ReportKind>> = linkedStudio.map { linked ->
+        listOf(ReportKind.CUSTOMER, ReportKind.PART_ISSUES, ReportKind.FULL) +
+            (if (linked) listOf(ReportKind.TO_MANAGER) else emptyList())
+    }.stateIn(viewModelScope, SharingStarted.Eagerly, listOf(ReportKind.CUSTOMER, ReportKind.PART_ISSUES, ReportKind.FULL))
 
     /** Counts the times the flow was started over, so an answer to an earlier start is dropped. */
     private var generation = 0
 
+    init {
+        // On a worker there is one report and no choice: the flow opens on its preview.
+        if (target is ReportTarget.Worker) loadPreview(ReportRequest(kind = ReportKind.WORKER_WORK.id))
+    }
+
     fun choose(kind: ReportKind) {
+        if (target !is ReportTarget.Piece) return
         when (kind) {
             ReportKind.CUSTOMER -> loadPreview(ReportRequest(kind = kind.id))
             ReportKind.PART_ISSUES, ReportKind.PART_FIXES -> step { openParts() }
-            ReportKind.FULL -> step { openAssessments(ReportKind.FULL, emptyList()) }
-            else -> Unit
+            ReportKind.FULL, ReportKind.TO_MANAGER -> step { openAssessments(kind, emptyList()) }
+            ReportKind.WORKER_WORK -> Unit
         }
     }
 
@@ -212,6 +232,7 @@ class SendReportViewModel(
             is Step.Failed -> when {
                 current.workersUnsent && current.request != null -> loadPreview(current.request)
                 current.request != null -> download(current.request)
+                target is ReportTarget.Worker -> loadPreview(ReportRequest(kind = ReportKind.WORKER_WORK.id))
                 else -> _step.value = Step.WhoFor
             }
             else -> Unit
@@ -225,7 +246,7 @@ class SendReportViewModel(
 
     /** The piece's assessments the home list shows, oldest first. */
     private suspend fun listed(): List<SessionSummary> =
-        summaries.first().filter { it.piece == pieceId }.sortedBy { it.createdAt }
+        summaries.first().filter { it.piece == target.id }.sortedBy { it.createdAt }
 
     private suspend fun openParts(): Next {
         val pieces = listed()
@@ -274,7 +295,7 @@ class SendReportViewModel(
                 if (mine == generation) _step.value = Step.Failed(request, workersUnsent = true)
                 return@launch
             }
-            val outcome = reports.preview(pieceId, request)
+            val outcome = reports.preview(target, request)
             // "Back" while the preview loaded: the maker has left this step.
             if (mine != generation) return@launch
             _step.value = when (outcome) {
@@ -289,7 +310,7 @@ class SendReportViewModel(
         val into = fileFor?.invoke()
         _step.value = Step.Preparing(request)
         viewModelScope.launch {
-            val outcome = if (into == null) ReportOutcome.Unavailable else reports.download(pieceId, request, into) { received, total ->
+            val outcome = if (into == null) ReportOutcome.Unavailable else reports.download(target, request, into) { received, total ->
                 // The first byte ends "Preparing": until then the server was rendering.
                 _step.value = Step.Downloading(request, received, total)
             }
@@ -306,12 +327,12 @@ class SendReportViewModel(
     }
 
     companion object {
-        fun factory(container: AppContainer, pieceId: String, fileFor: () -> File): ViewModelProvider.Factory =
+        fun factory(container: AppContainer, target: ReportTarget, fileFor: () -> File): ViewModelProvider.Factory =
             viewModelFactory {
                 initializer {
                     val workers = container.workerRepository
                     SendReportViewModel(
-                        pieceId = pieceId,
+                        target = target,
                         reports = container.reports,
                         fileFor = fileFor,
                         summaries = container.sessionRepository.observeSummaries(),
@@ -325,6 +346,9 @@ class SendReportViewModel(
                                 workers.unsynced().isEmpty() && workers.pendingSessions().isEmpty()
                             }.getOrDefault(false)
                         },
+                        // Linked as the server last said, at the last sync; an archived entry is not.
+                        linkedStudio = container.studioRepository.observeStudios()
+                            .map { studios -> studios.any { it.linked && !it.archived } },
                     )
                 }
             }
