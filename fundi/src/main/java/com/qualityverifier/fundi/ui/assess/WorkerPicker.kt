@@ -4,12 +4,10 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -22,9 +20,12 @@ import androidx.compose.ui.unit.dp
 import com.qualityverifier.domain.ItemType
 import com.qualityverifier.domain.WorkPart
 import com.qualityverifier.domain.Worker
+import com.qualityverifier.domain.WorkerDetails
 import com.qualityverifier.domain.WorkerNames
 import com.qualityverifier.domain.WorkerParts
 import com.qualityverifier.domain.WorkerSlot
+import com.qualityverifier.fundi.ui.workers.WorkerForm
+import com.qualityverifier.text.FundiLabels
 
 /**
  * "Who worked on this?": the roster as chips, "Me" first, and under each chosen person
@@ -49,7 +50,7 @@ fun WorkerPicker(
     slots: List<WorkerSlot>,
     onChange: (List<WorkerSlot>) -> Unit,
     /** Adds a person to the roster from inside the picker and hands back the new worker. */
-    onAddWorker: (String, (Worker) -> Unit) -> Unit,
+    onAddWorker: (WorkerDetails, (Worker) -> Unit) -> Unit,
 ) {
     val chosen = slots.map { it.workerId }.toSet()
     // The manager is a worker with no id; the roster is everybody else, archived left out.
@@ -100,34 +101,31 @@ fun WorkerPicker(
         }
 
         // Added and chosen in one go: the person was named because they worked on this.
-        AddWorkerRow { name ->
-            onAddWorker(name) { worker -> onChange(slots + WorkerSlot(worker.id, worker.name)) }
+        // The same form as "My workers", so a worker added here can have a number and a
+        // kind too, rather than a name to be completed later.
+        AddWorkerButton { details ->
+            onAddWorker(details) { worker -> onChange(slots + WorkerSlot(worker.id, worker.name)) }
         }
     }
 }
 
 @Composable
-private fun AddWorkerRow(onAddWorker: (String) -> Unit) {
-    var name by remember { mutableStateOf("") }
-    Row(
-        Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
-    ) {
-        OutlinedTextField(
-            value = name,
-            onValueChange = { if (WorkerNames.fits(it)) name = it },
-            placeholder = { Text("Add a worker") },
-            singleLine = true,
-            modifier = Modifier.weight(1f),
-        )
-        TextButton(
-            onClick = {
-                onAddWorker(name.trim())
-                name = ""
+private fun AddWorkerButton(onAddWorker: (WorkerDetails) -> Unit) {
+    val labels = FundiLabels.ENGLISH
+    var adding by remember { mutableStateOf(false) }
+    if (adding) {
+        WorkerForm(
+            labels = labels,
+            current = null,
+            accepts = { WorkerNames.fits(it.trim()) && it.isNotBlank() },
+            onSave = { details ->
+                adding = false
+                onAddWorker(details)
             },
-            enabled = name.isNotBlank(),
-        ) { Text("Add") }
+            onDismiss = { adding = false },
+        )
     }
+    TextButton(onClick = { adding = true }) { Text(labels.workerAddTitle) }
 }
 
 /** English until FundiLabels gets its Swahili pass (issue #20), like the rest of this app's chrome. */

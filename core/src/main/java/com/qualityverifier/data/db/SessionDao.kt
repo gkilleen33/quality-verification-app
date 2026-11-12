@@ -223,14 +223,23 @@ interface SessionDao {
     suspend fun markWorkerSynced(workerId: String, asOf: Long, syncedAt: Long)
 
     /**
-     * The server's name and archive state, applied only where nothing is unsent. Archive
-     * is sticky in both directions, so neither side can revive a worker the other let go.
+     * The server's name, number, kind and archive state, applied only where nothing is
+     * unsent. Archive is sticky in both directions, so neither side can revive a worker
+     * the other let go; the number and the kind follow the name, last write wins.
      */
     @Query(
-        "UPDATE workers SET name = :name, archivedAt = COALESCE(archivedAt, :archivedAt), " +
+        "UPDATE workers SET name = :name, phone = :phone, employment = :employment, " +
+            "archivedAt = COALESCE(archivedAt, :archivedAt), " +
             "syncedAt = :syncedAt WHERE id = :workerId AND syncedAt IS NOT NULL"
     )
-    suspend fun applySyncedWorker(workerId: String, name: String?, archivedAt: Long?, syncedAt: Long)
+    suspend fun applySyncedWorker(
+        workerId: String,
+        name: String?,
+        phone: String?,
+        employment: String,
+        archivedAt: Long?,
+        syncedAt: Long,
+    )
 
     // ---- who worked on a session
 

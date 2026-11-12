@@ -129,6 +129,17 @@ fun Route.apiRoutes(
             call.respond(ApiPage(rows.take(limit), rows.size > limit, limit, offset))
         }
 
+        // Every manager's roster (V23, V30), so an assessment's workers can be named and
+        // the numbers joined to the links V31 computes. Phone numbers of people who have
+        // no account here: behind the same key as the account holders' numbers above.
+        get("/workers") {
+            requireKey() ?: return@get
+            val limit = call.limit()
+            val offset = call.offset()
+            val rows = store.workers(limit + 1, offset)
+            call.respond(ApiPage(rows.take(limit), rows.size > limit, limit, offset))
+        }
+
         /**
          * The photo bytes.
          *

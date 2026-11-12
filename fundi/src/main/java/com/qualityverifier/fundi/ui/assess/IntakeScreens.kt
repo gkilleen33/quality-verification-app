@@ -31,6 +31,7 @@ import com.qualityverifier.domain.ItemType
 import com.qualityverifier.domain.PieceNames
 import com.qualityverifier.domain.PriorIssue
 import com.qualityverifier.domain.Worker
+import com.qualityverifier.domain.WorkerDetails
 import com.qualityverifier.domain.WorkerSlot
 import com.qualityverifier.text.FundiLabels
 
@@ -62,7 +63,7 @@ fun IntakeFlow(
     roster: List<Worker>,
     /** Who worked on the piece last time, as the starting answer. Empty on a new piece. */
     initialWorkers: List<WorkerSlot>,
-    onAddWorker: (String, (Worker) -> Unit) -> Unit,
+    onAddWorker: (WorkerDetails, (Worker) -> Unit) -> Unit,
     /** The answers, the piece's name or null when skipped, and who worked on it. */
     onComplete: (FundiIntake, String?, List<WorkerSlot>) -> Unit,
     onCancel: () -> Unit,

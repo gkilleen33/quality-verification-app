@@ -4,8 +4,10 @@ import com.qualityverifier.data.db.PendingSessionWorkersEntity
 import com.qualityverifier.data.db.SessionDao
 import com.qualityverifier.data.db.SessionWorkerEntity
 import com.qualityverifier.data.db.WorkerEntity
+import com.qualityverifier.domain.Employment
 import com.qualityverifier.domain.WorkPart
 import com.qualityverifier.domain.Worker
+import com.qualityverifier.domain.WorkerDetails
 import com.qualityverifier.domain.WorkerSlot
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
@@ -27,9 +29,10 @@ interface WorkerRepository {
     fun observeWorkers(): Flow<List<Worker>>
 
     /** Adds a worker with a phone-made id, as sessions and pieces are made. */
-    suspend fun add(name: String): Worker
+    suspend fun add(details: WorkerDetails): Worker
 
-    suspend fun rename(workerId: String, name: String)
+    /** The name, number and kind, replaced together: the form edits them as one. */
+    suspend fun edit(workerId: String, details: WorkerDetails)
 
     /** Archive, never delete: the name stays on the pieces this person worked on. */
     suspend fun archive(workerId: String)
@@ -67,11 +70,27 @@ interface WorkerRepository {
     suspend fun applySynced(sessionId: String, workers: List<WorkerSlot>)
 }
 
-/** A roster write waiting to reach the server. [asOf] is the phone's clock at the write. */
-data class WorkerChange(val id: String, val name: String, val archived: Boolean, val asOf: Long)
+/**
+ * A roster write waiting to reach the server. [asOf] is the phone's clock at the write.
+ * [phone] is sent on every write, null as blank, so a number removed here is removed there.
+ */
+data class WorkerChange(
+    val id: String,
+    val name: String,
+    val archived: Boolean,
+    val asOf: Long,
+    val phone: String? = null,
+    val employment: Employment = Employment.EMPLOYEE,
+)
 
 /** A roster row as the server sends it. */
-data class ServerWorker(val id: String, val name: String?, val archivedAt: Long?)
+data class ServerWorker(
+    val id: String,
+    val name: String?,
+    val archivedAt: Long?,
+    val phone: String? = null,
+    val employment: Employment = Employment.EMPLOYEE,
+)
 
 /** A session whose worker set is unsent. [asOf] is the phone's clock at the edit. */
 data class PendingSessionSet(val sessionId: String, val asOf: Long)
@@ -82,21 +101,33 @@ class RoomWorkerRepository(
 ) : WorkerRepository {
 
     override fun observeWorkers(): Flow<List<Worker>> =
-        dao.observeWorkers().map { rows ->
-            rows.map { Worker(it.id, it.name.orEmpty(), archived = it.archivedAt != null) }
-        }
+        dao.observeWorkers().map { rows -> rows.map { it.toWorker() } }
 
-    override suspend fun add(name: String): Worker {
-        val worker = Worker(UUID.randomUUID().toString(), name.trim(), archived = false)
-        dao.upsertWorker(
-            WorkerEntity(worker.id, worker.name, archivedAt = null, updatedAt = now(), syncedAt = null)
+    override suspend fun add(details: WorkerDetails): Worker {
+        val entity = WorkerEntity(
+            id = UUID.randomUUID().toString(),
+            name = details.name.trim(),
+            archivedAt = null,
+            updatedAt = now(),
+            syncedAt = null,
+            phone = details.phone,
+            employment = details.employment.id,
         )
-        return worker
+        dao.upsertWorker(entity)
+        return entity.toWorker()
     }
 
-    override suspend fun rename(workerId: String, name: String) {
+    override suspend fun edit(workerId: String, details: WorkerDetails) {
         val existing = dao.findWorker(workerId) ?: return
-        dao.upsertWorker(existing.copy(name = name.trim(), updatedAt = later(existing), syncedAt = null))
+        dao.upsertWorker(
+            existing.copy(
+                name = details.name.trim(),
+                phone = details.phone,
+                employment = details.employment.id,
+                updatedAt = later(existing),
+                syncedAt = null,
+            ),
+        )
     }
 
     override suspend fun archive(workerId: String) {
@@ -111,7 +142,10 @@ class RoomWorkerRepository(
 
     override suspend fun unsynced(): List<WorkerChange> =
         dao.unsyncedWorkers().map {
-            WorkerChange(it.id, it.name.orEmpty(), archived = it.archivedAt != null, asOf = it.updatedAt)
+            WorkerChange(
+                it.id, it.name.orEmpty(), archived = it.archivedAt != null, asOf = it.updatedAt,
+                phone = it.phone, employment = it.employmentOrDefault(),
+            )
         }
 
     override suspend fun markSynced(change: WorkerChange) =
@@ -124,9 +158,14 @@ class RoomWorkerRepository(
             // them is kept: the insert is a no-op on a known worker, and the update
             // touches only a row with nothing unsent.
             dao.insertWorkerIfAbsent(
-                WorkerEntity(worker.id, worker.name, worker.archivedAt, updatedAt = syncedAt, syncedAt = syncedAt)
+                WorkerEntity(
+                    worker.id, worker.name, worker.archivedAt, updatedAt = syncedAt, syncedAt = syncedAt,
+                    phone = worker.phone, employment = worker.employment.id,
+                ),
             )
-            dao.applySyncedWorker(worker.id, worker.name, worker.archivedAt, syncedAt)
+            dao.applySyncedWorker(
+                worker.id, worker.name, worker.phone, worker.employment.id, worker.archivedAt, syncedAt,
+            )
         }
     }
 
@@ -153,6 +192,14 @@ class RoomWorkerRepository(
 
     override suspend fun applySynced(sessionId: String, workers: List<WorkerSlot>) =
         dao.applySessionWorkersUnlessPending(sessionId, workers.map { it.toEntity(sessionId) })
+
+    private fun WorkerEntity.toWorker() = Worker(
+        id, name.orEmpty(), archived = archivedAt != null, phone = phone, employment = employmentOrDefault(),
+    )
+
+    /** A kind this build does not know, from a newer server, reads as an employee rather than failing. */
+    private fun WorkerEntity.employmentOrDefault(): Employment =
+        Employment.fromId(employment) ?: Employment.EMPLOYEE
 
     private fun SessionWorkerEntity.toSlot() =
         WorkerSlot(workerId = workerId, part = part?.let(WorkPart::fromId))

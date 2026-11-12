@@ -35,6 +35,7 @@ import com.qualityverifier.domain.ToolKind
 import com.qualityverifier.domain.ToolOwnership
 import com.qualityverifier.domain.WorkPart
 import com.qualityverifier.domain.Worker
+import com.qualityverifier.domain.WorkerDetails
 import com.qualityverifier.domain.WorkerSlot
 import com.qualityverifier.domain.Workshop
 import com.qualityverifier.fundi.ui.assess.AssessViewModel
@@ -1068,9 +1069,9 @@ class AssessViewModelTest {
         val recorded = mutableMapOf<String, List<WorkerSlot>>()
         val added = mutableListOf<String>()
         override fun observeWorkers(): Flow<List<Worker>> = MutableStateFlow(emptyList())
-        override suspend fun add(name: String): Worker {
-            added += name
-            return Worker("w${added.size}", name, archived = false)
+        override suspend fun add(details: WorkerDetails): Worker {
+            added += details.name
+            return Worker("w${added.size}", details.name, archived = false)
         }
         override suspend fun workersOf(sessionId: String) = recorded[sessionId].orEmpty()
         override suspend fun recordWorkersOf(sessionId: String, workers: List<WorkerSlot>) {
@@ -1079,7 +1080,7 @@ class AssessViewModelTest {
 
         private fun no(): Nothing = error("an assessment does not touch this")
 
-        override suspend fun rename(workerId: String, name: String) = no()
+        override suspend fun edit(workerId: String, details: WorkerDetails) = no()
         override suspend fun archive(workerId: String) = no()
         override suspend fun unsynced(): List<WorkerChange> = no()
         override suspend fun markSynced(change: WorkerChange) = no()

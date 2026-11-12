@@ -37,6 +37,9 @@ interface ApiStore {
 
     suspend fun testerFeedback(limit: Int, offset: Int): List<ApiTesterFeedback>
 
+    /** Every roster entry of every manager, archived ones included, oldest first. */
+    suspend fun workers(limit: Int, offset: Int): List<ApiWorker>
+
     /** Whether any assessment refers to this photo. Guards the bytes endpoint. */
     suspend fun photoExists(sha256: String): Boolean
 }
@@ -186,7 +189,51 @@ class PostgresApiStore(private val dataSource: DataSource) : ApiStore {
             statement.executeQuery().use { if (it.next()) it.toFeedback() else null }
         }
 
-        ApiAssessmentDetail(assessment, messages, feedback)
+        // In insertion order, as the phone listed them. Only here, not on the list: the
+        // roster route carries the names, and a page of assessments need not join to it.
+        val workers = connection.prepareStatement(
+            "select worker_id::text, part from session_workers where session_id = ?::uuid order by id"
+        ).use { statement ->
+            statement.setString(1, id)
+            statement.executeQuery().use { rows ->
+                val out = mutableListOf<ApiSessionWorker>()
+                while (rows.next()) out += ApiSessionWorker(rows.getString(1), rows.getString(2))
+                out
+            }
+        }
+
+        ApiAssessmentDetail(assessment, messages, feedback, workers = workers)
+    }
+
+    override suspend fun workers(limit: Int, offset: Int): List<ApiWorker> = query { connection ->
+        connection.prepareStatement(
+            """
+            select w.id::text, w.user_id::text, w.name, w.phone, w.employment,
+                   (extract(epoch from w.archived_at) * 1000)::bigint,
+                   (extract(epoch from w.created_at) * 1000)::bigint,
+                   (extract(epoch from w.updated_at) * 1000)::bigint
+              from workers w
+             order by w.created_at, w.id
+             limit ? offset ?
+            """.trimIndent()
+        ).use { statement ->
+            statement.setInt(1, limit)
+            statement.setInt(2, offset)
+            statement.executeQuery().use { rows ->
+                val out = mutableListOf<ApiWorker>()
+                while (rows.next()) out += ApiWorker(
+                    id = rows.getString(1),
+                    userId = rows.getString(2),
+                    name = rows.getString(3),
+                    phone = rows.getString(4),
+                    employment = rows.getString(5),
+                    archivedAt = rows.nullableLong(6),
+                    createdAt = rows.getLong(7),
+                    updatedAt = rows.getLong(8),
+                )
+                out
+            }
+        }
     }
 
     override suspend fun testerFeedback(limit: Int, offset: Int): List<ApiTesterFeedback> =
@@ -268,6 +315,12 @@ class PostgresApiStore(private val dataSource: DataSource) : ApiStore {
     /** getInt returns 0 for SQL null, which would read as a version that never existed. */
     private fun ResultSet.nullableInt(index: Int): Int? {
         val value = getInt(index)
+        return if (wasNull()) null else value
+    }
+
+    /** getLong returns 0 for SQL null, which would read as archived on 1 January 1970. */
+    private fun ResultSet.nullableLong(index: Int): Long? {
+        val value = getLong(index)
         return if (wasNull()) null else value
     }
 

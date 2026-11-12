@@ -4,6 +4,7 @@ import com.qualityverifier.server.api.ApiAssessmentDetail
 import com.qualityverifier.server.api.ApiIntake
 import com.qualityverifier.server.api.ApiMessage
 import com.qualityverifier.server.api.ApiProblem
+import com.qualityverifier.server.api.ApiSessionWorker
 import com.qualityverifier.server.api.ApiTesterFeedback
 import com.qualityverifier.server.api.PostgresApiKeyStore
 import com.qualityverifier.server.api.apiProblemsOf
@@ -49,6 +50,7 @@ class ApiRouteTest {
             "/api/v1/assessments",
             "/api/v1/assessments/${API_ASSESSMENT.id}",
             "/api/v1/tester-feedback",
+            "/api/v1/workers",
             "/api/v1/photos/${"a".repeat(64)}",
         ).forEach { path ->
             assertEquals(path, HttpStatusCode.Unauthorized, app.get(path).status)
@@ -284,6 +286,70 @@ class ApiRouteTest {
         )
         assertTrue("the list route must not carry problems: $list", !list.contains("problems"))
         assertTrue(list, !list.contains("Gap at the back joint"))
+    }
+
+    @Test
+    fun `the roster is listed with numbers, kinds and dates, paged and recorded like the rest`() = testApplication {
+        // V30. The numbers belong to people with no account here, so they sit behind the
+        // same key as the account holders' numbers, and the same audit row.
+        val keys = FakeApiKeyStore()
+        val admin = RecordingAudit()
+        val store = FakeApiStore(
+            workers = listOf(
+                API_WORKER,
+                API_WORKER.copy(
+                    id = "c0ffee00-0000-4000-8000-00000000001c", name = null, phone = null,
+                    employment = "employee", archivedAt = 1_700_000_300_000,
+                ),
+            ),
+        )
+        val app = withApi(keys = keys, store = store, admin = admin)
+
+        val body = app.get("/api/v1/workers?limit=10") { key(keys.anyKey()) }.bodyAsText()
+
+        assertTrue(body, body.contains("\"id\":\"${API_WORKER.id}\""))
+        assertTrue(body, body.contains("\"user_id\":\"${API_USER.id}\""))
+        assertTrue(body, body.contains("\"name\":\"Kamau\""))
+        assertTrue(body, body.contains("\"phone\":\"+254712345678\""))
+        assertTrue(body, body.contains("\"employment\":\"temporary\""))
+        assertTrue(body, body.contains("\"archived_at\":null"))
+        assertTrue(body, body.contains("\"archived_at\":1700000300000"))
+        // A deleted manager's roster: name and number null, as explicit nulls.
+        assertTrue(body, body.contains("\"name\":null"))
+        assertTrue(body, body.contains("\"phone\":null"))
+        assertTrue(body, body.contains("\"created_at\":1700000000000"))
+        assertTrue(body, body.contains("\"updated_at\":1700000200000"))
+        assertTrue(body, body.contains("\"has_more\":false"))
+        assertEquals(11, store.lastLimit)
+        assertEquals("/api/v1/workers", admin.audits.single().target)
+    }
+
+    @Test
+    fun `an assessment names who worked on it, by roster id and part`() = testApplication {
+        // D9 in the design doc: the per-worker report needs this join, and the list route
+        // never carried it.
+        val keys = FakeApiKeyStore()
+        val detail = ApiAssessmentDetail(
+            assessment = API_ASSESSMENT.copy(audience = "fundi"),
+            messages = emptyList(),
+            feedback = null,
+            workers = listOf(
+                ApiSessionWorker(API_WORKER.id, "joinery"),
+                // The manager, on the whole piece.
+                ApiSessionWorker(null, null),
+            ),
+        )
+        val app = withApi(keys = keys, store = FakeApiStore(detail = detail))
+
+        val body = app.get("/api/v1/assessments/${API_ASSESSMENT.id}") { key(keys.anyKey()) }.bodyAsText()
+
+        assertTrue(
+            body,
+            body.contains(
+                "\"workers\":[{\"worker_id\":\"${API_WORKER.id}\",\"part\":\"joinery\"}," +
+                    "{\"worker_id\":null,\"part\":null}]",
+            ),
+        )
     }
 
     @Test

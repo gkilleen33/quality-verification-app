@@ -100,11 +100,46 @@ data class WorkerSlot(
 )
 
 
-/** A person on the manager's roster. Archived, not deleted: past pieces still name them. */
+/**
+ * A person on the manager's roster. Archived, not deleted: past pieces still name them.
+ *
+ * [phone] is the worker's number in E.164, or null for an entry added without one. It is
+ * what will link the worker's own Fundi Bora account to this workshop once both sides have
+ * listed each other (V30, V31); an entry without a number is on the roster and on its
+ * pieces, and is never linked.
+ */
 data class Worker(
     val id: String,
     val name: String,
     val archived: Boolean,
+    val phone: String? = null,
+    val employment: Employment = Employment.EMPLOYEE,
+)
+
+/**
+ * Whether a roster entry is one of the workshop's own staff or somebody hired for a job.
+ * A closed list, mirrored by the CHECK on `workers.employment` (V30) and held to it by
+ * FundiVocabularyTest. Chosen when the worker is added and changeable later; every entry
+ * from before V30 is an employee.
+ */
+enum class Employment(val id: String) {
+    EMPLOYEE("employee"),
+    TEMPORARY("temporary");
+
+    companion object {
+        fun fromId(id: String): Employment? =
+            entries.firstOrNull { it.id == id.trim().lowercase() }
+    }
+}
+
+/**
+ * What the worker form hands over: the fields of a roster entry that the manager fills in.
+ * [phone] is in E.164 or null, already normalised by the form ([KenyanPhone.toE164]).
+ */
+data class WorkerDetails(
+    val name: String,
+    val phone: String? = null,
+    val employment: Employment = Employment.EMPLOYEE,
 )
 
 /** The bound on a worker's name, the same on the phone as in V23's CHECK. */

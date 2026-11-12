@@ -9,6 +9,7 @@ import com.qualityverifier.data.sync.AssessmentSync
 import com.qualityverifier.data.workers.WorkerRepository
 import com.qualityverifier.di.AppContainer
 import com.qualityverifier.domain.Worker
+import com.qualityverifier.domain.WorkerDetails
 import com.qualityverifier.domain.WorkerNames
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -32,9 +33,10 @@ class WorkersViewModel(
         workers.observeWorkers()
             .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
-    fun add(name: String) = write { workers.add(name) }
+    fun add(details: WorkerDetails) = write { workers.add(details) }
 
-    fun rename(workerId: String, name: String) = write { workers.rename(workerId, name) }
+    /** The name, number and kind together, as the form edits them. */
+    fun edit(workerId: String, details: WorkerDetails) = write { workers.edit(workerId, details) }
 
     fun archive(workerId: String) = write { workers.archive(workerId) }
 

@@ -1,8 +1,10 @@
 package com.qualityverifier.server.routes
 
 import com.qualityverifier.domain.Audience
+import com.qualityverifier.domain.Employment
 import com.qualityverifier.server.db.AuthStore
 import com.qualityverifier.server.db.FundiStore
+import com.qualityverifier.server.db.PhoneChange
 import com.qualityverifier.server.db.PieceLabels
 import io.ktor.http.HttpStatusCode
 import io.ktor.server.application.ApplicationCall
@@ -96,12 +98,16 @@ fun Route.fundiRoutes(store: FundiStore, auth: AuthStore) {
             if (!call.requireFundi(auth, userId)) return@get
             call.respond(
                 WorkerListDto(
-                    store.listWorkers(userId).map { WorkerDto(it.id, it.name, it.archivedAt) },
+                    store.listWorkers(userId).map {
+                        WorkerDto(it.id, it.name, it.archivedAt, phone = it.phone, employment = it.employment.id)
+                    },
                 ),
             )
         }
 
-        // Add, rename or archive one worker. The id is the phone's, as a piece id is.
+        // Add, rename or archive one worker, and since V30 set or clear their number and
+        // say whether they are an employee or temporary. The id is the phone's, as a
+        // piece id is.
         put("/v1/fundi/workers/{id}") {
             val userId = call.principal<JWTPrincipal>()?.subject
                 ?: return@put call.respond(
@@ -121,7 +127,32 @@ fun Route.fundiRoutes(store: FundiStore, auth: AuthStore) {
                 )
                 return@put
             }
-            if (!store.upsertWorker(userId, workerId, name, body.archived)) {
+            // Absent is Keep, blank is Remove, and anything else must read as a number.
+            // Normalised as sign-in normalises, so "0712…" from a phone that did not
+            // normalise lands as the same E.164 the stored copy and the match use.
+            val phone = when {
+                body.phone == null -> PhoneChange.Keep
+                body.phone.isBlank() -> PhoneChange.Remove
+                else -> {
+                    val e164 = normalisePhone(body.phone.trim())
+                    val fault = validatePhone(e164)
+                    if (fault != null) {
+                        call.respond(HttpStatusCode.BadRequest, ErrorResponse("invalid_phone", fault))
+                        return@put
+                    }
+                    PhoneChange.Set(e164)
+                }
+            }
+            val employment = body.employment?.let { kind ->
+                Employment.fromId(kind) ?: run {
+                    call.respond(
+                        HttpStatusCode.BadRequest,
+                        ErrorResponse("invalid_request", "employment must be employee or temporary"),
+                    )
+                    return@put
+                }
+            }
+            if (!store.upsertWorker(userId, workerId, name, body.archived, phone, employment)) {
                 // 404, never 403, as for a piece: the id is client-made and a different
                 // answer would say which ids exist.
                 call.respond(HttpStatusCode.NotFound, ErrorResponse("no_such_worker"))

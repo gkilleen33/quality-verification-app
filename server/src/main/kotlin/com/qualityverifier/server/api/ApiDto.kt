@@ -175,6 +175,46 @@ data class ApiAssessmentDetail(
      * route from [messages], not by the store.
      */
     val problems: List<ApiProblem>? = null,
+    /**
+     * Who worked on it, as the manager answered "Who worked on this?" (V23). Empty for
+     * Kagua and for an assessment where nobody was named, which reads as "not said"
+     * rather than "nobody". Joins to `/api/v1/workers` on `worker_id`.
+     */
+    val workers: List<ApiSessionWorker> = emptyList(),
+)
+
+/**
+ * One `session_workers` row. A null [workerId] is the manager, who has no roster entry; a
+ * null [part] names the worker on the whole piece.
+ */
+@Serializable
+data class ApiSessionWorker(
+    @SerialName("worker_id") val workerId: String?,
+    /** frame, joinery, upholstery, finishing, assembly, or other; null for the whole piece. */
+    val part: String?,
+)
+
+/**
+ * One roster entry (V23, V30), for the report that sets out each worker's work. The
+ * manager is `user_id`; the worker has no account here, and [phone] is what will link one
+ * once both sides have listed each other (V31).
+ */
+@Serializable
+data class ApiWorker(
+    val id: String,
+    /** The manager's account, as `/api/v1/users` lists it. */
+    @SerialName("user_id") val userId: String,
+    /** Null once the manager's account is deleted, as the manager's own name is. */
+    val name: String?,
+    /** E.164, or null for an entry added without a number, and null after deletion. */
+    val phone: String?,
+    /** `employee` or `temporary`. Every entry from before V30 is an employee. */
+    val employment: String,
+    /** When the manager archived this entry, or null while it is on the roster. */
+    @SerialName("archived_at") val archivedAt: Long?,
+    @SerialName("created_at") val createdAt: Long,
+    /** The server's receipt time of the last write, never the phone's clock (V18). */
+    @SerialName("updated_at") val updatedAt: Long,
 )
 
 @Serializable

@@ -98,16 +98,28 @@ data class WorkerDto(
     val id: String,
     val name: String? = null,
     @SerialName("archived_at") val archivedAt: Long? = null,
+    /** E.164, or null for an entry without a number (V30). */
+    val phone: String? = null,
+    /** `employee` or `temporary` (V30). Defaulted only so an older server's answer still reads. */
+    val employment: String? = null,
 )
 
 @Serializable
 data class WorkerListDto(val workers: List<WorkerDto>)
 
-/** The body of PUT /v1/fundi/workers/{id}. Archiving is sticky: false never revives. */
+/**
+ * The body of PUT /v1/fundi/workers/{id}. Archiving is sticky: false never revives.
+ *
+ * [phone] absent leaves the stored number alone, blank removes it, and anything else must
+ * be a number the route can read (see `PhoneChange`). An app from before V30 sends neither
+ * it nor [employment], and its writes change only the name and the archive flag.
+ */
 @Serializable
 data class WorkerUpsertDto(
     val name: String? = null,
     val archived: Boolean = false,
+    val phone: String? = null,
+    val employment: String? = null,
 )
 
 /** The body of PUT /v1/fundi/pieces/{id}. A blank or absent label clears the name. */

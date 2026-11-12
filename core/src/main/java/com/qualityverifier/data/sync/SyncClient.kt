@@ -4,6 +4,7 @@ import android.util.Log
 import com.qualityverifier.data.auth.AuthenticatedHttp
 import com.qualityverifier.data.auth.TokenProvider
 import com.qualityverifier.data.session.LocalTesterFeedback
+import com.qualityverifier.domain.Employment
 import com.qualityverifier.domain.WorkerSlot
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
@@ -49,13 +50,27 @@ data class RemoteWorker(
     val id: String,
     val name: String? = null,
     @SerialName("archived_at") val archivedAt: Long? = null,
+    /** E.164, or null. Absent from a server before V30, which reads the same. */
+    val phone: String? = null,
+    /** `employee` or `temporary`; absent from a server before V30, which is an employee. */
+    val employment: String? = null,
 )
 
 @Serializable
 private data class WorkerListBody(val workers: List<RemoteWorker> = emptyList())
 
+/**
+ * The number goes on every write, blank for none: the server keeps a stored number only
+ * when the field is absent, which is how an app from before V30 writes, so a number
+ * removed here has to be sent as blank to be removed there.
+ */
 @Serializable
-private data class WorkerUpsertBody(val name: String, val archived: Boolean)
+private data class WorkerUpsertBody(
+    val name: String,
+    val archived: Boolean,
+    val phone: String,
+    val employment: String,
+)
 
 @Serializable
 private data class WorkerSlotBody(
@@ -254,12 +269,20 @@ class SyncClient(
     }
 
     /**
-     * Adds, renames or archives a worker on the server. True when it has it, or will
-     * never take it (any 4xx but 426); false for a transport failure, a 5xx, or a 426,
-     * which retry.
+     * Adds, renames or archives a worker on the server, with their number and kind. True
+     * when it has it, or will never take it (any 4xx but 426); false for a transport
+     * failure, a 5xx, or a 426, which retry.
      */
-    suspend fun upsertWorker(workerId: String, name: String, archived: Boolean): Boolean = withContext(io) {
-        val body = json.encodeToString(WorkerUpsertBody(name, archived)).toRequestBody(JSON)
+    suspend fun upsertWorker(
+        workerId: String,
+        name: String,
+        archived: Boolean,
+        phone: String? = null,
+        employment: Employment = Employment.EMPLOYEE,
+    ): Boolean = withContext(io) {
+        val body = json.encodeToString(
+            WorkerUpsertBody(name, archived, phone = phone.orEmpty(), employment = employment.id),
+        ).toRequestBody(JSON)
         authenticated { token ->
             Request.Builder().url(baseUrl + "v1/fundi/workers/" + workerId)
                 .addHeader("Authorization", "Bearer $token").put(body).build()

@@ -48,6 +48,7 @@ import com.qualityverifier.domain.PieceNames
 import com.qualityverifier.domain.SessionSummary
 import com.qualityverifier.domain.UpdatePrompt
 import com.qualityverifier.domain.Worker
+import com.qualityverifier.domain.WorkerDetails
 import com.qualityverifier.domain.WorkerSlot
 import com.qualityverifier.fundi.ui.assess.WorkerPicker
 import com.qualityverifier.fundi.ui.fundiContainer
@@ -222,7 +223,7 @@ private fun PieceRow(
     /** Who is recorded on the latest assessment, read when the edit opens. */
     loadWorkers: suspend () -> List<WorkerSlot>,
     onSetWorkers: (List<WorkerSlot>) -> Unit,
-    onAddWorker: (String, (Worker) -> Unit) -> Unit,
+    onAddWorker: (WorkerDetails, (Worker) -> Unit) -> Unit,
     /** M-Pesa money out assigned to this piece, by category; null for none given yet. */
     spent: Map<MpesaCategory?, Double>,
 ) {
@@ -381,7 +382,7 @@ private fun WorkersDialog(
     roster: List<Worker>,
     load: suspend () -> List<WorkerSlot>,
     onSave: (List<WorkerSlot>) -> Unit,
-    onAddWorker: (String, (Worker) -> Unit) -> Unit,
+    onAddWorker: (WorkerDetails, (Worker) -> Unit) -> Unit,
     onDismiss: () -> Unit,
 ) {
     var slots by remember { mutableStateOf<List<WorkerSlot>?>(null) }

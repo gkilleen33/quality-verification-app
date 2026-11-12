@@ -27,6 +27,7 @@ import com.qualityverifier.domain.PlanRun
 import com.qualityverifier.domain.PriorIssue
 import com.qualityverifier.domain.Role
 import com.qualityverifier.domain.Worker
+import com.qualityverifier.domain.WorkerDetails
 import com.qualityverifier.domain.WorkerSlot
 import com.qualityverifier.images.UNREADABLE_PHOTO
 import com.qualityverifier.text.FundiLabels
@@ -294,9 +295,13 @@ class AssessViewModel(
     /** Destination for the next shot. The camera screen writes straight into it. */
     fun newCaptureFile(): File? = runCatching { images.newImageFile(sessionId) }.getOrNull()
 
-    /** A person added inside the picker. On the roster at once; the server hears with the turn. */
-    fun addWorker(name: String, onAdded: (Worker) -> Unit) {
-        viewModelScope.launch { onAdded(workers.add(name)) }
+    /**
+     * A person added inside the picker. On the roster at once; the server hears of the
+     * name with the turn, and of the number and kind on the next roster sync, since the
+     * turn carries only what the opening message needs.
+     */
+    fun addWorker(details: WorkerDetails, onAdded: (Worker) -> Unit) {
+        viewModelScope.launch { onAdded(workers.add(details)) }
     }
 
     /**

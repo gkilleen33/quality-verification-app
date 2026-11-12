@@ -12,12 +12,10 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.systemBarsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -30,15 +28,17 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.qualityverifier.domain.Worker
-import com.qualityverifier.domain.WorkerNames
+import com.qualityverifier.domain.WorkerDetails
 import com.qualityverifier.fundi.ui.fundiContainer
+import com.qualityverifier.text.FundiLabels
 
 /**
  * "My workers": the roster, one card per person, archived ones last and greyed.
  *
- * Add is a dialog with one field. Tapping a card opens the same dialog to rename, with
- * "Archive" beside Save. There is no delete: a past piece keeps the name of whoever
- * worked on it, and an archived worker simply stops appearing in the picker.
+ * Add opens the worker form ([WorkerForm]): name, a number from contacts or typed, and
+ * employee or temporary. Tapping a card opens the same form to edit, with "Archive"
+ * beside Save. There is no delete: a past piece keeps the name of whoever worked on it,
+ * and an archived worker simply stops appearing in the picker.
  */
 @Composable
 fun WorkersScreen(onBack: () -> Unit) {
@@ -46,30 +46,33 @@ fun WorkersScreen(onBack: () -> Unit) {
     val model: WorkersViewModel = viewModel(factory = WorkersViewModel.factory(container))
     val roster by model.roster.collectAsState()
     val sorted = remember(roster) { roster.sortedWith(compareBy({ it.archived }, { it.name.lowercase() })) }
+    val labels = FundiLabels.ENGLISH
 
     var adding by remember { mutableStateOf(false) }
     var editing by remember { mutableStateOf<Worker?>(null) }
 
     if (adding) {
-        WorkerDialog(
-            title = "Add a worker",
-            current = "",
+        WorkerForm(
+            labels = labels,
+            current = null,
             accepts = model::accepts,
-            onSave = { name ->
+            onSave = { details ->
                 adding = false
-                model.add(name)
+                model.add(details)
             },
             onDismiss = { adding = false },
         )
     }
     editing?.let { worker ->
-        WorkerDialog(
-            title = "Rename",
-            current = worker.name,
+        val before = WorkerDetails(worker.name, worker.phone, worker.employment)
+        WorkerForm(
+            labels = labels,
+            current = before,
             accepts = model::accepts,
-            onSave = { name ->
+            onSave = { details ->
                 editing = null
-                if (name != worker.name) model.rename(worker.id, name)
+                // Saved unchanged, nothing is written and nothing is sent.
+                if (details != before) model.edit(worker.id, details)
             },
             onArchive = if (worker.archived) null else {
                 {
@@ -93,7 +96,7 @@ fun WorkersScreen(onBack: () -> Unit) {
             Button(
                 onClick = { adding = true },
                 modifier = Modifier.fillMaxWidth().height(56.dp),
-            ) { Text("Add a worker") }
+            ) { Text(labels.workerAddTitle) }
         }
         if (sorted.isEmpty()) {
             item {
@@ -106,7 +109,7 @@ fun WorkersScreen(onBack: () -> Unit) {
             }
         }
         items(sorted, key = { it.id }) { worker ->
-            WorkerRow(worker, onClick = { editing = worker })
+            WorkerRow(worker, labels, onClick = { editing = worker })
         }
         item {
             TextButton(onClick = onBack, modifier = Modifier.fillMaxWidth()) { Text("Back") }
@@ -115,7 +118,8 @@ fun WorkersScreen(onBack: () -> Unit) {
 }
 
 @Composable
-private fun WorkerRow(worker: Worker, onClick: () -> Unit) {
+private fun WorkerRow(worker: Worker, labels: FundiLabels, onClick: () -> Unit) {
+    val muted = MaterialTheme.colorScheme.onSurfaceVariant
     Card(
         Modifier.fillMaxWidth().clickable(onClick = onClick),
         colors = CardDefaults.cardColors(
@@ -126,54 +130,23 @@ private fun WorkerRow(worker: Worker, onClick: () -> Unit) {
             Modifier.fillMaxWidth().padding(14.dp),
             horizontalArrangement = Arrangement.SpaceBetween,
         ) {
-            Text(
-                worker.name,
-                style = MaterialTheme.typography.titleMedium,
-                color = if (worker.archived) MaterialTheme.colorScheme.onSurfaceVariant
-                else MaterialTheme.colorScheme.onSurface,
-            )
-            if (worker.archived) {
+            Column(Modifier.weight(1f, fill = false)) {
                 Text(
-                    "Archived",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    worker.name,
+                    style = MaterialTheme.typography.titleMedium,
+                    color = if (worker.archived) muted else MaterialTheme.colorScheme.onSurface,
                 )
+                // The kind, and the number when there is one: what the form holds, so the
+                // card says what a tap will edit.
+                Text(
+                    listOfNotNull(labels.nameOf(worker.employment), worker.phone).joinToString(" · "),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = muted,
+                )
+            }
+            if (worker.archived) {
+                Text("Archived", style = MaterialTheme.typography.bodySmall, color = muted)
             }
         }
     }
-}
-
-/** One field, bounded as the server bounds it (V23), with Save and optionally Archive. */
-@Composable
-private fun WorkerDialog(
-    title: String,
-    current: String,
-    accepts: (String) -> Boolean,
-    onSave: (String) -> Unit,
-    onDismiss: () -> Unit,
-    onArchive: (() -> Unit)? = null,
-) {
-    var name by remember { mutableStateOf(current) }
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text(title) },
-        text = {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedTextField(
-                    value = name,
-                    onValueChange = { if (WorkerNames.fits(it)) name = it },
-                    singleLine = true,
-                    placeholder = { Text("Name or nickname") },
-                    modifier = Modifier.fillMaxWidth(),
-                )
-                if (onArchive != null) {
-                    TextButton(onClick = onArchive) { Text("Archive this worker") }
-                }
-            }
-        },
-        confirmButton = {
-            TextButton(onClick = { onSave(name.trim()) }, enabled = accepts(name)) { Text("Save") }
-        },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
-    )
 }
