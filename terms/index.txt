@@ -4,3 +4,4 @@
 # fails, when a listed file's bytes differ from its line: a published text never changes.
 # A change to the words is a new version, a new folder, and a new line here.
 fundi 2026-11 en cc55f09b5b899ef5e5bcbc51d27562df3732928be043b209bd825293bdf98e5d
+fundi 2026-11-16 en 23135d2ceecd306fef44b1b88febde68413403c9078cd3c0f8d47e7c598a8ea7
