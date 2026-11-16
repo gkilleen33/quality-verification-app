@@ -26,6 +26,7 @@ import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import org.slf4j.LoggerFactory
 import java.security.MessageDigest
+import java.util.concurrent.ConcurrentHashMap
 
 private val log = LoggerFactory.getLogger("com.qualityverifier.server.bench")
 
@@ -74,6 +75,8 @@ fun Route.benchRoutes(
     prompts: PromptRepository,
     dailyLimit: Int = BENCH_PHOTOS_PER_DAY,
 ) {
+    // Photo ids with a Claude call open, so a retry during one does not start a second.
+    val inFlight = ConcurrentHashMap.newKeySet<String>()
     authenticate("jwt") {
         post("/v1/fundi/bench-photos") {
             val userId = call.principal<JWTPrincipal>()?.subject
@@ -108,17 +111,37 @@ fun Route.benchRoutes(
                 val draft = runCatching { json.decodeFromString(BenchDraft.serializer(), stored) }.getOrNull()
                 if (draft != null) return@post call.respond(draft)
             }
-
-            val prompt = prompts.benchPrompt()
-            val turn = ChatMessage(
-                id = "bench-${photo.id}",
-                role = Role.USER,
-                text = "The bench.",
-                attachments = listOf(Attachment(id = photo.id, path = blobs.pathFor(sha).absolutePath)),
-            )
-            val started = System.currentTimeMillis()
-            val result = claude.send(prompt, listOf(turn), { blobs.read(sha) })
-            val elapsed = System.currentTimeMillis() - started
+            // The sweeper keeps every hash bench_photos names, so this holds unless the
+            // file was removed by hand.
+            if (!blobs.exists(photo.sha256)) {
+                return@post call.respond(HttpStatusCode.Conflict, MissingBlobsResponse(missing = listOf(photo.sha256)))
+            }
+            // A retry sent while the first call is still waiting on Claude (the phone's
+            // connection dropped, or its read timed out) is told to wait, not paid twice.
+            // In memory: the server is one process, and a restart ends every call in it.
+            if (!inFlight.add(photo.id)) {
+                return@post call.respond(HttpStatusCode.Conflict, ErrorResponse("bench_in_progress"))
+            }
+            // The photo Claude reads is the one the row holds, so the draft and the stored
+            // photo always match, whatever bytes a retry uploaded.
+            val heldSha = photo.sha256
+            val result: ClaudeResult
+            val prompt: String
+            val elapsed: Long
+            try {
+                prompt = prompts.benchPrompt()
+                val turn = ChatMessage(
+                    id = "bench-${photo.id}",
+                    role = Role.USER,
+                    text = "The bench.",
+                    attachments = listOf(Attachment(id = photo.id, path = blobs.pathFor(heldSha).absolutePath)),
+                )
+                val started = System.currentTimeMillis()
+                result = claude.send(prompt, listOf(turn), { blobs.read(heldSha) })
+                elapsed = System.currentTimeMillis() - started
+            } finally {
+                inFlight.remove(photo.id)
+            }
             when (result) {
                 is ClaudeResult.Success -> {
                     chat.recordUsage(

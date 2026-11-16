@@ -17,7 +17,11 @@ import com.qualityverifier.fundi.ui.setup.SetupViewModel
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.StandardTestDispatcher
+import com.qualityverifier.data.location.LocationSource
+import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.advanceUntilIdle
+import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
@@ -336,6 +340,38 @@ class SetupViewModelTest {
         advanceUntilIdle()
         assertEquals(2, calls.size)
         assertEquals("a retry is counted once on the server", 1, calls.toSet().size)
+    }
+
+    // A fundi under a tin roof, with location allowed: the fix never comes. The photo goes
+    // without a point after the short wait, rather than after a minute and a half.
+    @Test
+    fun `a slow GPS fix does not hold the bench photo`() = runTest {
+        val sent = mutableListOf<LocationFix?>()
+        val never = object : LocationSource {
+            override val isAvailable = true
+            override suspend fun capture(): LocationFix? = awaitCancellation()
+        }
+        val model = SetupViewModel(
+            FakeProfiles(),
+            bench = BenchApi { _, _, location -> sent += location; drafted },
+            benchLocation = never,
+            io = dispatcher,
+        )
+        model.onBenchPhoto(benchPhoto())
+        advanceTimeBy(SetupViewModel.BENCH_FIX_WAIT_MILLIS + 1)
+        runCurrent()
+        assertEquals(listOf<LocationFix?>(null), sent)
+        assertTrue(model.benchStep.value is SetupViewModel.Bench.Confirm)
+    }
+
+    @Test
+    fun `a second tap while sending sends once`() = runTest {
+        val calls = mutableListOf<String>()
+        val model = benchModel(FakeProfiles(), BenchOutcome.Unavailable, calls)
+        model.onBenchPhoto(benchPhoto())
+        model.retryBench()
+        advanceUntilIdle()
+        assertEquals(1, calls.size)
     }
 
     @Test
