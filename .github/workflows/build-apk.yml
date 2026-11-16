@@ -41,14 +41,18 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/android-toolchain
-      - run: ./gradlew --no-daemon testDebugUnitTest lintDebug :shared:test :server:test
+      # PesaLog's debug APK too: assembling it runs checkDebugNoSmsPermission against the
+      # merged manifest, and its notification listener is only exercised on a phone.
+      - run: ./gradlew --no-daemon testDebugUnitTest lintDebug :shared:test :server:test :tracker:assembleDebug
       # The Room schema the compiler exported, so a migration PR written without an
       # Android toolchain can commit the new version's JSON from this run.
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: room-schemas
-          path: core/schemas
+          path: |
+            core/schemas
+            tracker/schemas
           if-no-files-found: ignore
 
   publish:
@@ -111,11 +115,13 @@ jobs:
       - name: Name the APKs after the versions being built
         id: name
         run: |
-          # Two apps now. The label still comes from Kagua's versionName, because that is
-          # what a tag names; Fundi Bora carries its own versionName in its filename so a
-          # tester can tell two downloads apart.
+          # Three apps now. The label still comes from Kagua's versionName, because that is
+          # what a tag names; Fundi Bora and PesaLog carry their own versionNames in their
+          # filenames so a tester can tell the downloads apart. PesaLog numbers its versions
+          # on its own (0.1.0 first), so its versionName never has to match the tag.
           version=$(grep -oE 'versionName = "[^"]+"' app/build.gradle.kts | cut -d'"' -f2)
           fundi_version=$(grep -oE 'versionName = "[^"]+"' fundi/build.gradle.kts | cut -d'"' -f2)
+          tracker_version=$(grep -oE 'versionName = "[^"]+"' tracker/build.gradle.kts | cut -d'"' -f2)
           if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
             label="${GITHUB_REF_NAME}"
           else
@@ -143,15 +149,28 @@ jobs:
           fundi_name="fundi-bora-${fundi_version}-${short}.apk"
           cp "$fundi_built" "$fundi_name"
 
+          # PesaLog, with the same checks. Signed with the same upload key as the other two
+          # (tracker/build.gradle.kts), so a later version may share data with Fundi Bora.
+          tracker_built=tracker/build/outputs/apk/release/tracker-release.apk
+          if [ ! -f "$tracker_built" ]; then
+            echo "::error::Expected PesaLog's APK at $tracker_built but it is missing."
+            echo "::error::assembleRelease builds every application module, so this means"
+            echo "::error::the :tracker module did not assemble."
+            exit 1
+          fi
+          tracker_name="pesalog-${tracker_version}-${short}.apk"
+          cp "$tracker_built" "$tracker_name"
+
           echo "apk=$name" >> "$GITHUB_OUTPUT"
           echo "fundi_apk=$fundi_name" >> "$GITHUB_OUTPUT"
+          echo "tracker_apk=$tracker_name" >> "$GITHUB_OUTPUT"
           echo "label=$label" >> "$GITHUB_OUTPUT"
-          ls -lh "$name" "$fundi_name"
+          ls -lh "$name" "$fundi_name" "$tracker_name"
 
-      - name: Confirm both APKs carry the upload key, not a debug key
+      - name: Confirm every APK carries the upload key, not a debug key
         run: |
           APKSIGNER=$(ls "$ANDROID_HOME"/build-tools/*/apksigner | tail -1)
-          for apk in "${{ steps.name.outputs.apk }}" "${{ steps.name.outputs.fundi_apk }}"; do
+          for apk in "${{ steps.name.outputs.apk }}" "${{ steps.name.outputs.fundi_apk }}" "${{ steps.name.outputs.tracker_apk }}"; do
             echo "--- $apk"
             certs=$("$APKSIGNER" verify --print-certs "$apk")
             echo "$certs"
@@ -172,6 +191,7 @@ jobs:
           gh release create "${GITHUB_REF_NAME}" \
             "${{ steps.name.outputs.apk }}" \
             "${{ steps.name.outputs.fundi_apk }}" \
+            "${{ steps.name.outputs.tracker_apk }}" \
             kagua-server.jar \
             --title "${GITHUB_REF_NAME}" \
             --notes "Signed release build of ${GITHUB_REF_NAME}. Install on a phone with \"install unknown apps\" allowed for your browser."
@@ -186,6 +206,7 @@ jobs:
           gh release create nightly \
             "${{ steps.name.outputs.apk }}" \
             "${{ steps.name.outputs.fundi_apk }}" \
+            "${{ steps.name.outputs.tracker_apk }}" \
             kagua-server.jar \
             --title "Latest test build (${{ steps.name.outputs.label }})" \
             --prerelease \

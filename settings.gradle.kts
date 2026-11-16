@@ -25,4 +25,6 @@ include(":capture")
 include(":design")
 include(":app")
 include(":fundi")
+// PesaLog, the mobile money log: a third app that reads notifications, never SMS.
+include(":tracker")
 include(":server")
