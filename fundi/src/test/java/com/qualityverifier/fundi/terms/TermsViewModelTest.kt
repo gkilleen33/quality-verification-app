@@ -45,7 +45,7 @@ class TermsViewModelTest {
     private val text = "# Fundi Bora: Terms of Use\n\nVersion: 2026-11\n\n## 1. About\n\nText.\n".toByteArray()
     private val sha = sha256Hex(text)
 
-    private fun required(languages: List<TermsLanguageInfo> = listOf(TermsLanguageInfo("en", sha, "terms/fundi/2026-11/en"))) =
+    private fun required(languages: List<TermsLanguageInfo> = listOf(TermsLanguageInfo("en", sha, "v1/terms/fundi/2026-11/en"))) =
         TermsInfo(required = true, version = "2026-11", languages = languages, transferAgreed = false)
 
     private class FakeApi(
