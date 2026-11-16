@@ -255,8 +255,17 @@ interface SessionDao {
     @Query("SELECT * FROM pieces WHERE studioPendingAt IS NOT NULL ORDER BY studioPendingAt")
     suspend fun unsyncedPieceStudios(): List<PieceEntity>
 
-    /** Pieces with a name or a studio change the server has not had, for "Not sent yet". */
-    @Query("SELECT id FROM pieces WHERE labelSyncedAt IS NULL OR studioPendingAt IS NOT NULL")
+    /**
+     * Pieces with a name, a studio change, or an assessment's "who worked on this" the server
+     * has not had, for "Not sent yet". A worker set waits while its assessment's opening turn
+     * is unsent, and the sync reports it as not finished, so its piece carries the tag too.
+     * A first assessment's piece is its own session id.
+     */
+    @Query(
+        "SELECT id FROM pieces WHERE labelSyncedAt IS NULL OR studioPendingAt IS NOT NULL " +
+            "UNION SELECT COALESCE(s.pieceId, s.id) FROM sessions s " +
+            "JOIN pending_session_workers p ON p.sessionId = s.id"
+    )
     fun observeUnsentPieceIds(): Flow<List<String>>
 
     /** Marks the change sent, unless another was made while it was in flight. */
