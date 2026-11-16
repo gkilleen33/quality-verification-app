@@ -1,7 +1,9 @@
 package com.qualityverifier.server
 
 import io.ktor.http.HttpStatusCode
+import io.ktor.http.decodeURLPart
 import io.ktor.serialization.kotlinx.json.json
+import java.sql.SQLException
 import io.ktor.server.application.Application
 import io.ktor.server.application.install
 import com.qualityverifier.server.blobs.BlobSweeper
@@ -304,6 +306,17 @@ internal const val MPESA_PATH_PREFIX = "/v1/fundi/mpesa"
 /** Every PesaLog route starts with this, and is logged as the M-Pesa routes are. */
 internal const val TRACKER_PATH_PREFIX = "/v1/tracker"
 
+/**
+ * Whether [path] reaches an M-Pesa or PesaLog route, whose bodies and database rows carry
+ * people's money and must not reach a log. Decoded first, since the router decodes before
+ * it matches ("/v1/%74racker/..." is a PesaLog route); one that will not decode is treated
+ * as one of them.
+ */
+internal fun carriesMoneyRecords(path: String): Boolean {
+    val decoded = runCatching { path.decodeURLPart() }.getOrNull() ?: return true
+    return decoded.startsWith(MPESA_PATH_PREFIX) || decoded.startsWith(TRACKER_PATH_PREFIX)
+}
+
 /** Bundled so the module signature does not grow a parameter per collaborator. */
 class Auth(val store: AuthStore, val accessTokens: AccessTokens)
 
@@ -334,7 +347,8 @@ class Terms(val gate: TermsGate, val consents: ConsentStore, val texts: TermsTex
                 MeTermsLanguage(
                     language = language.id,
                     sha256 = file.sha256,
-                    path = "terms/${app.id}/$version/${language.id}",
+                    // Under v1/: production nginx passes nothing else to the app (TermsRoutes).
+                    path = "v1/terms/${app.id}/$version/${language.id}",
                 )
             }
         },
@@ -482,7 +496,7 @@ fun Application.module(
             // upload holds counterparties' numbers and names, which must never reach a log.
             // So those paths log only the kind of failure.
             val path = call.request.path()
-            if (path.startsWith(MPESA_PATH_PREFIX) || path.startsWith(TRACKER_PATH_PREFIX)) {
+            if (carriesMoneyRecords(path)) {
                 log.warn("Unreadable request on {}: {}", path, cause.javaClass.simpleName)
             } else {
                 log.warn("Unreadable request on {}: {}", path, cause.message)
@@ -495,7 +509,16 @@ fun Application.module(
         exception<SerializationException> { call, cause -> badRequest(call, cause) }
 
         exception<Throwable> { call, cause ->
-            log.error("Unhandled failure on {}", call.request.path(), cause)
+            val path = call.request.path()
+            if (carriesMoneyRecords(path)) {
+                // A database error's message quotes the statement's values or the row it
+                // refused: amounts, codes, comments. The kind and the SQL state say what
+                // broke without them.
+                val state = (cause as? SQLException)?.sqlState?.let { " (SQL state $it)" }.orEmpty()
+                log.error("Unhandled failure on {}: {}{}", path, cause.javaClass.name, state)
+            } else {
+                log.error("Unhandled failure on {}", path, cause)
+            }
             // The message stays server-side. A stack trace on the wire tells an
             // attacker about the stack and tells the customer nothing.
             call.respond(HttpStatusCode.InternalServerError, mapOf("error" to "internal_error"))

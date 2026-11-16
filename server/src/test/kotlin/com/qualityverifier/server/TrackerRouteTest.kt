@@ -15,6 +15,8 @@ import com.qualityverifier.server.db.UserRow
 import com.qualityverifier.server.mpesa.CounterpartyCoder
 import com.qualityverifier.server.terms.ConsentAction
 import com.qualityverifier.server.terms.ConsentKind
+import com.qualityverifier.server.terms.TermsGate
+import com.qualityverifier.server.terms.TermsTexts
 import com.qualityverifier.server.tracker.TrackerAnnotation
 import com.qualityverifier.server.tracker.TrackerAnnotationOutcome
 import com.qualityverifier.server.tracker.TrackerDeletion
@@ -37,6 +39,7 @@ import io.ktor.http.HttpStatusCode
 import io.ktor.http.contentType
 import io.ktor.server.testing.ApplicationTestBuilder
 import io.ktor.server.testing.testApplication
+import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.boolean
 import kotlinx.serialization.json.int
@@ -52,7 +55,11 @@ import org.junit.rules.TemporaryFolder
 import org.slf4j.LoggerFactory
 import java.time.LocalDate
 
-/** An in-memory set of V33's two data tables and its deletion record, with V33's rules where the routes rely on them. */
+/**
+ * An in-memory set of V33's two data tables and its deletion record, with V33's rules where
+ * the routes rely on them, and PostgresTrackerStore's check of the newest `tracker_send` row
+ * against [consents].
+ */
 class FakeTrackerStore : TrackerStore {
     data class Key(val userId: String, val network: MobileMoneyNetwork, val code: String)
 
@@ -60,9 +67,19 @@ class FakeTrackerStore : TrackerStore {
     val annotations = mutableMapOf<Key, TrackerAnnotation>()
     val unread = mutableMapOf<Triple<String, MobileMoneyNetwork, LocalDate>, TrackerUnreadDay>()
     val deletions = mutableListOf<Pair<String, TrackerDeletion>>()
+    var consents: FakeConsentStore? = null
 
-    override suspend fun insertTransactions(userId: String, rows: List<TrackerTransactionRow>): Int =
-        rows.count { transactions.putIfAbsent(Key(userId, it.network, it.code), it) == null }
+    /** Thrown by the next insert, to stand in for a database error. */
+    var failNextInsert: Exception? = null
+
+    private suspend fun sendingAgreed(userId: String): Boolean =
+        consents?.current(userId)?.get(ConsentKind.TRACKER_SEND)?.action == ConsentAction.AGREED
+
+    override suspend fun insertTransactions(userId: String, rows: List<TrackerTransactionRow>): Int {
+        failNextInsert?.let { failNextInsert = null; throw it }
+        if (!sendingAgreed(userId)) return 0
+        return rows.count { transactions.putIfAbsent(Key(userId, it.network, it.code), it) == null }
+    }
 
     override suspend fun annotate(
         userId: String,
@@ -78,15 +95,17 @@ class FakeTrackerStore : TrackerStore {
     }
 
     override suspend fun saveUnread(userId: String, days: List<TrackerUnreadDay>) {
+        if (!sendingAgreed(userId)) return
         days.forEach { unread[Triple(userId, it.network, it.day)] = it }
     }
 
-    override suspend fun deleteAll(userId: String, appVersion: Int?): TrackerDeletion {
+    override suspend fun deleteAll(userId: String, audience: Audience, appVersion: Int): TrackerDeletion {
+        val withdrawn = consents?.withdraw(userId, audience, ConsentKind.TRACKER_SEND, appVersion) == true
         val gone = transactions.keys.filter { it.userId == userId }
         val days = unread.keys.filter { it.first == userId }
         gone.forEach { transactions.remove(it); annotations.remove(it) }
         days.forEach { unread.remove(it) }
-        return TrackerDeletion(gone.size, days.size).also { deletions += userId to it }
+        return TrackerDeletion(gone.size, days.size, withdrawn).also { deletions += userId to it }
     }
 }
 
@@ -110,9 +129,15 @@ class TrackerRouteTest {
     ) = builder.mount(
         folder.newFolder(),
         mpesa = Mpesa(mpesaStore, coder),
-        tracker = Tracker(store, if (withCoder) coder else null),
+        tracker = Tracker(store.also { it.consents = consents }, if (withCoder) coder else null),
         appVersions = appVersions,
     )
+
+    private suspend fun HttpClient.deleteRecords(world: TermsWorld): HttpResponse =
+        delete("/v1/tracker/records") {
+            signedInAs(world.fundi)
+            appVersion(1)
+        }
 
     private suspend fun HttpClient.agreeToTrackerTerms(world: TermsWorld, user: UserRow = world.fundi, sha: String? = null) =
         post("/v1/me/consents") {
@@ -525,22 +550,66 @@ class TrackerRouteTest {
         store.transactions[FakeTrackerStore.Key("someone-else", MobileMoneyNetwork.MPESA, "SKA1B2C3D9")] =
             store.transactions.values.first()
         client.withdraw(world, "tracker_read")
-        val consentsBefore = world.consents.rows.size
+        val consentsBefore = world.consents.rows.toList()
 
-        val response = client.delete("/v1/tracker/records") {
-            signedInAs(world.fundi)
-            appVersion(1)
-        }
+        val response = client.deleteRecords(world)
 
         assertEquals(HttpStatusCode.OK, response.status)
         val body = Json.parseToJsonElement(response.bodyAsText()).jsonObject
         assertEquals(2, body["transactions_deleted"]!!.jsonPrimitive.int)
         assertEquals(1, body["unread_days_deleted"]!!.jsonPrimitive.int)
+        assertFalse(body["sending_withdrawn"]!!.jsonPrimitive.boolean)
         assertTrue(store.transactions.keys.none { it.userId == world.fundi.id })
         assertEquals(1, store.transactions.size)
         assertTrue(store.unread.isEmpty())
-        assertEquals(listOf(world.fundi.id to TrackerDeletion(2, 1)), store.deletions)
-        assertEquals(consentsBefore, world.consents.rows.size)
+        assertEquals(listOf(world.fundi.id to TrackerDeletion(2, 1, sendingWithdrawn = false)), store.deletions)
+        // Sending was already withdrawn with reading, so nothing more is written.
+        assertEquals(consentsBefore, world.consents.rows)
+    }
+
+    @Test
+    fun `deletion with sending on withdraws it, so the next upload cannot refill the server`() = testApplication {
+        val world = TermsWorld()
+        val client = world.mountTracker(this)
+        client.agreeToAll(world)
+        client.upload(world, transaction())
+        val consentsBefore = world.consents.rows.toList()
+
+        val body = Json.parseToJsonElement(client.deleteRecords(world).bodyAsText()).jsonObject
+
+        assertTrue(body["sending_withdrawn"]!!.jsonPrimitive.boolean)
+        // Every earlier row stands; the withdrawal is one new row after them.
+        assertEquals(consentsBefore, world.consents.rows.dropLast(1))
+        val added = world.consents.rows.last()
+        assertEquals(ConsentKind.TRACKER_SEND to ConsentAction.WITHDRAWN, added.kind to added.action)
+        assertEquals(HttpStatusCode.Forbidden, client.upload(world, transaction(code = "SKA1B2C3D5")).status)
+        assertTrue(store.transactions.isEmpty())
+    }
+
+    @Test
+    fun `an upload the route let through finds sending withdrawn by a deletion and stores nothing`() = testApplication {
+        val world = TermsWorld()
+        val client = world.mountTracker(this)
+        client.agreeToAll(world)
+        // The race the store's lock closes: the deletion's withdrawal lands between the route's
+        // check and the insert. Simulated by withdrawing behind the gate's cache, which the
+        // status call fills with "agreed".
+        assertEquals(HttpStatusCode.OK, client.status(world).status)
+        world.consents.withdraw(world.fundi.id, Audience.FUNDI, ConsentKind.TRACKER_SEND, 1)
+
+        val response = Json.parseToJsonElement(client.upload(world, transaction()).bodyAsText()).jsonObject
+
+        assertEquals(0, response["inserted"]!!.jsonPrimitive.int)
+        assertTrue(store.transactions.isEmpty())
+    }
+
+    @Test
+    fun `deletion needs the app version, for the withdrawal row`() = testApplication {
+        val world = TermsWorld()
+        val client = world.mountTracker(this)
+
+        assertEquals(HttpStatusCode.BadRequest, client.delete("/v1/tracker/records") { signedInAs(world.fundi) }.status)
+        assertTrue(store.deletions.isEmpty())
     }
 
     // ------------------------------------------------------------ status, mounting, logging
@@ -558,7 +627,7 @@ class TrackerRouteTest {
         assertEquals(TrackerConsentText.TERMS_VERSION, terms["version"]!!.jsonPrimitive.content)
         val english = terms["languages"]!!.jsonArray.single().jsonObject
         assertEquals(world.trackerSha, english["sha256"]!!.jsonPrimitive.content)
-        assertEquals("terms/tracker/${TrackerConsentText.TERMS_VERSION}/en", english["path"]!!.jsonPrimitive.content)
+        assertEquals("v1/terms/tracker/${TrackerConsentText.TERMS_VERSION}/en", english["path"]!!.jsonPrimitive.content)
 
         client.agreeToAll(world)
         val after = status()
@@ -569,11 +638,11 @@ class TrackerRouteTest {
     }
 
     @Test
-    fun `PesaLog's text is served at its own path`() = testApplication {
+    fun `PesaLog's text is served at the path status names`() = testApplication {
         val world = TermsWorld()
         val client = world.mountTracker(this)
 
-        val response = client.get("/terms/tracker/${TrackerConsentText.TERMS_VERSION}/en")
+        val response = client.get("/v1/terms/tracker/${TrackerConsentText.TERMS_VERSION}/en")
 
         assertEquals(HttpStatusCode.OK, response.status)
         assertEquals(String(world.trackerBytes), response.bodyAsText())
@@ -587,7 +656,56 @@ class TrackerRouteTest {
 
         assertEquals(HttpStatusCode.NotFound, client.upload(world, transaction()).status)
         assertEquals(HttpStatusCode.OK, client.status(world).status)
-        assertEquals(HttpStatusCode.OK, client.delete("/v1/tracker/records") { signedInAs(world.fundi) }.status)
+        assertEquals(HttpStatusCode.OK, client.deleteRecords(world).status)
+    }
+
+    @Test
+    fun `without PesaLog's text the gate refuses, and the health check says so`() = runBlocking {
+        val world = TermsWorld()
+        // A server whose jar lacks PesaLog's text: fails closed, unlike Fundi Bora's gate.
+        val bare = TermsGate(world.settings, world.consents, TermsTexts.NONE)
+
+        val status = bare.trackerStatusFor(world.fundi.id)
+
+        assertTrue(status.required)
+        assertTrue(status.refuses)
+        assertTrue(bare.missingTexts().contains("tracker ${TrackerConsentText.TERMS_VERSION}"))
+    }
+
+    @Test
+    fun `an escaped path never borrows PesaLog's exemption from Fundi Bora's gate`() {
+        assertTrue(TermsGate.isTracker("/v1/tracker/transactions/airtel/PP260909.1015.A12345"))
+        assertFalse(TermsGate.isTracker("/v1/tracker/../fundi/pieces"))
+        assertFalse(TermsGate.isTracker("/v1/tracker/%2E%2E/fundi/pieces"))
+        assertFalse(TermsGate.isTracker("/v1/fundi/pieces"))
+    }
+
+    @Test
+    fun `a database failure on a PesaLog route is logged without its message`() = testApplication {
+        val world = TermsWorld()
+        val client = world.mountTracker(this)
+        client.agreeToAll(world)
+        store.failNextInsert = java.sql.SQLException("Failing row contains (SKA1B2C3D4, 1500.00, Kamau 0712345678)", "23514")
+        val root = LoggerFactory.getLogger(org.slf4j.Logger.ROOT_LOGGER_NAME) as Logger
+        val events = ListAppender<ILoggingEvent>().apply { start() }
+        root.addAppender(events)
+        try {
+            assertEquals(HttpStatusCode.InternalServerError, client.upload(world, transaction()).status)
+        } finally {
+            root.detachAppender(events)
+        }
+        val logged = events.list.joinToString("\n") {
+            it.formattedMessage + (it.throwableProxy?.message ?: "") + (it.throwableProxy?.cause?.message ?: "")
+        }
+        assertTrue("expected the failure to be logged:\n$logged", logged.contains("23514"))
+        listOf("Kamau", "0712345678", "1500.00").forEach { assertFalse("$it reached the log:\n$logged", logged.contains(it)) }
+    }
+
+    @Test
+    fun `an escaped PesaLog path is still logged as one`() {
+        assertTrue(carriesMoneyRecords("/v1/%74racker/transactions"))
+        assertTrue(carriesMoneyRecords("/v1/fundi/mpesa/transactions"))
+        assertFalse(carriesMoneyRecords("/v1/fundi/pieces"))
     }
 
     @Test

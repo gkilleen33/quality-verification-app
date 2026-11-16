@@ -45,7 +45,7 @@ private val log = LoggerFactory.getLogger("com.qualityverifier.server.tracker")
  * status and deletion routes need only the account: status is how the phone learns what is
  * missing, and a person who has withdrawn everything must still be able to delete. The three
  * data routes also need a current agreement to PesaLog's terms, and a newest `tracker_send`
- * row that is an agreement.
+ * row that is an agreement, which the store checks again under its lock (TrackerStore).
  *
  * The data routes are mounted only with the HMAC key ([coder] not null), as the M-Pesa
  * routes are: without it a counterparty could only be stored in the clear, so they answer
@@ -68,16 +68,19 @@ fun Route.trackerRoutes(store: TrackerStore, coder: CounterpartyCoder?, auth: Au
             )
         }
 
-        // Deletion on request (Grady, 12 November 2026; terms section 8). Consents untouched.
+        // Deletion on request (Grady, 12 November 2026; terms section 8). Withdraws sending as
+        // well, in the same transaction (TrackerStore.deleteAll); every earlier consent row stays.
         delete("/v1/tracker/records") {
             val userId = call.trackerAccount(auth) ?: return@delete
-            val appVersion = AppVersionHeaders.parseVersion(call.request.headers[AppVersionHeaders.VERSION])
-            val deletion = store.deleteAll(userId, appVersion)
+            // Required, as for a consent: the withdrawal row records the build that made it.
+            val appVersion = call.trackerAppVersion() ?: return@delete
+            val deletion = store.deleteAll(userId, Audience.FUNDI, appVersion)
+            terms.gate.forget(userId)
             log.info(
-                "PesaLog records deleted on request for {}: {} transactions, {} unread days",
-                userId, deletion.transactions, deletion.unreadDays,
+                "PesaLog records deleted on request for {}: {} transactions, {} unread days, sending withdrawn {}",
+                userId, deletion.transactions, deletion.unreadDays, deletion.sendingWithdrawn,
             )
-            call.respond(TrackerDeletionResponse(deletion.transactions, deletion.unreadDays))
+            call.respond(TrackerDeletionResponse(deletion.transactions, deletion.unreadDays, deletion.sendingWithdrawn))
         }
 
         if (coder == null) return@authenticate

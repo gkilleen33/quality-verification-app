@@ -87,13 +87,12 @@ class TermsGate(
 
     /**
      * The version of PesaLog's terms an account must have agreed to, or null when the server
-     * holds no English text for it. Read as no terms, as [currentVersion] reads a missing
-     * Fundi Bora text, and reported by [missingTexts].
+     * holds no English text for it, which [missingTexts] reports.
      */
     fun currentTrackerVersion(): String? {
         val version = TrackerConsentText.TERMS_VERSION
         if (texts.file(TermsApp.TRACKER, version, TermsLanguage.ENGLISH) == null) {
-            log.error("PesaLog's terms {} have no English text; reading them as no terms", version)
+            log.error("PesaLog's terms {} have no English text; PesaLog's routes refuse until it is published", version)
             return null
         }
         return version
@@ -105,10 +104,20 @@ class TermsGate(
      * [TermsStatus.refuses] equals it. Fundi Bora's gate never reads this, and Fundi Bora's
      * terms are never asked of a PesaLog route (TermsGatePlugin), so a person who uses only
      * PesaLog is governed by PesaLog's terms alone.
+     *
+     * **Missing text refuses**, unlike [statusFor]. Fundi Bora's gate reads a missing text as
+     * no terms so that a typo in a setting cannot lock every phone out of assessments; PesaLog's
+     * version is a constant beside its text, so a missing text is a broken build, and nothing
+     * PesaLog sends is worth taking without its terms.
      */
     suspend fun trackerStatusFor(userId: String): TermsStatus {
         val version = currentTrackerVersion()
-            ?: return TermsStatus(version = null, required = false, transferAgreed = false, refuses = false)
+            ?: return TermsStatus(
+                version = null,
+                required = true,
+                transferAgreed = agreed(userId, ConsentKind.TRACKER_TRANSFER),
+                refuses = true,
+            )
         val required = !agreedToAll(userId, ConsentKind.TRACKER_TERMS_SCREEN, version)
         return TermsStatus(
             version = version,
@@ -202,9 +211,13 @@ class TermsGate(
          */
         const val TRACKER_PREFIX = "/v1/tracker/"
 
-        /** No dot segments, so "/v1/tracker/../fundi/..." can never borrow the exemption. */
+        /**
+         * No dot segments and no percent-escapes, so neither "/v1/tracker/../fundi/..." nor
+         * "/v1/tracker/%2E%2E/fundi/..." can borrow the exemption. No PesaLog path needs
+         * either: networks are letters and codes are letters, digits, dots and hyphens.
+         */
         fun isTracker(path: String): Boolean =
-            path.startsWith(TRACKER_PREFIX) && path.split('/').none { it == ".." || it == "." }
+            path.startsWith(TRACKER_PREFIX) && '%' !in path && path.split('/').none { it == ".." || it == "." }
     }
 }
 

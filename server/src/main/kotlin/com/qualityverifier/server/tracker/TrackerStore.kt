@@ -1,5 +1,6 @@
 package com.qualityverifier.server.tracker
 
+import com.qualityverifier.domain.Audience
 import com.qualityverifier.domain.MobileMoneyNetwork
 import com.qualityverifier.domain.MpesaCategory
 import com.qualityverifier.domain.MpesaDirection
@@ -55,17 +56,28 @@ data class TrackerUnreadDay(
     val appVersion: Int,
 )
 
-/** How many rows a deletion removed, which is all `tracker_deletions` keeps of them. */
-data class TrackerDeletion(val transactions: Int, val unreadDays: Int)
+/**
+ * How many rows a deletion removed, which is all `tracker_deletions` keeps of them, and
+ * whether it withdrew the agreement to send.
+ */
+data class TrackerDeletion(val transactions: Int, val unreadDays: Int, val sendingWithdrawn: Boolean = false)
 
 /**
  * PesaLog's records. An interface for the same reason as MpesaStore: the rules worth testing
  * live in the routes, and stating them needs a fake.
+ *
+ * **Deletion and uploads never interleave.** Each write below takes a transaction-scoped
+ * advisory lock on the account first, and each upload checks, under that lock, that the
+ * account's newest `tracker_send` row is still an agreement. A deletion withdraws that
+ * agreement under the same lock. So an upload the route let through a moment before the
+ * deletion either lands before it, and is deleted, or finds sending withdrawn, and stores
+ * nothing; it never lands after the deletion and survives it.
  */
 interface TrackerStore {
     /**
      * Inserts each transaction the account does not hold yet, by network and code. One
-     * already held is left as it is, annotations included. Returns how many rows were new.
+     * already held is left as it is, annotations included. Stores nothing once the newest
+     * `tracker_send` row is not an agreement. Returns how many rows were new.
      */
     suspend fun insertTransactions(userId: String, rows: List<TrackerTransactionRow>): Int
 
@@ -77,15 +89,17 @@ interface TrackerStore {
         annotation: TrackerAnnotation,
     ): TrackerAnnotationOutcome
 
-    /** Replaces each network and day's count with the phone's. */
+    /** Replaces each network and day's count with the phone's. Nothing once sending is withdrawn. */
     suspend fun saveUnread(userId: String, days: List<TrackerUnreadDay>)
 
     /**
-     * Deletes every transaction and unread count the account holds, and records in
-     * `tracker_deletions` that it happened and how many rows went, in one transaction.
-     * Consent rows are not touched.
+     * Deletes every transaction and unread count the account holds, withdraws the agreement
+     * to send if it stands, and records in `tracker_deletions` that the deletion happened and
+     * how many rows went, all in one transaction. Without the withdrawal, the next upload
+     * would start refilling what the person just asked to have deleted. No consent row is
+     * changed or removed; the withdrawal is a new one, as in Settings.
      */
-    suspend fun deleteAll(userId: String, appVersion: Int?): TrackerDeletion
+    suspend fun deleteAll(userId: String, audience: Audience, appVersion: Int): TrackerDeletion
 }
 
 class PostgresTrackerStore(private val dataSource: DataSource) : TrackerStore {
@@ -107,6 +121,8 @@ class PostgresTrackerStore(private val dataSource: DataSource) : TrackerStore {
     }
 
     override suspend fun insertTransactions(userId: String, rows: List<TrackerTransactionRow>): Int = tx { connection ->
+        connection.lockAccount(userId)
+        if (!connection.sendingAgreed(userId)) return@tx 0
         connection.prepareStatement(
             """
             insert into tracker_transactions (
@@ -175,6 +191,8 @@ class PostgresTrackerStore(private val dataSource: DataSource) : TrackerStore {
     }
 
     override suspend fun saveUnread(userId: String, days: List<TrackerUnreadDay>): Unit = tx { connection ->
+        connection.lockAccount(userId)
+        if (!connection.sendingAgreed(userId)) return@tx
         connection.prepareStatement(
             """
             insert into tracker_unread_counts (user_id, network, day, unread, parser_version, app_version)
@@ -200,7 +218,24 @@ class PostgresTrackerStore(private val dataSource: DataSource) : TrackerStore {
         Unit
     }
 
-    override suspend fun deleteAll(userId: String, appVersion: Int?): TrackerDeletion = tx { connection ->
+    override suspend fun deleteAll(userId: String, audience: Audience, appVersion: Int): TrackerDeletion = tx { connection ->
+        connection.lockAccount(userId)
+        // ConsentStore.withdraw's statement, here so it shares this transaction and lock.
+        val withdrawn = connection.prepareStatement(
+            """
+            insert into consents (user_id, kind, action, audience, app_version)
+            select ?::uuid, 'tracker_send', 'withdrawn', ?, ?
+             where (select action from consents
+                     where user_id = ?::uuid and kind = 'tracker_send'
+                     order by id desc limit 1) = 'agreed'
+            """.trimIndent()
+        ).use { statement ->
+            statement.setString(1, userId)
+            statement.setString(2, audience.id)
+            statement.setInt(3, appVersion)
+            statement.setString(4, userId)
+            statement.executeUpdate() > 0
+        }
         fun delete(table: String): Int =
             connection.prepareStatement("delete from $table where user_id = ?::uuid").use { statement ->
                 statement.setString(1, userId)
@@ -209,6 +244,7 @@ class PostgresTrackerStore(private val dataSource: DataSource) : TrackerStore {
         val deletion = TrackerDeletion(
             transactions = delete("tracker_transactions"),
             unreadDays = delete("tracker_unread_counts"),
+            sendingWithdrawn = withdrawn,
         )
         connection.prepareStatement(
             """
@@ -219,12 +255,29 @@ class PostgresTrackerStore(private val dataSource: DataSource) : TrackerStore {
             statement.setString(1, userId)
             statement.setInt(2, deletion.transactions)
             statement.setInt(3, deletion.unreadDays)
-            if (appVersion == null) statement.setNull(4, Types.INTEGER) else statement.setInt(4, appVersion)
+            statement.setInt(4, appVersion)
             statement.executeUpdate()
         }
         deletion
     }
 }
+
+/** Serialises this account's PesaLog writes until the transaction ends (see [TrackerStore]). */
+private fun Connection.lockAccount(userId: String) {
+    prepareStatement("select pg_advisory_xact_lock(hashtextextended(?, 0))").use { statement ->
+        statement.setString(1, "tracker:$userId")
+        statement.executeQuery().close()
+    }
+}
+
+/** Whether the account's newest `tracker_send` row is an agreement, read under [lockAccount]. */
+private fun Connection.sendingAgreed(userId: String): Boolean =
+    prepareStatement(
+        "select action from consents where user_id = ?::uuid and kind = 'tracker_send' order by id desc limit 1"
+    ).use { statement ->
+        statement.setString(1, userId)
+        statement.executeQuery().use { rows -> rows.next() && rows.getString(1) == "agreed" }
+    }
 
 private fun PreparedStatement.setNullableDecimal(index: Int, value: BigDecimal?) {
     if (value == null) setNull(index, Types.NUMERIC) else setBigDecimal(index, value)

@@ -89,4 +89,6 @@ data class TrackerUnreadDayDto(
 data class TrackerDeletionResponse(
     @SerialName("transactions_deleted") val transactionsDeleted: Int,
     @SerialName("unread_days_deleted") val unreadDaysDeleted: Int,
+    /** True when the deletion also withdrew the agreement to send, which was standing. */
+    @SerialName("sending_withdrawn") val sendingWithdrawn: Boolean,
 )
