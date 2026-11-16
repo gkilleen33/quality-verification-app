@@ -77,6 +77,8 @@ fun SendReportScreen(
      * (row 27): the piece, its kind, whether it is this account's own, and its name.
      */
     onAssessFinal: (pieceId: String, itemType: com.qualityverifier.domain.ItemType, pieceMine: Boolean, label: String?) -> Unit = { _, _, _, _ -> },
+    /** What is known of a linked worker's piece opened from the worker's page; null from the pieces list. */
+    hint: SendReportViewModel.PieceHint? = null,
 ) {
     val context = LocalContext.current
     val container = fundiContainer()
@@ -85,7 +87,7 @@ fun SendReportScreen(
     val appContext = context.applicationContext
     val model: SendReportViewModel = viewModel(
         key = "report-${target.id}",
-        factory = SendReportViewModel.factory(container, target) { ReportFiles.newFile(appContext, target.id) },
+        factory = SendReportViewModel.factory(container, target, hint) { ReportFiles.newFile(appContext, target.id) },
     )
     val step by model.step.collectAsState()
     val toShare by model.share.collectAsState()

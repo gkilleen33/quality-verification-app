@@ -191,11 +191,14 @@ class ReportService(
     /**
      * The assessments of [piece] that [userId] may read (Nathan, 16 November 2026): its
      * own, and, for the account that runs the studio the piece is labelled for, the
-     * maker's as well. The maker never reads the manager's assessments of their piece, so
-     * nothing the maker asks for, a report or its preview, ever carries one.
+     * maker's as well, except those the maker deleted from their phone, which the worker
+     * page does not show either. The maker never reads the manager's assessments of their
+     * piece, so nothing the maker asks for, a report or its preview, ever carries one.
      */
     private fun readable(userId: String, piece: ReportPiece, sessions: List<ReportSession>): List<ReportSession> =
-        sessions.filter { it.userId == userId || (piece.userId != userId && it.userId == piece.userId) }
+        sessions.filter {
+            it.userId == userId || (piece.userId != userId && it.userId == piece.userId && !it.clientDeleted)
+        }
 
     /**
      * Every piece a worker-work report on roster entry [workerId] covers, each once, with
@@ -280,8 +283,12 @@ class ReportService(
         var previous: ReportAssessment? = null
         if (kind.coversOneAssessment) {
             // Only the assessments the phone lists: a client-deleted one cannot be chosen
-            // and does not count as the first, latest or previous.
-            val listed = assessments.filter { it.listed }
+            // and does not count as the first, latest or previous. And only the caller's
+            // own: these kinds print the names recorded on the assessment, and on a
+            // worker's assessment those are the worker's roster and "Me", which would print
+            // the manager's name for the worker's own work. The customer report is the one
+            // that spans the worker's assessments, and it prints no name.
+            val listed = assessments.filter { it.listed && it.userId == userId }
             chosen = when (val id = request.sessionId) {
                 null -> listed.lastOrNull() ?: return Prepared.Invalid("no_assessment", "this piece has no assessment to report on")
                 else -> listed.firstOrNull { it.sessionId == id } ?: return Prepared.NoSuchSession

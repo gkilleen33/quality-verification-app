@@ -587,15 +587,8 @@ class PostgresFundiStore(private val dataSource: DataSource) : FundiStore {
             } ?: return@tx PieceStudioChange.NoSuchPiece
             val (oldEntry, chosen) = current
 
-            if (studioEntryId != null) {
-                val ours = connection.prepareStatement(
-                    "select 1 from worker_studios where id = ?::uuid and user_id = ?::uuid"
-                ).use { statement ->
-                    statement.setString(1, studioEntryId)
-                    statement.setString(2, userId)
-                    statement.executeQuery().use { it.next() }
-                }
-                if (!ours) return@tx PieceStudioChange.NotYourStudio
+            if (studioEntryId != null && !ownsLiveStudioEntry(connection, userId, studioEntryId)) {
+                return@tx PieceStudioChange.NotYourStudio
             }
             if (chosen && oldEntry == studioEntryId) return@tx PieceStudioChange.Unchanged
 
@@ -636,6 +629,19 @@ class PostgresFundiStore(private val dataSource: DataSource) : FundiStore {
             PieceStudioChange.Changed
         }
 
+    /**
+     * Whether [entryId] is a live entry of [userId]'s own list (V31). An archived one is a
+     * studio they no longer work for: no label and no day's answer may name it.
+     */
+    private fun ownsLiveStudioEntry(connection: Connection, userId: String, entryId: String): Boolean =
+        connection.prepareStatement(
+            "select 1 from worker_studios where id = ?::uuid and user_id = ?::uuid and archived_at is null"
+        ).use { statement ->
+            statement.setString(1, entryId)
+            statement.setString(2, userId)
+            statement.executeQuery().use { it.next() }
+        }
+
     override suspend fun studioToday(userId: String): StudioDay? = tx { connection ->
         connection.prepareStatement(
             """
@@ -652,15 +658,8 @@ class PostgresFundiStore(private val dataSource: DataSource) : FundiStore {
 
     override suspend fun answerStudioToday(userId: String, studioEntryId: String?): StudioDayAnswer =
         tx { connection ->
-            if (studioEntryId != null) {
-                val ours = connection.prepareStatement(
-                    "select 1 from worker_studios where id = ?::uuid and user_id = ?::uuid"
-                ).use { statement ->
-                    statement.setString(1, studioEntryId)
-                    statement.setString(2, userId)
-                    statement.executeQuery().use { it.next() }
-                }
-                if (!ours) return@tx StudioDayAnswer.NotYourStudio
+            if (studioEntryId != null && !ownsLiveStudioEntry(connection, userId, studioEntryId)) {
+                return@tx StudioDayAnswer.NotYourStudio
             }
             // The Nairobi day, as the daily allowance counts it. The first answer stands: a
             // phone that resends after a lost response must not move the day's answer.

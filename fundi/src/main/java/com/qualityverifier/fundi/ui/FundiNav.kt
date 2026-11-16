@@ -35,6 +35,7 @@ import com.qualityverifier.domain.ItemType
 import com.qualityverifier.domain.UpdatePrompt
 import com.qualityverifier.data.reports.ReportTarget
 import com.qualityverifier.fundi.reports.SendReportScreen
+import com.qualityverifier.fundi.reports.SendReportViewModel
 import com.qualityverifier.fundi.ui.assess.AssessScreen
 import com.qualityverifier.fundi.ui.home.HomeScreen
 import com.qualityverifier.fundi.ui.mpesa.FinancesScreen
@@ -81,13 +82,21 @@ private object Routes {
     /** "Studios I work for" (V31), the other side of the roster, from Home. */
     const val STUDIOS = "studios"
     const val SETTINGS = "settings"
-    /** "Send report" on a piece (plan v7 §5.4): who for, the preview, the download, the share sheet. */
-    const val SEND_REPORT = "pieces/{pieceId}/report"
+    /**
+     * "Send report" on a piece (plan v7 §5.4): who for, the preview, the download, the share
+     * sheet. From the worker's page, [itemType], [theirs] and [label] describe a linked
+     * worker's piece this phone may hold no assessment of (row 11).
+     */
+    const val SEND_REPORT = "pieces/{pieceId}/report?itemType={itemType}&theirs={theirs}&label={label}"
     /** "Send report" on a linked worker's page: the report of their work across pieces. */
     const val WORKER_REPORT = "workers/{workerId}/report"
 
     fun workerPage(workerId: String) = "workers/$workerId"
     fun sendReport(pieceId: String) = "pieces/$pieceId/report"
+
+    /** A linked worker's piece, from the worker's page. */
+    fun sendReportOnTheirs(pieceId: String, itemTypeId: String, label: String?) =
+        "pieces/$pieceId/report?itemType=$itemTypeId&theirs=true&label=${Uri.encode(label.orEmpty())}"
     fun workerReport(workerId: String) = "workers/$workerId/report"
     /**
      * [final] marks the final assessment before a customer report (row 27); [theirs] a
@@ -463,10 +472,23 @@ fun FundiNav() {
 
         composable(
             Routes.SEND_REPORT,
-            arguments = listOf(navArgument("pieceId") { type = NavType.StringType }),
+            arguments = listOf(
+                navArgument("pieceId") { type = NavType.StringType },
+                navArgument("itemType") { type = NavType.StringType; nullable = true },
+                navArgument("theirs") { type = NavType.BoolType; defaultValue = false },
+                navArgument("label") { type = NavType.StringType; nullable = true },
+            ),
         ) { entry ->
+            val args = entry.arguments
             SendReportScreen(
-                target = ReportTarget.Piece(entry.arguments?.getString("pieceId").orEmpty()),
+                target = ReportTarget.Piece(args?.getString("pieceId").orEmpty()),
+                hint = args?.getString("itemType")?.let(ItemType::fromId)?.let { itemType ->
+                    SendReportViewModel.PieceHint(
+                        itemType = itemType,
+                        mine = !(args.getBoolean("theirs")),
+                        label = args.getString("label")?.takeIf { it.isNotBlank() },
+                    )
+                },
                 onBack = { navController.popBackStack() },
                 // The final assessment a customer report needs (row 27): a new session on the
                 // same piece, as any re-assessment is. Done, it comes back here.
@@ -525,8 +547,11 @@ fun FundiNav() {
                     )
                 },
                 // "Send report" on the worker's piece: the manager's reports on it, the
-                // customer's among them.
-                onSendPieceReport = { pieceId -> navController.navigate(Routes.sendReport(pieceId)) },
+                // customer's among them. Its kind and name go with it, since this phone may
+                // hold no assessment of it yet.
+                onSendPieceReport = { piece ->
+                    navController.navigate(Routes.sendReportOnTheirs(piece.id, piece.itemTypeId, piece.label))
+                },
             )
         }
 
