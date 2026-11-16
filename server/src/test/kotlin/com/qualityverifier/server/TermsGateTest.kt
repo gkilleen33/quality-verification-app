@@ -123,6 +123,22 @@ class TermsGateTest {
     }
 
     @Test
+    fun `with the gate on, an account that has not agreed can still read the terms text`() = testApplication {
+        // A phone must be able to load the terms it is asked to agree to. The text route
+        // sits outside sign-in, so the gate never sees it, even when a phone sends its token.
+        // On 16 November 2026 production phones could not load a new version (nginx did not
+        // pass the old path), and every fundi was locked out; this keeps the route reachable
+        // if it is ever moved behind sign-in.
+        val world = TermsWorld().apply { switchGate(Audience.FUNDI, on = true) }
+        val client = with(world) { mount(folder.newFolder()) }
+
+        val response = client.hit(HttpMethod.Get, "/v1/terms/fundi/2026-11/en", world.fundi)
+
+        assertEquals(HttpStatusCode.OK, response.status)
+        assertEquals(String(world.englishBytes), response.bodyAsText())
+    }
+
+    @Test
     fun `after agreeing, the refused routes answer`() = testApplication {
         val world = TermsWorld().apply { switchGate(Audience.FUNDI, on = true) }
         val client = with(world) { mount(folder.newFolder()) }
