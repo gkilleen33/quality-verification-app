@@ -52,6 +52,7 @@ import com.qualityverifier.fundi.ui.terms.TermsMode
 import com.qualityverifier.fundi.ui.terms.TermsRules
 import com.qualityverifier.fundi.ui.terms.TermsScreen
 import com.qualityverifier.fundi.ui.terms.TermsStep
+import com.qualityverifier.fundi.ui.setup.BenchScreen
 import com.qualityverifier.fundi.ui.setup.GoalsScreen
 import com.qualityverifier.fundi.ui.setup.SetupViewModel
 import com.qualityverifier.fundi.ui.setup.ToolsScreen
@@ -73,6 +74,8 @@ private object Routes {
     const val REGISTER_PASSWORD = "register/password"
     const val TERMS = "terms/{mode}"
     const val SETUP_WORKSHOP = "setup/workshop"
+    /** The bench photo (v0.6.0, row 5), before the typed tool list. */
+    const val SETUP_BENCH = "setup/bench"
     const val SETUP_TOOLS = "setup/tools"
     const val SETUP_GOALS = "setup/goals"
     const val HOME = "home"
@@ -313,7 +316,7 @@ fun FundiNav() {
                 // it is a setting on this phone, not part of what the server is sent, and
                 // a maker who answers and then skips setup has still answered.
                 assessLocation = container.locationPreference,
-                onNext = { navController.navigate(Routes.SETUP_TOOLS) },
+                onNext = { navController.navigate(Routes.SETUP_BENCH) },
                 // Skipping lands on home with no profile at all. The coaching then runs
                 // tool-blind, which is worse advice but not broken advice, and setup can
                 // be finished later.
@@ -322,6 +325,30 @@ fun FundiNav() {
                         popUpTo(Routes.SETUP_WORKSHOP) { inclusive = true }
                     }
                 },
+            )
+        }
+
+        // The bench photo, skippable: the typed list after it works as before, prefilled with
+        // whatever the fundi confirmed here.
+        composable(Routes.SETUP_BENCH) { entry ->
+            val model = sharedSetupViewModel(navController, entry)
+            val step by model.benchStep.collectAsState()
+            BenchScreen(
+                labels = labels,
+                step = step,
+                newFile = model::newBenchFile,
+                onPhoto = model::onBenchPhoto,
+                onConfirm = model::confirmTool,
+                onOwner = model::chooseOwner,
+                onRetry = model::retryBench,
+                onSkip = model::skipBench,
+                onDone = {
+                    navController.navigate(Routes.SETUP_TOOLS) {
+                        // Back from the tools comes to the workshop, not to a finished draft.
+                        popUpTo(Routes.SETUP_BENCH) { inclusive = true }
+                    }
+                },
+                onBack = { navController.popBackStack() },
             )
         }
 

@@ -5,9 +5,14 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
+import com.qualityverifier.data.db.SessionImageStore
+import com.qualityverifier.data.fundi.BenchApi
+import com.qualityverifier.data.fundi.BenchOutcome
 import com.qualityverifier.data.fundi.FundiProfiles
 import com.qualityverifier.data.fundi.ProfileOutcome
+import com.qualityverifier.data.location.LocationSource
 import com.qualityverifier.di.AppContainer
+import com.qualityverifier.domain.BenchTool
 import com.qualityverifier.domain.FundiGoal
 import com.qualityverifier.domain.FundiProfile
 import com.qualityverifier.domain.LocationFix
@@ -15,10 +20,15 @@ import com.qualityverifier.domain.OwnedTool
 import com.qualityverifier.domain.ToolKind
 import com.qualityverifier.domain.ToolOwnership
 import com.qualityverifier.domain.Workshop
+import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import java.io.File
+import java.util.UUID
 
 /**
  * The maker's setup answers, held while they work through the three screens.
@@ -32,7 +42,103 @@ class SetupViewModel(
     private val profiles: FundiProfiles,
     /** One GPS fix, now — `LocationCapture.captureNow`. Null when none arrived. */
     private val locate: suspend () -> LocationFix? = { null },
+    /** The bench photo's draft (v0.6.0, row 5). Null in tests that never photograph a bench. */
+    private val bench: BenchApi? = null,
+    /** Where the bench photo is written and processed, as an assessment's photos are. */
+    private val images: SessionImageStore? = null,
+    /**
+     * The bench photo's GPS point, only when the fundi allows location: the same switch,
+     * answer and permission an assessment's point needs (`LocationSource.isAvailable`).
+     */
+    private val benchLocation: LocationSource = LocationSource.None,
+    private val io: CoroutineDispatcher = Dispatchers.IO,
 ) : ViewModel() {
+
+    /**
+     * The bench photo at setup (v0.6.0, release scope row 5; design of 3 and 4 November
+     * 2026): before the typed list, one photo of the bench, from which Claude drafts the
+     * tools; then each drafted tool is put to the fundi, and only one they confirm and say
+     * who owns is set. Nothing is set from the draft alone, and nothing reaches the server
+     * until the profile is saved at the end of setup, as a typed answer does.
+     */
+    sealed interface Bench {
+        /** The offer: take a photo, or skip to the typed list. */
+        data object Intro : Bench
+        /** The photo is being processed, sent, and read. */
+        data object Sending : Bench
+        /** Is [BenchTool] number [index] of [draft] on the bench? Then, once yes, who owns it. */
+        data class Confirm(val draft: List<BenchTool>, val index: Int, val askingOwner: Boolean) : Bench
+        /** Every drafted tool answered, or skipped: on to the typed list, prefilled. */
+        data object Done : Bench
+        data class Failed(val reason: Reason) : Bench
+
+        enum class Reason { LIMIT, UNAVAILABLE, UNREADABLE }
+    }
+
+    private val _bench = MutableStateFlow<Bench>(Bench.Intro)
+    val benchStep: StateFlow<Bench> = _bench.asStateFlow()
+
+    /** The photo being sent, and its id, kept so a retry is the same photo to the server. */
+    private var benchPhoto: Pair<String, File>? = null
+
+    /** Where the camera writes the bench photo. Null when it cannot be made. */
+    fun newBenchFile(): File? = runCatching { images?.newImageFile(BENCH_FOLDER) }.getOrNull()
+
+    /** The camera has written the photo: process it as an assessment's, then ask for the draft. */
+    fun onBenchPhoto(file: File) {
+        benchPhoto = UUID.randomUUID().toString() to file
+        sendBench()
+    }
+
+    /** Sends the photo again after a failure that a retry can clear. */
+    fun retryBench() = sendBench()
+
+    private fun sendBench() {
+        val (photoId, file) = benchPhoto ?: return
+        val api = bench ?: return
+        _bench.value = Bench.Sending
+        viewModelScope.launch {
+            val ready = withContext(io) { file.length() > 0 && images?.normaliseInPlace(file) != false }
+            if (!ready) {
+                _bench.value = Bench.Failed(Bench.Reason.UNREADABLE)
+                return@launch
+            }
+            val fix = if (benchLocation.isAvailable) runCatching { benchLocation.capture() }.getOrNull() else null
+            _bench.value = when (val outcome = runCatching { api.draft(photoId, file, fix) }.getOrDefault(BenchOutcome.Unavailable)) {
+                is BenchOutcome.Drafted ->
+                    if (outcome.draft.tools.isEmpty()) Bench.Done
+                    else Bench.Confirm(outcome.draft.tools, index = 0, askingOwner = false)
+                BenchOutcome.LimitReached -> Bench.Failed(Bench.Reason.LIMIT)
+                BenchOutcome.Unavailable -> Bench.Failed(Bench.Reason.UNAVAILABLE)
+                BenchOutcome.Refused -> Bench.Failed(Bench.Reason.UNREADABLE)
+            }
+        }
+    }
+
+    /** "Is this on your bench?" A yes asks who owns it; a no leaves the tool unset and moves on. */
+    fun confirmTool(onBench: Boolean) {
+        val current = _bench.value as? Bench.Confirm ?: return
+        if (current.askingOwner) return
+        _bench.value = if (onBench) current.copy(askingOwner = true) else next(current)
+    }
+
+    /** Who owns the confirmed tool: only now is it set, with that owner. */
+    fun chooseOwner(owner: ToolOwnership) {
+        val current = _bench.value as? Bench.Confirm ?: return
+        if (!current.askingOwner || !owner.toHand) return
+        val kind = ToolKind.fromId(current.draft[current.index].kind) ?: return
+        setTool(kind, owner)
+        _bench.value = next(current)
+    }
+
+    /** Straight to the typed list, from the offer or part way through the draft. */
+    fun skipBench() {
+        _bench.value = Bench.Done
+    }
+
+    private fun next(current: Bench.Confirm): Bench =
+        if (current.index + 1 < current.draft.size) current.copy(index = current.index + 1, askingOwner = false)
+        else Bench.Done
 
     /**
      * The shop's GPS point: two questions, then a fix.
@@ -185,9 +291,18 @@ class SetupViewModel(
     }
 
     companion object {
+        /** The folder the bench photo is written to, beside the assessments' own. */
+        const val BENCH_FOLDER = "bench"
+
         fun factory(container: AppContainer): ViewModelProvider.Factory = viewModelFactory {
             initializer {
-                SetupViewModel(container.fundiProfiles, container.locationCapture::captureNow)
+                SetupViewModel(
+                    profiles = container.fundiProfiles,
+                    locate = container.locationCapture::captureNow,
+                    bench = container.bench,
+                    images = container.images,
+                    benchLocation = container.locationCapture,
+                )
             }
         }
     }

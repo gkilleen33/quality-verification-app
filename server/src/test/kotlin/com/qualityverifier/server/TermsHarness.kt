@@ -7,6 +7,7 @@ import com.qualityverifier.server.blobs.BlobStore
 import com.qualityverifier.server.chat.ClaudeClient
 import com.qualityverifier.server.db.AppSettings
 import com.qualityverifier.server.db.AuthStore
+import com.qualityverifier.server.db.BenchStore
 import com.qualityverifier.server.db.ChatStore
 import com.qualityverifier.server.db.FeedbackStore
 import com.qualityverifier.server.db.FundiStore
@@ -135,9 +136,10 @@ class TermsWorld {
     private val claude = Stub(ClaudeClient::class.java)
     private val prompts = Stub(PromptRepository::class.java)
     private val feedback = Stub(FeedbackStore::class.java)
+    private val bench = Stub(BenchStore::class.java)
 
     /** Calls that reached a route's own stores. The gate's own account lookup is not one. */
-    val routeCalls: List<String> get() = chat.calls + fundiStore.calls + feedback.calls + claude.calls
+    val routeCalls: List<String> get() = chat.calls + fundiStore.calls + feedback.calls + claude.calls + bench.calls
 
     /** Switches [audience]'s gate and makes the change visible at once. */
     fun switchGate(audience: Audience, on: Boolean) {
@@ -164,7 +166,10 @@ class TermsWorld {
                 version = "test",
                 database = null,
                 auth = Auth(auth.instance, AccessTokens(KEY)),
-                chat = Chat(chat.instance, BlobStore(blobsDir), claude.instance, prompts.instance, feedback.instance),
+                chat = Chat(
+                    chat.instance, BlobStore(blobsDir), claude.instance, prompts.instance, feedback.instance,
+                    bench = bench.instance,
+                ),
                 fundi = Fundi(fundiStore.instance),
                 appVersions = appVersions,
                 settings = settings,

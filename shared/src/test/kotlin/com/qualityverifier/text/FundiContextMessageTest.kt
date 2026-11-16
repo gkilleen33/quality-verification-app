@@ -100,6 +100,26 @@ class FundiContextMessageTest {
         assertEquals("Tools I have: square (borrowed), drill.\n" + language, message(profile))
     }
 
+    // V35 rewrote "owned" to the worker's and "borrowed" to a rental; the manager's and the
+    // studio's are named as an owned tool was. The opening turn, which is the assessment
+    // prompt's input, is then the same bytes for every profile the migration rewrote.
+    @Test
+    fun `the new owners give the opening turn the bytes the old answers gave`() {
+        val asBefore = "Tools I have: hand saw, chisels, square (borrowed), drill.\n" + language
+        val owners = FundiProfile(
+            tools = listOf(
+                OwnedTool(ToolKind.HAND_SAW, ToolOwnership.WORKER),
+                OwnedTool(ToolKind.CHISELS, ToolOwnership.MANAGER),
+                OwnedTool(ToolKind.SQUARE, ToolOwnership.RENTAL),
+                OwnedTool(ToolKind.DRILL, ToolOwnership.STUDIO),
+            ),
+        )
+        assertEquals(asBefore, message(owners))
+        // And the old words, as an older app sends them, read as their mapping.
+        assertEquals(ToolOwnership.WORKER, ToolOwnership.fromId("owned"))
+        assertEquals(ToolOwnership.RENTAL, ToolOwnership.fromId("borrowed"))
+    }
+
     @Test
     fun `the workshop reads as the maker's own sentences`() {
         val profile = FundiProfile(
