@@ -11,6 +11,7 @@ import com.qualityverifier.server.db.BenchStore
 import com.qualityverifier.server.db.ChatStore
 import com.qualityverifier.server.db.FeedbackStore
 import com.qualityverifier.server.db.FundiStore
+import com.qualityverifier.server.db.HelpfulStore
 import com.qualityverifier.server.db.UserRow
 import com.qualityverifier.server.terms.Agreement
 import com.qualityverifier.server.terms.ConsentAction
@@ -137,9 +138,11 @@ class TermsWorld {
     private val prompts = Stub(PromptRepository::class.java)
     private val feedback = Stub(FeedbackStore::class.java)
     private val bench = Stub(BenchStore::class.java)
+    private val helpful = Stub(HelpfulStore::class.java)
 
     /** Calls that reached a route's own stores. The gate's own account lookup is not one. */
-    val routeCalls: List<String> get() = chat.calls + fundiStore.calls + feedback.calls + claude.calls + bench.calls
+    val routeCalls: List<String>
+        get() = chat.calls + fundiStore.calls + feedback.calls + claude.calls + bench.calls + helpful.calls
 
     /** Switches [audience]'s gate and makes the change visible at once. */
     fun switchGate(audience: Audience, on: Boolean) {
@@ -168,7 +171,7 @@ class TermsWorld {
                 auth = Auth(auth.instance, AccessTokens(KEY)),
                 chat = Chat(
                     chat.instance, BlobStore(blobsDir), claude.instance, prompts.instance, feedback.instance,
-                    bench = bench.instance,
+                    bench = bench.instance, helpful = helpful.instance,
                 ),
                 fundi = Fundi(fundiStore.instance),
                 appVersions = appVersions,

@@ -179,6 +179,15 @@ fun Route.apiRoutes(
             call.respond(ApiPage(rows.take(limit), rows.size > limit, limit, offset))
         }
 
+        // Testers' "Was this review helpful?" after each Fundi Bora verdict (V36).
+        get("/review-helpful") {
+            requireKey() ?: return@get
+            val limit = call.limit()
+            val offset = call.offset()
+            val rows = store.reviewHelpful(limit + 1, offset)
+            call.respond(ApiPage(rows.take(limit), rows.size > limit, limit, offset))
+        }
+
         // Bench photos at setup (V35), each with the draft Claude made, for the accuracy
         // check against the tools the fundi then confirmed.
         get("/bench-photos") {

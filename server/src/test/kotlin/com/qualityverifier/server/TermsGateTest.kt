@@ -58,6 +58,8 @@ class TermsGateTest {
         HttpMethod.Put to "/v1/fundi/studio-today",
         // v0.6.0 (V35): the bench photo collects a photo, a GPS point, and a Claude call.
         HttpMethod.Post to "/v1/fundi/bench-photos",
+        // v0.6.0 (V36): a tester's answer on a verdict, which is research data.
+        HttpMethod.Put to "/v1/fundi/sessions/$uuid/helpful",
         HttpMethod.Put to "/v1/sessions/$uuid/workers",
         HttpMethod.Post to "/v1/tester-feedback",
     )
@@ -291,6 +293,7 @@ class TermsGateTest {
             "GET" to "/v1/fundi/studio-today",
             "PUT" to "/v1/fundi/studio-today",
             "POST" to "/v1/fundi/bench-photos",
+            "PUT" to "/v1/fundi/sessions/x/helpful",
             "PUT" to "/v1/sessions/x/workers",
             "POST" to "/v1/tester-feedback",
         )

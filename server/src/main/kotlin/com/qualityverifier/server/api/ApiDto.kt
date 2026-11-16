@@ -354,6 +354,19 @@ data class ApiStudioDay(
 )
 
 /**
+ * A tester's answer to "Was this review helpful?" after a Fundi Bora verdict (V36, row 7):
+ * one per assessment, the first answer sent. [userId] is null once the tester's account is
+ * deleted; the answer stays.
+ */
+@Serializable
+data class ApiReviewHelpful(
+    @SerialName("session_id") val sessionId: String,
+    @SerialName("user_id") val userId: String?,
+    val helpful: Boolean,
+    @SerialName("answered_at") val answeredAt: Long,
+)
+
+/**
  * One PDF report the server issued (V32): which piece or worker, which kind, which
  * assessments and problems it printed, and the hash of the file that left the server.
  *

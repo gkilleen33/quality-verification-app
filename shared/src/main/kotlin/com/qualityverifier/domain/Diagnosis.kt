@@ -2,6 +2,11 @@ package com.qualityverifier.domain
 
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.doubleOrNull
+import kotlinx.serialization.json.intOrNull
 
 /**
  * What went wrong with a piece the maker built, and why.
@@ -106,7 +111,17 @@ data class Finding(
     @SerialName("what_i_see") val whatISee: String = "",
     @SerialName("what_it_means") val whatItMeans: String = "",
     @SerialName("what_to_do") val whatToDo: String = "",
+    /**
+     * Where the defect shows (v0.6.0, release scope row 19): the photo, by the number the
+     * server and the notes use, and a point on it. Kept as raw JSON and read through [mark],
+     * so a position the model writes badly costs the mark, never the whole diagnosis.
+     * Absent on older replies and on a finding no photograph shows.
+     */
+    @SerialName("where") val where: JsonElement? = null,
 ) {
+    /** [where], if it names a photo and a point inside it. */
+    val mark: DefectMark? get() = DefectMark.from(where)
+
     val severity: Severity get() = Severity.fromId(severityId)
 
     val skillDimension: SkillDimension? get() = SkillDimension.fromId(dimension)
@@ -139,4 +154,24 @@ data class Finding(
         get() = whatHappened.isNotBlank() ||
             manufacturingCause.isNotBlank() ||
             rootHabit.isNotBlank()
+}
+
+/**
+ * Where one finding shows: photo [photo], numbered from 1 in the order the photographs were
+ * attached across the whole assessment (as `PhotoShelf` and the notes number them), and the
+ * point ([x], [y]) on it, each a fraction of the width from the left and of the height from
+ * the top.
+ */
+data class DefectMark(val photo: Int, val x: Double, val y: Double) {
+    companion object {
+        /** The mark [where] describes, or null when it names no photo or a point off the photo. */
+        fun from(where: JsonElement?): DefectMark? {
+            val fields = where as? JsonObject ?: return null
+            val photo = (fields["photo"] as? JsonPrimitive)?.let { it.intOrNull ?: it.doubleOrNull?.toInt() } ?: return null
+            val x = (fields["x"] as? JsonPrimitive)?.doubleOrNull ?: return null
+            val y = (fields["y"] as? JsonPrimitive)?.doubleOrNull ?: return null
+            if (photo < 1 || x !in 0.0..1.0 || y !in 0.0..1.0) return null
+            return DefectMark(photo, x, y)
+        }
+    }
 }
