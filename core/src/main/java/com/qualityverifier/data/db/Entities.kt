@@ -289,6 +289,8 @@ data class AttachmentEntity(
     /** Path relative to the app's files directory, e.g. `images/<sessionId>/<uuid>.jpg`. */
     val relativePath: String,
     val mimeType: String,
+    /** The server's number for this photo in the conversation, when the sync wrote it (v0.6.0). */
+    val photoNumber: Int? = null,
 )
 
 /**

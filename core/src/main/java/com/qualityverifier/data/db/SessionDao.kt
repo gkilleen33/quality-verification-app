@@ -10,6 +10,9 @@ import androidx.room.Transaction
 import kotlinx.coroutines.flow.Flow
 
 /** A message joined with its images, as Room hydrates it. */
+/** One synced photo and the server's number for it in its conversation (v0.6.0, row 19). */
+data class PhotoNumberRow(val relativePath: String, val photoNumber: Int)
+
 data class MessageWithAttachments(
     @Embedded val message: MessageEntity,
     @Relation(parentColumn = "id", entityColumn = "messageId")
@@ -269,6 +272,13 @@ interface SessionDao {
 
     @Query("UPDATE studio_days SET syncedAt = :syncedAt WHERE day = :day")
     suspend fun markStudioDaySynced(day: String, syncedAt: Long)
+
+    /** Each synced photo of a session with the server's number for it (v0.6.0, row 19). */
+    @Query(
+        "SELECT a.relativePath AS relativePath, a.photoNumber AS photoNumber FROM attachments a " +
+            "JOIN messages m ON m.id = a.messageId WHERE m.sessionId = :sessionId AND a.photoNumber IS NOT NULL"
+    )
+    suspend fun photoNumbers(sessionId: String): List<PhotoNumberRow>
 
     @Query("SELECT helpful FROM review_helpful WHERE sessionId = :sessionId")
     fun reviewHelpful(sessionId: String): Flow<Boolean?>

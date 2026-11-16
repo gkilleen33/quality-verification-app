@@ -320,9 +320,15 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
-        /** Fundi Bora v0.6.0 (server V36): a tester's "Was this review helpful?" answers. */
+        /**
+         * Fundi Bora v0.6.0: a tester's "Was this review helpful?" answers (server V36), and
+         * each synced photo's number in its conversation as the server counts it, so a
+         * defect's photo is found even when the sync could not download an earlier one.
+         * Existing photos have no number and are counted in order, as before.
+         */
         val MIGRATION_16_17 = object : Migration(16, 17) {
             override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE attachments ADD COLUMN photoNumber INTEGER")
                 db.execSQL(
                     "CREATE TABLE IF NOT EXISTS `review_helpful` (" +
                         "`sessionId` TEXT NOT NULL, `helpful` INTEGER NOT NULL, " +

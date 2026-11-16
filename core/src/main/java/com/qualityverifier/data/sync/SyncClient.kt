@@ -346,6 +346,9 @@ class SyncClient(
             when {
                 response.isSuccessful -> true
                 response.code == UPGRADE_REQUIRED -> false
+                // New terms to agree to: the answer is kept and sent once the tester has
+                // agreed. Peeked, as FundiProfileClient does, so the body stays readable.
+                response.code == 403 && response.peekBody(512).string().contains("terms_required") -> false
                 response.code in 400..499 -> {
                     Log.w(TAG, "Server refused a review answer (${response.code}); dropping it")
                     true

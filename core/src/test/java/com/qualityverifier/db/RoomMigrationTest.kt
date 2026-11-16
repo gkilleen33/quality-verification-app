@@ -124,9 +124,16 @@ class RoomMigrationTest {
     }
 
     @Test
-    fun `16 to 17 adds the tester's review answers, as schema 17 has them, and changes nothing else`() {
+    fun `16 to 17 adds the tester's review answers and each photo's number, as schema 17 has them`() {
         val statements = statementsOf(AppDatabase.MIGRATION_16_17)
-        assertEquals(listOf(createSql(17, "review_helpful").replace("\${TABLE_NAME}", "review_helpful")), statements)
+        assertEquals(
+            listOf(
+                "ALTER TABLE attachments ADD COLUMN photoNumber INTEGER",
+                createSql(17, "review_helpful").replace("\${TABLE_NAME}", "review_helpful"),
+            ),
+            statements,
+        )
+        assertTrue(createSql(17, "attachments").contains("`photoNumber` INTEGER"))
         listOf("sessions", "pieces", "workers", "worker_studios", "studio_days", "pending_tester_feedback").forEach { table ->
             assertEquals(table, createSql(16, table), createSql(17, table))
         }

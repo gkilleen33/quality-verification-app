@@ -79,15 +79,20 @@ fun assessmentPhotos(
  * "See it on the photo".
  *
  * Counted over every attachment of the maker's turns, before [assessmentPhotos] drops a
- * repeated file, so the numbers match the server's.
+ * repeated file, so the numbers match the server's. A synced photo has the server's own
+ * number in [synced] (`SessionRepository.photoNumbers`, by path), so one the sync could not
+ * download leaves a gap instead of shifting the rest; a photo taken here follows the one
+ * before it.
  */
-fun photoNumbered(messages: List<ChatMessage>, number: Int): String? {
+fun photoNumbered(messages: List<ChatMessage>, number: Int, synced: Map<String, Int> = emptyMap()): String? {
     if (number < 1) return null
-    return messages.asSequence()
-        .filter { it.role == Role.USER }
-        .flatMap { it.attachments.asSequence() }
-        .elementAtOrNull(number - 1)
-        ?.path
+    var counted = 0
+    for (attachment in messages.asSequence().filter { it.role == Role.USER }.flatMap { it.attachments.asSequence() }) {
+        counted = synced[attachment.path] ?: (counted + 1)
+        if (counted == number) return attachment.path
+        if (counted > number) return null
+    }
+    return null
 }
 
 /**
