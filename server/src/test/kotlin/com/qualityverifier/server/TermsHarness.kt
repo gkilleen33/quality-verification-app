@@ -16,10 +16,12 @@ import com.qualityverifier.server.terms.ConsentAction
 import com.qualityverifier.server.terms.ConsentKind
 import com.qualityverifier.server.terms.ConsentRecord
 import com.qualityverifier.server.terms.ConsentStore
+import com.qualityverifier.server.terms.TermsApp
 import com.qualityverifier.server.terms.TermsFile
 import com.qualityverifier.server.terms.TermsGate
 import com.qualityverifier.server.terms.TermsLanguage
 import com.qualityverifier.server.terms.TermsTexts
+import com.qualityverifier.text.TrackerConsentText
 import com.qualityverifier.text.sha256Hex
 import io.ktor.client.plugins.contentnegotiation.ContentNegotiation as ClientContentNegotiation
 import io.ktor.client.request.HttpRequestBuilder
@@ -95,11 +97,19 @@ class TermsWorld {
 
     /** A later version, published so a test can raise terms_version to it. */
     private val laterBytes = "# Fundi Bora: Terms of Use\n\nVersion: 2026-12\n\nChanged.\n".toByteArray()
+
+    /** PesaLog's terms, at the version TrackerConsentText names. */
+    val trackerBytes = "# PesaLog: Terms of Use\n\nVersion: ${TrackerConsentText.TERMS_VERSION}\n\nText.\n"
+        .toByteArray()
+    val trackerSha = sha256Hex(trackerBytes)
+
     val texts = TermsTexts(
         mapOf(
             TermsTexts.Key(Audience.FUNDI, "2026-11", TermsLanguage.ENGLISH) to TermsFile(englishBytes, englishSha),
             TermsTexts.Key(Audience.FUNDI, "2026-12", TermsLanguage.ENGLISH) to
                 TermsFile(laterBytes, sha256Hex(laterBytes)),
+            TermsTexts.Key(TermsApp.TRACKER, TrackerConsentText.TERMS_VERSION, TermsLanguage.ENGLISH) to
+                TermsFile(trackerBytes, trackerSha),
         )
     )
 
@@ -142,7 +152,13 @@ class TermsWorld {
         return this
     }
 
-    fun ApplicationTestBuilder.mount(blobsDir: File, withTerms: Boolean = true, mpesa: Mpesa? = null) = run {
+    fun ApplicationTestBuilder.mount(
+        blobsDir: File,
+        withTerms: Boolean = true,
+        mpesa: Mpesa? = null,
+        tracker: Tracker? = null,
+        appVersions: AppVersions = AppVersions.UNCONFIGURED,
+    ) = run {
         application {
             module(
                 version = "test",
@@ -150,9 +166,11 @@ class TermsWorld {
                 auth = Auth(auth.instance, AccessTokens(KEY)),
                 chat = Chat(chat.instance, BlobStore(blobsDir), claude.instance, prompts.instance, feedback.instance),
                 fundi = Fundi(fundiStore.instance),
+                appVersions = appVersions,
                 settings = settings,
                 terms = if (withTerms) terms else null,
                 mpesa = mpesa,
+                tracker = tracker,
             )
         }
         createClient { install(ClientContentNegotiation) { json() } }

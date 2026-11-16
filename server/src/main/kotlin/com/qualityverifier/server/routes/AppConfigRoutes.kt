@@ -9,7 +9,7 @@ import io.ktor.server.routing.Route
 import io.ktor.server.routing.get
 
 /**
- * `GET /v1/auth/config?app=kagua|fundi`: the latest and minimum versionCode of one app,
+ * `GET /v1/auth/config?app=kagua|fundi|tracker`: the latest and minimum versionCode of one app,
  * and where to download it.
  *
  * Mounted on its own rather than inside the auth routes, and with no token: it needs
@@ -26,7 +26,7 @@ fun Route.appConfigRoutes(versions: AppVersions) {
         if (app == null) {
             call.respond(
                 HttpStatusCode.BadRequest,
-                ErrorResponse("invalid_request", "app must be kagua or fundi"),
+                ErrorResponse("invalid_request", "app must be kagua, fundi or tracker"),
             )
             return@get
         }

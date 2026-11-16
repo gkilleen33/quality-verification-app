@@ -9,10 +9,14 @@ package com.qualityverifier.domain
  * because this is about which build is installed, not about whose prompt it reaches.
  *
  * Not stored in the database, so no CHECK mirrors it.
+ *
+ * [TRACKER] is PesaLog, the mobile money log (V33). It signs in with a Fundi Bora account, so
+ * it has no audience of its own, but it is a separate install with its own versionCode.
  */
 enum class AppId(val id: String) {
     KAGUA("kagua"),
-    FUNDI("fundi");
+    FUNDI("fundi"),
+    TRACKER("tracker");
 
     companion object {
         fun fromId(id: String?): AppId? {
@@ -33,7 +37,7 @@ object AppVersionHeaders {
     /** The app's `versionCode`, as a decimal integer. */
     const val VERSION = "X-App-Version"
 
-    /** [AppId.id]: `kagua` or `fundi`. */
+    /** [AppId.id]: `kagua`, `fundi` or `tracker`. */
     const val APP = "X-App-Id"
 
     /**

@@ -4,6 +4,7 @@ import com.qualityverifier.domain.Audience
 import com.qualityverifier.server.db.AppSettings
 import com.qualityverifier.server.db.AuthStore
 import com.qualityverifier.server.routes.ErrorResponse
+import com.qualityverifier.text.TrackerConsentText
 import io.ktor.http.HttpMethod
 import io.ktor.http.HttpStatusCode
 import io.ktor.server.application.createRouteScopedPlugin
@@ -75,21 +76,58 @@ class TermsGate(
     suspend fun statusFor(userId: String, audience: Audience): TermsStatus {
         val version = currentVersion(audience)
             ?: return TermsStatus(version = null, required = false, transferAgreed = false, refuses = false)
-        val records = recordsFor(userId)
-        fun agreedNow(kind: ConsentKind) =
-            records[kind]?.let { it.action == ConsentAction.AGREED && it.version == version } == true
-        val required = !ConsentKind.TERMS_SCREEN.all(::agreedNow)
+        val required = !agreedToAll(userId, ConsentKind.TERMS_SCREEN, version)
         return TermsStatus(
             version = version,
             required = required,
-            transferAgreed = records[ConsentKind.TRANSFER]?.action == ConsentAction.AGREED,
+            transferAgreed = agreed(userId, ConsentKind.TRANSFER),
             refuses = required && settings.termsGateOn(audience),
         )
     }
 
     /**
+     * The version of PesaLog's terms an account must have agreed to, or null when the server
+     * holds no English text for it. Read as no terms, as [currentVersion] reads a missing
+     * Fundi Bora text, and reported by [missingTexts].
+     */
+    fun currentTrackerVersion(): String? {
+        val version = TrackerConsentText.TERMS_VERSION
+        if (texts.file(TermsApp.TRACKER, version, TermsLanguage.ENGLISH) == null) {
+            log.error("PesaLog's terms {} have no English text; reading them as no terms", version)
+            return null
+        }
+        return version
+    }
+
+    /**
+     * Where an account stands with PesaLog's terms. PesaLog's gate has no switch: every
+     * tracker route that moves data refuses an account while [TermsStatus.required], so
+     * [TermsStatus.refuses] equals it. Fundi Bora's gate never reads this, and Fundi Bora's
+     * terms are never asked of a PesaLog route (TermsGatePlugin), so a person who uses only
+     * PesaLog is governed by PesaLog's terms alone.
+     */
+    suspend fun trackerStatusFor(userId: String): TermsStatus {
+        val version = currentTrackerVersion()
+            ?: return TermsStatus(version = null, required = false, transferAgreed = false, refuses = false)
+        val required = !agreedToAll(userId, ConsentKind.TRACKER_TERMS_SCREEN, version)
+        return TermsStatus(
+            version = version,
+            required = required,
+            transferAgreed = agreed(userId, ConsentKind.TRACKER_TRANSFER),
+            refuses = required,
+        )
+    }
+
+    private suspend fun agreedToAll(userId: String, kinds: List<ConsentKind>, version: String): Boolean {
+        val records = recordsFor(userId)
+        return kinds.all { kind ->
+            records[kind]?.let { it.action == ConsentAction.AGREED && it.version == version } == true
+        }
+    }
+
+    /**
      * Whether [userId]'s newest row for [kind] is an agreement, of any version. The M-Pesa
-     * routes ask it on every upload, so it reads the same cache as [statusFor].
+     * and tracker routes ask it on every upload, so it reads the same cache as [statusFor].
      */
     suspend fun agreed(userId: String, kind: ConsentKind): Boolean =
         recordsFor(userId)[kind]?.action == ConsentAction.AGREED
@@ -102,11 +140,17 @@ class TermsGate(
         cache.remove(userId)
     }
 
-    /** "fundi 2026-12" for each app whose terms_version has no English text. Empty when all is well. */
+    /**
+     * "fundi 2026-12" for each app whose terms_version has no English text, and "tracker
+     * 2026-11" when PesaLog's has none. Empty when all is well.
+     */
     suspend fun missingTexts(): List<String> = Audience.entries.mapNotNull { audience ->
         val version = settings.termsVersion(audience) ?: return@mapNotNull null
         if (texts.file(audience, version, TermsLanguage.ENGLISH) == null) "${audience.id} $version" else null
-    }
+    } + listOfNotNull(
+        TrackerConsentText.TERMS_VERSION.takeIf { texts.file(TermsApp.TRACKER, it, TermsLanguage.ENGLISH) == null }
+            ?.let { "${TermsApp.TRACKER.id} $it" },
+    )
 
     private suspend fun recordsFor(userId: String): Map<ConsentKind, ConsentRecord> {
         val at = now()
@@ -149,6 +193,18 @@ class TermsGate(
             val trimmed = path.trimEnd('/').ifEmpty { "/" }
             return OPEN.any { (m, pattern) -> m == method && pattern.matches(trimmed) }
         }
+
+        /**
+         * PesaLog's routes (V33). Outside Fundi Bora's gate whatever its switch says: they
+         * are governed by PesaLog's terms, which each of them checks itself, so a person who
+         * signed in to PesaLog with a Fundi Bora account and never agreed to Fundi Bora's
+         * terms is not refused for that.
+         */
+        const val TRACKER_PREFIX = "/v1/tracker/"
+
+        /** No dot segments, so "/v1/tracker/../fundi/..." can never borrow the exemption. */
+        fun isTracker(path: String): Boolean =
+            path.startsWith(TRACKER_PREFIX) && path.split('/').none { it == ".." || it == "." }
     }
 }
 
@@ -174,6 +230,7 @@ val TermsGatePlugin = createRouteScopedPlugin("TermsGate", ::TermsGateConfig) {
         val userId = call.principal<JWTPrincipal>()?.subject ?: return@on
         if (!gate.anyGateOn()) return@on
         if (TermsGate.isOpen(call.request.httpMethod, call.request.path())) return@on
+        if (TermsGate.isTracker(call.request.path())) return@on
         // A missing or disabled account is left to the route, which answers 401 as before.
         val user = users.findUser(userId)?.takeUnless { it.disabled } ?: return@on
         if (gate.statusFor(user.id, user.audience).refuses) {

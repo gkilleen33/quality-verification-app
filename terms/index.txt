@@ -3,5 +3,9 @@
 # The SHA-256 is of the file's exact bytes. The server refuses to start, and TermsTextTest
 # fails, when a listed file's bytes differ from its line: a published text never changes.
 # A change to the words is a new version, a new folder, and a new line here.
+#
+# The first field names whose text it is: an audience (fundi, buyer), or tracker for
+# PesaLog's own terms, which Fundi Bora accounts agree to separately (V33).
 fundi 2026-11 en cc55f09b5b899ef5e5bcbc51d27562df3732928be043b209bd825293bdf98e5d
 fundi 2026-11-16 en 23135d2ceecd306fef44b1b88febde68413403c9078cd3c0f8d47e7c598a8ea7
+tracker 2026-11 en e1e03456d0896c41d5c86474d333c69c25d13bb1a045c8d29d1d0b9d15847bb3

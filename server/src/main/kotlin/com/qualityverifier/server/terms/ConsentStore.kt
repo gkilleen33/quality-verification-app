@@ -8,7 +8,7 @@ import javax.sql.DataSource
 
 /**
  * What an account can agree to. Mirrored by `consents_kind_known`, which V29 replaced to add
- * the two M-Pesa questions.
+ * the two M-Pesa questions and V33 replaced to add PesaLog's four.
  */
 enum class ConsentKind(val id: String) {
     /** The first box on the terms screen. */
@@ -21,7 +21,24 @@ enum class ConsentKind(val id: String) {
     MPESA_READ("mpesa_read"),
 
     /** May it send them to the server. Asked only after [MPESA_READ] (MpesaConsentText.SEND). */
-    MPESA_SEND("mpesa_send");
+    MPESA_SEND("mpesa_send"),
+
+    /**
+     * The first box on PesaLog's terms screen. Its own kind rather than [TERMS]: a PesaLog
+     * account is a Fundi Bora account, and the newest `terms` row is what Fundi Bora's gate
+     * reads, so an agreement to PesaLog's text under that kind would stand in for, or
+     * overwrite, the person's agreement to Fundi Bora's.
+     */
+    TRACKER_TERMS("tracker_terms"),
+
+    /** The second box on PesaLog's terms screen: the transfer to the United States, section 10. */
+    TRACKER_TRANSFER("tracker_transfer"),
+
+    /** May PesaLog read mobile money notifications and keep them on the phone (TrackerConsentText.READ). */
+    TRACKER_READ("tracker_read"),
+
+    /** May it send them to the research team. Asked only after [TRACKER_READ] (TrackerConsentText.SEND). */
+    TRACKER_SEND("tracker_send");
 
     companion object {
         fun fromId(id: String?): ConsentKind? = entries.firstOrNull { it.id == id }
@@ -29,8 +46,15 @@ enum class ConsentKind(val id: String) {
         /** The two boxes on the terms screen, agreed together, and what [TermsGate] checks. */
         val TERMS_SCREEN: List<ConsentKind> = listOf(TERMS, TRANSFER)
 
-        /** The kinds that can be withdrawn. Withdrawing the terms is deleting the account. */
-        val WITHDRAWABLE: List<ConsentKind> = listOf(TRANSFER, MPESA_READ, MPESA_SEND)
+        /** The two boxes on PesaLog's terms screen, agreed together, and what the tracker routes check. */
+        val TRACKER_TERMS_SCREEN: List<ConsentKind> = listOf(TRACKER_TERMS, TRACKER_TRANSFER)
+
+        /** The questions each app asks one at a time, each against its own published text. */
+        val QUESTIONS: List<ConsentKind> = listOf(MPESA_READ, MPESA_SEND, TRACKER_READ, TRACKER_SEND)
+
+        /** The kinds that can be withdrawn. Withdrawing either app's terms is deleting the account. */
+        val WITHDRAWABLE: List<ConsentKind> =
+            listOf(TRANSFER, MPESA_READ, MPESA_SEND, TRACKER_TRANSFER, TRACKER_READ, TRACKER_SEND)
     }
 }
 
@@ -67,9 +91,9 @@ interface ConsentStore {
     suspend fun current(userId: String): Map<ConsentKind, ConsentRecord>
 
     /**
-     * Records agreement to [kinds], in one transaction. The terms screen sends both of its
-     * boxes at once, so an account never holds one without the other; each M-Pesa question
-     * is its own agreement to its own text.
+     * Records agreement to [kinds], in one transaction. Each terms screen sends both of its
+     * boxes at once, so an account never holds one without the other; each M-Pesa or PesaLog
+     * question is its own agreement to its own text.
      */
     suspend fun agree(userId: String, agreement: Agreement, kinds: List<ConsentKind>)
 

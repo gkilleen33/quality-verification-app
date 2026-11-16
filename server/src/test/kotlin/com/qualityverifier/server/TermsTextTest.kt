@@ -1,10 +1,12 @@
 package com.qualityverifier.server
 
 import com.qualityverifier.domain.Audience
+import com.qualityverifier.server.terms.TermsApp
 import com.qualityverifier.server.terms.TermsLanguage
 import com.qualityverifier.server.terms.TermsTexts
 import com.qualityverifier.text.TermsDocument
 import com.qualityverifier.text.TermsIndexEntry
+import com.qualityverifier.text.TrackerConsentText
 import com.qualityverifier.text.sha256Hex
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
@@ -82,6 +84,24 @@ class TermsTextTest {
     }
 
     @Test
+    fun `PesaLog's English text is sections 1 to 14, at the version the tracker routes require`() {
+        val version = TrackerConsentText.TERMS_VERSION
+        val text = File(folder, "${TermsApp.TRACKER.id}/$version/en.md").readText()
+        assertTrue(text.startsWith("# PesaLog: Terms of Use and Privacy Notice\n"))
+        assertTrue(text.contains("\nVersion: $version\n"))
+        (1..14).forEach { section ->
+            assertTrue("section $section is missing", Regex("""(?m)^## $section\. """).containsMatchIn(text))
+        }
+        assertTrue("PesaLog's text has no section 15", !Regex("""(?m)^## 15\. """).containsMatchIn(text))
+        assertTrue(index.any { it.app == TermsApp.TRACKER.id && it.version == version && it.language == "en" })
+    }
+
+    @Test
+    fun `every app named in the index is one the server knows`() {
+        index.forEach { assertNotNull("unknown app ${it.app}", TermsApp.fromId(it.app)) }
+    }
+
+    @Test
     fun `the terms version V27 seeds has an English text`() {
         val seeded = Regex("""\('fundi',\s*'terms_version',\s*'([^']+)'\)""")
             .find(File("db/migrations/V27__app_settings.sql").readText())
@@ -99,6 +119,7 @@ class TermsTextTest {
             File(folder, path).takeIf { it.exists() }?.readBytes()
         }
         assertNotNull(texts.file(Audience.FUNDI, "2026-11", TermsLanguage.ENGLISH))
+        assertNotNull(texts.file(TermsApp.TRACKER, TrackerConsentText.TERMS_VERSION, TermsLanguage.ENGLISH))
     }
 
     @Test

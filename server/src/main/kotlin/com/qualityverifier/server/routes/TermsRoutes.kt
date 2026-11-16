@@ -7,8 +7,10 @@ import com.qualityverifier.server.db.AuthStore
 import com.qualityverifier.server.db.UserRow
 import com.qualityverifier.server.terms.Agreement
 import com.qualityverifier.server.terms.ConsentKind
+import com.qualityverifier.server.terms.TermsApp
 import com.qualityverifier.server.terms.TermsLanguage
 import com.qualityverifier.text.MpesaConsentText
+import com.qualityverifier.text.TrackerConsentText
 import io.ktor.http.ContentType
 import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
@@ -37,10 +39,11 @@ private val log = LoggerFactory.getLogger("com.qualityverifier.server.terms")
  */
 fun Route.termsTextRoutes(terms: Terms) {
     get("/terms/{app}/{version}/{language}") {
-        val audience = call.parameters["app"]?.let { Audience.fromId(it) }
+        // An audience's id, or `tracker` for PesaLog's terms (TermsApp).
+        val app = TermsApp.fromId(call.parameters["app"])
         val language = TermsLanguage.fromId(call.parameters["language"])
         val version = call.parameters["version"].orEmpty()
-        val file = if (audience != null && language != null) terms.texts.file(audience, version, language) else null
+        val file = if (app != null && language != null) terms.texts.file(app, version, language) else null
         if (file == null) {
             call.respond(HttpStatusCode.NotFound, ErrorResponse("not_found"))
             return@get
@@ -73,11 +76,22 @@ fun Route.consentRoutes(users: AuthStore, terms: Terms) {
                 call.respond(HttpStatusCode.BadRequest, ErrorResponse("invalid_request", "X-App-Version is required"))
                 return@post
             }
-            // One M-Pesa question at a time: each has its own text, so its own hash.
-            val mpesaKind = request.kinds.singleOrNull()?.let(ConsentKind::fromId)
-                ?.takeIf { it == ConsentKind.MPESA_READ || it == ConsentKind.MPESA_SEND }
-            if (mpesaKind != null) {
-                call.agreeToMpesa(user, mpesaKind, request, appVersion, terms)
+            // One question at a time: each has its own text, so its own hash.
+            val question = request.kinds.singleOrNull()?.let(ConsentKind::fromId)
+            when (question) {
+                ConsentKind.MPESA_READ, ConsentKind.MPESA_SEND -> {
+                    call.agreeToMpesa(user, question, request, appVersion, terms)
+                    return@post
+                }
+                ConsentKind.TRACKER_READ, ConsentKind.TRACKER_SEND -> {
+                    call.agreeToTrackerQuestion(user, question, request, appVersion, terms)
+                    return@post
+                }
+                else -> Unit
+            }
+            // PesaLog's terms screen: its two boxes, as Fundi Bora's below.
+            if (request.kinds.sorted() == ConsentKind.TRACKER_TERMS_SCREEN.map { it.id }.sorted()) {
+                call.agreeToTrackerTerms(user, request, appVersion, terms)
                 return@post
             }
             // Both boxes or nothing: an agreement to the terms without the transfer is not
@@ -87,7 +101,10 @@ fun Route.consentRoutes(users: AuthStore, terms: Terms) {
             ) {
                 call.respond(
                     HttpStatusCode.BadRequest,
-                    ErrorResponse("invalid_request", "kinds must be exactly terms and transfer, or one M-Pesa question"),
+                    ErrorResponse(
+                        "invalid_request",
+                        "kinds must be exactly terms and transfer, tracker_terms and tracker_transfer, or one question",
+                    ),
                 )
                 return@post
             }
@@ -137,16 +154,20 @@ fun Route.consentRoutes(users: AuthStore, terms: Terms) {
             if (kind == null) {
                 call.respond(
                     HttpStatusCode.BadRequest,
-                    ErrorResponse("invalid_request", "only the transfer agreement and the M-Pesa questions can be withdrawn"),
+                    ErrorResponse(
+                        "invalid_request",
+                        "only a transfer agreement, the M-Pesa questions and PesaLog's questions can be withdrawn",
+                    ),
                 )
                 return@post
             }
             // Sending was only ever allowed on top of reading, so stopping reading stops
-            // sending too: the newest rows never say "send" without "read".
-            val withdrawn = if (kind == ConsentKind.MPESA_READ) {
-                listOf(ConsentKind.MPESA_SEND, ConsentKind.MPESA_READ)
-            } else {
-                listOf(kind)
+            // sending too: the newest rows never say "send" without "read". The same for
+            // PesaLog's two questions.
+            val withdrawn = when (kind) {
+                ConsentKind.MPESA_READ -> listOf(ConsentKind.MPESA_SEND, ConsentKind.MPESA_READ)
+                ConsentKind.TRACKER_READ -> listOf(ConsentKind.TRACKER_SEND, ConsentKind.TRACKER_READ)
+                else -> listOf(kind)
             }
             // Idempotent: a second withdrawal finds nothing to withdraw and writes nothing.
             withdrawn.forEach {
@@ -187,6 +208,98 @@ private suspend fun ApplicationCall.agreeToMpesa(
     }
     if (kind == ConsentKind.MPESA_SEND && !terms.gate.agreed(user.id, ConsentKind.MPESA_READ)) {
         respond(HttpStatusCode.Conflict, ErrorResponse("mpesa_read_required"))
+        return
+    }
+    terms.consents.agree(
+        user.id,
+        Agreement(
+            audience = user.audience,
+            version = request.version,
+            language = language,
+            textSha256 = sha,
+            appVersion = appVersion,
+        ),
+        listOf(kind),
+    )
+    terms.gate.forget(user.id)
+    log.info("Recorded agreement to {} {} for user {}", kind.id, request.version, user.id)
+    respond(HttpStatusCode.NoContent)
+}
+
+/**
+ * Records agreement to both boxes of PesaLog's terms screen (V33). A Fundi Bora account
+ * only: PesaLog signs in with one. The rules are Fundi Bora's: the current version, a
+ * published language, and the hash of the exact file the phone showed.
+ *
+ * `consents.audience` is still the account's, `fundi`; what says these rows are PesaLog's
+ * is their kinds.
+ */
+private suspend fun ApplicationCall.agreeToTrackerTerms(
+    user: UserRow,
+    request: ConsentRequest,
+    appVersion: Int,
+    terms: Terms,
+) {
+    if (user.audience != Audience.FUNDI) {
+        respond(HttpStatusCode.Forbidden, ErrorResponse("not_a_fundi"))
+        return
+    }
+    val current = terms.gate.currentTrackerVersion()
+    if (current == null || request.version != current) {
+        respond(HttpStatusCode.Conflict, ErrorResponse("terms_version_changed"))
+        return
+    }
+    val language = TermsLanguage.fromId(request.language)
+    val file = language?.let { terms.texts.file(TermsApp.TRACKER, current, it) }
+    if (language == null || file == null || file.sha256 != request.textSha256.lowercase()) {
+        respond(HttpStatusCode.Conflict, ErrorResponse("terms_text_mismatch"))
+        return
+    }
+    terms.consents.agree(
+        user.id,
+        Agreement(
+            audience = user.audience,
+            version = current,
+            language = language,
+            textSha256 = file.sha256,
+            appVersion = appVersion,
+        ),
+        ConsentKind.TRACKER_TERMS_SCREEN,
+    )
+    terms.gate.forget(user.id)
+    log.info("Recorded agreement to PesaLog's terms {} ({}) for user {}", current, language.id, user.id)
+    respond(HttpStatusCode.NoContent)
+}
+
+/**
+ * Records agreement to one of PesaLog's two questions, against [TrackerConsentText.published],
+ * as [agreeToMpesa] does for Fundi Bora's. Both are asked after PesaLog's terms, and sending
+ * after reading; the server holds the same order.
+ */
+private suspend fun ApplicationCall.agreeToTrackerQuestion(
+    user: UserRow,
+    kind: ConsentKind,
+    request: ConsentRequest,
+    appVersion: Int,
+    terms: Terms,
+) {
+    if (user.audience != Audience.FUNDI) {
+        respond(HttpStatusCode.Forbidden, ErrorResponse("not_a_fundi"))
+        return
+    }
+    val language = TermsLanguage.fromId(request.language)
+    val sha = request.textSha256.lowercase()
+    val published = TrackerConsentText.published[Triple(kind.id, request.version, request.language)]
+    if (language == null || published == null || published != sha) {
+        respond(HttpStatusCode.Conflict, ErrorResponse("tracker_text_mismatch"))
+        return
+    }
+    if (terms.gate.trackerStatusFor(user.id).required) {
+        respond(HttpStatusCode.Conflict, ErrorResponse("tracker_terms_required"))
+        return
+    }
+    if (kind == ConsentKind.TRACKER_SEND && !terms.gate.agreed(user.id, ConsentKind.TRACKER_READ)) {
+        respond(HttpStatusCode.Conflict, ErrorResponse("tracker_read_required"))
         return
     }
     terms.consents.agree(

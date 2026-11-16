@@ -164,6 +164,9 @@ class MigrationsTest {
         // V29: a fundi's M-Pesa transactions, with free-text comments, and unread counts.
         "mpesa_transactions",
         "mpesa_unread_counts",
+        // V33: the same for PesaLog's.
+        "tracker_transactions",
+        "tracker_unread_counts",
     )
 
     @Test
@@ -290,6 +293,8 @@ class MigrationsTest {
         "V28__consents.sql" to "consents",
         // V31: each link's start and end.
         "V31__worker_studios.sql" to "worker_link_events",
+        // V33: each deletion a person asked for from PesaLog.
+        "V33__tracker.sql" to "tracker_deletions",
     )
 
     /**

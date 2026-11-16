@@ -19,6 +19,31 @@ enum class TermsLanguage(val id: String) {
 class TermsFile(val bytes: ByteArray, val sha256: String)
 
 /**
+ * Whose terms a text is: the first field of each `terms/index.txt` line and of the path
+ * `/terms/{app}/...`.
+ *
+ * Each audience has its own terms under its own id, as before V33. [TRACKER] is PesaLog's,
+ * which has no audience of its own: a PesaLog account is a Fundi Bora account (audience
+ * `fundi`), so its agreements are told apart by their consent kinds (`tracker_terms`,
+ * `tracker_transfer`), not by `consents.audience`.
+ */
+enum class TermsApp(val id: String) {
+    BUYER("buyer"),
+    FUNDI("fundi"),
+    TRACKER("tracker");
+
+    companion object {
+        fun fromId(id: String?): TermsApp? = entries.firstOrNull { it.id == id }
+
+        /** The terms an account of [audience] agrees to in its own app. */
+        fun of(audience: Audience): TermsApp = when (audience) {
+            Audience.BUYER -> BUYER
+            Audience.FUNDI -> FUNDI
+        }
+    }
+}
+
+/**
  * The published terms texts, read once at start from the jar.
  *
  * The files live in the repository's `terms/` folder, which the server build copies into
@@ -30,14 +55,20 @@ class TermsFile(val bytes: ByteArray, val sha256: String)
  */
 class TermsTexts(private val files: Map<Key, TermsFile>) {
 
-    data class Key(val audience: Audience, val version: String, val language: TermsLanguage)
+    data class Key(val app: TermsApp, val version: String, val language: TermsLanguage) {
+        constructor(audience: Audience, version: String, language: TermsLanguage) :
+            this(TermsApp.of(audience), version, language)
+    }
+
+    fun file(app: TermsApp, version: String, language: TermsLanguage): TermsFile? =
+        files[Key(app, version, language)]
 
     fun file(audience: Audience, version: String, language: TermsLanguage): TermsFile? =
-        files[Key(audience, version, language)]
+        file(TermsApp.of(audience), version, language)
 
-    /** The languages published for [audience] at [version], English first. */
-    fun languages(audience: Audience, version: String): List<TermsLanguage> =
-        TermsLanguage.entries.filter { Key(audience, version, it) in files }
+    /** The languages published for [app] at [version], English first. */
+    fun languages(app: TermsApp, version: String): List<TermsLanguage> =
+        TermsLanguage.entries.filter { Key(app, version, it) in files }
 
     companion object {
         /** No texts at all: every app reads as having no terms. For tests and a server without the folder. */
@@ -59,7 +90,7 @@ class TermsTexts(private val files: Map<Key, TermsFile>) {
         /** As [fromClasspath], reading each file with [read]. Separate so a test can supply the bytes. */
         fun fromIndex(index: String, read: (path: String) -> ByteArray?): TermsTexts {
             val files = TermsIndexEntry.parseIndex(index).associate { entry ->
-                val audience = Audience.fromId(entry.app)
+                val app = TermsApp.fromId(entry.app)
                     ?: error("terms/index.txt names an unknown app '${entry.app}'")
                 val language = TermsLanguage.fromId(entry.language)
                     ?: error("terms/index.txt names an unknown language '${entry.language}'")
@@ -72,7 +103,7 @@ class TermsTexts(private val files: Map<Key, TermsFile>) {
                 // Parsed only to refuse a malformed file here rather than on a phone.
                 runCatching { TermsDocument.parse(String(bytes, Charsets.UTF_8)) }
                     .onFailure { throw IllegalStateException("terms/${entry.path} does not parse: ${it.message}", it) }
-                Key(audience, entry.version, language) to TermsFile(bytes, actual)
+                Key(app, entry.version, language) to TermsFile(bytes, actual)
             }
             return TermsTexts(files)
         }

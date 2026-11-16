@@ -9,6 +9,9 @@ import com.qualityverifier.server.api.ApiReport
 import com.qualityverifier.server.api.snapshotWithoutNames
 import com.qualityverifier.server.api.ApiSessionWorker
 import com.qualityverifier.server.api.ApiTesterFeedback
+import com.qualityverifier.server.api.ApiTrackerDeletion
+import com.qualityverifier.server.api.ApiTrackerTransaction
+import com.qualityverifier.server.api.ApiTrackerUnreadCount
 import com.qualityverifier.server.api.ApiWorkerLink
 import com.qualityverifier.server.api.PostgresApiKeyStore
 import com.qualityverifier.server.api.apiProblemsOf
@@ -59,6 +62,9 @@ class ApiRouteTest {
             "/api/v1/worker-links",
             "/api/v1/pieces",
             "/api/v1/reports",
+            "/api/v1/tracker-transactions",
+            "/api/v1/tracker-unread-counts",
+            "/api/v1/tracker-deletions",
             "/api/v1/photos/${"a".repeat(64)}",
         ).forEach { path ->
             assertEquals(path, HttpStatusCode.Unauthorized, app.get(path).status)
@@ -594,6 +600,45 @@ class ApiRouteTest {
             ```
         """.trimIndent()
     }
+
+    @Test
+    fun `PesaLog's transactions, unread counts and deletions are listed, paged and recorded like the rest`() =
+        testApplication {
+            val keys = FakeApiKeyStore()
+            val admin = RecordingAudit()
+            val code = "c".repeat(64)
+            val store = FakeApiStore(
+                trackerTransactions = listOf(
+                    ApiTrackerTransaction(
+                        id = 7, userId = API_USER.id, network = "airtel", code = "P3RAIQM1E4N",
+                        direction = "out", type = "send", amountKes = 20.0, feeKes = null, balanceAfterKes = 170.0,
+                        occurredAt = 1_762_934_400_000, counterpartyCode = code, counterpartyBasis = "phone",
+                        parserVersion = 2, appVersion = 1, receivedAt = 1_762_934_500_000,
+                        category = "wages", comment = null, annotatedAt = null,
+                    ),
+                ),
+                trackerUnread = listOf(
+                    ApiTrackerUnreadCount(API_USER.id, "mpesa", "2026-11-12", 2, 2, 1, 1_762_934_500_000),
+                ),
+                trackerDeletions = listOf(ApiTrackerDeletion(1, API_USER.id, 1_762_934_600_000, 4, 1, 1)),
+            )
+            val app = withApi(keys = keys, store = store, admin = admin)
+
+            val transactions = app.get("/api/v1/tracker-transactions?limit=10") { key(keys.anyKey()) }.bodyAsText()
+            assertTrue(transactions.contains("\"network\":\"airtel\""))
+            assertTrue(transactions.contains("\"counterparty_code\":\"$code\""))
+            assertTrue(transactions.contains("\"has_more\":false"))
+            assertEquals(11, store.lastLimit)
+            assertEquals("/api/v1/tracker-transactions", admin.audits.last().target)
+
+            val unread = app.get("/api/v1/tracker-unread-counts") { key(keys.anyKey()) }.bodyAsText()
+            assertTrue(unread.contains("\"day\":\"2026-11-12\""))
+            assertEquals("/api/v1/tracker-unread-counts", admin.audits.last().target)
+
+            val deletions = app.get("/api/v1/tracker-deletions") { key(keys.anyKey()) }.bodyAsText()
+            assertTrue(deletions.contains("\"transactions_deleted\":4"))
+            assertEquals("/api/v1/tracker-deletions", admin.audits.last().target)
+        }
 
     private fun io.ktor.client.request.HttpRequestBuilder.key(secret: String) {
         header("X-API-Key", secret)

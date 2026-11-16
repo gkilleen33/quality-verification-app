@@ -8,6 +8,9 @@ import com.qualityverifier.server.api.ApiPiece
 import com.qualityverifier.server.api.ApiReport
 import com.qualityverifier.server.api.ApiStore
 import com.qualityverifier.server.api.ApiTesterFeedback
+import com.qualityverifier.server.api.ApiTrackerDeletion
+import com.qualityverifier.server.api.ApiTrackerTransaction
+import com.qualityverifier.server.api.ApiTrackerUnreadCount
 import com.qualityverifier.server.api.ApiUser
 import com.qualityverifier.server.api.ApiWorker
 import com.qualityverifier.server.api.ApiWorkerLink
@@ -85,6 +88,9 @@ class FakeApiStore(
     private val links: List<ApiWorkerLink> = emptyList(),
     private val pieces: List<ApiPiece> = emptyList(),
     private val reports: List<ApiReport> = emptyList(),
+    private val trackerTransactions: List<ApiTrackerTransaction> = emptyList(),
+    private val trackerUnread: List<ApiTrackerUnreadCount> = emptyList(),
+    private val trackerDeletions: List<ApiTrackerDeletion> = emptyList(),
 ) : ApiStore {
     var lastLimit: Int? = null
         private set
@@ -137,6 +143,21 @@ class FakeApiStore(
     override suspend fun reports(limit: Int, offset: Int): List<ApiReport> {
         lastLimit = limit
         return reports
+    }
+
+    override suspend fun trackerTransactions(limit: Int, offset: Int): List<ApiTrackerTransaction> {
+        lastLimit = limit
+        return trackerTransactions
+    }
+
+    override suspend fun trackerUnreadCounts(limit: Int, offset: Int): List<ApiTrackerUnreadCount> {
+        lastLimit = limit
+        return trackerUnread
+    }
+
+    override suspend fun trackerDeletions(limit: Int, offset: Int): List<ApiTrackerDeletion> {
+        lastLimit = limit
+        return trackerDeletions
     }
 
     override suspend fun photoExists(sha256: String): Boolean = sha256 in photos
