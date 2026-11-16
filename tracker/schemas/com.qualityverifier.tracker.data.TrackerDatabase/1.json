@@ -1,0 +1,196 @@
+{
+  "formatVersion": 1,
+  "database": {
+    "version": 1,
+    "identityHash": "c3fe823df351971ec6d19ec79403a277",
+    "entities": [
+      {
+        "tableName": "transactions",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`network` TEXT NOT NULL, `code` TEXT NOT NULL, `direction` TEXT NOT NULL, `type` TEXT NOT NULL, `amountKes` REAL NOT NULL, `feeKes` REAL, `balanceAfterKes` REAL, `occurredAt` INTEGER NOT NULL, `counterpartyName` TEXT, `counterpartyPhone` TEXT, `parserVersion` INTEGER NOT NULL, `storedAt` INTEGER NOT NULL, `uploadedAt` INTEGER, `category` TEXT, `comment` TEXT, `annotatedAt` INTEGER, `annotationSyncedAt` INTEGER, PRIMARY KEY(`network`, `code`))",
+        "fields": [
+          {
+            "fieldPath": "network",
+            "columnName": "network",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "code",
+            "columnName": "code",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "direction",
+            "columnName": "direction",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "type",
+            "columnName": "type",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "amountKes",
+            "columnName": "amountKes",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "feeKes",
+            "columnName": "feeKes",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "balanceAfterKes",
+            "columnName": "balanceAfterKes",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "occurredAt",
+            "columnName": "occurredAt",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "counterpartyName",
+            "columnName": "counterpartyName",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "counterpartyPhone",
+            "columnName": "counterpartyPhone",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "parserVersion",
+            "columnName": "parserVersion",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "storedAt",
+            "columnName": "storedAt",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "uploadedAt",
+            "columnName": "uploadedAt",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "category",
+            "columnName": "category",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "comment",
+            "columnName": "comment",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "annotatedAt",
+            "columnName": "annotatedAt",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "annotationSyncedAt",
+            "columnName": "annotationSyncedAt",
+            "affinity": "INTEGER"
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "network",
+            "code"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_transactions_occurredAt",
+            "unique": false,
+            "columnNames": [
+              "occurredAt"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_transactions_occurredAt` ON `${TABLE_NAME}` (`occurredAt`)"
+          }
+        ]
+      },
+      {
+        "tableName": "unread_days",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`network` TEXT NOT NULL, `day` TEXT NOT NULL, `unread` INTEGER NOT NULL, `updatedAt` INTEGER NOT NULL, `syncedAt` INTEGER, PRIMARY KEY(`network`, `day`))",
+        "fields": [
+          {
+            "fieldPath": "network",
+            "columnName": "network",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "day",
+            "columnName": "day",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "unread",
+            "columnName": "unread",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "updatedAt",
+            "columnName": "updatedAt",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "syncedAt",
+            "columnName": "syncedAt",
+            "affinity": "INTEGER"
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "network",
+            "day"
+          ]
+        }
+      },
+      {
+        "tableName": "counted_unread",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`key` TEXT NOT NULL, `countedAt` INTEGER NOT NULL, PRIMARY KEY(`key`))",
+        "fields": [
+          {
+            "fieldPath": "key",
+            "columnName": "key",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "countedAt",
+            "columnName": "countedAt",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "key"
+          ]
+        }
+      }
+    ],
+    "setupQueries": [
+      "CREATE TABLE IF NOT EXISTS room_master_table (id INTEGER PRIMARY KEY,identity_hash TEXT)",
+      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, 'c3fe823df351971ec6d19ec79403a277')"
+    ]
+  }
+}

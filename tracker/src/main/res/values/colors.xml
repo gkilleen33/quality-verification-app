@@ -1,0 +1,5 @@
+<resources>
+    <!-- A slate blue: the same project as Kagua's brown and Fundi Bora's green, and a third
+         colour, so somebody with all three installed can tell the icons apart. -->
+    <color name="ic_launcher_background">#3D5A6C</color>
+</resources>

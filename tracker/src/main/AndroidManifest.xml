@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+
+    <!-- INTERNET comes from :core. Nothing else: no SMS permission of any kind, no contacts,
+         no accessibility (build prompt, 13 November 2026). The build fails if the merged
+         manifest ever asks for one (checkNoSmsPermission in build.gradle.kts). -->
+
+    <!-- :core declares location for Kagua's and Fundi Bora's assessments. PesaLog records no
+         location, so the merger is told to drop them rather than ask for them here. -->
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" tools:node="remove" />
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" tools:node="remove" />
+
+    <application
+        android:name=".TrackerApp"
+        android:allowBackup="false"
+        android:fullBackupContent="false"
+        android:dataExtractionRules="@xml/data_extraction_rules"
+        android:icon="@mipmap/ic_launcher"
+        android:label="@string/app_name"
+        android:supportsRtl="true"
+        android:usesCleartextTraffic="false"
+        android:theme="@style/Theme.PesaLog">
+
+        <activity
+            android:name=".MainActivity"
+            android:exported="true"
+            android:windowSoftInputMode="adjustResize"
+            android:theme="@style/Theme.PesaLog">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <!-- The only way PesaLog reads anything. Bound by the system once the person turns on
+             notification access for PesaLog in Android's settings; only the system holds
+             BIND_NOTIFICATION_LISTENER_SERVICE, so nothing else can call it. Every type of
+             notification is asked for, silent ones included: a person who muted the M-Pesa
+             conversation still gets its messages, quietly. The listener itself drops every
+             notification that is not a mobile money message (MoneyNotificationListener). -->
+        <service
+            android:name=".listen.MoneyNotificationListener"
+            android:label="@string/app_name"
+            android:exported="true"
+            android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE">
+            <intent-filter>
+                <action android:name="android.service.notification.NotificationListenerService" />
+            </intent-filter>
+            <meta-data
+                android:name="android.service.notification.default_filter_types"
+                android:value="conversations|alerting|silent" />
+        </service>
+    </application>
+</manifest>
