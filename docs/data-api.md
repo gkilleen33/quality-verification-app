@@ -44,11 +44,12 @@ milliseconds throughout.
 |---|---|
 | `GET /users` | accounts, with phone, name, business, latitude/longitude and accuracy |
 | `GET /assessments` | assessments, newest last, each with the `app_version_code` that started it, its `purpose`, `language`, `piece_id`, `prompt_sha`, `assessed_as` and `final` (V34). Filters: `user`, `item`, `testers=1`, `updated_since` |
-| `GET /assessments/{id}` | one assessment with its messages, photo hashes in order, each photo's camera metadata, its `problems`, and the evaluator's critique if there is one |
+| `GET /assessments/{id}` | one assessment with its messages, photo hashes in order, each photo's camera metadata, its `problems`, the evaluator's critique if there is one, and its `tools` (V35, see below) |
 | `GET /tester-feedback` | every evaluator critique, keyed on `session_id` |
 | `GET /pieces` | every piece a Fundi Bora maker has assessed: `id`, `user_id`, `item_type_id`, `created_at`, and its studio label, `studio_entry_id` and `studio_chosen_at` (V34). No name (see below) |
 | `GET /piece-studio-changes` | each change of a piece's studio label after it was made (V34): `piece_id`, `user_id`, `kind` (`first_choice` or `correction`), `old_studio_entry_id`, `new_studio_entry_id`, `at` |
 | `GET /studio-days` | each answer to "Which studio are you at today?" (V34): `user_id`, `day` (Nairobi date), `studio_entry_id` (null for the fundi's own workshop), `answered_at` |
+| `GET /bench-photos` | each bench photo taken at Fundi Bora setup (V35): `id`, `user_id`, `sha256`, `latitude`, `longitude` and `location_accuracy_m` (null unless the fundi allowed location), `taken_at`, the `draft` tool list Claude made from it, `prompt_sha`, `model` |
 | `GET /reports` | every PDF report the server issued (V32): `piece_id` or `worker_id`, `kind`, `session_ids`, `parts`, `defect_refs`, `defect_snapshot`, `sha256`, `byte_size`, `issued_at` |
 | `GET /tracker-transactions` | every PesaLog transaction (V33), oldest first: `user_id`, `network`, `code`, `direction`, `type`, amounts, `occurred_at`, `counterparty_code` and `counterparty_basis`, `category`, `comment` |
 | `GET /tracker-unread-counts` | per PesaLog account, `network` and `day`, how many mobile money messages the phone could not read |
@@ -207,6 +208,24 @@ worker's piece while the two sides are linked. Such an assessment has the manage
 who assesses the wrong piece, so wrong picks are found among the `manager` rows. `final` marks
 the assessment of the finished piece that a customer report needs first: by the studio's
 manager on a labelled piece, or by the maker on one that is not labelled.
+
+## Tools
+
+Since v0.6.0 (V35) a tool on a fundi's list is owned by the `worker` (the account itself),
+the `manager`, the `studio`, or is a `rental`; `none` and `unknown` are unchanged. Answers
+given before V35 were rewritten: `owned` became `worker` and `borrowed` became `rental`.
+
+An assessment of a piece made from v0.6.0 on has `tools`: one row per tool to hand when it
+started, each with `kind`, `source` (`maker` for the maker's own list, `studio` for the
+studio manager's list on a piece labelled for a studio) and `owner`. The server infers the
+list from the maker's list and, on a labelled piece, the studio manager's list, as each stood
+when the assessment started; the fundi never sees it and Claude is never sent it. A manager's
+assessment of a worker's piece carries the worker's tools, since the worker makes the piece.
+An assessment made before V35, Kagua's, or one of no piece has an empty list.
+
+`GET /bench-photos` keeps the draft Claude made from each bench photo, before the fundi
+confirmed or rejected each tool, for comparing the draft with the list the fundi kept. The
+photo's bytes come from `/photos/{sha256}`.
 
 `GET /reports` is one row per PDF report the server issued, written whether the file was
 freshly rendered or served from the day-long cache, so the rows count downloads started and
