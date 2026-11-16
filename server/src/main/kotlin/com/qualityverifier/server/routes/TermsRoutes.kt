@@ -28,26 +28,37 @@ import org.slf4j.LoggerFactory
 private val log = LoggerFactory.getLogger("com.qualityverifier.server.terms")
 
 /**
- * `GET /terms/{app}/{version}/{language}`: a published terms text, byte for byte as the
+ * `GET /v1/terms/{app}/{version}/{language}`: a published terms text, byte for byte as the
  * index pins it, so a phone can check the hash before showing it.
  *
  * Unauthenticated, as the text of the terms is not personal and a phone may need it before
  * its token is refreshed. The hash is the ETag, so a phone that already holds the file can
  * tell without downloading it again.
+ *
+ * Under `/v1/` because the production nginx passes only `/v1/`, `/api/`, `/admin` and
+ * `/healthz` to this process. The first path, `/terms/...`, never reached it: nginx answered
+ * 404 itself. Nobody noticed until a new terms version (2026-11-16) made phones download a
+ * text instead of using their bundled copy, and every fundi was asked to agree to terms
+ * their phone could not load. The phone fetches whatever path `/v1/me` names
+ * ([Terms.describe]), so moving the path there fixes v0.5.0 phones with no new APK.
+ * `/terms/...` stays mounted for any client that kept the old path.
  */
 fun Route.termsTextRoutes(terms: Terms) {
-    get("/terms/{app}/{version}/{language}") {
-        val audience = call.parameters["app"]?.let { Audience.fromId(it) }
-        val language = TermsLanguage.fromId(call.parameters["language"])
-        val version = call.parameters["version"].orEmpty()
-        val file = if (audience != null && language != null) terms.texts.file(audience, version, language) else null
-        if (file == null) {
-            call.respond(HttpStatusCode.NotFound, ErrorResponse("not_found"))
-            return@get
-        }
-        call.response.headers.append(HttpHeaders.ETag, "\"${file.sha256}\"")
-        call.respondBytes(file.bytes, ContentType("text", "markdown").withCharset(Charsets.UTF_8))
+    get("/v1/terms/{app}/{version}/{language}") { respondTermsText(call, terms) }
+    get("/terms/{app}/{version}/{language}") { respondTermsText(call, terms) }
+}
+
+private suspend fun respondTermsText(call: ApplicationCall, terms: Terms) {
+    val audience = call.parameters["app"]?.let { Audience.fromId(it) }
+    val language = TermsLanguage.fromId(call.parameters["language"])
+    val version = call.parameters["version"].orEmpty()
+    val file = if (audience != null && language != null) terms.texts.file(audience, version, language) else null
+    if (file == null) {
+        call.respond(HttpStatusCode.NotFound, ErrorResponse("not_found"))
+        return
     }
+    call.response.headers.append(HttpHeaders.ETag, "\"${file.sha256}\"")
+    call.respondBytes(file.bytes, ContentType("text", "markdown").withCharset(Charsets.UTF_8))
 }
 
 /**

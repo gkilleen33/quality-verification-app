@@ -319,7 +319,8 @@ class Terms(val gate: TermsGate, val consents: ConsentStore, val texts: TermsTex
                 MeTermsLanguage(
                     language = language.id,
                     sha256 = file.sha256,
-                    path = "terms/${audience.id}/$version/${language.id}",
+                    // Under v1/: production nginx passes nothing else to the app (TermsRoutes).
+                    path = "v1/terms/${audience.id}/$version/${language.id}",
                 )
             }
         },

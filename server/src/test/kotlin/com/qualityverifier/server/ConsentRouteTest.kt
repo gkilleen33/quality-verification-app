@@ -193,7 +193,8 @@ class ConsentRouteTest {
         val english = terms["languages"]!!.jsonArray.single().jsonObject
         assertEquals("en", english["language"]!!.jsonPrimitive.content)
         assertEquals(world.englishSha, english["sha256"]!!.jsonPrimitive.content)
-        assertEquals("terms/fundi/2026-11/en", english["path"]!!.jsonPrimitive.content)
+        // Under v1/, the only prefix production nginx passes to the app besides /api/ and /admin.
+        assertEquals("v1/terms/fundi/2026-11/en", english["path"]!!.jsonPrimitive.content)
     }
 
     @Test
@@ -254,6 +255,24 @@ class ConsentRouteTest {
         assertEquals(String(world.englishBytes), response.bodyAsText())
         assertEquals("\"${world.englishSha}\"", response.headers[HttpHeaders.ETag])
         assertTrue(response.headers[HttpHeaders.ContentType].orEmpty().startsWith("text/markdown"))
+    }
+
+    @Test
+    fun `the path me names serves the text, and the old path still does`() = testApplication {
+        val world = TermsWorld()
+        val client = with(world) { mount(folder.newFolder()) }
+        val path = client.me(world)["terms"]!!.jsonObject["languages"]!!.jsonArray.single()
+            .jsonObject["path"]!!.jsonPrimitive.content
+
+        // The phone fetches base URL + this path, with no token (TermsClient).
+        val named = client.get("/$path")
+        val old = client.get("/terms/fundi/2026-11/en")
+
+        assertTrue(path.startsWith("v1/"))
+        assertEquals(HttpStatusCode.OK, named.status)
+        assertEquals(String(world.englishBytes), named.bodyAsText())
+        assertEquals("\"${world.englishSha}\"", named.headers[HttpHeaders.ETag])
+        assertEquals(HttpStatusCode.OK, old.status)
     }
 
     @Test
