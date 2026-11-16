@@ -78,7 +78,12 @@ fun FundiProfileDto.toDomain(): FundiProfile = FundiProfile(
     goals = goals.mapNotNull(FundiGoal::fromId).toSet(),
 )
 
-fun FundiProfile.toDto(): FundiProfileDto = FundiProfileDto(
+/**
+ * [legacy] writes each owner in the words an app older than v0.6.0 knows (V35): "owned" for
+ * the worker's, the manager's and the studio's, "borrowed" for a rental. Such an app drops a
+ * word it has never seen, and its opening turn would then leave the tool out.
+ */
+fun FundiProfile.toDto(legacy: Boolean = false): FundiProfileDto = FundiProfileDto(
     workshop = WorkshopDto(
         worksAt = workshop.worksAt,
         yearsInTrade = workshop.yearsInTrade,
@@ -88,9 +93,32 @@ fun FundiProfile.toDto(): FundiProfileDto = FundiProfileDto(
         usualTimber = workshop.usualTimber,
         rentsTools = workshop.rentsTools,
     ),
-    tools = tools.map { ToolDto(it.kind.id, it.ownership.id, it.dayRateKes) },
+    tools = tools.map { ToolDto(it.kind.id, if (legacy) it.ownership.legacyId else it.ownership.id, it.dayRateKes) },
     goals = goals.map { it.id },
 )
+
+/**
+ * An app older than v0.6.0 writes "owned" for a tool the server holds as the manager's or
+ * the studio's, because that is the word the server sent it. Read as V35's mapping, "owned"
+ * is the worker's, and the save would overwrite the owner a newer phone recorded. So where
+ * the stored owner is one "owned" stands for, the stored one is kept.
+ */
+fun FundiProfile.keepingOwnersFrom(stored: FundiProfile?, sent: FundiProfileDto): FundiProfile {
+    if (stored == null) return this
+    val before = stored.tools.associate { it.kind to it.ownership }
+    val sentOwned = sent.tools.filter { it.ownership.trim().lowercase() == ToolOwnership.WORKER.legacyId }
+        .map { it.kind.trim().lowercase() }.toSet()
+    return copy(
+        tools = tools.map { tool ->
+            val kept = before[tool.kind]
+            if (tool.kind.id in sentOwned && kept != null && kept.legacyId == ToolOwnership.WORKER.legacyId) {
+                tool.copy(ownership = kept)
+            } else {
+                tool
+            }
+        },
+    )
+}
 
 /** One worker on the roster, as the phone reads it back. Archived ones are included. */
 @Serializable

@@ -115,6 +115,10 @@ class MigrationsTest {
         "attachments" to "photo_meta",
         // V32: the worker names and the maker's name a report printed.
         "reports" to "printed_names",
+        // V35: where each bench photo was taken, which is the fundi's workshop.
+        "bench_photos" to "location",
+        "bench_photos" to "location_accuracy_m",
+        "bench_photos" to "location_at",
     )
 
     /**

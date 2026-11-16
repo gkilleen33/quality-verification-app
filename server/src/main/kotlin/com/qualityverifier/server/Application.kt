@@ -59,6 +59,9 @@ import com.qualityverifier.server.db.ChatStore
 import com.qualityverifier.server.db.FundiStore
 import com.qualityverifier.server.db.PostgresChatStore
 import com.qualityverifier.server.db.PostgresFundiStore
+import com.qualityverifier.server.db.BenchStore
+import com.qualityverifier.server.db.PostgresBenchStore
+import com.qualityverifier.server.routes.benchRoutes
 import com.qualityverifier.server.db.PostgresAuthStore
 import com.qualityverifier.domain.Audience
 import com.qualityverifier.server.routes.ErrorResponse
@@ -148,6 +151,7 @@ fun main() {
             dailyAssessmentLimit = config.dailyAssessmentLimit,
             testerDailyAssessmentLimit = config.testerDailyAssessmentLimit,
             fundiDailyAssessmentLimit = config.fundiDailyAssessmentLimit,
+            bench = PostgresBenchStore(database.source),
         )
     } else {
         log.warn("Chat is disabled: needs a database and KAGUA_ANTHROPIC_API_KEY.")
@@ -402,6 +406,11 @@ class Chat(
     /** The higher allowance for a maker assessing their own work. */
     val fundiDailyAssessmentLimit: Int =
         Config.DEFAULT_DAILY_ASSESSMENT_LIMIT * Config.FUNDI_LIMIT_MULTIPLE,
+    /**
+     * Fundi Bora's bench photos at setup (V35). Here because the call needs the same Claude
+     * client, prompts and photo store as an assessment. Null mounts no bench route.
+     */
+    val bench: BenchStore? = null,
 )
 
 @Serializable
@@ -556,6 +565,8 @@ fun Application.module(
             // Reading assessments back, plus the two account actions. Needs both halves:
             // the chat store for sessions and the auth store for credentials.
             syncRoutes(it.store, auth.store, auth.accessTokens, it.blobs, it.feedback)
+            // The bench photo at setup (V35): a Claude call outside any assessment.
+            it.bench?.let { bench -> benchRoutes(bench, it.store, auth.store, it.blobs, it.claude, it.prompts) }
         }
 
         // Also behind auth, but deliberately not inside the `chat` block: the setup

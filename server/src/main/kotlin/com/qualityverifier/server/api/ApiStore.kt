@@ -54,6 +54,9 @@ interface ApiStore {
     /** Every answer to "Which studio are you at today?" (V34), by day, then account. */
     suspend fun studioDays(limit: Int, offset: Int): List<ApiStudioDay>
 
+    /** Every bench photo (V35), oldest first, with its point and the draft Claude made. */
+    suspend fun benchPhotos(limit: Int, offset: Int): List<ApiBenchPhoto>
+
     /** Every report issued (V32), oldest first, with the names it printed left out. */
     suspend fun reports(limit: Int, offset: Int): List<ApiReport>
 
@@ -228,7 +231,54 @@ class PostgresApiStore(private val dataSource: DataSource) : ApiStore {
             }
         }
 
-        ApiAssessmentDetail(assessment, messages, feedback, workers = workers)
+        // The tools to hand when it started (V35), as the server worked them out. Only here,
+        // for the reason the workers are.
+        val tools = connection.prepareStatement(
+            "select kind, source, owner from session_tools where session_id = ?::uuid order by source, kind"
+        ).use { statement ->
+            statement.setString(1, id)
+            statement.executeQuery().use { rows ->
+                val out = mutableListOf<ApiSessionTool>()
+                while (rows.next()) out += ApiSessionTool(rows.getString(1), rows.getString(2), rows.getString(3))
+                out
+            }
+        }
+
+        ApiAssessmentDetail(assessment, messages, feedback, workers = workers, tools = tools)
+    }
+
+    override suspend fun benchPhotos(limit: Int, offset: Int): List<ApiBenchPhoto> = query { connection ->
+        connection.prepareStatement(
+            """
+            select b.id::text, b.user_id::text, b.sha256,
+                   ST_Y(b.location::geometry), ST_X(b.location::geometry), b.location_accuracy_m,
+                   (extract(epoch from b.taken_at) * 1000)::bigint,
+                   b.draft::text, b.prompt_sha, b.model
+              from bench_photos b
+             order by b.taken_at, b.id
+             limit ? offset ?
+            """.trimIndent()
+        ).use { statement ->
+            statement.setInt(1, limit)
+            statement.setInt(2, offset)
+            statement.executeQuery().use { rows ->
+                val out = mutableListOf<ApiBenchPhoto>()
+                while (rows.next()) out += ApiBenchPhoto(
+                    id = rows.getString(1),
+                    userId = rows.getString(2),
+                    sha256 = rows.getString(3).trim(),
+                    // Y then X: ST_Y is the latitude, as for users.
+                    latitude = rows.nullableDouble(4),
+                    longitude = rows.nullableDouble(5),
+                    locationAccuracyM = rows.nullableDouble(6),
+                    takenAt = rows.getLong(7),
+                    draft = photoMetaOf(rows.getString(8)),
+                    promptSha = rows.getString(9),
+                    model = rows.getString(10),
+                )
+                out
+            }
+        }
     }
 
     override suspend fun workers(limit: Int, offset: Int): List<ApiWorker> = query { connection ->
@@ -550,10 +600,15 @@ class PostgresApiStore(private val dataSource: DataSource) : ApiStore {
     }
 
     override suspend fun photoExists(sha256: String): Boolean = query { connection ->
+        // A bench photo (V35) too, so its bytes can be checked against the draft it made.
         connection.prepareStatement(
-            "select exists (select 1 from attachments where sha256 = ?)"
+            """
+            select exists (select 1 from attachments where sha256 = ?)
+                or exists (select 1 from bench_photos where sha256 = ?)
+            """.trimIndent()
         ).use { statement ->
             statement.setString(1, sha256)
+            statement.setString(2, sha256)
             statement.executeQuery().use { it.next() && it.getBoolean(1) }
         }
     }

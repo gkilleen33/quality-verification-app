@@ -100,7 +100,8 @@ fun interface ReferencedHashes {
 }
 
 /**
- * Reads them from `attachments`.
+ * Reads them from `attachments`, and since v0.6.0 from `bench_photos` (V35): a bench photo is
+ * kept for the accuracy check of the tool lists it drafted, and belongs to no assessment.
  *
  * Deliberately the whole table and not a per-session query: a hash is shared between
  * customers, so anything narrower would answer a different and more dangerous question.
@@ -108,7 +109,9 @@ fun interface ReferencedHashes {
 class PostgresReferencedHashes(private val dataSource: DataSource) : ReferencedHashes {
     override suspend fun hashes(): Set<String> = withContext(Dispatchers.IO) {
         dataSource.connection.use { connection ->
-            connection.prepareStatement("select distinct sha256 from attachments").use { statement ->
+            connection.prepareStatement(
+                "select sha256 from attachments union select sha256 from bench_photos"
+            ).use { statement ->
                 statement.executeQuery().use { rows ->
                     val out = HashSet<String>()
                     while (rows.next()) out += rows.getString(1).lowercase()

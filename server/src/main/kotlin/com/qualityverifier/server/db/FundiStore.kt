@@ -732,7 +732,7 @@ class PostgresFundiStore(private val dataSource: DataSource) : FundiStore {
  * CHECK are kept in step by `FundiVocabularyTest`, so this is only reachable across a
  * downgrade, where losing one tool beats losing the profile.
  */
-private fun readTools(connection: Connection, userId: String): List<OwnedTool> =
+internal fun readTools(connection: Connection, userId: String): List<OwnedTool> =
     connection.prepareStatement(
         "select kind, ownership, day_rate_kes from fundi_tools where user_id = ?::uuid"
     ).use { statement ->

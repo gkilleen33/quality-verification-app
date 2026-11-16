@@ -20,7 +20,7 @@ class ToolChangesTest {
     @Test
     fun `getting rid of a tool is recorded, with where it came from`() {
         val changes = toolChanges(
-            previous = listOf(tool(ToolKind.CIRCULAR_SAW, ToolOwnership.OWNED)),
+            previous = listOf(tool(ToolKind.CIRCULAR_SAW, ToolOwnership.WORKER)),
             next = listOf(
                 OwnedTool(
                     ToolKind.CIRCULAR_SAW,
@@ -34,7 +34,7 @@ class ToolChangesTest {
             listOf(
                 ToolChange(
                     kind = ToolKind.CIRCULAR_SAW,
-                    from = ToolOwnership.OWNED,
+                    from = ToolOwnership.WORKER,
                     to = ToolOwnership.NONE,
                     reason = ToolChangeReason.SOLD,
                 ),
@@ -52,14 +52,14 @@ class ToolChangesTest {
             next = listOf(
                 OwnedTool(
                     ToolKind.MARKING_GAUGE,
-                    ToolOwnership.OWNED,
+                    ToolOwnership.WORKER,
                     changeReason = ToolChangeReason.BOUGHT,
                 ),
             ),
         )
 
         assertEquals(ToolOwnership.NONE, changes.single().from)
-        assertEquals(ToolOwnership.OWNED, changes.single().to)
+        assertEquals(ToolOwnership.WORKER, changes.single().to)
         assertEquals(ToolChangeReason.BOUGHT, changes.single().reason)
     }
 
@@ -69,10 +69,10 @@ class ToolChangesTest {
     fun `a tool left out of the answer is not a tool disposed of`() {
         val changes = toolChanges(
             previous = listOf(
-                tool(ToolKind.CHISELS, ToolOwnership.OWNED),
-                tool(ToolKind.ROUTER, ToolOwnership.OWNED),
+                tool(ToolKind.CHISELS, ToolOwnership.WORKER),
+                tool(ToolKind.ROUTER, ToolOwnership.WORKER),
             ),
-            next = listOf(tool(ToolKind.CHISELS, ToolOwnership.OWNED)),
+            next = listOf(tool(ToolKind.CHISELS, ToolOwnership.WORKER)),
         )
 
         assertEquals(emptyList<ToolChange>(), changes)
@@ -82,7 +82,7 @@ class ToolChangesTest {
     @Test
     fun `an unchanged answer is not a change`() {
         val tools = listOf(
-            tool(ToolKind.CHISELS, ToolOwnership.OWNED),
+            tool(ToolKind.CHISELS, ToolOwnership.WORKER),
             tool(ToolKind.CLAMPS, ToolOwnership.NONE),
         )
 
@@ -94,11 +94,11 @@ class ToolChangesTest {
     fun `the first answer about a tool has no from`() {
         val changes = toolChanges(
             previous = emptyList(),
-            next = listOf(tool(ToolKind.DRILL, ToolOwnership.OWNED)),
+            next = listOf(tool(ToolKind.DRILL, ToolOwnership.WORKER)),
         )
 
         assertNull(changes.single().from)
-        assertEquals(ToolOwnership.OWNED, changes.single().to)
+        assertEquals(ToolOwnership.WORKER, changes.single().to)
     }
 
     @Test
@@ -116,7 +116,7 @@ class ToolChangesTest {
     @Test
     fun `returning a borrowed tool is a change of its own`() {
         val changes = toolChanges(
-            previous = listOf(tool(ToolKind.CIRCULAR_SAW, ToolOwnership.BORROWED)),
+            previous = listOf(tool(ToolKind.CIRCULAR_SAW, ToolOwnership.RENTAL)),
             next = listOf(
                 OwnedTool(
                     ToolKind.CIRCULAR_SAW,
@@ -126,7 +126,7 @@ class ToolChangesTest {
             ),
         )
 
-        assertEquals(ToolOwnership.BORROWED, changes.single().from)
+        assertEquals(ToolOwnership.RENTAL, changes.single().from)
         assertEquals(ToolChangeReason.RETURNED, changes.single().reason)
     }
 
@@ -135,7 +135,7 @@ class ToolChangesTest {
     @Test
     fun `a change with no reason is still a change`() {
         val changes = toolChanges(
-            previous = listOf(tool(ToolKind.PLANE_NO4, ToolOwnership.OWNED)),
+            previous = listOf(tool(ToolKind.PLANE_NO4, ToolOwnership.WORKER)),
             next = listOf(tool(ToolKind.PLANE_NO4, ToolOwnership.NONE)),
         )
 
@@ -148,7 +148,7 @@ class ToolChangesTest {
         val changes = toolChanges(
             previous = emptyList(),
             next = listOf(
-                OwnedTool(ToolKind.SANDER, ToolOwnership.OWNED, changeNote = "   "),
+                OwnedTool(ToolKind.SANDER, ToolOwnership.WORKER, changeNote = "   "),
             ),
         )
 
@@ -158,7 +158,7 @@ class ToolChangesTest {
     @Test
     fun `the maker's own words are kept, trimmed`() {
         val changes = toolChanges(
-            previous = listOf(tool(ToolKind.SANDER, ToolOwnership.OWNED)),
+            previous = listOf(tool(ToolKind.SANDER, ToolOwnership.WORKER)),
             next = listOf(
                 OwnedTool(
                     ToolKind.SANDER,
@@ -177,12 +177,12 @@ class ToolChangesTest {
         val changes = toolChanges(
             previous = emptyList(),
             next = listOf(
-                tool(ToolKind.CHISELS, ToolOwnership.OWNED),
+                tool(ToolKind.CHISELS, ToolOwnership.WORKER),
                 tool(ToolKind.CHISELS, ToolOwnership.NONE),
             ),
         )
 
         assertEquals(1, changes.size)
-        assertEquals(ToolOwnership.OWNED, changes.single().to)
+        assertEquals(ToolOwnership.WORKER, changes.single().to)
     }
 }

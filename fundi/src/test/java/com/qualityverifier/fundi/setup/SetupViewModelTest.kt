@@ -141,7 +141,7 @@ class SetupViewModelTest {
         val profiles = FakeProfiles()
         val model = SetupViewModel(profiles)
 
-        model.setTool(ToolKind.CHISELS, ToolOwnership.OWNED)
+        model.setTool(ToolKind.CHISELS, ToolOwnership.WORKER)
         model.setTool(ToolKind.CLAMPS, ToolOwnership.NONE)
         model.save()
         advanceUntilIdle()
@@ -163,13 +163,13 @@ class SetupViewModelTest {
         val profiles = FakeProfiles()
         val model = SetupViewModel(profiles)
 
-        model.setTool(ToolKind.PLANE_NO4, ToolOwnership.BORROWED)
-        model.setTool(ToolKind.PLANE_NO4, ToolOwnership.OWNED)
+        model.setTool(ToolKind.PLANE_NO4, ToolOwnership.RENTAL)
+        model.setTool(ToolKind.PLANE_NO4, ToolOwnership.WORKER)
         model.save()
         advanceUntilIdle()
 
         assertEquals(1, profiles.sent!!.tools.size)
-        assertEquals(ToolOwnership.OWNED, profiles.sent!!.tools.single().ownership)
+        assertEquals(ToolOwnership.WORKER, profiles.sent!!.tools.single().ownership)
     }
 
     @Test
@@ -191,7 +191,7 @@ class SetupViewModelTest {
         val profiles = FakeProfiles()
         val model = SetupViewModel(profiles)
 
-        model.setTool(ToolKind.HAND_SAW, ToolOwnership.OWNED)
+        model.setTool(ToolKind.HAND_SAW, ToolOwnership.WORKER)
         model.save()
         advanceUntilIdle()
 
@@ -206,7 +206,7 @@ class SetupViewModelTest {
     fun `existing answers are loaded before editing`() = runTest {
         val stored = FundiProfile(
             workshop = Workshop(makes = "stools"),
-            tools = listOf(OwnedTool(ToolKind.CHISELS, ToolOwnership.OWNED)),
+            tools = listOf(OwnedTool(ToolKind.CHISELS, ToolOwnership.WORKER)),
             goals = setOf(FundiGoal.MORE_ORDERS),
         )
         val profiles = FakeProfiles(existing = ProfileOutcome.Loaded(stored))
@@ -272,7 +272,7 @@ class SetupViewModelTest {
         val model = SetupViewModel(profiles)
 
         model.updateWorkshop { it.copy(makes = "stools") }
-        model.setTool(ToolKind.DRILL, ToolOwnership.OWNED)
+        model.setTool(ToolKind.DRILL, ToolOwnership.WORKER)
         advanceUntilIdle()
 
         assertNull("the profile is sent whole, at the end", profiles.sent)

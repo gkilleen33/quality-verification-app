@@ -29,9 +29,9 @@ data class FundiProfile(
     val tools: List<OwnedTool> = emptyList(),
     val goals: Set<FundiGoal> = emptySet(),
 ) {
-    /** Tools they can use on this piece. Borrowed counts; see [ToolOwnership]. */
+    /** Tools they can use on this piece, whoever owns them. A rental counts; see [ToolOwnership]. */
     val available: List<OwnedTool>
-        get() = tools.filter { it.ownership == ToolOwnership.OWNED || it.ownership == ToolOwnership.BORROWED }
+        get() = tools.filter { it.ownership.toHand }
 
     /** Tools they told us they do not have, which is what the fix plan works around. */
     val missing: List<ToolKind>

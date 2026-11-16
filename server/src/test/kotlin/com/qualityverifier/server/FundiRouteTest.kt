@@ -693,8 +693,8 @@ class FundiRouteTest {
                 existing = FundiProfile(
                     workshop = Workshop(makes = "stools"),
                     tools = listOf(
-                        OwnedTool(ToolKind.CIRCULAR_SAW, ToolOwnership.OWNED),
-                        OwnedTool(ToolKind.ROUTER, ToolOwnership.OWNED),
+                        OwnedTool(ToolKind.CIRCULAR_SAW, ToolOwnership.WORKER),
+                        OwnedTool(ToolKind.ROUTER, ToolOwnership.WORKER),
                     ),
                 ),
             )
@@ -718,7 +718,7 @@ class FundiRouteTest {
             assertEquals(2, changes.size)
 
             val saw = changes.single { it.kind == ToolKind.CIRCULAR_SAW }
-            assertEquals(ToolOwnership.OWNED, saw.from)
+            assertEquals(ToolOwnership.WORKER, saw.from)
             assertEquals(ToolChangeReason.SOLD, saw.reason)
             assertEquals("bad month", saw.note)
 
@@ -734,7 +734,7 @@ class FundiRouteTest {
         val store = FakeFundiStore(
             existing = FundiProfile(
                 workshop = Workshop(makes = "stools"),
-                tools = listOf(OwnedTool(ToolKind.CHISELS, ToolOwnership.OWNED)),
+                tools = listOf(OwnedTool(ToolKind.CHISELS, ToolOwnership.WORKER)),
             ),
         )
         val app = withFundi(store, audience = Audience.FUNDI)
@@ -758,7 +758,7 @@ class FundiRouteTest {
     fun `the rental answers survive the round trip`() = testApplication {
         val profile = FundiProfile(
             workshop = Workshop(makes = "stools", rentsTools = true),
-            tools = listOf(OwnedTool(ToolKind.ROUTER, ToolOwnership.OWNED, dayRateKes = 400)),
+            tools = listOf(OwnedTool(ToolKind.ROUTER, ToolOwnership.WORKER, dayRateKes = 400)),
         )
         val app = withFundi(FakeFundiStore(existing = profile), audience = Audience.FUNDI)
 

@@ -53,6 +53,10 @@ class GitHubPromptRepository(
         load(COMPACT_PATH, blankIsValid = false) { DefaultPrompts.COMPACT }
     }
 
+    override suspend fun benchPrompt(): String = withContext(io) {
+        load(BENCH_PATH, blankIsValid = false) { DefaultPrompts.FUNDI_BENCH }
+    }
+
     override suspend fun clearCache() = withContext(io) { cache.clear() }
 
     private fun load(
@@ -97,6 +101,7 @@ class GitHubPromptRepository(
         const val MASTER_PATH = "master.txt"
         const val FUNDI_MASTER_PATH = "fundi-master.txt"
         const val COMPACT_PATH = "compact.txt"
+        const val BENCH_PATH = "fundi-bench.txt"
 
         fun masterPathFor(audience: Audience): String = when (audience) {
             Audience.BUYER -> MASTER_PATH

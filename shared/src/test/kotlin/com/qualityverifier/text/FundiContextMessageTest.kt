@@ -41,7 +41,7 @@ class FundiContextMessageTest {
     fun `tools they do not have are stated, not left out`() {
         val profile = FundiProfile(
             tools = listOf(
-                OwnedTool(ToolKind.CHISELS, ToolOwnership.OWNED),
+                OwnedTool(ToolKind.CHISELS, ToolOwnership.WORKER),
                 OwnedTool(ToolKind.CLAMPS, ToolOwnership.NONE),
             ),
         )
@@ -59,7 +59,7 @@ class FundiContextMessageTest {
     fun `a tool they do not know is its own list, and not available`() {
         val profile = FundiProfile(
             tools = listOf(
-                OwnedTool(ToolKind.CHISELS, ToolOwnership.OWNED),
+                OwnedTool(ToolKind.CHISELS, ToolOwnership.WORKER),
                 OwnedTool(ToolKind.CLAMPS, ToolOwnership.NONE),
                 OwnedTool(ToolKind.MARKING_GAUGE, ToolOwnership.UNKNOWN),
             ),
@@ -78,7 +78,7 @@ class FundiContextMessageTest {
     @Test
     fun `a tool nobody asked about appears in neither list`() {
         val profile = FundiProfile(
-            tools = listOf(OwnedTool(ToolKind.CHISELS, ToolOwnership.OWNED)),
+            tools = listOf(OwnedTool(ToolKind.CHISELS, ToolOwnership.WORKER)),
         )
 
         val text = message(profile)
@@ -90,8 +90,8 @@ class FundiContextMessageTest {
     fun `a borrowed tool is available but marked`() {
         val profile = FundiProfile(
             tools = listOf(
-                OwnedTool(ToolKind.SQUARE, ToolOwnership.BORROWED),
-                OwnedTool(ToolKind.DRILL, ToolOwnership.OWNED),
+                OwnedTool(ToolKind.SQUARE, ToolOwnership.RENTAL),
+                OwnedTool(ToolKind.DRILL, ToolOwnership.WORKER),
             ),
         )
 
@@ -144,7 +144,7 @@ class FundiContextMessageTest {
     fun `renting out tools is never mentioned to the assistant`() {
         val profile = FundiProfile(
             workshop = Workshop(makes = "stools", rentsTools = true),
-            tools = listOf(OwnedTool(ToolKind.ROUTER, ToolOwnership.OWNED, dayRateKes = 400)),
+            tools = listOf(OwnedTool(ToolKind.ROUTER, ToolOwnership.WORKER, dayRateKes = 400)),
         )
 
         val text = message(profile)
@@ -176,7 +176,7 @@ class FundiContextMessageTest {
             workshop = Workshop(makes = "stools"),
             tools = listOf(
                 OwnedTool(ToolKind.CLAMPS, ToolOwnership.NONE),
-                OwnedTool(ToolKind.HAND_SAW, ToolOwnership.OWNED),
+                OwnedTool(ToolKind.HAND_SAW, ToolOwnership.WORKER),
             ),
             goals = setOf(FundiGoal.MORE_ORDERS),
         )

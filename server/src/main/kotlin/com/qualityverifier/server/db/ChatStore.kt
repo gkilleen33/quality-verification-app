@@ -470,6 +470,9 @@ class PostgresChatStore(private val dataSource: DataSource) : ChatStore {
             statement.setBoolean(11, keepFinal)
             statement.executeUpdate()
         }
+        // The tools to hand for this assessment (V35, row 10), worked out once, now, from the
+        // lists as they stand. For research only: nothing reads them back into a request.
+        if (footing != null) recordSessionTools(connection, sessionId, pieceId!!)
         // Fundi Bora only, like the piece. Kagua's endpoint never sends any.
         if (audience == Audience.FUNDI) writeSessionWorkers(connection, userId, sessionId, workers)
         SessionAccess.Ok(created = true)
@@ -548,6 +551,48 @@ class PostgresChatStore(private val dataSource: DataSource) : ChatStore {
 
     /** `sessions.assessed_as` (V34), and whether this account may mark the assessment final. */
     private data class PieceFooting(val assessedAs: String, val mayMakeFinal: Boolean)
+
+    /**
+     * Writes `session_tools` (V35) for a new assessment of [pieceId]: the maker's tools and,
+     * on a piece labelled for a linked studio, the studio manager's, by [InferredTools]' rule.
+     */
+    private fun recordSessionTools(connection: Connection, sessionId: String, pieceId: String) {
+        val (maker, labelled, manager) = connection.prepareStatement(
+            """
+            select p.user_id::text, p.studio_entry_id is not null,
+                   (select pm.manager_user_id::text from piece_managers pm where pm.piece_id = p.id)
+              from pieces p where p.id = ?::uuid
+            """.trimIndent()
+        ).use { statement ->
+            statement.setString(1, pieceId)
+            statement.executeQuery().use { rows ->
+                if (!rows.next()) return
+                Triple(rows.getString(1), rows.getBoolean(2), rows.getString(3))
+            }
+        }
+        val rows = InferredTools.of(
+            maker = readTools(connection, maker),
+            labelled = labelled,
+            studio = manager?.let { readTools(connection, it) },
+        )
+        if (rows.isEmpty()) return
+        connection.prepareStatement(
+            """
+            insert into session_tools (session_id, kind, source, owner)
+            values (?::uuid, ?, ?, ?)
+            on conflict do nothing
+            """.trimIndent()
+        ).use { statement ->
+            rows.forEach { row ->
+                statement.setString(1, sessionId)
+                statement.setString(2, row.kind.id)
+                statement.setString(3, row.source)
+                statement.setString(4, row.owner.id)
+                statement.addBatch()
+            }
+            statement.executeBatch()
+        }
+    }
 
     private fun workerExists(connection: Connection, workerId: String): Boolean =
         connection.prepareStatement("select 1 from workers where id = ?::uuid").use { statement ->

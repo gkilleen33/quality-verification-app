@@ -352,7 +352,7 @@ class AssessViewModelTest {
                 FundiProfile(
                     workshop = Workshop(makes = "stools"),
                     tools = listOf(
-                        OwnedTool(ToolKind.CHISELS, ToolOwnership.OWNED),
+                        OwnedTool(ToolKind.CHISELS, ToolOwnership.WORKER),
                         OwnedTool(ToolKind.CLAMPS, ToolOwnership.NONE),
                     ),
                 )

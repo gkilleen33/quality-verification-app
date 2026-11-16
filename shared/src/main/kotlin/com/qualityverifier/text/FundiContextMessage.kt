@@ -50,14 +50,16 @@ fun buildFundiContextMessage(profile: FundiProfile, labels: FundiLabels): String
     }
 
     // Enum order rather than the order they were answered in, so the same profile always
-    // produces the same message. Borrowed tools are marked inline rather than split into a
-    // third list: they are available for this piece, which is what matters for the fix, and
-    // the caveat about the next piece is the prompt's job to apply.
+    // produces the same message. Rentals are marked inline, as borrowed tools were before
+    // V35, rather than split into a third list: they are available for this piece, which is
+    // what matters for the fix, and the caveat about the next piece is the prompt's job to
+    // apply. The worker's, the manager's and the studio's are named plainly, as an owned
+    // tool was, so the message for every profile V35 rewrote is the same bytes as before.
     val available = profile.available.sortedBy { it.kind.ordinal }
     if (available.isNotEmpty()) {
         val named = available.map { tool ->
             val name = labels.nameOf(tool.kind)
-            if (tool.ownership == ToolOwnership.BORROWED) labels.borrowed(name) else name
+            if (tool.ownership == ToolOwnership.RENTAL) labels.borrowed(name) else name
         }
         lines += labels.contextToolsHave + " " + named.joinToString(", ") + "."
     }

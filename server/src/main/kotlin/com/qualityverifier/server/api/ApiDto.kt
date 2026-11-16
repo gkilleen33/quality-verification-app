@@ -191,6 +191,44 @@ data class ApiAssessmentDetail(
      * rather than "nobody". Joins to `/api/v1/workers` on `worker_id`.
      */
     val workers: List<ApiSessionWorker> = emptyList(),
+    /**
+     * The tools to hand when the assessment started (V35, release scope row 10), as the
+     * server worked them out: the maker's own, and on a piece labelled for a studio, the
+     * maker's whole list and the studio manager's. Empty for Kagua, for an assessment of no
+     * piece, and for one made before v0.6.0. Never shown to the fundi or sent to Claude.
+     */
+    val tools: List<ApiSessionTool> = emptyList(),
+)
+
+/** One `session_tools` row: a tool kind, whose list it came from (`maker`, `studio`), and its owner. */
+@Serializable
+data class ApiSessionTool(
+    val kind: String,
+    val source: String,
+    /** `worker`, `manager`, `studio` or `rental`. */
+    val owner: String,
+)
+
+/**
+ * One bench photo at setup (V35, release scope row 5): who took it, when, where when the
+ * fundi allowed location, and the tool list Claude drafted from it, before the fundi
+ * confirmed or rejected each tool. The confirmed list is the account's tools.
+ */
+@Serializable
+data class ApiBenchPhoto(
+    val id: String,
+    @SerialName("user_id") val userId: String,
+    /** Fetch the bytes with /api/v1/photos. */
+    val sha256: String,
+    val latitude: Double?,
+    val longitude: Double?,
+    @SerialName("location_accuracy_m") val locationAccuracyM: Double?,
+    /** The server's receipt time. */
+    @SerialName("taken_at") val takenAt: Long,
+    /** `{"tools":[{"kind":..., "seen":...}]}`, or null when the call failed. */
+    val draft: JsonObject?,
+    @SerialName("prompt_sha") val promptSha: String?,
+    val model: String?,
 )
 
 /**

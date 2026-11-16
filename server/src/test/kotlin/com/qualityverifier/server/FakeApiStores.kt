@@ -154,6 +154,11 @@ class FakeApiStore(
         return studioDays
     }
 
+    override suspend fun benchPhotos(limit: Int, offset: Int): List<com.qualityverifier.server.api.ApiBenchPhoto> {
+        lastLimit = limit
+        return emptyList()
+    }
+
     override suspend fun reports(limit: Int, offset: Int): List<ApiReport> {
         lastLimit = limit
         return reports

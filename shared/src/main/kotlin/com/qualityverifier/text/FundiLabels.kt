@@ -455,8 +455,10 @@ data class FundiLabels(
             setupGoalsTitle = "What you want from this",
             setupGoalsBlurb = "Pick any that fit.",
             ownershipNames = mapOf(
-                ToolOwnership.OWNED to "Have it",
-                ToolOwnership.BORROWED to "Can borrow",
+                ToolOwnership.WORKER to "Mine",
+                ToolOwnership.MANAGER to "My manager's",
+                ToolOwnership.STUDIO to "The studio's",
+                ToolOwnership.RENTAL to "Rented",
                 ToolOwnership.NONE to "Do not have",
                 ToolOwnership.UNKNOWN to "Don't know what this tool is",
             ),
