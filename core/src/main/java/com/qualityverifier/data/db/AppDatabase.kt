@@ -20,8 +20,9 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         MpesaTransactionEntity::class,
         MpesaUnreadDayEntity::class,
         StudioEntity::class,
+        StudioDayEntity::class,
     ],
-    version = 15,
+    version = 16,
     exportSchema = true,
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -295,10 +296,33 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        /**
+         * Fundi Bora v0.6.0 (server V34): each piece's studio label, whether its one
+         * correction is used, a label change waiting to be sent, and whether the piece is
+         * this account's own; each session's final flag; and the day's answer to "Which
+         * studio are you at today?". Every existing piece reads as never asked and as its
+         * own, and every session as not final, which is what they were.
+         */
+        val MIGRATION_15_16 = object : Migration(15, 16) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE pieces ADD COLUMN studioId TEXT")
+                db.execSQL("ALTER TABLE pieces ADD COLUMN studioChosen INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE pieces ADD COLUMN studioCorrected INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE pieces ADD COLUMN studioPendingAt INTEGER")
+                db.execSQL("ALTER TABLE pieces ADD COLUMN mine INTEGER NOT NULL DEFAULT 1")
+                db.execSQL("ALTER TABLE sessions ADD COLUMN isFinal INTEGER NOT NULL DEFAULT 0")
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `studio_days` (" +
+                        "`day` TEXT NOT NULL, `studioId` TEXT, `answeredAt` INTEGER NOT NULL, " +
+                        "`syncedAt` INTEGER, PRIMARY KEY(`day`))"
+                )
+            }
+        }
+
         val MIGRATIONS = arrayOf(
             MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6,
             MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11,
-            MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15,
+            MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16,
         )
     }
 }

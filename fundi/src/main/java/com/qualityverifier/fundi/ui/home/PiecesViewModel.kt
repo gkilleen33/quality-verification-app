@@ -11,9 +11,12 @@ import com.qualityverifier.domain.MpesaCategory
 import com.qualityverifier.mpesa.MpesaSums
 import kotlinx.coroutines.flow.map
 import com.qualityverifier.data.sync.AssessmentSync
+import com.qualityverifier.data.workers.StudioRepository
 import com.qualityverifier.data.workers.WorkerRepository
 import com.qualityverifier.di.AppContainer
 import com.qualityverifier.domain.SessionSummary
+import com.qualityverifier.domain.Studio
+import kotlinx.coroutines.flow.flowOf
 import com.qualityverifier.domain.Worker
 import com.qualityverifier.domain.WorkerDetails
 import com.qualityverifier.domain.WorkerSlot
@@ -40,7 +43,26 @@ class PiecesViewModel(
     private val sync: AssessmentSync,
     private val workers: WorkerRepository,
     mpesa: MpesaRepository,
+    /** "Studios I work for", for each card's studio line and its change (v0.6.0, rows 1 and 2). */
+    studioList: StudioRepository? = null,
 ) : ViewModel() {
+
+    /** Every entry of "Studios I work for", archived ones too, so an old label still has a name. */
+    val studios: StateFlow<List<Studio>> =
+        (studioList?.observeStudios() ?: flowOf(emptyList()))
+            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    /**
+     * Labels one of this maker's pieces with a studio, or "My own job" with null: the first
+     * answer for a piece never asked, or its one correction. Local first; sent at once when
+     * there is signal, and otherwise on the next sync.
+     */
+    fun setStudio(pieceId: String, studioId: String?) {
+        viewModelScope.launch {
+            sessions.setPieceStudio(pieceId, studioId)
+            refresh()
+        }
+    }
 
     /**
      * What each piece cost, by category: M-Pesa money out the fundi assigned to it (Grady's
@@ -121,6 +143,7 @@ class PiecesViewModel(
                     container.assessmentSync,
                     container.workerRepository,
                     container.mpesa,
+                    container.studioRepository,
                 )
             }
         }

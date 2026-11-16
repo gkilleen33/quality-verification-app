@@ -36,6 +36,12 @@ data class SessionSummaryRow(
     val pieceId: String?,
     /** From `pieces`, joined on the piece the session belongs to. */
     val pieceLabel: String?,
+    /** From `pieces` too (V34): the label, whether it was chosen and corrected, and whose piece. */
+    val pieceStudioId: String? = null,
+    val pieceStudioChosen: Boolean = false,
+    val pieceStudioCorrected: Boolean = false,
+    val pieceMine: Boolean = true,
+    val isFinal: Boolean = false,
 )
 
 @Dao
@@ -53,6 +59,11 @@ interface SessionDao {
                s.verdictUnverifiedCount AS verdictUnverifiedCount,
                s.pieceId AS pieceId,
                p.label AS pieceLabel,
+               p.studioId AS pieceStudioId,
+               COALESCE(p.studioChosen, 0) AS pieceStudioChosen,
+               COALESCE(p.studioCorrected, 0) AS pieceStudioCorrected,
+               COALESCE(p.mine, 1) AS pieceMine,
+               s.isFinal AS isFinal,
                COUNT(m.id) AS messageCount
         FROM sessions s
         LEFT JOIN messages m ON m.sessionId = s.id
@@ -200,6 +211,64 @@ interface SessionDao {
             "AND (labelUpdatedAt = :asOf OR (:asOf IS NULL AND labelUpdatedAt IS NULL))"
     )
     suspend fun markPieceSynced(pieceId: String, asOf: Long?, syncedAt: Long)
+
+    /**
+     * A rename, as an update rather than a replace: replacing the row would reset the
+     * piece's studio label (V34) to "never asked".
+     */
+    @Query(
+        "UPDATE pieces SET label = :label, labelUpdatedAt = :updatedAt, labelSyncedAt = NULL " +
+            "WHERE id = :pieceId"
+    )
+    suspend fun renamePiece(pieceId: String, label: String?, updatedAt: Long)
+
+    // ---- a piece's studio label (server V34)
+
+    /**
+     * The server's label, applied only where the phone holds no unsent change of its own,
+     * in one statement for the reason [applySyncedLabel] gives. [mine] is applied always:
+     * whose piece it is never changes on the phone.
+     */
+    @Query(
+        "UPDATE pieces SET mine = :mine, " +
+            "studioId = CASE WHEN studioPendingAt IS NULL THEN :studioId ELSE studioId END, " +
+            "studioChosen = CASE WHEN studioPendingAt IS NULL THEN :chosen ELSE studioChosen END, " +
+            "studioCorrected = CASE WHEN studioPendingAt IS NULL THEN :corrected ELSE studioCorrected END " +
+            "WHERE id = :pieceId"
+    )
+    suspend fun applySyncedStudio(pieceId: String, studioId: String?, chosen: Boolean, corrected: Boolean, mine: Boolean)
+
+    /**
+     * The maker's own change of label, waiting to be sent. A first answer for a piece never
+     * asked does not spend the correction; any later change does.
+     */
+    @Query(
+        "UPDATE pieces SET studioId = :studioId, " +
+            "studioCorrected = CASE WHEN studioChosen THEN 1 ELSE studioCorrected END, " +
+            "studioChosen = 1, studioPendingAt = :at WHERE id = :pieceId AND mine"
+    )
+    suspend fun setPieceStudio(pieceId: String, studioId: String?, at: Long)
+
+    @Query("SELECT * FROM pieces WHERE studioPendingAt IS NOT NULL ORDER BY studioPendingAt")
+    suspend fun unsyncedPieceStudios(): List<PieceEntity>
+
+    /** Marks the change sent, unless another was made while it was in flight. */
+    @Query("UPDATE pieces SET studioPendingAt = NULL WHERE id = :pieceId AND studioPendingAt = :asOf")
+    suspend fun markPieceStudioSent(pieceId: String, asOf: Long)
+
+    // ---- which studio today (server V34)
+
+    @Query("SELECT * FROM studio_days WHERE day = :day")
+    suspend fun studioDay(day: String): StudioDayEntity?
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsertStudioDay(day: StudioDayEntity)
+
+    @Query("SELECT * FROM studio_days WHERE syncedAt IS NULL ORDER BY answeredAt")
+    suspend fun unsyncedStudioDays(): List<StudioDayEntity>
+
+    @Query("UPDATE studio_days SET syncedAt = :syncedAt WHERE day = :day")
+    suspend fun markStudioDaySynced(day: String, syncedAt: Long)
 
     // ---- the roster
 

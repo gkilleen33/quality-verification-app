@@ -61,6 +61,20 @@ interface SessionRepository {
          * rename when the piece already has a different name.
          */
         pieceLabel: String? = null,
+        /**
+         * The studio a new piece is for (Fundi Bora v0.6.0): [PieceStudioChoice.NotAsked]
+         * for a returning piece, whose label is the piece's own and changes only through
+         * [setPieceStudio].
+         */
+        pieceStudio: PieceStudioChoice = PieceStudioChoice.NotAsked,
+        /**
+         * False when the piece is a linked worker's and this account assesses it as the
+         * manager of the studio it is labelled for (row 11): the piece row is kept with the
+         * worker's name, and nothing about it is sent as this account's change.
+         */
+        pieceMine: Boolean = true,
+        /** The final assessment of the finished piece, before a customer report (row 27). */
+        isFinal: Boolean = false,
     )
 
     suspend fun sessionExists(sessionId: String): Boolean
@@ -147,10 +161,37 @@ interface SessionRepository {
     suspend fun unsyncedPieceLabels(): List<PieceLabelChange>
 
     suspend fun markPieceLabelSynced(change: PieceLabelChange)
+
+    /**
+     * Labels one of this account's pieces with a studio, or "My own job" with null: the
+     * first answer for a piece never asked, or its one correction (V34). Written locally
+     * first and sent on the next sync.
+     *
+     * The three label methods have defaults that do nothing, as Kagua has no pieces and its
+     * test doubles need not grow them; the Room repository overrides all three.
+     */
+    suspend fun setPieceStudio(pieceId: String, studioId: String?) = Unit
+
+    /** Label changes the server has not been told yet. */
+    suspend fun unsyncedPieceStudios(): List<PieceStudioChange> = emptyList()
+
+    /** The change reached the server, or the server refused it for good; either way it is not resent. */
+    suspend fun markPieceStudioSent(change: PieceStudioChange) = Unit
 }
 
 /** A rename waiting to reach the server. [asOf] is the phone's clock at the rename. */
 data class PieceLabelChange(val pieceId: String, val label: String?, val asOf: Long?)
+
+/** A studio label waiting to reach the server. [studioId] null is "My own job". */
+data class PieceStudioChange(val pieceId: String, val studioId: String?, val asOf: Long)
+
+/** The answer to "Which studio is this for?" when a new piece is named. */
+sealed interface PieceStudioChoice {
+    /** A returning piece, or an account with no studios on its list. */
+    data object NotAsked : PieceStudioChoice
+    data object OwnJob : PieceStudioChoice
+    data class Studio(val studioId: String) : PieceStudioChoice
+}
 
 /** An evaluator's review as the phone holds it, before it reaches the server. */
 data class LocalTesterFeedback(

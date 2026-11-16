@@ -80,6 +80,12 @@ data class SessionEntity(
      * nothing extra to mint and an old row with none falls back to itself.
      */
     val pieceId: String? = null,
+    /**
+     * The final assessment of the finished piece, made before a customer report (server
+     * V34, release scope row 27). Sent with the opening turn and read back through sync.
+     */
+    @ColumnInfo(defaultValue = "0")
+    val isFinal: Boolean = false,
 )
 
 /**
@@ -102,6 +108,43 @@ data class PieceEntity(
     /** The phone's own clock, for ordering its own writes; never sent. */
     val labelUpdatedAt: Long? = null,
     val labelSyncedAt: Long? = null,
+    /**
+     * The studio the piece is for (server V34): an entry of this account's "Studios I work
+     * for" list, or null for "My own job" when [studioChosen] is true, and for a piece made
+     * before v0.6.0, which was never asked.
+     */
+    val studioId: String? = null,
+    @ColumnInfo(defaultValue = "0")
+    val studioChosen: Boolean = false,
+    /** Whether the one correction of the label has been used. */
+    @ColumnInfo(defaultValue = "0")
+    val studioCorrected: Boolean = false,
+    /**
+     * The phone's clock at a label change the server has not been told of, or null when
+     * none is waiting. The first assessment's opening turn carries the label itself.
+     */
+    val studioPendingAt: Long? = null,
+    /**
+     * False for a linked worker's piece this account assessed as the manager of the studio
+     * it is labelled for (row 11). Its name and label are the worker's, and not this
+     * account's to change.
+     */
+    @ColumnInfo(defaultValue = "1")
+    val mine: Boolean = true,
+)
+
+/**
+ * This account's answer to "Which studio are you at today?" (server V34, row 9), one per
+ * Nairobi day. [studioId] null is its own workshop. [syncedAt] null means the server has
+ * not been told yet.
+ */
+@Entity(tableName = "studio_days")
+data class StudioDayEntity(
+    /** The Nairobi date, "2026-11-16". */
+    @PrimaryKey val day: String,
+    val studioId: String? = null,
+    val answeredAt: Long,
+    val syncedAt: Long? = null,
 )
 
 /**

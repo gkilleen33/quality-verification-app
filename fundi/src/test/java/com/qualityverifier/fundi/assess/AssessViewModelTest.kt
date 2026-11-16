@@ -246,6 +246,51 @@ class AssessViewModelTest {
         assertEquals("Kiti cha Wanjirũ", sessions.created.single().pieceLabel)
     }
 
+    // v0.6.0, row 1: the studio a new piece is for goes with the session row at creation,
+    // and the opening turn carries it from there.
+    @Test
+    fun `the studio a new piece is for is stored with the session`() = runTest {
+        val sessions = FakeSessions()
+        model(sessions = sessions).start(
+            intake, "/tmp/whole.jpg", pieceLabel = "Stool",
+            studio = com.qualityverifier.data.session.PieceStudioChoice.Studio("studio-1"),
+        )
+        advanceUntilIdle()
+        assertEquals(
+            Triple(com.qualityverifier.data.session.PieceStudioChoice.Studio("studio-1"), true, false),
+            sessions.createdWith.single(),
+        )
+    }
+
+    // Row 11: the manager assessing a linked worker's piece. The piece stays the worker's,
+    // under the worker's name, and the opening turn holds nothing of the worker's
+    // assessments: there are none on this phone, and the record of an earlier assessment
+    // comes from this phone's own.
+    @Test
+    fun `a manager's assessment of a worker's piece keeps the piece the worker's, and is final when asked`() = runTest {
+        val sessions = FakeSessions()
+        val model = AssessViewModel(
+            sessionId = "m1", itemType = ItemType.WOODEN_TABLE, pieceId = "worker-piece", returning = true,
+            sessions = sessions, chat = FakeChat(), images = FakeImages(), profiles = FakeProfiles(),
+            workers = FakeWorkers(), io = dispatcher,
+            isFinal = true, pieceMine = false, givenLabel = "Kamau's stool",
+        )
+        advanceUntilIdle()
+        assertEquals("Kamau's stool", model.pieceLabel.value)
+
+        model.start(FundiIntake(AssessmentLanguage.ENGLISH, FundiPurpose.REEVALUATE), "/tmp/whole.jpg", pieceLabel = "Renamed")
+        advanceUntilIdle()
+
+        val created = sessions.created.single()
+        assertEquals("worker-piece", created.pieceId)
+        assertEquals("the worker's name, never one typed here", "Kamau's stool", created.pieceLabel)
+        assertEquals(
+            Triple(com.qualityverifier.data.session.PieceStudioChoice.NotAsked, false, true),
+            sessions.createdWith.single(),
+        )
+        assertFalse(sessions.userTurns.single().text.contains("What you recorded the last time"))
+    }
+
     @Test
     fun `a skipped name passes no name, and the intake prefills the existing one`() = runTest {
         val sessions = FakeSessions().apply { existingLabel = "Old stool" }
@@ -1004,9 +1049,16 @@ class AssessViewModelTest {
             pieceId: String?,
             intakeCode: String?,
             pieceLabel: String?,
+            pieceStudio: com.qualityverifier.data.session.PieceStudioChoice,
+            pieceMine: Boolean,
+            isFinal: Boolean,
         ) {
             created += Created(sessionId, pieceId, intakeCode, pieceLabel)
+            createdWith += Triple(pieceStudio, pieceMine, isFinal)
         }
+
+        /** The studio answer, whose piece, and the final flag each session was created with (v0.6.0). */
+        val createdWith = mutableListOf<Triple<com.qualityverifier.data.session.PieceStudioChoice, Boolean, Boolean>>()
 
         /** The name this piece already has, for the prefilled intake. */
         var existingLabel: String? = null
@@ -1014,6 +1066,9 @@ class AssessViewModelTest {
         override suspend fun setPieceLabel(pieceId: String, label: String?) = no()
         override suspend fun unsyncedPieceLabels() = no()
         override suspend fun markPieceLabelSynced(change: PieceLabelChange) = no()
+        override suspend fun setPieceStudio(pieceId: String, studioId: String?) = no()
+        override suspend fun unsyncedPieceStudios() = no()
+        override suspend fun markPieceStudioSent(change: com.qualityverifier.data.session.PieceStudioChange) = no()
         /** Whether the assessment is already on the handset, as when reopened from Home. */
         var exists = false
         override suspend fun sessionExists(sessionId: String) = exists

@@ -21,6 +21,18 @@ data class SessionSummary(
     val pieceId: String? = null,
     /** What the maker calls the piece. Null until they name it. */
     val pieceLabel: String? = null,
+    /**
+     * The studio the piece is for (Fundi Bora v0.6.0): an entry of "Studios I work for", or
+     * null for "My own job" when [pieceStudioChosen], and for a piece never asked.
+     */
+    val pieceStudioId: String? = null,
+    val pieceStudioChosen: Boolean = false,
+    /** Whether the one correction of the label has been used. */
+    val pieceStudioCorrected: Boolean = false,
+    /** False for a linked worker's piece this account assessed as the studio's manager. */
+    val pieceMine: Boolean = true,
+    /** The final assessment of the finished piece, before a customer report. */
+    val isFinal: Boolean = false,
 ) {
     /** Which piece this is, falling back to the session itself for rows made before pieces. */
     val piece: String get() = pieceId ?: id

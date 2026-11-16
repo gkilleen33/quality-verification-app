@@ -72,6 +72,11 @@ fun SendReportScreen(
     /** The piece, or the linked worker from the worker's page. */
     target: ReportTarget,
     onBack: () -> Unit,
+    /**
+     * Starts the final assessment of the finished piece that a customer report needs
+     * (row 27): the piece, its kind, whether it is this account's own, and its name.
+     */
+    onAssessFinal: (pieceId: String, itemType: com.qualityverifier.domain.ItemType, pieceMine: Boolean, label: String?) -> Unit = { _, _, _, _ -> },
 ) {
     val context = LocalContext.current
     val container = fundiContainer()
@@ -121,6 +126,21 @@ fun SendReportScreen(
                 onSelect = model::selectAssessment,
                 onNext = model::assessmentChosen,
                 onBack = model::back,
+            )
+            is SendReportViewModel.Step.FinalNeeded -> Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text(labels.reportFinalNeeded, style = MaterialTheme.typography.bodyLarge)
+                Button(
+                    onClick = { onAssessFinal(target.id, current.itemType, current.pieceMine, current.pieceLabel) },
+                    modifier = Modifier.fillMaxWidth(),
+                ) { Text(labels.reportAssessFinished) }
+                TextButton(onClick = model::back, modifier = Modifier.fillMaxWidth()) { Text(labels.reportBack) }
+            }
+            is SendReportViewModel.Step.ChoosePieces -> ChoosePieces(
+                labels = labels,
+                step = current,
+                onToggle = model::togglePiece,
+                onNext = model::piecesChosen,
+                onBack = onBack,
             )
             is SendReportViewModel.Step.LoadingPreview -> Waiting(labels.reportPreparing)
             is SendReportViewModel.Step.Preview -> Preview(
@@ -179,6 +199,51 @@ private fun WhoFor(
             }
         }
         TextButton(onClick = onBack, modifier = Modifier.fillMaxWidth()) { Text(labels.reportBack) }
+    }
+}
+
+/** "Which pieces?" on a worker's work report (row 22): every piece it can cover, all chosen at first. */
+@Composable
+private fun ChoosePieces(
+    labels: FundiLabels,
+    step: SendReportViewModel.Step.ChoosePieces,
+    onToggle: (String) -> Unit,
+    onNext: () -> Unit,
+    onBack: () -> Unit,
+) {
+    val all = step.all
+    if (all == null) {
+        Waiting(labels.reportPreparing)
+        return
+    }
+    LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        item {
+            Text(labels.reportWhichPieces, style = MaterialTheme.typography.titleMedium)
+            Text(
+                labels.reportWhichPiecesHint,
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        items(all, key = { it.id }) { piece ->
+            FilterChip(
+                selected = piece.id in step.chosen,
+                onClick = { onToggle(piece.id) },
+                label = {
+                    Text(
+                        piece.label
+                            ?: com.qualityverifier.domain.ItemType.fromId(piece.itemTypeId)?.homeLabel
+                            ?: piece.itemTypeId,
+                    )
+                },
+            )
+        }
+        item {
+            Button(onClick = onNext, enabled = step.chosen.isNotEmpty(), modifier = Modifier.fillMaxWidth()) {
+                Text(labels.reportNext)
+            }
+            TextButton(onClick = onBack, modifier = Modifier.fillMaxWidth()) { Text(labels.reportBack) }
+        }
     }
 }
 

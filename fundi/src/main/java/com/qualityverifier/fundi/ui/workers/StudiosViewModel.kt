@@ -16,7 +16,7 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
 /**
- * "Studios I work at": the other side of the roster (V31). Read from the local database,
+ * "Studios I work for": the other side of the roster (V31). Read from the local database,
  * so the list and every edit work with no signal; the server hears on the next sync, and
  * says on the pull which entries the two-sided match holds.
  */

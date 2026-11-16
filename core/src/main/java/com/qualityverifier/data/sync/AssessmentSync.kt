@@ -8,6 +8,7 @@ import com.qualityverifier.data.session.SyncedMessage
 import com.qualityverifier.data.session.SyncedSession
 import com.qualityverifier.data.workers.ServerStudio
 import com.qualityverifier.data.workers.ServerWorker
+import com.qualityverifier.data.workers.StudioDays
 import com.qualityverifier.data.workers.StudioRepository
 import com.qualityverifier.data.workers.WorkerRepository
 import com.qualityverifier.domain.Employment
@@ -52,6 +53,8 @@ class AssessmentSync(
      * reads no messages. It sends nothing unless the fundi agreed to sending.
      */
     private val mpesa: (suspend () -> Int)? = null,
+    /** Fundi Bora's answers to "Which studio are you at today?" (V34). Null in Kagua. */
+    private val studioDays: StudioDays? = null,
     private val io: CoroutineDispatcher = Dispatchers.IO,
 ) {
 
@@ -157,6 +160,11 @@ class AssessmentSync(
                     intakeAnswers = detail.session.intakeAnswers,
                     pieceId = detail.session.pieceId,
                     pieceLabel = detail.session.pieceLabel,
+                    pieceMine = detail.session.pieceMine,
+                    pieceStudioId = detail.session.pieceStudioId,
+                    pieceStudioChosen = detail.session.pieceStudioChosen,
+                    pieceStudioCorrected = detail.session.pieceStudioCorrected,
+                    isFinal = detail.session.final,
                 ),
                 messages,
             )
@@ -212,6 +220,16 @@ class AssessmentSync(
                 names++
             }
         }
+        // Studio labels (V34) on the same footing as the names: a pull landing first would
+        // put the server's label back over the maker's correction.
+        for (change in sessions.unsyncedPieceStudios()) {
+            if (client.setPieceStudio(change.pieceId, change.studioId)) {
+                sessions.markPieceStudioSent(change)
+                names++
+            }
+        }
+        // Today's studio, if answering it did not reach the server at the time.
+        studioDays?.let { names += it.push() }
 
         // The roster before any session that names it, so the server never meets a
         // worker id it has no row for.

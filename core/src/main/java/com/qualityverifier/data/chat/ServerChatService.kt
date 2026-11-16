@@ -62,6 +62,15 @@ private data class ChatBody(
      * and never puts it in the request to Claude.
      */
     @SerialName("photo_meta") val photoMeta: Map<String, JsonObject>? = null,
+    /**
+     * The studio a new piece is for (server V34). Null, so not sent, unless the maker
+     * answered: the server refuses unknown fields, so a field a v0.5.0 server has never
+     * seen goes only on a turn that needs it, as [workers] does.
+     */
+    @SerialName("piece_studio_id") val pieceStudioId: String? = null,
+    @SerialName("piece_studio_chosen") val pieceStudioChosen: Boolean? = null,
+    /** The final assessment of the finished piece. Null, so not sent, for every other. */
+    val final: Boolean? = null,
 )
 
 /** One slot as the server reads it: no id means the manager. */
@@ -189,6 +198,9 @@ class ServerChatService(
                 longitude = start?.location?.longitude,
                 accuracyMetres = start?.location?.accuracyMetres,
                 photoMeta = photoMeta.takeIf { it.isNotEmpty() },
+                pieceStudioId = start?.pieceStudioId,
+                pieceStudioChosen = true.takeIf { start?.pieceStudioChosen == true },
+                final = true.takeIf { start?.isFinal == true },
             )
         )
         // One retry, and only for the two conditions a retry can actually fix: a token

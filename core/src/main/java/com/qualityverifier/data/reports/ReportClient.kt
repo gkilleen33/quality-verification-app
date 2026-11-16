@@ -5,6 +5,7 @@ import com.qualityverifier.data.auth.AuthenticatedHttp
 import com.qualityverifier.data.auth.TokenProvider
 import com.qualityverifier.domain.ReportPreview
 import com.qualityverifier.domain.ReportRequest
+import com.qualityverifier.domain.WorkerPieces
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -65,6 +66,24 @@ interface ReportApi {
 
     /** Downloads the report into [into]. On any failure, [into] does not exist afterwards. */
     suspend fun download(target: ReportTarget, request: ReportRequest, into: File, progress: DownloadProgress): ReportOutcome
+
+    /**
+     * A linked worker's page (v0.6.0, rows 4, 11 and 22): the pieces a report of their work
+     * covers, their own labelled pieces among them. A default, so fakes that never call it
+     * need not grow it.
+     */
+    suspend fun workerPieces(workerId: String): WorkerPiecesOutcome = WorkerPiecesOutcome.Unavailable
+}
+
+/** What asking for a linked worker's pieces came back with. */
+sealed interface WorkerPiecesOutcome {
+    data class Loaded(val pieces: WorkerPieces) : WorkerPiecesOutcome
+
+    /** Offline, the server is unwell, or the answer would not read. */
+    data object Unavailable : WorkerPiecesOutcome
+
+    /** Not on the roster (404), or not linked (403). */
+    data class Refused(val code: Int) : WorkerPiecesOutcome
 }
 
 /**
@@ -131,6 +150,25 @@ class ReportClient(
         }
     }
 
+    override suspend fun workerPieces(workerId: String): WorkerPiecesOutcome = withContext(io) {
+        val response = http.send { token ->
+            Request.Builder().url(baseUrl + "v1/fundi/workers/$workerId/pieces")
+                .addHeader("Authorization", "Bearer $token").get().build()
+        } ?: return@withContext WorkerPiecesOutcome.Unavailable
+        response.use {
+            when {
+                it.isSuccessful -> runCatching {
+                    WorkerPiecesOutcome.Loaded(json.decodeFromString<WorkerPieces>(it.body!!.string()))
+                }.getOrElse { error ->
+                    Log.w(TAG, "Could not read the worker's pieces", error)
+                    WorkerPiecesOutcome.Unavailable
+                }
+                it.code in 400..499 -> WorkerPiecesOutcome.Refused(it.code)
+                else -> WorkerPiecesOutcome.Unavailable
+            }
+        }
+    }
+
     private fun save(response: okhttp3.Response, into: File, progress: DownloadProgress): ReportOutcome {
         val responseBody = response.body ?: return ReportOutcome.Unavailable
         val total = responseBody.contentLength().takeIf { it > 0 }
@@ -182,6 +220,8 @@ class ReportClient(
         append(path(target)).append("/preview?kind=").append(request.kind)
         request.parts?.takeIf { it.isNotEmpty() }?.let { append("&parts=").append(it.joinToString(",")) }
         request.sessionId?.let { append("&session_id=").append(it) }
+        request.studioId?.let { append("&studio_id=").append(it) }
+        request.pieceIds?.takeIf { it.isNotEmpty() }?.let { append("&piece_ids=").append(it.joinToString(",")) }
     }
 
     private companion object {

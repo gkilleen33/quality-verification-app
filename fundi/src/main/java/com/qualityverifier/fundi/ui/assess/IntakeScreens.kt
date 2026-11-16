@@ -24,7 +24,9 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import com.qualityverifier.data.session.PieceStudioChoice
 import com.qualityverifier.domain.AssessmentLanguage
+import com.qualityverifier.domain.Studio
 import com.qualityverifier.domain.FundiIntake
 import com.qualityverifier.domain.FundiPurpose
 import com.qualityverifier.domain.ItemType
@@ -35,7 +37,7 @@ import com.qualityverifier.domain.WorkerDetails
 import com.qualityverifier.domain.WorkerSlot
 import com.qualityverifier.text.FundiLabels
 
-private enum class Step { NAME, WORKERS, LANGUAGE, PURPOSE, DETAILS }
+private enum class Step { NAME, STUDIO, WORKERS, LANGUAGE, PURPOSE, DETAILS }
 
 /**
  * The questions asked before anything is sent.
@@ -64,11 +66,32 @@ fun IntakeFlow(
     /** Who worked on the piece last time, as the starting answer. Empty on a new piece. */
     initialWorkers: List<WorkerSlot>,
     onAddWorker: (WorkerDetails, (Worker) -> Unit) -> Unit,
-    /** The answers, the piece's name or null when skipped, and who worked on it. */
-    onComplete: (FundiIntake, String?, List<WorkerSlot>) -> Unit,
+    /**
+     * The answers, the piece's name or null when skipped, who worked on it, and the studio
+     * it is for ([PieceStudioChoice.NotAsked] when the question was not asked).
+     */
+    onComplete: (FundiIntake, String?, List<WorkerSlot>, PieceStudioChoice) -> Unit,
     onCancel: () -> Unit,
+    /**
+     * "Studios I work for", live ones, for "Which studio is this piece for?" (v0.6.0, row
+     * 1). Asked only of a new piece, and only of an account with a studio on its list.
+     */
+    studios: List<Studio> = emptyList(),
+    /**
+     * False on a linked worker's piece assessed by its studio's manager: the name is the
+     * worker's, so it is neither asked nor changed.
+     */
+    askName: Boolean = true,
+    /**
+     * The purpose, already decided: the final assessment of the finished piece is a full
+     * re-assessment (row 27), so its purpose is not asked.
+     */
+    fixedPurpose: FundiPurpose? = null,
 ) {
-    var step by remember { mutableStateOf(Step.NAME) }
+    var step by remember { mutableStateOf(if (askName) Step.NAME else Step.WORKERS) }
+    val askStudio = !returning && studios.isNotEmpty()
+    // Nothing chosen to begin with: the fundi picks, so a wrong label is never a default.
+    var studio by remember { mutableStateOf<PieceStudioChoice?>(null) }
     // Keyed on the name, which loads a moment after this first composes: without the
     // key a returning piece's name would arrive too late to prefill the field.
     var name by remember(initialName) { mutableStateOf(initialName.orEmpty()) }
@@ -79,7 +102,15 @@ fun IntakeFlow(
     var details by remember { mutableStateOf("") }
 
     fun finish(intake: FundiIntake) {
-        if (intake.isComplete) onComplete(intake, name.trim().ifEmpty { null }, workedOn)
+        if (intake.isComplete) {
+            onComplete(intake, name.trim().ifEmpty { null }, workedOn, studio ?: PieceStudioChoice.NotAsked)
+        }
+    }
+
+    /** After the language: the purpose, unless it is already decided. */
+    fun afterLanguage(chosen: AssessmentLanguage) {
+        val fixed = fixedPurpose
+        if (fixed != null && !fixed.needsDetails) finish(FundiIntake(chosen, fixed)) else step = Step.PURPOSE
     }
 
     IntakeColumn {
@@ -98,7 +129,7 @@ fun IntakeFlow(
                     modifier = Modifier.fillMaxWidth(),
                 )
                 Button(
-                    onClick = { step = Step.WORKERS },
+                    onClick = { step = if (askStudio) Step.STUDIO else Step.WORKERS },
                     enabled = name.isNotBlank(),
                     modifier = Modifier.fillMaxWidth().height(56.dp),
                 ) { Text(labels.intakeContinue) }
@@ -106,9 +137,39 @@ fun IntakeFlow(
                 // unnamed by a maker who did not want to type. Clearing is the card's job.
                 Secondary(labels.intakeNameSkip) {
                     name = initialName.orEmpty()
-                    step = Step.WORKERS
+                    step = if (askStudio) Step.STUDIO else Step.WORKERS
                 }
                 Secondary(labels.setupBack, onCancel)
+            }
+
+            // Which studio the piece is for (Nathan, 4 November 2026; row 1): required, with
+            // nothing chosen at first. The label decides which manager may see the piece.
+            Step.STUDIO -> {
+                Title(labels.intakeStudioTitle)
+                studios.forEach { each ->
+                    Picked(each.name, selected = studio == PieceStudioChoice.Studio(each.id)) {
+                        studio = PieceStudioChoice.Studio(each.id)
+                    }
+                }
+                Picked(labels.studioOwnJob, selected = studio == PieceStudioChoice.OwnJob) {
+                    studio = PieceStudioChoice.OwnJob
+                }
+                // One sentence on who can see the assessments (Nathan, 16 November 2026).
+                (studio as? PieceStudioChoice.Studio)?.let { chosen ->
+                    studios.firstOrNull { it.id == chosen.studioId }?.let {
+                        Text(
+                            labels.intakeStudioNotice(it.name),
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+                Button(
+                    onClick = { step = Step.WORKERS },
+                    enabled = studio != null,
+                    modifier = Modifier.fillMaxWidth().height(56.dp),
+                ) { Text(labels.intakeContinue) }
+                Secondary(labels.setupBack) { step = Step.NAME }
             }
 
             // Who worked on it, while the manager is standing over the piece and knows.
@@ -131,7 +192,11 @@ fun IntakeFlow(
                     workedOn = emptyList()
                     step = Step.LANGUAGE
                 }
-                Secondary(labels.setupBack) { step = Step.NAME }
+                if (askName) {
+                    Secondary(labels.setupBack) { step = if (askStudio) Step.STUDIO else Step.NAME }
+                } else {
+                    Secondary(labels.setupBack, onCancel)
+                }
             }
 
             Step.LANGUAGE -> {
@@ -141,7 +206,7 @@ fun IntakeFlow(
                     // person choosing it may not read the other.
                     Choice(choice.ownName) {
                         language = choice
-                        step = Step.PURPOSE
+                        afterLanguage(choice)
                     }
                 }
                 Secondary(labels.setupBack) { step = Step.WORKERS }
@@ -238,4 +303,34 @@ private fun Choice(label: String, onClick: () -> Unit) {
 @Composable
 private fun Secondary(label: String, onClick: () -> Unit) {
     TextButton(onClick = onClick, modifier = Modifier.fillMaxWidth()) { Text(label) }
+}
+
+/** A choice that stays chosen until another is tapped, for a question with a Continue. */
+@Composable
+private fun Picked(label: String, selected: Boolean, onClick: () -> Unit) {
+    if (selected) {
+        Button(onClick = onClick, modifier = Modifier.fillMaxWidth().height(56.dp)) { Text(label) }
+    } else {
+        OutlinedButton(onClick = onClick, modifier = Modifier.fillMaxWidth().height(56.dp)) { Text(label) }
+    }
+}
+
+/**
+ * "Which studio are you at today?" (v0.6.0, row 9; Nathan, 16 November 2026): before the
+ * day's first assessment, one tap, nothing chosen in advance, and no way on without an
+ * answer. The fundi's studios, then their own workshop.
+ */
+@Composable
+fun StudioTodayQuestion(
+    labels: FundiLabels,
+    studios: List<Studio>,
+    onAnswer: (studioId: String?) -> Unit,
+    onCancel: () -> Unit,
+) {
+    IntakeColumn {
+        Title(labels.todayStudioTitle)
+        studios.forEach { each -> Choice(each.name) { onAnswer(each.id) } }
+        Choice(labels.todayStudioOwn) { onAnswer(null) }
+        Secondary(labels.setupBack, onCancel)
+    }
 }

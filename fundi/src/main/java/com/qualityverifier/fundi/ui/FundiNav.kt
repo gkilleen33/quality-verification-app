@@ -1,5 +1,6 @@
 package com.qualityverifier.fundi.ui
 
+import android.net.Uri
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
@@ -77,7 +78,7 @@ private object Routes {
     const val WORKERS = "workers"
     /** One worker's page (plan v7 §4.6), from a card on "My workers". */
     const val WORKER_PAGE = "workers/{workerId}"
-    /** "Studios I work at" (V31), the other side of the roster, from Home. */
+    /** "Studios I work for" (V31), the other side of the roster, from Home. */
     const val STUDIOS = "studios"
     const val SETTINGS = "settings"
     /** "Send report" on a piece (plan v7 §5.4): who for, the preview, the download, the share sheet. */
@@ -88,7 +89,13 @@ private object Routes {
     fun workerPage(workerId: String) = "workers/$workerId"
     fun sendReport(pieceId: String) = "pieces/$pieceId/report"
     fun workerReport(workerId: String) = "workers/$workerId/report"
-    const val ASSESS = "assess/{sessionId}/{itemTypeId}?piece={piece}&returning={returning}"
+    /**
+     * [final] marks the final assessment before a customer report (row 27); [theirs] a
+     * linked worker's piece assessed from the worker's page (row 11), with [label], the
+     * worker's name for it.
+     */
+    const val ASSESS = "assess/{sessionId}/{itemTypeId}?piece={piece}&returning={returning}" +
+        "&final={final}&theirs={theirs}&label={label}"
 
     /**
      * The M-Pesa questions, from [MpesaQuestion]. [signUp] true between the terms and setup,
@@ -111,7 +118,11 @@ private object Routes {
         itemTypeId: String,
         piece: String = sessionId,
         returning: Boolean = false,
-    ) = "assess/$sessionId/$itemTypeId?piece=$piece&returning=$returning"
+        final: Boolean = false,
+        theirs: Boolean = false,
+        label: String? = null,
+    ) = "assess/$sessionId/$itemTypeId?piece=$piece&returning=$returning&final=$final&theirs=$theirs" +
+        "&label=${Uri.encode(label.orEmpty())}"
 
     fun terms(mode: TermsMode) = "terms/${mode.id}"
 
@@ -412,6 +423,10 @@ fun FundiNav() {
                                         itemTypeId = latest.itemType.id,
                                         piece = latest.piece,
                                         returning = true,
+                                        // A linked worker's piece this account assessed as
+                                        // the studio's manager stays the worker's (row 11).
+                                        theirs = !latest.pieceMine,
+                                        label = latest.pieceLabel.takeIf { !latest.pieceMine },
                                     ),
                                 )
                             },
@@ -453,6 +468,21 @@ fun FundiNav() {
             SendReportScreen(
                 target = ReportTarget.Piece(entry.arguments?.getString("pieceId").orEmpty()),
                 onBack = { navController.popBackStack() },
+                // The final assessment a customer report needs (row 27): a new session on the
+                // same piece, as any re-assessment is. Done, it comes back here.
+                onAssessFinal = { pieceId, itemType, mine, label ->
+                    navController.navigate(
+                        Routes.assess(
+                            sessionId = UUID.randomUUID().toString(),
+                            itemTypeId = itemType.id,
+                            piece = pieceId,
+                            returning = true,
+                            final = true,
+                            theirs = !mine,
+                            label = label,
+                        ),
+                    )
+                },
             )
         }
 
@@ -480,6 +510,23 @@ fun FundiNav() {
                         Routes.assess(latest.id, latest.itemType.id, piece = latest.piece),
                     )
                 },
+                // "Assess piece" on one of the worker's own pieces (row 11): the manager's
+                // own new assessment of that piece, judged afresh.
+                onAssessPiece = { piece ->
+                    navController.navigate(
+                        Routes.assess(
+                            sessionId = UUID.randomUUID().toString(),
+                            itemTypeId = piece.itemTypeId,
+                            piece = piece.id,
+                            returning = true,
+                            theirs = true,
+                            label = piece.label,
+                        ),
+                    )
+                },
+                // "Send report" on the worker's piece: the manager's reports on it, the
+                // customer's among them.
+                onSendPieceReport = { pieceId -> navController.navigate(Routes.sendReport(pieceId)) },
             )
         }
 
@@ -523,6 +570,9 @@ fun FundiNav() {
                 navArgument("itemTypeId") { type = NavType.StringType },
                 navArgument("piece") { type = NavType.StringType; nullable = true },
                 navArgument("returning") { type = NavType.BoolType; defaultValue = false },
+                navArgument("final") { type = NavType.BoolType; defaultValue = false },
+                navArgument("theirs") { type = NavType.BoolType; defaultValue = false },
+                navArgument("label") { type = NavType.StringType; nullable = true },
             ),
         ) { entry ->
             // The id is generated on the phone, so a retry of the same assessment is the
@@ -537,6 +587,9 @@ fun FundiNav() {
                     ?: sessionId,
                 returning = entry.arguments?.getBoolean("returning") ?: false,
                 onDone = { navController.popBackStack() },
+                isFinal = entry.arguments?.getBoolean("final") ?: false,
+                pieceMine = !(entry.arguments?.getBoolean("theirs") ?: false),
+                givenLabel = entry.arguments?.getString("label")?.takeIf { it.isNotBlank() },
             )
         }
     }

@@ -37,7 +37,20 @@ data class RemoteSession(
     @SerialName("piece_label") val pieceLabel: String? = null,
     /** Who worked on it, by roster id and part. Names come from [SyncClient.workers]. */
     val workers: List<RemoteSessionWorker> = emptyList(),
+    /**
+     * Server V34. False for a linked worker's piece this account assessed as the studio's
+     * manager, whose label is the worker's and is left out. Absent from an older server,
+     * which reads as this account's own piece, never asked, and not final.
+     */
+    @SerialName("piece_mine") val pieceMine: Boolean = true,
+    @SerialName("piece_studio_id") val pieceStudioId: String? = null,
+    @SerialName("piece_studio_chosen") val pieceStudioChosen: Boolean = false,
+    @SerialName("piece_studio_corrected") val pieceStudioCorrected: Boolean = false,
+    val final: Boolean = false,
 )
+
+@Serializable
+private data class StudioIdBody(@SerialName("studio_id") val studioId: String?)
 
 @Serializable
 data class RemoteSessionWorker(
@@ -272,6 +285,60 @@ class SyncClient(
             }
         } ?: false
     }
+
+    /**
+     * Labels a piece with the studio it is for, or "My own job" with null (V34). True when
+     * the server has it, and also when it will never take it, by [renamePiece]'s rule: a
+     * 409 means the one correction was used from another phone, and a 404 a piece or entry
+     * the server does not know. The next pull brings the server's label back either way.
+     */
+    suspend fun setPieceStudio(pieceId: String, studioId: String?): Boolean = withContext(io) {
+        val body = studioBody(studioId)
+        authenticated { token ->
+            Request.Builder().url(baseUrl + "v1/fundi/pieces/" + pieceId + "/studio")
+                .addHeader("Authorization", "Bearer $token").put(body).build()
+        }?.use { response ->
+            when {
+                response.isSuccessful -> true
+                response.code == UPGRADE_REQUIRED -> false
+                response.code in 400..499 -> {
+                    Log.w(TAG, "Server refused a studio label (${response.code}); dropping it")
+                    true
+                }
+                else -> false
+            }
+        } ?: false
+    }
+
+    /**
+     * Sends today's answer. True when the server has it, or will never take it (an entry it
+     * does not know); false to keep it for the next sync.
+     */
+    suspend fun answerStudioToday(studioId: String?): Boolean = withContext(io) {
+        val body = studioBody(studioId)
+        authenticated { token ->
+            Request.Builder().url(baseUrl + "v1/fundi/studio-today")
+                .addHeader("Authorization", "Bearer $token").put(body).build()
+        }?.use { response ->
+            when {
+                response.isSuccessful -> true
+                response.code == UPGRADE_REQUIRED -> false
+                response.code in 400..499 -> {
+                    Log.w(TAG, "Server refused today's studio (${response.code}); dropping it")
+                    true
+                }
+                else -> false
+            }
+        } ?: false
+    }
+
+    /**
+     * `{"studio_id": ...}`. A null id is written out, since encodeDefaults is off and would
+     * drop it; absent and null read the same to the server, but the body says what is meant.
+     */
+    private fun studioBody(studioId: String?) =
+        (if (studioId == null) """{"studio_id":null}""" else json.encodeToString(StudioIdBody(studioId)))
+            .toRequestBody(JSON)
 
     /** The roster as the server holds it, archived included. Null when it could not be fetched. */
     suspend fun workers(): List<RemoteWorker>? = withContext(io) {

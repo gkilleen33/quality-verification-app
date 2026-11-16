@@ -5,7 +5,11 @@ import com.qualityverifier.data.reports.PreviewOutcome
 import com.qualityverifier.data.reports.ReportApi
 import com.qualityverifier.data.reports.ReportOutcome
 import com.qualityverifier.data.reports.ReportTarget
+import com.qualityverifier.data.reports.WorkerPiecesOutcome
 import com.qualityverifier.domain.ItemType
+import com.qualityverifier.domain.Studio
+import com.qualityverifier.domain.WorkerPiece
+import com.qualityverifier.domain.WorkerPieces
 import com.qualityverifier.domain.ReportKind
 import com.qualityverifier.domain.ReportPreview
 import com.qualityverifier.domain.ReportRequest
@@ -68,8 +72,10 @@ class ReportStepsTest {
     )
 
     @Test
-    fun `the first step offers the customer, a worker and me`() {
-        assertEquals(listOf(ReportKind.CUSTOMER, ReportKind.PART_ISSUES, ReportKind.FULL), model(one).offered.value)
+    fun `the first step offers the customer, a worker and me`() = runTest {
+        val model = model(one)
+        advanceUntilIdle()
+        assertEquals(listOf(ReportKind.CUSTOMER, ReportKind.PART_ISSUES, ReportKind.FULL), model.offered.value)
     }
 
     @Test
@@ -196,19 +202,32 @@ class ReportStepsTest {
         assertTrue(model.step.value is SendReportViewModel.Step.Preview)
     }
 
+    private fun studio(id: String, linked: Boolean) = Studio(id, "Mama Njeri's", "+254712345678", archived = false, linked = linked)
+
     @Test
-    fun `My manager is offered only to an account with a linked studio, and opens which assessment`() = runTest {
+    fun `My manager is offered only on a piece labelled for a linked studio, and names that studio`() = runTest {
         val api = FakeApi()
+        val labelled = two.map { it.copy(pieceStudioId = "studio-1", pieceStudioChosen = true) }
         val unlinked = SendReportViewModel(
             target = ReportTarget.Piece("piece-1"), reports = api, fileFor = null,
-            summaries = MutableStateFlow(two), linkedStudio = MutableStateFlow(false),
+            summaries = MutableStateFlow(labelled), studios = MutableStateFlow(listOf(studio("studio-1", linked = false))),
         )
         advanceUntilIdle()
-        assertEquals(listOf(ReportKind.CUSTOMER, ReportKind.PART_ISSUES, ReportKind.FULL), unlinked.offered.value)
+        // Labelled for a studio, so the customer report is the studio's; not linked, so no My manager.
+        assertEquals(listOf(ReportKind.PART_ISSUES, ReportKind.FULL), unlinked.offered.value)
+
+        // "My own job" with a linked studio on the list: no My manager either (row 3).
+        val ownJob = SendReportViewModel(
+            target = ReportTarget.Piece("piece-1"), reports = api, fileFor = null,
+            summaries = MutableStateFlow(two.map { it.copy(pieceStudioChosen = true) }),
+            studios = MutableStateFlow(listOf(studio("studio-1", linked = true))),
+        )
+        advanceUntilIdle()
+        assertEquals(listOf(ReportKind.CUSTOMER, ReportKind.PART_ISSUES, ReportKind.FULL), ownJob.offered.value)
 
         val linked = SendReportViewModel(
             target = ReportTarget.Piece("piece-1"), reports = api, fileFor = null,
-            summaries = MutableStateFlow(two), linkedStudio = MutableStateFlow(true),
+            summaries = MutableStateFlow(labelled), studios = MutableStateFlow(listOf(studio("studio-1", linked = true))),
         )
         advanceUntilIdle()
         assertEquals(ReportKind.TO_MANAGER, linked.offered.value.last())
@@ -219,7 +238,21 @@ class ReportStepsTest {
         assertEquals(ReportKind.TO_MANAGER, which.kind)
         linked.assessmentChosen()
         advanceUntilIdle()
-        assertEquals(ReportRequest(kind = "to_manager", sessionId = "s2"), api.previewed.single().second)
+        assertEquals(
+            ReportRequest(kind = "to_manager", sessionId = "s2", studioId = "studio-1"),
+            api.previewed.single().second,
+        )
+    }
+
+    @Test
+    fun `on a linked worker's piece the manager is offered the customer report`() = runTest {
+        val theirs = two.map { it.copy(pieceMine = false) }
+        val model = SendReportViewModel(
+            target = ReportTarget.Piece("piece-1"), reports = FakeApi(), fileFor = null,
+            summaries = MutableStateFlow(theirs),
+        )
+        advanceUntilIdle()
+        assertEquals(ReportKind.CUSTOMER, model.offered.value.first())
     }
 
     @Test
@@ -237,24 +270,74 @@ class ReportStepsTest {
     }
 
     @Test
-    fun `the customer report sends nothing first`() = runTest {
+    fun `a worker's work report can be narrowed to chosen pieces, and all chosen sends no list`() = runTest {
+        val api = FakeApi(pieces = listOf(WorkerPiece("p1", "wooden-table"), WorkerPiece("p2", "wooden-table", theirs = true)))
+        val model = SendReportViewModel(target = ReportTarget.Worker("w1"), reports = api, fileFor = null)
+        advanceUntilIdle()
+        val choose = model.step.value as SendReportViewModel.Step.ChoosePieces
+        assertEquals(setOf("p1", "p2"), choose.chosen)
+
+        model.piecesChosen()
+        advanceUntilIdle()
+        assertEquals(ReportRequest(kind = "worker_work"), api.previewed.last().second)
+
+        model.back()
+        val again = SendReportViewModel(target = ReportTarget.Worker("w1"), reports = api, fileFor = null)
+        advanceUntilIdle()
+        again.togglePiece("p1")
+        again.piecesChosen()
+        advanceUntilIdle()
+        assertEquals(ReportRequest(kind = "worker_work", pieceIds = listOf("p2")), api.previewed.last().second)
+    }
+
+    @Test
+    fun `the customer report waits for a final assessment with a verdict, and sends nothing first`() = runTest {
         val api = FakeApi()
-        val model = SendReportViewModel(
+        val waiting = SendReportViewModel(
             target = ReportTarget.Piece("piece-1"), reports = api, fileFor = null,
             summaries = MutableStateFlow(one), workersOf = { emptyList() }, pushWorkers = { false },
         )
-        model.choose(ReportKind.CUSTOMER)
+        waiting.choose(ReportKind.CUSTOMER)
         advanceUntilIdle()
-        assertTrue(model.step.value is SendReportViewModel.Step.Preview)
+        val needed = waiting.step.value as SendReportViewModel.Step.FinalNeeded
+        assertEquals(ItemType.WOODEN_TABLE, needed.itemType)
+        assertTrue(api.previewed.isEmpty())
+
+        val finished = SendReportViewModel(
+            target = ReportTarget.Piece("piece-1"), reports = api, fileFor = null,
+            summaries = MutableStateFlow(one + summary("f1", 9_000, VerdictLevel.SOUND).copy(isFinal = true)),
+            workersOf = { emptyList() }, pushWorkers = { false },
+        )
+        finished.choose(ReportKind.CUSTOMER)
+        advanceUntilIdle()
+        assertTrue(finished.step.value is SendReportViewModel.Step.Preview)
     }
 
-    private class FakeApi : ReportApi {
+    @Test
+    fun `a server that finds no final assessment sends the maker to make one`() = runTest {
+        val api = FakeApi(refuse = 409)
+        val model = SendReportViewModel(
+            target = ReportTarget.Piece("piece-1"), reports = api, fileFor = null,
+            summaries = MutableStateFlow(one + summary("f1", 9_000, VerdictLevel.SOUND).copy(isFinal = true)),
+        )
+        model.choose(ReportKind.CUSTOMER)
+        advanceUntilIdle()
+        assertTrue(model.step.value is SendReportViewModel.Step.FinalNeeded)
+    }
+
+    private class FakeApi(
+        private val pieces: List<WorkerPiece>? = null,
+        private val refuse: Int? = null,
+    ) : ReportApi {
         val previewed = mutableListOf<Pair<String, ReportRequest>>()
         override suspend fun preview(target: ReportTarget, request: ReportRequest): PreviewOutcome {
             previewed += target.id to request
+            refuse?.let { return PreviewOutcome.Refused(it) }
             return PreviewOutcome.Loaded(ReportPreview(request.kind, "Hotel table", "en", emptyList(), listOfNotNull(request.sessionId), 0))
         }
         override suspend fun download(target: ReportTarget, request: ReportRequest, into: File, progress: DownloadProgress): ReportOutcome =
             ReportOutcome.Unavailable
+        override suspend fun workerPieces(workerId: String): WorkerPiecesOutcome =
+            pieces?.let { WorkerPiecesOutcome.Loaded(WorkerPieces(it)) } ?: WorkerPiecesOutcome.Unavailable
     }
 }

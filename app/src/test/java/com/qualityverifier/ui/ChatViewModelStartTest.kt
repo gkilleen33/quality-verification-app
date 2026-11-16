@@ -472,6 +472,9 @@ class ChatViewModelStartTest {
             pieceId: String?,
             intakeCode: String?,
             pieceLabel: String?,
+            pieceStudio: com.qualityverifier.data.session.PieceStudioChoice,
+            pieceMine: Boolean,
+            isFinal: Boolean,
         ) {
             created = true
             sessionExists = true

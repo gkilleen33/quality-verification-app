@@ -6,14 +6,20 @@ import com.qualityverifier.data.reports.ReportApi
 import com.qualityverifier.data.reports.ReportOutcome
 import com.qualityverifier.data.reports.ReportTarget
 import com.qualityverifier.domain.HeadingBlock
+import com.qualityverifier.domain.ItemType
 import com.qualityverifier.domain.ProblemBlock
 import com.qualityverifier.domain.ReportKind
 import com.qualityverifier.domain.ReportPreview
 import com.qualityverifier.domain.ReportRequest
+import com.qualityverifier.domain.SessionSummary
+import com.qualityverifier.domain.VerdictLevel
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.advanceUntilIdle
+import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
@@ -58,10 +64,25 @@ class SendReportViewModelTest {
         photoCount = 2,
     )
 
+    /**
+     * The piece with its final assessment made (v0.6.0, row 27), so the customer report
+     * these tests ask for goes straight to its preview.
+     */
+    private val finished = MutableStateFlow(
+        listOf(
+            SessionSummary(
+                id = "s1", itemType = ItemType.WOODEN_TABLE, createdAt = 1_000, updatedAt = 1_000,
+                preview = "", messageCount = 4, verdictLevel = VerdictLevel.SOUND, pieceId = "piece-1",
+                isFinal = true,
+            ),
+        ),
+    )
+
     @Test
     fun `choosing the customer opens the preview with its request`() = runTest {
         val api = FakeApi(previewOutcome = PreviewOutcome.Loaded(preview))
-        val model = SendReportViewModel(ReportTarget.Piece("piece-1"), api, fileFor = null)
+        val model = SendReportViewModel(ReportTarget.Piece("piece-1"), api, fileFor = null, summaries = finished)
+        advanceUntilIdle()
 
         assertEquals(ReportKind.CUSTOMER, model.offered.value.first())
         assertEquals(SendReportViewModel.Step.WhoFor, model.step.value)
@@ -98,7 +119,7 @@ class SendReportViewModelTest {
                 ReportOutcome.Done(into, "report-id")
             },
         )
-        model = SendReportViewModel(ReportTarget.Piece("piece-1"), api, fileFor = { file })
+        model = SendReportViewModel(ReportTarget.Piece("piece-1"), api, fileFor = { file }, summaries = finished)
 
         model.choose(ReportKind.CUSTOMER)
         advanceUntilIdle()
@@ -134,7 +155,7 @@ class SendReportViewModelTest {
                 }
             },
         )
-        val model = SendReportViewModel(ReportTarget.Piece("piece-1"), api, fileFor = { file })
+        val model = SendReportViewModel(ReportTarget.Piece("piece-1"), api, fileFor = { file }, summaries = finished)
 
         model.choose(ReportKind.CUSTOMER)
         advanceUntilIdle()
@@ -161,7 +182,7 @@ class SendReportViewModelTest {
             previewOutcome = PreviewOutcome.Loaded(preview),
             download = { _, _ -> ReportOutcome.Busy },
         )
-        val model = SendReportViewModel(ReportTarget.Piece("piece-1"), api, fileFor = { File(folder.newFolder(), "r.pdf") })
+        val model = SendReportViewModel(ReportTarget.Piece("piece-1"), api, fileFor = { File(folder.newFolder(), "r.pdf") }, summaries = finished)
         model.choose(ReportKind.CUSTOMER)
         advanceUntilIdle()
         model.send()
@@ -169,7 +190,7 @@ class SendReportViewModelTest {
         val failed = model.step.value as SendReportViewModel.Step.Failed
         assertTrue(failed.busy)
 
-        val offline = SendReportViewModel(ReportTarget.Piece("piece-1"), FakeApi(previewOutcome = PreviewOutcome.Unavailable), fileFor = null)
+        val offline = SendReportViewModel(ReportTarget.Piece("piece-1"), FakeApi(previewOutcome = PreviewOutcome.Unavailable), fileFor = null, summaries = finished)
         offline.choose(ReportKind.CUSTOMER)
         advanceUntilIdle()
         val noPreview = offline.step.value as SendReportViewModel.Step.Failed
@@ -179,7 +200,7 @@ class SendReportViewModelTest {
         assertEquals(SendReportViewModel.Step.WhoFor, offline.step.value)
 
         // A 4xx is not a connection problem, and says so.
-        val refused = SendReportViewModel(ReportTarget.Piece("piece-1"), FakeApi(previewOutcome = PreviewOutcome.Refused(404)), fileFor = null)
+        val refused = SendReportViewModel(ReportTarget.Piece("piece-1"), FakeApi(previewOutcome = PreviewOutcome.Refused(404)), fileFor = null, summaries = finished)
         refused.choose(ReportKind.CUSTOMER)
         advanceUntilIdle()
         assertTrue((refused.step.value as SendReportViewModel.Step.Failed).refused)
@@ -187,10 +208,16 @@ class SendReportViewModelTest {
 
     @Test
     fun `back while the preview loads wins over the preview that then arrives`() = runTest {
-        val model = SendReportViewModel(ReportTarget.Piece("piece-1"), FakeApi(previewOutcome = PreviewOutcome.Loaded(preview)), fileFor = null)
+        val gate = CompletableDeferred<Unit>()
+        val model = SendReportViewModel(
+            ReportTarget.Piece("piece-1"), FakeApi(previewOutcome = PreviewOutcome.Loaded(preview), gate = gate),
+            fileFor = null, summaries = finished,
+        )
         model.choose(ReportKind.CUSTOMER)
+        runCurrent()
         assertTrue(model.step.value is SendReportViewModel.Step.LoadingPreview)
         model.back()
+        gate.complete(Unit)
         advanceUntilIdle()
         assertEquals(SendReportViewModel.Step.WhoFor, model.step.value)
     }
@@ -198,12 +225,15 @@ class SendReportViewModelTest {
     private class FakeApi(
         private val previewOutcome: PreviewOutcome,
         private val download: suspend (File, DownloadProgress) -> ReportOutcome = { _, _ -> ReportOutcome.Unavailable },
+        /** Holds the preview until completed, so a test can act while it loads. */
+        private val gate: CompletableDeferred<Unit>? = null,
     ) : ReportApi {
         val previewed = mutableListOf<Pair<String, ReportRequest>>()
         val downloaded = mutableListOf<Pair<String, ReportRequest>>()
 
         override suspend fun preview(target: ReportTarget, request: ReportRequest): PreviewOutcome {
             previewed += target.id to request
+            gate?.await()
             return previewOutcome
         }
 
