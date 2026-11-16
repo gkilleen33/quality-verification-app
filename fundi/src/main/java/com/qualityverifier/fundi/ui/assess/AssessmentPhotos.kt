@@ -73,6 +73,24 @@ fun assessmentPhotos(
 }
 
 /**
+ * The file of photo [number] as the server and Claude number them (v0.6.0, row 19): from 1,
+ * in the order the photographs were attached across the whole conversation (`PhotoShelf`).
+ * Null when the conversation on this phone has no such photo, and then the defect has no
+ * "See it on the photo".
+ *
+ * Counted over every attachment of the maker's turns, before [assessmentPhotos] drops a
+ * repeated file, so the numbers match the server's.
+ */
+fun photoNumbered(messages: List<ChatMessage>, number: Int): String? {
+    if (number < 1) return null
+    return messages.asSequence()
+        .filter { it.role == Role.USER }
+        .flatMap { it.attachments.asSequence() }
+        .elementAtOrNull(number - 1)
+        ?.path
+}
+
+/**
  * The titles of the shots a submission turn's [count] photographs answer, in order, or
  * nulls when the turn cannot be read against [plan].
  *

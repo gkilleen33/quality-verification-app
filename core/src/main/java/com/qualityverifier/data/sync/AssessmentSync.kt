@@ -9,6 +9,7 @@ import com.qualityverifier.data.session.SyncedSession
 import com.qualityverifier.data.workers.ServerStudio
 import com.qualityverifier.data.workers.ServerWorker
 import com.qualityverifier.data.workers.StudioDays
+import com.qualityverifier.data.session.ReviewAnswers
 import com.qualityverifier.data.workers.StudioRepository
 import com.qualityverifier.data.workers.WorkerRepository
 import com.qualityverifier.domain.Employment
@@ -55,6 +56,8 @@ class AssessmentSync(
     private val mpesa: (suspend () -> Int)? = null,
     /** Fundi Bora's answers to "Which studio are you at today?" (V34). Null in Kagua. */
     private val studioDays: StudioDays? = null,
+    /** Fundi Bora testers' "Was this review helpful?" answers (V36). Null in Kagua. */
+    private val reviewAnswers: ReviewAnswers? = null,
     private val io: CoroutineDispatcher = Dispatchers.IO,
 ) {
 
@@ -209,7 +212,7 @@ class AssessmentSync(
 
         // Reviews go up before anything comes down, same as deletes: they are the phone's
         // own unsent work, and a pull failing should not strand them for another cycle.
-        val reviews = pushReviews()
+        val reviews = pushReviews() + (reviewAnswers?.push() ?: 0)
 
         // Names too, and before the pull for the same reason: a pull that landed first
         // would write the server's older name over the one the maker just typed.

@@ -131,6 +131,24 @@ class PhotoFrame(
         }
 
     /**
+     * Where the point ([x], [y]) of the photo sits at scale 1, relative to the viewport's
+     * centre. [x] and [y] are fractions of the photo's width from the left and its height from
+     * the top, as a defect's mark gives them.
+     */
+    fun pointAt(x: Float, y: Float): Pair<Float, Float> = (x - 0.5f) * fittedWidth to (y - 0.5f) * fittedHeight
+
+    /**
+     * Zoomed to [doubleTapScale] with the point ([x], [y]) as near the centre as the edges
+     * allow: how a defect's photo opens, so the maker sees the defect rather than the piece.
+     * A point at `p` from the centre shows at `scale * p + pan`, so the pan is `-scale * p`.
+     */
+    fun focusOn(x: Float, y: Float): PhotoPosition {
+        val (px, py) = pointAt(x, y)
+        val scale = doubleTapScale
+        return clamp(PhotoPosition(scale = scale, panX = -scale * px, panY = -scale * py))
+    }
+
+    /**
      * Whether a drag that has moved by ([dx], [dy]) belongs to the photo, or to the pager
      * the photo sits in.
      *

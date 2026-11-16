@@ -1,6 +1,7 @@
 package com.qualityverifier.ui.photo
 
 import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
@@ -41,6 +42,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.PointerInputScope
 import androidx.compose.ui.input.pointer.pointerInput
@@ -69,7 +71,12 @@ import kotlin.math.abs
 data class ViewerPhoto(
     val path: String,
     val caption: String? = null,
+    /** A defect to point at (v0.6.0, row 19): the photo opens zoomed on it, with a ring round it. */
+    val mark: PhotoMark? = null,
 )
+
+/** A point on a photo, as fractions of its width from the left and its height from the top. */
+data class PhotoMark(val x: Float, val y: Float)
 
 /**
  * A photograph full screen, to look closely at what the verdict describes.
@@ -97,6 +104,9 @@ data class ViewerPhoto(
  *
  * Shared by both apps, like the camera it sits beside. Fundi Bora is the only caller
  * for now.
+ *
+ * A photo with a [ViewerPhoto.mark] (v0.6.0, row 19), opened from a defect in the
+ * diagnosis, opens zoomed on the defect with a ring round it.
  */
 @Composable
 fun PhotoViewer(
@@ -214,6 +224,17 @@ private fun ZoomablePhoto(
     // new frame mid-pinch (the full decode landing) must not cancel the pinch.
     val currentFrame by rememberUpdatedState(frame)
     LaunchedEffect(frame) { frame?.let { position = it.clamp(position) } }
+    // A defect's photo opens on the defect, once: the full decode landing later rebuilds
+    // the frame, and must not undo a pinch the maker has made since.
+    var focused by remember(photo.mark) { mutableStateOf(false) }
+    LaunchedEffect(frame, photo.mark) {
+        val mark = photo.mark ?: return@LaunchedEffect
+        val ready = frame ?: return@LaunchedEffect
+        if (!focused) {
+            position = ready.focusOn(mark.x, mark.y)
+            focused = true
+        }
+    }
 
     val noteSize = { state: AsyncImagePainter.State ->
         if (state is AsyncImagePainter.State.Success) {
@@ -303,6 +324,20 @@ private fun ZoomablePhoto(
                     modifier = Modifier.fillMaxSize(),
                 )
             }
+            // Inside the transformed box, so the ring moves and zooms with the photo. Its
+            // size is divided by the zoom, so on screen it stays the same size.
+            val mark = photo.mark
+            val markFrame = frame
+            if (mark != null && markFrame != null) {
+                Canvas(Modifier.fillMaxSize()) {
+                    val (px, py) = markFrame.pointAt(mark.x, mark.y)
+                    val centre = Offset(size.width / 2f + px, size.height / 2f + py)
+                    val radius = MARK_RADIUS.toPx() / position.scale
+                    val stroke = MARK_STROKE.toPx() / position.scale
+                    drawCircle(Color.Black.copy(alpha = 0.6f), radius, centre, style = Stroke(stroke * 2f))
+                    drawCircle(MARK_COLOUR, radius, centre, style = Stroke(stroke))
+                }
+            }
         }
 
         when (preview) {
@@ -390,3 +425,10 @@ private suspend fun PointerInputScope.detectPhotoGestures(
 
 /** The retry counter's name on the request, so a retry is not answered from the failed one. */
 private const val ATTEMPT = "attempt"
+
+/** A defect's ring: large enough to surround a joint at the zoom the photo opens at. */
+private val MARK_RADIUS = 36.dp
+private val MARK_STROKE = 3.dp
+
+/** Yellow, with a dark outline under it, so the ring shows on pale timber and on dark. */
+private val MARK_COLOUR = Color(0xFFFFD600)

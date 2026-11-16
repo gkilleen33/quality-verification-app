@@ -148,6 +148,19 @@ data class StudioDayEntity(
 )
 
 /**
+ * A tester's answer to "Was this review helpful?" after a Fundi Bora verdict (server V36,
+ * release scope row 7): one per assessment, the first answer kept, as the server keeps it.
+ * [syncedAt] null means the server has not been told yet.
+ */
+@Entity(tableName = "review_helpful")
+data class ReviewHelpfulEntity(
+    @PrimaryKey val sessionId: String,
+    val helpful: Boolean,
+    val answeredAt: Long,
+    val syncedAt: Long? = null,
+)
+
+/**
  * A person on the manager's roster.
  *
  * Ids are made on the phone, as session and piece ids are, so the picker works offline

@@ -123,7 +123,16 @@ class RoomMigrationTest {
         }
     }
 
+    @Test
+    fun `16 to 17 adds the tester's review answers, as schema 17 has them, and changes nothing else`() {
+        val statements = statementsOf(AppDatabase.MIGRATION_16_17)
+        assertEquals(listOf(createSql(17, "review_helpful").replace("\${TABLE_NAME}", "review_helpful")), statements)
+        listOf("sessions", "pieces", "workers", "worker_studios", "studio_days", "pending_tester_feedback").forEach { table ->
+            assertEquals(table, createSql(16, table), createSql(17, table))
+        }
+    }
+
     private companion object {
-        const val CURRENT = 16
+        const val CURRENT = 17
     }
 }

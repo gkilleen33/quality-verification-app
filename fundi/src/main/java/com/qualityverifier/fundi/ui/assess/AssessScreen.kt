@@ -18,8 +18,10 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Button
+import androidx.compose.material3.Card
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -40,6 +42,8 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import coil.compose.AsyncImage
 import com.qualityverifier.data.session.PieceStudioChoice
 import com.qualityverifier.domain.ChatMessage
+import com.qualityverifier.domain.DefectMark
+import com.qualityverifier.domain.Finding
 import com.qualityverifier.domain.FundiIntake
 import com.qualityverifier.domain.FundiPurpose
 import com.qualityverifier.domain.ItemType
@@ -57,6 +61,7 @@ import com.qualityverifier.text.RetryLabels
 import com.qualityverifier.text.markdownToPlainText
 import com.qualityverifier.text.parseAssistantContent
 import com.qualityverifier.ui.capture.CaptureScreen
+import com.qualityverifier.ui.photo.PhotoMark
 import com.qualityverifier.ui.photo.PhotoViewer
 import com.qualityverifier.ui.plan.InspectingScreen
 import com.qualityverifier.ui.plan.WorkingText
@@ -112,6 +117,7 @@ fun AssessScreen(
     val unanswered by viewModel.unansweredTurn.collectAsState()
     val studios by viewModel.studios.collectAsState()
     val askToday by viewModel.askToday.collectAsState()
+    val reviewHelpful by viewModel.reviewHelpful.collectAsState()
 
     val labels = FundiLabels.ENGLISH
     // The capture pipeline and the verdict speak ReportLabels, and follow the language
@@ -163,8 +169,13 @@ fun AssessScreen(
     // open afterwards, on the same photograph. The path rather than a position in the
     // list, because the list grows as shots are taken.
     var viewing by rememberSaveable { mutableStateOf<String?>(null) }
-    val photos = remember(messages, run, purpose, reportLabels) {
+    // The defect's point on [viewing] when it was opened from a finding (row 19): x then y,
+    // fractions of the photo. Null when it was opened from a thumbnail.
+    var marked by rememberSaveable { mutableStateOf<FloatArray?>(null) }
+    val photos = remember(messages, run, purpose, reportLabels, viewing, marked) {
+        val mark = marked?.let { PhotoMark(it[0], it[1]) }
         assessmentPhotos(messages, run, purpose, labels, reportLabels)
+            .map { if (mark != null && it.path == viewing) it.copy(mark = mark) else it }
     }
     val viewingIndex = photos.indexOfFirst { it.path == viewing }
     // A photograph deleted while open — a shot retaken from the plan card cannot be,
@@ -316,7 +327,14 @@ fun AssessScreen(
                 onSubmit = viewModel::submitRun,
                 onRetakeShot = { viewModel.retakeShot(it); stage = Stage.SHOOTING },
                 onChangeAnswer = { viewModel.answerTest(it, ""); stage = Stage.TESTING },
-                onOpenPhoto = { viewing = it },
+                onOpenPhoto = { viewing = it; marked = null },
+                onOpenMark = { path, mark ->
+                    viewing = path
+                    marked = floatArrayOf(mark.x.toFloat(), mark.y.toFloat())
+                },
+                isTester = viewModel.isTester,
+                reviewHelpful = reviewHelpful,
+                onAnswerHelpful = viewModel::answerReviewHelpful,
             )
         }
 
@@ -325,7 +343,7 @@ fun AssessScreen(
                 photos = photos,
                 initialIndex = viewingIndex,
                 labels = reportLabels,
-                onClose = { viewing = null },
+                onClose = { viewing = null; marked = null },
             )
         }
     }
@@ -352,10 +370,25 @@ private fun Conversation(
     onChangeAnswer: (Int) -> Unit,
     /** A tap on any photograph, by its path: opens it full screen. */
     onOpenPhoto: (String) -> Unit,
+    /** A tap on a defect with a mark: opens its photo, by path, zoomed on the mark (row 19). */
+    onOpenMark: (String, DefectMark) -> Unit,
+    /** Testers are asked "Was this review helpful?" after a verdict (row 7). */
+    isTester: Boolean,
+    reviewHelpful: Boolean?,
+    onAnswerHelpful: (Boolean) -> Unit,
 ) {
     val firstUserId = messages.firstOrNull { it.role == Role.USER }?.id
     val lastAssistant = messages.lastOrNull { it.role == Role.ASSISTANT }
     val awaitingFirstReply = messages.none { it.role == Role.ASSISTANT }
+    // A finding's button opens the photo Claude named, if this phone holds it.
+    val showOnPhoto: (Finding) -> (() -> Unit)? = { finding ->
+        finding.mark?.let { mark ->
+            photoNumbered(messages, mark.photo)?.let { path -> { onOpenMark(path, mark) } }
+        }
+    }
+    val hasVerdict = remember(messages) {
+        messages.any { it.role == Role.ASSISTANT && parseAssistantContent(it.text).verdict != null }
+    }
 
     Column(Modifier.fillMaxSize().systemBarsPadding().imePadding()) {
         LazyColumn(
@@ -364,7 +397,7 @@ private fun Conversation(
         ) {
             itemsIndexed(messages, key = { _, m -> m.id }) { _, message ->
                 when {
-                    message.role == Role.ASSISTANT -> AssistantTurn(message, labels, reportLabels)
+                    message.role == Role.ASSISTANT -> AssistantTurn(message, labels, reportLabels, showOnPhoto)
                     // Written by the app on the maker's behalf. The model reads every
                     // word; the maker sees what they did — which purpose, which photos —
                     // rather than the app printing its own prompt back at them.
@@ -378,6 +411,13 @@ private fun Conversation(
                         onOpenPhoto = onOpenPhoto,
                     )
                     else -> TypedTurn(message, onOpenPhoto)
+                }
+            }
+            // One answer per assessment, below the conversation once there is a verdict, so it
+            // follows whichever verdict came last. Never sent to Claude.
+            if (isTester && hasVerdict) {
+                item(key = "review-helpful") {
+                    ReviewHelpfulCard(labels, reviewHelpful, onAnswerHelpful)
                 }
             }
             run?.let {
@@ -457,7 +497,12 @@ private fun Conversation(
 }
 
 @Composable
-private fun AssistantTurn(message: ChatMessage, labels: FundiLabels, reportLabels: ReportLabels) {
+private fun AssistantTurn(
+    message: ChatMessage,
+    labels: FundiLabels,
+    reportLabels: ReportLabels,
+    showOnPhoto: (Finding) -> (() -> Unit)?,
+) {
     val content = parseAssistantContent(message.text)
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
         if (content.displayProse.isNotBlank()) {
@@ -466,8 +511,26 @@ private fun AssistantTurn(message: ChatMessage, labels: FundiLabels, reportLabel
         // A verdict means a full assessment; drawn first because it is the answer the
         // maker came for.
         content.verdict?.let { VerdictCard(it, verdictCardProblems(content), reportLabels) }
-        content.diagnosis?.let { DiagnosisCard(it, labels, reportLabels) }
+        content.diagnosis?.let { DiagnosisCard(it, labels, reportLabels, showOnPhoto = showOnPhoto) }
         content.fixPlan?.let { FixPlanCard(it, labels) }
+    }
+}
+
+/** "Was this review helpful?" for a tester (row 7): Yes or No, once; then a thank-you. */
+@Composable
+private fun ReviewHelpfulCard(labels: FundiLabels, answer: Boolean?, onAnswer: (Boolean) -> Unit) {
+    Card(Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            if (answer == null) {
+                Text(labels.reviewHelpfulQuestion, style = MaterialTheme.typography.titleMedium)
+                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    OutlinedButton(onClick = { onAnswer(true) }) { Text(labels.reviewHelpfulYes) }
+                    OutlinedButton(onClick = { onAnswer(false) }) { Text(labels.reviewHelpfulNo) }
+                }
+            } else {
+                Text(labels.reviewHelpfulThanks, style = MaterialTheme.typography.bodyMedium)
+            }
+        }
     }
 }
 

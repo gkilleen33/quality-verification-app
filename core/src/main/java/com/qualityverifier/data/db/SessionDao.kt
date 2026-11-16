@@ -270,6 +270,19 @@ interface SessionDao {
     @Query("UPDATE studio_days SET syncedAt = :syncedAt WHERE day = :day")
     suspend fun markStudioDaySynced(day: String, syncedAt: Long)
 
+    @Query("SELECT helpful FROM review_helpful WHERE sessionId = :sessionId")
+    fun reviewHelpful(sessionId: String): Flow<Boolean?>
+
+    /** IGNORE: the first answer stands, as on the server. */
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
+    suspend fun insertReviewHelpful(answer: ReviewHelpfulEntity)
+
+    @Query("SELECT * FROM review_helpful WHERE syncedAt IS NULL ORDER BY answeredAt")
+    suspend fun unsyncedReviewHelpful(): List<ReviewHelpfulEntity>
+
+    @Query("UPDATE review_helpful SET syncedAt = :syncedAt WHERE sessionId = :sessionId")
+    suspend fun markReviewHelpfulSynced(sessionId: String, syncedAt: Long)
+
     // ---- the roster
 
     @Query("SELECT * FROM workers ORDER BY updatedAt")

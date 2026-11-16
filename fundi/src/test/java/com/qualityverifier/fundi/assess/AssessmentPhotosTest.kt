@@ -8,6 +8,7 @@ import com.qualityverifier.domain.PlanRun
 import com.qualityverifier.domain.PlannedShot
 import com.qualityverifier.domain.Role
 import com.qualityverifier.fundi.ui.assess.assessmentPhotos
+import com.qualityverifier.fundi.ui.assess.photoNumbered
 import com.qualityverifier.text.FundiLabels
 import com.qualityverifier.text.ReportLabels
 import com.qualityverifier.text.buildSubmissionText
@@ -178,5 +179,21 @@ class AssessmentPhotosTest {
         // Guards the other tests: a fixture that silently stopped parsing would make
         // every caption null and the uncaptioned test pass for the wrong reason.
         assertEquals(4, parseAssistantContent(planText).plan?.photos?.size)
+    }
+
+    // Claude names a defect's photo by the server's number: every photo the maker sent,
+    // from 1, across the whole conversation (v0.6.0, row 19).
+    @Test
+    fun `a defect's photo number finds the file the server numbered so`() {
+        val messages = listOf(
+            user("u1", "/p/opening.jpg"),
+            assistant("a1", planText),
+            user("u2", "/p/whole.jpg", "/p/joint.jpg", "/p/under.jpg"),
+            assistant("a2", "Diagnosis"),
+        )
+        assertEquals("/p/opening.jpg", photoNumbered(messages, 1))
+        assertEquals("/p/joint.jpg", photoNumbered(messages, 3))
+        assertNull(photoNumbered(messages, 5))
+        assertNull(photoNumbered(messages, 0))
     }
 }
