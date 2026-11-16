@@ -314,7 +314,14 @@ data class FundiLabels(
     val reviewHelpfulNo: String,
     /** After the tester has answered. */
     val reviewHelpfulThanks: String,
+    // ---- v0.6.0: offline (row 6)
+    /** Beside a worker or a piece the server has not been told about yet. */
+    val notSentYet: String,
+    /** Above the workers and the pieces when the last sync failed; {time} is its time, "14:32". */
+    private val lastSyncFailedFormat: String,
 ) {
+    fun lastSyncFailed(time: String) = lastSyncFailedFormat.replace("{time}", time)
+
     fun benchIsThere(tool: String) = benchIsThereFormat.replace("{tool}", tool)
 
     fun benchWhoOwns(tool: String) = benchWhoOwnsFormat.replace("{tool}", tool)
@@ -749,6 +756,9 @@ data class FundiLabels(
             reviewHelpfulYes = "Yes",
             reviewHelpfulNo = "No",
             reviewHelpfulThanks = "Thank you. Your answer is saved.",
+            notSentYet = "Not sent yet",
+            lastSyncFailedFormat = "The last sync at {time} did not finish. What is marked \"Not sent yet\" " +
+                "is kept on this phone and is sent at the next sync.",
         )
     }
 }

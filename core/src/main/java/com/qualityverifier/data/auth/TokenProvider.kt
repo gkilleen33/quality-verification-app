@@ -86,6 +86,14 @@ class TokenProvider(
         }
     }
 
+    /**
+     * Whether a sign-in is still held, for a caller that got no token (v0.6.0, row 6). A
+     * refusal by the server clears the store, and losing signal keeps it, so after a null
+     * from [accessToken] this says which happened: true means no connection, and the maker
+     * should be told so rather than asked to sign in again.
+     */
+    fun holdsSignIn(): Boolean = synchronized(lock) { store.refreshToken() != null }
+
     fun signOut() = synchronized(lock) {
         generation++
         store.clear()

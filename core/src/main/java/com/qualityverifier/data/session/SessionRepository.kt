@@ -8,6 +8,7 @@ import com.qualityverifier.domain.LocationFix
 import com.qualityverifier.domain.SessionStart
 import com.qualityverifier.domain.SessionSummary
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.flowOf
 
 /**
  * Conversation history.
@@ -174,6 +175,12 @@ interface SessionRepository {
 
     /** Label changes the server has not been told yet. */
     suspend fun unsyncedPieceStudios(): List<PieceStudioChange> = emptyList()
+
+    /**
+     * Pieces with a name or a studio change the server has not had yet, as they change
+     * (v0.6.0, row 6): the pieces list tags each "Not sent yet". Empty in fakes.
+     */
+    fun observeUnsentPieceIds(): Flow<Set<String>> = flowOf(emptySet())
 
     /** The change reached the server, or the server refused it for good; either way it is not resent. */
     suspend fun markPieceStudioSent(change: PieceStudioChange) = Unit

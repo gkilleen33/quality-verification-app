@@ -40,4 +40,7 @@ class ReviewAnswers(
         }
         return sent
     }
+
+    /** Whether no answer is still waiting to be sent, for the sync's report. */
+    suspend fun allSent(): Boolean = dao.unsyncedReviewHelpful().isEmpty()
 }

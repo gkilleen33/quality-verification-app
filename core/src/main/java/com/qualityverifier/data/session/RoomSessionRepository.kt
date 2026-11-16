@@ -351,6 +351,8 @@ class RoomSessionRepository(
         dao.setPieceStudio(pieceId, studioId, now())
     }
 
+    override fun observeUnsentPieceIds(): Flow<Set<String>> = dao.observeUnsentPieceIds().map { it.toSet() }
+
     override suspend fun unsyncedPieceStudios(): List<PieceStudioChange> =
         dao.unsyncedPieceStudios().mapNotNull { piece ->
             piece.studioPendingAt?.let { PieceStudioChange(piece.id, piece.studioId, it) }

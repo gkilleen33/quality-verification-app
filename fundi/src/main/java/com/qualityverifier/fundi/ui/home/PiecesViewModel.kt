@@ -96,6 +96,11 @@ class PiecesViewModel(
         sessions.observeSummaries()
             .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
+    /** Pieces with a name or studio change still to send, tagged "Not sent yet" (row 6). */
+    val unsent: StateFlow<Set<String>> =
+        sessions.observeUnsentPieceIds()
+            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptySet())
+
     private val _syncing = MutableStateFlow(false)
     val syncing: StateFlow<Boolean> = _syncing.asStateFlow()
 

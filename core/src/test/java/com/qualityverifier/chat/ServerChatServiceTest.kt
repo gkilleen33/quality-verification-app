@@ -64,6 +64,7 @@ class ServerChatServiceTest {
         store: TokenStore = FakeStore(),
         chatPath: String = "v1/chat",
         images: ImageBytesSource = FakeImages,
+        refresh: RefreshOutcome = RefreshOutcome.Renewed("refreshed", 900, "r2", "u"),
     ): ServerChatService {
         val client = OkHttpClient.Builder()
             .connectTimeout(2, TimeUnit.SECONDS)
@@ -71,7 +72,7 @@ class ServerChatServiceTest {
             .build()
         return ServerChatService(
             client = client,
-            tokens = TokenProvider(store, { RefreshOutcome.Renewed("refreshed", 900, "r2", "u") }),
+            tokens = TokenProvider(store, { refresh }),
             images = images,
             sessionStart = { sessionStart },
             baseUrl = server.url("/").toString(),
@@ -488,6 +489,35 @@ class ServerChatServiceTest {
         assertTrue(failure.message.contains("sign in again"))
     }
 
+    // v0.6.0, row 6. A maker in a workshop with no signal, whose access token has expired:
+    // the refresh cannot reach the server, the sign-in is kept, and the chat says there is
+    // no connection, with the turn kept for Retry. Only a refusal asks them to sign in.
+    @Test
+    fun `no signal for the refresh says no connection, not sign in again`() = runTest {
+        val failure = service(store = FakeStore(expired = true), refresh = RefreshOutcome.Unavailable)
+            .send("s1", ItemType.WOODEN_TABLE, history()) as ChatResult.Failure
+        assertEquals(ChatErrorKind.NETWORK, failure.kind)
+        assertFalse(failure.message, failure.message.contains("sign in again"))
+        assertEquals("nothing reached the server", 0, server.requestCount)
+    }
+
+    @Test
+    fun `a refresh the server refuses still asks them to sign in again`() = runTest {
+        val failure = service(store = FakeStore(expired = true), refresh = RefreshOutcome.Rejected)
+            .send("s1", ItemType.WOODEN_TABLE, history()) as ChatResult.Failure
+        assertEquals(ChatErrorKind.AUTH, failure.kind)
+        assertTrue(failure.message.contains("sign in again"))
+    }
+
+    // A 401 whose refresh then cannot reach the server is the same case, met later.
+    @Test
+    fun `a 401 whose refresh has no signal says no connection`() = runTest {
+        server.enqueue(MockResponse().setResponseCode(401).setBody("{}"))
+        val failure = service(refresh = RefreshOutcome.Unavailable)
+            .send("s1", ItemType.WOODEN_TABLE, history()) as ChatResult.Failure
+        assertEquals(ChatErrorKind.NETWORK, failure.kind)
+    }
+
     // v0.4.0, D3. Keyed by hash, so the server stores each photo's metadata on that photo's
     // row even when an unreadable photo before it was skipped.
     @Test
@@ -555,11 +585,14 @@ class ServerChatServiceTest {
     private class FakeStore(
         private var access: String? = "stored-access",
         private var refresh: String? = "stored-refresh",
+        /** An access token past its lifetime, so the next request refreshes first. */
+        private val expired: Boolean = false,
     ) : TokenStore {
         override fun accessToken() = access
         override fun refreshToken() = refresh
         override fun userId() = "user-1"
-        override fun accessTokenExpiresAt() = System.currentTimeMillis() + 60 * 60 * 1000
+        override fun accessTokenExpiresAt() =
+            System.currentTimeMillis() + if (expired) -1_000 else 60 * 60 * 1000
         override fun save(
             accessToken: String,
             expiresInSeconds: Long,

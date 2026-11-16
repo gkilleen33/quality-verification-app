@@ -53,6 +53,7 @@ import com.qualityverifier.domain.Worker
 import com.qualityverifier.domain.WorkerDetails
 import com.qualityverifier.domain.WorkerSlot
 import com.qualityverifier.fundi.ui.assess.WorkerPicker
+import com.qualityverifier.fundi.ui.SyncFailedLine
 import com.qualityverifier.fundi.ui.fundiContainer
 import com.qualityverifier.fundi.ui.location.AssessmentLocationDialog
 import com.qualityverifier.fundi.ui.location.rememberAssessmentLocationAnswer
@@ -96,6 +97,8 @@ fun HomeScreen(
     val spending by model.spending.collectAsState()
     val studios by model.studios.collectAsState()
     val update by container.appVersionCheck.state.collectAsState()
+    val syncStatus by container.assessmentSync.status.collectAsState()
+    val unsent by model.unsent.collectAsState()
     // One row per physical piece rather than per assessment. A stool assessed on Monday
     // and re-assessed on Tuesday is one stool, and listing it twice would make the maker
     // work out which row is the current one.
@@ -207,6 +210,7 @@ fun HomeScreen(
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(top = 8.dp),
                 )
+                SyncFailedLine(syncStatus, FundiLabels.ENGLISH)
             }
             items(pieces, key = { (latest, _) -> latest.piece }) { (latest, count) ->
                 PieceRow(
@@ -224,6 +228,7 @@ fun HomeScreen(
                     studios = studios,
                     onSetStudio = { studioId -> model.setStudio(latest.piece, studioId) },
                     onServer = latest.piece in onServer,
+                    unsent = latest.piece in unsent,
                 )
             }
         }
@@ -253,6 +258,8 @@ private fun PieceRow(
     onSetStudio: (String?) -> Unit = {},
     /** Whether the server holds the piece yet, which a label change needs. */
     onServer: Boolean = true,
+    /** A name or studio change for the piece the server has not had yet (row 6). */
+    unsent: Boolean = false,
 ) {
     val labels = FundiLabels.ENGLISH
     var choosingStudio by remember { mutableStateOf(false) }
@@ -343,6 +350,10 @@ private fun PieceRow(
             // An assessment with one turn is one somebody started and did not finish —
             // a phone call mid-plan, usually. Saying so is the difference between a list
             // they trust and a list of things they cannot account for.
+            // A name or studio change kept on this phone until the next sync (row 6).
+            if (unsent) {
+                Text(labels.notSentYet, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+            }
             if (latest.messageCount <= 1) {
                 Text(
                     "Not finished",
