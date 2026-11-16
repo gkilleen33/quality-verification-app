@@ -48,6 +48,8 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.foundation.clickable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -66,6 +68,8 @@ import com.qualityverifier.domain.ItemType
 import com.qualityverifier.domain.Role
 import com.qualityverifier.text.AssistantContent
 import com.qualityverifier.ui.capture.CaptureScreen
+import com.qualityverifier.ui.photo.PhotoViewer
+import com.qualityverifier.ui.photo.ViewerPhoto
 import com.qualityverifier.ui.capture.captureInstruction
 import com.qualityverifier.ui.plan.InspectingScreen
 import com.qualityverifier.ui.plan.WorkingText
@@ -115,6 +119,8 @@ fun ChatScreen(
     )
 
     val messages by viewModel.messages.collectAsState()
+    // The photo open in the viewer, by path, or null (row 20). Saved across a rotation.
+    var viewingPhoto by rememberSaveable { mutableStateOf<String?>(null) }
     val pending by viewModel.pending.collectAsState()
     val sending by viewModel.sending.collectAsState()
     val error by viewModel.error.collectAsState()
@@ -396,6 +402,7 @@ fun ChatScreen(
                                 message = message,
                                 content = parsed[message.id],
                                 onAskQuestion = { question -> viewModel.send(question) },
+                                onOpenPhoto = { viewingPhoto = it },
                             )
                             if (active != null && message.id == active.sourceMessageId) {
                                 Spacer(Modifier.height(10.dp))
@@ -617,6 +624,25 @@ fun ChatScreen(
             }
         }
     }
+
+    // A tapped photo, full screen (v0.6.0, row 20): the viewer Fundi Bora has used since
+    // #86, from :capture. Drawn over the conversation rather than navigated to, so closing
+    // it finds the chat scrolled where it was.
+    val photos = remember(messages) {
+        messages.filter { it.role == Role.USER }
+            .flatMap { it.attachments }
+            .map { ViewerPhoto(it.path) }
+            .distinctBy { it.path }
+    }
+    val viewingIndex = photos.indexOfFirst { it.path == viewingPhoto }
+    if (viewingIndex >= 0) {
+        PhotoViewer(
+            photos = photos,
+            initialIndex = viewingIndex,
+            labels = rememberReportLabels(shareable?.second?.language),
+            onClose = { viewingPhoto = null },
+        )
+    }
 }
 
 /** A sign-in failure offers Settings instead of Retry: sending again cannot fix it. */
@@ -659,6 +685,8 @@ private fun MessageBubble(
     message: ChatMessage,
     content: AssistantContent?,
     onAskQuestion: (String) -> Unit,
+    /** A tap on a photo, by its path: opens it full screen. */
+    onOpenPhoto: (String) -> Unit,
 ) {
     val fromUser = message.role == Role.USER
     Column(
@@ -674,7 +702,8 @@ private fun MessageBubble(
                         contentScale = ContentScale.Crop,
                         modifier = Modifier
                             .size(140.dp)
-                            .clip(RoundedCornerShape(12.dp)),
+                            .clip(RoundedCornerShape(12.dp))
+                            .clickable { onOpenPhoto(attachment.path) },
                     )
                 }
             }

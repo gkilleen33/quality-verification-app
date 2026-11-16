@@ -102,8 +102,8 @@ data class PhotoMark(val x: Float, val y: Float)
  * swipes between; the page the pager has settled on draws the full-size decode over
  * it, uncached, and drops it when the pager moves on. See [ZoomablePhoto].
  *
- * Shared by both apps, like the camera it sits beside. Fundi Bora is the only caller
- * for now.
+ * Shared by both apps, like the camera it sits beside: Fundi Bora's assessment screen,
+ * and from v0.6.0 Kagua's conversation (row 20).
  *
  * A photo with a [ViewerPhoto.mark] (v0.6.0, row 19), opened from a defect in the
  * diagnosis, opens zoomed on the defect with a ring round it.
