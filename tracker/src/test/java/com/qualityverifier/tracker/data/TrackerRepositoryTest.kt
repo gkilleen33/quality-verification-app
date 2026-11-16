@@ -67,6 +67,14 @@ class FakeDao : TrackerDao {
         return rows.value.size.toLong()
     }
 
+    override suspend fun fillMissing(network: String, code: String, feeKes: Double?, balanceAfterKes: Double?) {
+        val row = rows.value[network to code]?.takeIf { it.uploadedAt == null } ?: return
+        rows.value = rows.value + ((network to code) to row.copy(
+            feeKes = row.feeKes ?: feeKes,
+            balanceAfterKes = row.balanceAfterKes ?: balanceAfterKes,
+        ))
+    }
+
     override fun observeAll(): Flow<List<TransactionEntity>> = rows.map { it.values.sortedByDescending { r -> r.occurredAt } }
     override fun observe(network: String, code: String): Flow<TransactionEntity?> = rows.map { it[network to code] }
 
@@ -297,6 +305,34 @@ class TrackerRepositoryTest {
         repository.agreeToSending()
         repository.push()
         assertEquals(1, api.uploaded.size)
+    }
+
+    @Test
+    fun `a copy cut before the balance is filled in by the whole copy, before upload`() = runTest {
+        repository.agreeToReading(clock)
+        clock += 1_000
+        val cut = "SFA1B2C3D5 Confirmed. Ksh200.00 sent to JANE MERCHANT on 9/9/26 at 5:00 PM. New M-PESA"
+        assertEquals(TakeOutcome.STORED, repository.take(messagesOf(BuiltNotification(title = "MPESA", text = cut, time = clock + 1)).single()))
+        assertEquals(null, dao.rows.value.values.single().balanceAfterKes)
+
+        repository.take(messagesOf(BuiltNotification(title = "MPESA", text = send, time = clock + 1)).single())
+
+        val row = dao.rows.value.values.single()
+        assertEquals(34.56, row.balanceAfterKes!!, 0.0)
+        assertEquals(200.0, row.amountKes, 0.0)
+    }
+
+    @Test
+    fun `an inbox line from before the agreement is not stored, though the notification is newer`() = runTest {
+        agreeToBoth()
+        // The 1/1/25 payment is still on screen when a newer message updates the notification.
+        val old = "SFA1B2C3D4 Confirmed. Ksh500.00 sent to JOHN DOE 0722123456 on 1/1/25 at 10:15 AM. New M-PESA balance is Ksh1,234.56."
+        val inbox = BuiltNotification(title = "MPESA", lines = listOf(old, send), time = clock + 10)
+
+        val outcomes = messagesOf(inbox).map { repository.take(it) }
+
+        assertEquals(listOf(TakeOutcome.NOTHING, TakeOutcome.STORED), outcomes)
+        assertEquals(setOf("mpesa" to "SFA1B2C3D5"), dao.rows.value.keys)
     }
 
     @Test

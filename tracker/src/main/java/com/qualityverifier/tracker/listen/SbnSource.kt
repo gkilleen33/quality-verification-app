@@ -34,7 +34,7 @@ class SbnSource(private val sbn: StatusBarNotification) : NotificationSource {
         extras.getCharSequence(Notification.EXTRA_CONVERSATION_TITLE)?.toString()
 
     override fun messageHeaders(): List<MessageHeader> = messages().map { bundle ->
-        MessageHeader(sender = senderOf(bundle), time = bundle.getLong(KEY_TIME))
+        MessageHeader(sender = senderOf(bundle), time = bundle.getLong(KEY_TIME), senderUri = senderUriOf(bundle))
     }
 
     override fun messageText(index: Int): String? = messages().getOrNull(index)?.getCharSequence(KEY_TEXT)?.toString()
@@ -59,6 +59,11 @@ class SbnSource(private val sbn: StatusBarNotification) : NotificationSource {
         }
         return null
     }
+
+    /** The sender Person's URI, from Android 9; null before, or when the SMS app sets none. */
+    @Suppress("DEPRECATION")
+    private fun senderUriOf(bundle: Bundle): String? =
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) bundle.getParcelable<Person>(KEY_SENDER_PERSON)?.uri else null
 
     private companion object {
         const val KEY_TEXT = "text"

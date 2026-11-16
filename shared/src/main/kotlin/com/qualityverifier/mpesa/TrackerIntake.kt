@@ -16,6 +16,13 @@ data class NotificationMessage(
     val text: String,
     /** When the message arrived, on this phone's clock. */
     val receivedAt: Long,
+    /**
+     * False when [receivedAt] is the notification's time rather than this message's own: one
+     * line of an inbox-style notification, which carries one time for all its lines, or a
+     * messaging-style message without a time. Such a message may be older than the
+     * notification, and older than the agreement, so its time is taken from its own text.
+     */
+    val exactTime: Boolean = true,
 )
 
 /** One transaction PesaLog keeps: the network it came from, and what the parser read. */
@@ -65,15 +72,35 @@ object TrackerIntake {
      *   reading is off.
      */
     fun read(message: NotificationMessage, agreedAt: Long?): TrackerReading {
-        if (agreedAt == null || message.receivedAt <= agreedAt) return TrackerReading.Ignored
+        if (agreedAt == null) return TrackerReading.Ignored
+        if (message.exactTime && message.receivedAt <= agreedAt) return TrackerReading.Ignored
         // The listener has already matched the sender; checked again so this rule stands alone.
         if (MobileMoneyParser.networkForSender(message.sender) != message.network.id) return TrackerReading.Ignored
 
         val text = message.text.trim()
-        val unread = TrackerReading.Unread(message.network, MpesaIntake.dayOf(message.receivedAt))
-        if (looksHidden(text) || !looksWhole(message.network, text)) return unread
+        val whole = !looksHidden(text) && looksWhole(message.network, text)
+        if (!message.exactTime) return readUndated(message, text, whole, agreedAt)
 
-        val tx = MobileMoneyParser.parse(text, message.sender, message.receivedAt) ?: return TrackerReading.NotMoney
+        val unread = TrackerReading.Unread(message.network, MpesaIntake.dayOf(message.receivedAt))
+        if (!whole) return unread
+        return readWhole(message, text, message.receivedAt, unread)
+    }
+
+    /**
+     * A message whose time is the notification's, not its own ([NotificationMessage.exactTime]).
+     * Its time comes from its text ("on 9/9/26 at 5:00 PM"), to the minute, and it is read only
+     * when that minute is wholly after the agreement. Anything that cannot be dated, cut or
+     * whole, is ignored rather than counted: it may be from before the agreement.
+     */
+    private fun readUndated(message: NotificationMessage, text: String, whole: Boolean, agreedAt: Long): TrackerReading {
+        if (!whole) return TrackerReading.Ignored
+        val printed = MobileMoneyParser.bodyTime(text) ?: return TrackerReading.Ignored
+        if (printed <= agreedAt) return TrackerReading.Ignored
+        return readWhole(message, text, printed, TrackerReading.Unread(message.network, MpesaIntake.dayOf(printed)))
+    }
+
+    private fun readWhole(message: NotificationMessage, text: String, at: Long, unread: TrackerReading.Unread): TrackerReading {
+        val tx = MobileMoneyParser.parse(text, message.sender, at) ?: return TrackerReading.NotMoney
         if (tx.type == MobileMoneyParser.TYPE_FAILED || tx.type == MobileMoneyParser.TYPE_IGNORED) {
             return TrackerReading.NotMoney
         }
@@ -88,6 +115,10 @@ object TrackerIntake {
         // A name the parser cleaned to nothing ("from 123456 -") is the same cut, one step on.
         if (endsWith(text, tx.counterparty) || endsWith(text, tx.ref)) return unread
         if (tx.counterparty?.isBlank() == true) return unread
+        // A text that stops on "balance is Ksh" or "Transaction cost," was cut just before the
+        // figure. (A cut earlier, inside "bal", reads as whole with no balance; the repository
+        // fills the gap if the whole copy arrives before the row is sent.)
+        if (DANGLING_FIGURE.containsMatchIn(text)) return unread
 
         val somebody = tx.counterpartyKind != MobileMoneyParser.KIND_SELF &&
             tx.counterpartyKind != MobileMoneyParser.KIND_UNKNOWN
@@ -101,7 +132,7 @@ object TrackerIntake {
                     amountKes = amount,
                     feeKes = tx.cost,
                     balanceAfterKes = tx.balanceAfter,
-                    occurredAt = message.receivedAt,
+                    occurredAt = at,
                     counterpartyName = tx.counterparty.takeIf { somebody },
                     counterpartyPhone = tx.counterpartyPhone.takeIf { somebody },
                 ),
@@ -161,6 +192,14 @@ object TrackerIntake {
     private fun squash(value: String): String = value.uppercase().replace(SPACES, " ").trim()
 
     private val SPACES = Regex("""\s+""")
+
+    /** A balance or cost phrase with its figure missing at the very end: "balance is Ksh", "Fee:". */
+    private val DANGLING_FIGURE = Regex(
+        """(?i)(?:(?:\bbalance(?:\s+is)?|\bbal\s*:?|transaction\s+cost,?)\s*(?:(?:KES|KSHS?)\.?)?""" +
+            // "Fee" and "Charges" also end whole texts as words ("Select Query Charges"),
+            // so only with a colon or a currency after them.
+            """|\b(?:fee|charges?)\s*(?::\s*(?:(?:KES|KSHS?)\.?)?|(?:KES|KSHS?)\.?))\s*$""",
+    )
 
     /** A shilling figure with no decimals and a point at the very end: "Ksh34.", "KES 1,000." */
     private val CUT_AFTER_POINT = Regex("""(?i)(?:KES|KSHS?)\.?\s*[\d,]*\d\.$""")

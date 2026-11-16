@@ -19,6 +19,7 @@ class BuiltNotification(
     private val conversationTitle: String? = null,
     private val messages: List<Pair<String?, String>> = emptyList(),
     private val messageTimes: List<Long> = emptyList(),
+    private val senderUris: List<String?> = emptyList(),
     private val bigText: String? = null,
     private val text: String? = null,
     private val lines: List<String> = emptyList(),
@@ -32,7 +33,9 @@ class BuiltNotification(
     override fun conversationTitle(): String? = conversationTitle.also { read += "conversationTitle" }
     override fun messageHeaders(): List<MessageHeader> {
         read += "messageHeaders"
-        return messages.mapIndexed { index, (sender, _) -> MessageHeader(sender, messageTimes.getOrElse(index) { time + index }) }
+        return messages.mapIndexed { index, (sender, _) ->
+            MessageHeader(sender, messageTimes.getOrElse(index) { time + index }, senderUris.getOrNull(index))
+        }
     }
     override fun messageText(index: Int): String? = messages.getOrNull(index)?.second.also { read += "messageText$index" }
     override fun bigText(): String? = bigText.also { read += "bigText" }
@@ -106,12 +109,39 @@ class NotificationReaderTest {
     }
 
     @Test
-    fun `a message with no sender of its own takes the conversation's`() {
-        val conversation = BuiltNotification(conversationTitle = "AirtelMoney", messages = listOf(null to "U3RAGOD5ZEU. Ksh 200 received from JOHN DOE 254733000222 on 15/09/26 10:28 AM. Bal:Ksh 390.0"))
+    fun `a message with no sender is the person's own, and is never read`() {
+        val own = BuiltNotification(conversationTitle = "MPESA", title = "MPESA", messages = listOf(null to send))
 
-        val message = (read(conversation) as ReaderOutcome.Messages).messages.single()
+        assertEquals(ReaderOutcome.Dropped(DropReason.NOT_A_MONEY_SENDER), read(own))
+        assertFalse(own.anyTextRead)
+    }
 
-        assertEquals(MobileMoneyNetwork.AIRTEL, message.network)
+    @Test
+    fun `a contact saved under a mobile money name, with a phone number, is never read`() {
+        val contact = BuiltNotification(messages = listOf("MPESA" to send), senderUris = listOf("tel:+254712345678"))
+        val shortcode = BuiltNotification(messages = listOf("MPESA" to send), senderUris = listOf("tel:MPESA"))
+
+        assertEquals(ReaderOutcome.Dropped(DropReason.NOT_A_MONEY_SENDER), read(contact))
+        assertFalse(contact.anyTextRead)
+        assertTrue(read(shortcode) is ReaderOutcome.Messages)
+    }
+
+    @Test
+    fun `an Airtel Money message is read as Airtel Money`() {
+        val conversation = BuiltNotification(messages = listOf("AirtelMoney" to "U3RAGOD5ZEU. Ksh 200 received from JOHN DOE 254733000222 on 15/09/26 10:28 AM. Bal:Ksh 390.0"))
+
+        assertEquals(MobileMoneyNetwork.AIRTEL, (read(conversation) as ReaderOutcome.Messages).messages.single().network)
+    }
+
+    @Test
+    fun `inbox lines and untimed messages are marked as undated`() {
+        val inbox = BuiltNotification(title = "MPESA", lines = listOf(send, receive))
+        val untimed = BuiltNotification(messages = listOf("MPESA" to send), messageTimes = listOf(0L))
+        val single = BuiltNotification(title = "MPESA", text = send)
+
+        assertTrue((read(inbox) as ReaderOutcome.Messages).messages.none { it.exactTime })
+        assertFalse((read(untimed) as ReaderOutcome.Messages).messages.single().exactTime)
+        assertTrue((read(single) as ReaderOutcome.Messages).messages.single().exactTime)
     }
 
     @Test

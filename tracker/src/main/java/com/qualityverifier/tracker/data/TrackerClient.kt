@@ -3,7 +3,6 @@ package com.qualityverifier.tracker.data
 import android.util.Log
 import com.qualityverifier.data.auth.AuthenticatedHttp
 import com.qualityverifier.data.auth.TokenProvider
-import com.qualityverifier.data.auth.TokenStore
 import com.qualityverifier.data.terms.AgreeOutcome
 import com.qualityverifier.data.terms.TermsApi
 import com.qualityverifier.data.terms.TermsInfo
@@ -154,6 +153,11 @@ class TrackerClient(
             when {
                 response.isSuccessful -> true
                 response.refusesSending() -> null
+                // Refused as invalid: sending the same rows again would be refused again.
+                response.code == 400 -> {
+                    Log.w(TAG, "Server refused unread counts (400); dropping them")
+                    true
+                }
                 else -> false
             }
         } ?: false
@@ -223,9 +227,13 @@ class TrackerClient(
         } ?: AccountCheck.UNKNOWN
     }
 
-    /** No agreement to send or to PesaLog's terms, or a Kagua account: no retry changes these. */
+    /**
+     * No agreement to send, or a Kagua account: no retry changes these. `tracker_terms_required`
+     * is not one of them: the agreement to send still stands, and uploads resume once the
+     * person agrees to new terms, so that refusal is a "later".
+     */
     private fun Response.refusesSending(): Boolean = code == 403 && peekBody(1024).string().let {
-        it.contains("tracker_send_required") || it.contains("tracker_terms_required") || it.contains("not_a_fundi")
+        it.contains("tracker_send_required") || it.contains("not_a_fundi")
     }
 
     private companion object {
@@ -242,7 +250,11 @@ class TrackerClient(
 class TrackerTermsClient(
     private val client: OkHttpClient,
     tokens: TokenProvider,
-    private val store: TokenStore,
+    /**
+     * Where PesaLog keeps its last answer about its own terms (TrackerPreference). Not the
+     * token store's terms flag: AuthClient writes Fundi Bora's answer there at every sign-in.
+     */
+    private val remember: (termsRequired: Boolean) -> Unit,
     private val baseUrl: String,
     private val json: Json,
     private val io: CoroutineDispatcher = Dispatchers.IO,
@@ -256,7 +268,7 @@ class TrackerTermsClient(
             languages = body.terms?.languages.orEmpty().map { TermsLanguageInfo(it.language, it.sha256, it.path) },
             transferAgreed = body.transferAgreed,
         )
-    }?.also { store.setTermsRequired(it.required) }
+    }?.also { remember(it.required) }
 
     // Unauthenticated: the text of the terms is not personal.
     override suspend fun text(path: String): ByteArray? = withContext(io) {
@@ -279,7 +291,7 @@ class TrackerTermsClient(
         response.use {
             when {
                 it.isSuccessful -> {
-                    store.setTermsRequired(false)
+                    remember(false)
                     AgreeOutcome.Agreed
                 }
                 it.code == 409 -> AgreeOutcome.TextChanged

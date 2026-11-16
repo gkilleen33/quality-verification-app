@@ -66,7 +66,16 @@ class TrackerRepository(
         return when (val reading = TrackerIntake.read(message, since)) {
             is TrackerReading.Read -> {
                 prefs.messageFound(at)
-                if (dao.insertIfNew(reading.record.toEntity(at)) != -1L) TakeOutcome.STORED else TakeOutcome.ALREADY_HELD
+                if (dao.insertIfNew(reading.record.toEntity(at)) != -1L) {
+                    TakeOutcome.STORED
+                } else {
+                    // A copy read earlier from a notification cut before its balance ("...New
+                    // M-PESA") has no balance or fee; this copy may have them. Filled only
+                    // before upload.
+                    val record = reading.record.record
+                    dao.fillMissing(reading.record.network.id, record.code, record.feeKes, record.balanceAfterKes)
+                    TakeOutcome.ALREADY_HELD
+                }
             }
             is TrackerReading.Unread -> {
                 prefs.messageFound(at)
@@ -227,6 +236,9 @@ class TrackerRepository(
         if (outcome is DeleteOutcome.Deleted) prefs.stopSending(record = false)
         outcome
     }
+
+    /** Sends any withdrawal the server has not recorded yet; at sign-out, before the tokens go. */
+    suspend fun sendWithdrawals() = flushWithdrawals()
 
     /** Sends the withdrawals made on this phone that the server has not recorded. */
     private suspend fun flushWithdrawals() {

@@ -103,6 +103,18 @@ class TrackerPreference internal constructor(private val prefs: SharedPreference
         prefs.edit().putStringSet(KEY_PENDING, pendingWithdrawals - kind).apply()
     }
 
+    /**
+     * The server's last answer about PesaLog's own terms for this account: true once agreed,
+     * false while they are still to agree, null before it has ever answered. Decides whether
+     * PesaLog opens on home or on its terms screen.
+     */
+    val termsAgreed: Boolean?
+        get() = if (prefs.contains(KEY_TERMS_AGREED)) prefs.getBoolean(KEY_TERMS_AGREED, false) else null
+
+    fun rememberTerms(required: Boolean) {
+        prefs.edit().putBoolean(KEY_TERMS_AGREED, !required).apply()
+    }
+
     fun listenerConnected(at: Long) {
         prefs.edit().putLong(KEY_CONNECTED_AT, at).apply()
         _listener.value = readListener()
@@ -130,6 +142,7 @@ class TrackerPreference internal constructor(private val prefs: SharedPreference
             .remove(KEY_SENDING)
             .remove(KEY_PENDING)
             .remove(KEY_LAST_MESSAGE_AT)
+            .remove(KEY_TERMS_AGREED)
             .commit()
         publish()
         _listener.value = readListener()
@@ -161,5 +174,6 @@ class TrackerPreference internal constructor(private val prefs: SharedPreference
         private const val KEY_CONNECTED_AT = "listener_connected_at"
         private const val KEY_DISCONNECTED_AT = "listener_disconnected_at"
         private const val KEY_LAST_MESSAGE_AT = "last_message_at"
+        private const val KEY_TERMS_AGREED = "terms_agreed"
     }
 }

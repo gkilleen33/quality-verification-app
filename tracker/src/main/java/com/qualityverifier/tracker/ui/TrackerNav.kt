@@ -5,7 +5,9 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.platform.LocalContext
+import kotlinx.coroutines.launch
 import androidx.navigation.NavHostController
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
@@ -63,12 +65,15 @@ fun TrackerNav() {
     val labels = remember { TrackerLabels.english(APP_NAME) }
     val auth = rememberAuthViewModel(labels)
 
-    // Read once per process. Signed in with PesaLog's terms last known agreed: home, with a
-    // check in the background; otherwise the terms screen, which asks the server.
+    val scope = rememberCoroutineScope()
+
+    // Read once per process. Signed in with PesaLog's own terms last known agreed: home, with
+    // a check in the background; otherwise the terms screen, which asks the server. PesaLog's
+    // own flag (TrackerPreference), not the token store's, which holds Fundi Bora's terms.
     val start = remember {
         when {
             !container.isSignedIn -> Routes.SIGN_IN
-            container.tokenStore.termsRequired() == false -> Routes.HOME
+            container.termsAgreed == true -> Routes.HOME
             else -> Routes.TERMS
         }
     }
@@ -80,10 +85,12 @@ fun TrackerNav() {
         return
     }
 
-    val signOut = {
-        container.signOut()
-        auth.reset()
-        navController.navigate(Routes.SIGN_IN) { popUpTo(0) { inclusive = true } }
+    val signOut: () -> Unit = {
+        scope.launch {
+            container.signOut()
+            auth.reset()
+            navController.navigate(Routes.SIGN_IN) { popUpTo(0) { inclusive = true } }
+        }
     }
 
     // Opening on home with a stored "agreed": ask again, and open the terms screen if PesaLog's
@@ -94,14 +101,22 @@ fun TrackerNav() {
         }
     }
 
-    /** After the terms: the first question if reading is off, access if it is off, else home. */
+    /**
+     * After PesaLog's terms: the answers this account already gave on another phone are taken
+     * from the server (only now, so nothing is read here before the terms are agreed here);
+     * then the first question if reading is off, access if it is off, else home. A new terms
+     * version leaves sending as it was: the upload refused meanwhile was a "later", not a no.
+     */
     fun afterTerms() {
-        val next = when {
-            !container.repository.switches.value.reading -> Routes.consent(Question.READ)
-            !ListenerAccess.isEnabled(context) -> Routes.access()
-            else -> Routes.HOME
+        scope.launch {
+            runCatching { container.repository.adoptServerAnswers() }
+            val next = when {
+                !container.repository.switches.value.reading -> Routes.consent(Question.READ)
+                !ListenerAccess.isEnabled(context) -> Routes.access()
+                else -> Routes.HOME
+            }
+            navController.navigate(next) { popUpTo(0) { inclusive = true } }
         }
-        navController.navigate(next) { popUpTo(0) { inclusive = true } }
     }
 
     NavHost(navController = navController, startDestination = start) {

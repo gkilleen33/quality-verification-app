@@ -99,6 +99,39 @@ class TrackerIntakeTest {
     }
 
     @Test
+    fun `a message that carries only the notification's time is dated by its own text`() {
+        // One line of an inbox-style notification: its time is the newest line's.
+        val older = mpesa("SFA1B2C3D5 Confirmed. Ksh200.00 sent to JANE MERCHANT on 1/1/25 at 5:00 PM. New M-PESA balance is Ksh34.56.")
+            .copy(exactTime = false)
+        assertEquals(TrackerReading.Ignored, read(older))
+
+        val newer = mpesa("SFA1B2C3D5 Confirmed. Ksh200.00 sent to JANE MERCHANT on 9/9/26 at 5:00 PM. New M-PESA balance is Ksh34.56.")
+            .copy(exactTime = false)
+        val record = (read(newer) as TrackerReading.Read).record.record
+        assertEquals(MobileMoneyParser.bodyTime(newer.text), record.occurredAt)
+    }
+
+    @Test
+    fun `an undated message that cannot be dated, or is cut, is not counted at all`() {
+        val noTime = airtel("P3RAIQM1E4N. Ksh 20 sent to JANE DOE 254722000111 on 16/09/26 11:20 AM. Bal:Ksh 170.0").copy(exactTime = false)
+        // Airtel prints the time without "at"; bodyTime reads it. A text with none is ignored.
+        val bare = airtel("Trans ID: PP260909.1015.A12345. You have sent KES 500.00 to JOHN DOE 0733123456. Charges KES 11.00. Your available balance is KES 1,000.00.")
+            .copy(exactTime = false)
+        assertTrue(read(noTime) is TrackerReading.Read)
+        assertEquals(TrackerReading.Ignored, read(bare))
+        assertEquals(TrackerReading.Ignored, read(mpesa("SFA1B2C3D5 Confirmed. Ksh200.00 sent…").copy(exactTime = false)))
+    }
+
+    @Test
+    fun `a text cut just before its balance or cost is unread`() {
+        assertTrue(read(mpesa("SFA1B2C3D5 Confirmed. Ksh200.00 sent to JANE MERCHANT on 9/9/26 at 5:00 PM. New M-PESA balance is Ksh")) is TrackerReading.Unread)
+        assertTrue(
+            read(mpesa("SFA1B2C3D5 Confirmed. Ksh200.00 sent to JANE MERCHANT on 9/9/26 at 5:00 PM. New M-PESA balance is Ksh34.56. Transaction cost,"))
+                is TrackerReading.Unread,
+        )
+    }
+
+    @Test
     fun `the same message read twice gives the same code`() {
         val text = "UIGRL6LYLB Confirmed. You have received Ksh450.00 from IM BANK LIMITED- APP on 16/9/26 at 8:29 PM. New M-PESA balance is Ksh450.00. Buy goods with M-PESA."
         val first = (read(mpesa(text)) as TrackerReading.Read).record

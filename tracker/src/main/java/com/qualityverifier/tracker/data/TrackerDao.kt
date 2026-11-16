@@ -15,6 +15,14 @@ interface TrackerDao {
     @Insert(onConflict = OnConflictStrategy.IGNORE)
     suspend fun insertIfNew(transaction: TransactionEntity): Long
 
+    /** Fills a stored row's missing fee or balance from a fuller copy of its message, before upload only. */
+    @Query(
+        "UPDATE transactions SET feeKes = COALESCE(feeKes, :feeKes), " +
+            "balanceAfterKes = COALESCE(balanceAfterKes, :balanceAfterKes) " +
+            "WHERE network = :network AND code = :code AND uploadedAt IS NULL"
+    )
+    suspend fun fillMissing(network: String, code: String, feeKes: Double?, balanceAfterKes: Double?)
+
     @Query("SELECT * FROM transactions ORDER BY occurredAt DESC, network, code")
     fun observeAll(): Flow<List<TransactionEntity>>
 

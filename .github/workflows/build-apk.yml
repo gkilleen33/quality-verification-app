@@ -50,7 +50,9 @@ jobs:
         if: always()
         with:
           name: room-schemas
-          path: core/schemas
+          path: |
+            core/schemas
+            tracker/schemas
           if-no-files-found: ignore
 
   publish:

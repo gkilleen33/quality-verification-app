@@ -125,11 +125,7 @@ class AuthViewModel(
                             _error.value = labels.notAFundiAccount
                         }
                         // Not knowing is not a reason to refuse: the next request says otherwise if it must.
-                        AccountCheck.USABLE, AccountCheck.UNKNOWN -> {
-                            // An account that agreed on another phone keeps its answers here.
-                            runCatching { container.repository.adoptServerAnswers() }
-                            _signedIn.value = true
-                        }
+                        AccountCheck.USABLE, AccountCheck.UNKNOWN -> _signedIn.value = true
                     }
                     is AuthResult.Failure -> _error.value = result.message
                 }

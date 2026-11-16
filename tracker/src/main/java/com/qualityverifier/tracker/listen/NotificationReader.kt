@@ -4,8 +4,11 @@ import com.qualityverifier.domain.MobileMoneyNetwork
 import com.qualityverifier.mpesa.MobileMoneyParser
 import com.qualityverifier.mpesa.NotificationMessage
 
-/** One message of a messaging-style notification, without its text: who sent it, and when. */
-data class MessageHeader(val sender: String?, val time: Long)
+/**
+ * One message of a messaging-style notification, without its text: who sent it, and when.
+ * [senderUri] is the sender's Person URI where the SMS app gives one ("tel:+254712345678").
+ */
+data class MessageHeader(val sender: String?, val time: Long, val senderUri: String? = null)
 
 /**
  * A posted notification as [NotificationReader] reads it, one field per call.
@@ -97,13 +100,19 @@ object NotificationReader {
 
         val headers = source.messageHeaders()
         if (headers.isNotEmpty()) {
-            val conversation = source.conversationTitle() ?: source.title()
             val messages = headers.mapIndexedNotNull { index, header ->
-                val sender = header.sender ?: conversation
-                // Drop 3, per message: a message from any other sender. Its text is never read.
+                // Drop 3, per message: a message from any other sender, its text never read.
+                // No sender is, by Android's convention, the person's own message. A sender
+                // whose Person is a dialable number is a contact who happens to be saved under
+                // a mobile money name; M-Pesa's and Airtel's ids are not numbers.
+                val sender = header.sender ?: return@mapIndexedNotNull null
+                if (isPhoneNumber(header.senderUri)) return@mapIndexedNotNull null
                 val network = networkFor(sender) ?: return@mapIndexedNotNull null
                 val text = source.messageText(index)?.takeIf { it.isNotBlank() } ?: return@mapIndexedNotNull null
-                NotificationMessage(network, sender!!, text, header.time.takeIf { it > 0 } ?: source.time)
+                // A message without its own time takes the notification's, and is dated by its
+                // text instead (TrackerIntake), since it may be older than the agreement.
+                val time = header.time.takeIf { it > 0 }
+                NotificationMessage(network, sender, text, time ?: source.time, exactTime = time != null)
             }
             return if (messages.isEmpty()) {
                 ReaderOutcome.Dropped(DropReason.NOT_A_MONEY_SENDER)
@@ -122,8 +131,15 @@ object NotificationReader {
             listOfNotNull(listOfNotNull(source.bigText(), source.text()).filter { it.isNotBlank() }.maxByOrNull { it.length })
         }
         if (texts.isEmpty()) return ReaderOutcome.Dropped(DropReason.NOT_A_MONEY_SENDER)
-        return ReaderOutcome.Messages(texts.map { NotificationMessage(network, sender!!, it, source.time) })
+        // Several lines share the notification's one time, which is the newest line's; each
+        // line is dated by its own text instead (TrackerIntake).
+        val exact = lines.size <= 1
+        return ReaderOutcome.Messages(texts.map { NotificationMessage(network, sender!!, it, source.time, exactTime = exact) })
     }
+
+    /** "tel:+254712345678", "tel:0712345678": a Person URI that is somebody's phone number. */
+    private fun isPhoneNumber(uri: String?): Boolean =
+        uri != null && Regex("""^tel:\+?[\d\s-]{7,}$""").matches(uri.trim())
 
     /** The network of a mobile money sender id, by MobileMoneyParser's own list; null for anybody else. */
     fun networkOf(sender: String?): MobileMoneyNetwork? =

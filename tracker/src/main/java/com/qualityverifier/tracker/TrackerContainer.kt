@@ -19,6 +19,7 @@ import com.qualityverifier.tracker.data.TrackerDatabase
 import com.qualityverifier.tracker.data.TrackerPreference
 import com.qualityverifier.tracker.data.TrackerRepository
 import com.qualityverifier.tracker.data.TrackerTermsClient
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.Json
 import okhttp3.OkHttpClient
 import java.util.concurrent.TimeUnit
@@ -111,19 +112,29 @@ class TrackerContainer(
     val terms: TermsApi = TrackerTermsClient(
         client = httpClient,
         tokens = tokenProvider,
-        store = tokenStore,
+        remember = prefs::rememberTerms,
         baseUrl = baseUrl,
         json = json,
     )
 
     val isSignedIn: Boolean get() = tokenStore.isSignedIn()
 
+    /** PesaLog's own terms as the server last answered; null before it has. */
+    val termsAgreed: Boolean? get() = prefs.termsAgreed
+
     /**
      * Signs out on this phone. The records stay, for the same account signing back in, and
      * go when a different account signs in. Reading stops with the sign-out: the listener
      * stores nothing while nobody is signed in (MoneyNotificationListener).
+     *
+     * A withdrawal made offline is sent first, for a few seconds at most, while the tokens
+     * still work: the account guard forgets it if a different account signs in next, and the
+     * server would then keep an agreement the person withdrew.
      */
-    fun signOut() {
+    suspend fun signOut() {
+        withTimeoutOrNull(SIGN_OUT_FLUSH_MILLIS) {
+            runCatching { repository.sendWithdrawals() }
+        }
         tokenProvider.signOut()
     }
 
@@ -135,5 +146,8 @@ class TrackerContainer(
 
     private companion object {
         const val TAG = "TrackerContainer"
+
+        /** How long sign-out waits to send a pending withdrawal. */
+        const val SIGN_OUT_FLUSH_MILLIS = 5_000L
     }
 }
