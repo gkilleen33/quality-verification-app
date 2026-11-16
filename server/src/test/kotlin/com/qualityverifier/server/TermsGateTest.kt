@@ -51,6 +51,11 @@ class TermsGateTest {
         HttpMethod.Put to "/v1/fundi/workers/$uuid",
         HttpMethod.Put to "/v1/fundi/studios/$uuid",
         HttpMethod.Put to "/v1/fundi/pieces/$uuid",
+        // v0.6.0 (V34): a piece's studio label, and the day's studio. Both behind the gate,
+        // as every other route that writes or reads the maker's work is.
+        HttpMethod.Put to "/v1/fundi/pieces/$uuid/studio",
+        HttpMethod.Get to "/v1/fundi/studio-today",
+        HttpMethod.Put to "/v1/fundi/studio-today",
         HttpMethod.Put to "/v1/sessions/$uuid/workers",
         HttpMethod.Post to "/v1/tester-feedback",
     )
@@ -280,6 +285,9 @@ class TermsGateTest {
             "PUT" to "/v1/fundi/workers/x",
             "PUT" to "/v1/fundi/studios/x",
             "PUT" to "/v1/fundi/pieces/x",
+            "PUT" to "/v1/fundi/pieces/x/studio",
+            "GET" to "/v1/fundi/studio-today",
+            "PUT" to "/v1/fundi/studio-today",
             "PUT" to "/v1/sessions/x/workers",
             "POST" to "/v1/tester-feedback",
         )

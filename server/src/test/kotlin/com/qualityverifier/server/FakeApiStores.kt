@@ -5,8 +5,10 @@ import com.qualityverifier.server.api.ApiAssessmentDetail
 import com.qualityverifier.server.api.ApiKeyRow
 import com.qualityverifier.server.api.ApiKeyStore
 import com.qualityverifier.server.api.ApiPiece
+import com.qualityverifier.server.api.ApiPieceStudioChange
 import com.qualityverifier.server.api.ApiReport
 import com.qualityverifier.server.api.ApiStore
+import com.qualityverifier.server.api.ApiStudioDay
 import com.qualityverifier.server.api.ApiTesterFeedback
 import com.qualityverifier.server.api.ApiTrackerDeletion
 import com.qualityverifier.server.api.ApiTrackerTransaction
@@ -91,6 +93,8 @@ class FakeApiStore(
     private val trackerTransactions: List<ApiTrackerTransaction> = emptyList(),
     private val trackerUnread: List<ApiTrackerUnreadCount> = emptyList(),
     private val trackerDeletions: List<ApiTrackerDeletion> = emptyList(),
+    private val studioChanges: List<ApiPieceStudioChange> = emptyList(),
+    private val studioDays: List<ApiStudioDay> = emptyList(),
 ) : ApiStore {
     var lastLimit: Int? = null
         private set
@@ -138,6 +142,16 @@ class FakeApiStore(
     override suspend fun pieces(limit: Int, offset: Int): List<ApiPiece> {
         lastLimit = limit
         return pieces
+    }
+
+    override suspend fun pieceStudioChanges(limit: Int, offset: Int): List<ApiPieceStudioChange> {
+        lastLimit = limit
+        return studioChanges
+    }
+
+    override suspend fun studioDays(limit: Int, offset: Int): List<ApiStudioDay> {
+        lastLimit = limit
+        return studioDays
     }
 
     override suspend fun reports(limit: Int, offset: Int): List<ApiReport> {

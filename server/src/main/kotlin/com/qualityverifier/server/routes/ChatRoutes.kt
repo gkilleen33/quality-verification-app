@@ -12,6 +12,7 @@ import com.qualityverifier.server.chat.Compactor
 import com.qualityverifier.server.chat.UpstreamError
 import com.qualityverifier.server.db.AuthStore
 import com.qualityverifier.server.db.ChatStore
+import com.qualityverifier.server.db.PieceStudio
 import com.qualityverifier.server.db.SessionAccess
 import com.qualityverifier.text.AssistantContent
 import com.qualityverifier.text.fundiDefectCount
@@ -190,6 +191,13 @@ private suspend fun RoutingContext.assessmentTurn(
                 )
                 return
             }
+            if (request.pieceStudioId != null && !isUuid(request.pieceStudioId)) {
+                call.respond(
+                    HttpStatusCode.BadRequest,
+                    ErrorResponse("invalid_request", "piece_studio_id must be a uuid"),
+                )
+                return
+            }
             if (request.blobs.any { !BlobStore.isValidHash(it) }) {
                 call.respond(HttpStatusCode.BadRequest, ErrorResponse("invalid_hash"))
                 return
@@ -226,6 +234,8 @@ private suspend fun RoutingContext.assessmentTurn(
                 testerDailyLimit = testerDailyAssessmentLimit,
                 pieceId = request.pieceId,
                 pieceLabel = request.pieceLabel,
+                pieceStudio = PieceStudio.of(request.pieceStudioChosen, request.pieceStudioId),
+                isFinal = request.final,
                 workers = request.workers.map { it.toDomain() },
                 // A header, not a body field: the strict JSON reader would refuse a new
                 // key from a new app talking to an old server. Absent from a v0.3.0 app,

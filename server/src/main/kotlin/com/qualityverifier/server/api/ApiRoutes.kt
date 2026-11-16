@@ -160,6 +160,25 @@ fun Route.apiRoutes(
             call.respond(ApiPage(rows.take(limit), rows.size > limit, limit, offset))
         }
 
+        // Each change of a piece's studio label after creation (V34): the first answer for
+        // a piece never asked, and its one correction, with the old and new entries.
+        get("/piece-studio-changes") {
+            requireKey() ?: return@get
+            val limit = call.limit()
+            val offset = call.offset()
+            val rows = store.pieceStudioChanges(limit + 1, offset)
+            call.respond(ApiPage(rows.take(limit), rows.size > limit, limit, offset))
+        }
+
+        // "Which studio are you at today?" (V34): one answer per account and Nairobi day.
+        get("/studio-days") {
+            requireKey() ?: return@get
+            val limit = call.limit()
+            val offset = call.offset()
+            val rows = store.studioDays(limit + 1, offset)
+            call.respond(ApiPage(rows.take(limit), rows.size > limit, limit, offset))
+        }
+
         // Every report issued (V32): what left the server, for whom, and its hash. The
         // names it printed stay in the row; join worker_id to /workers.
         get("/reports") {

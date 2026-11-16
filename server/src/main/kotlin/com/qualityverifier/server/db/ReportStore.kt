@@ -16,13 +16,19 @@ import javax.sql.DataSource
  * never call. The SQL is checked against the real database.
  */
 interface ReportStore {
-    /** The piece, or null unless it is this account's: the route answers 404 either way. */
+    /**
+     * The piece, or null unless this account made it or runs the studio it is labelled for
+     * while the two-sided match holds (V34's piece_managers): the route answers 404 either
+     * way.
+     */
     suspend fun piece(userId: String, pieceId: String): ReportPiece?
 
     /**
-     * Every assessment of the piece, oldest first, with its replies, photos and workers.
-     * Client-deleted ones are included and marked: a customer report shows every
-     * assessment, and the part and full reports leave the deleted ones out themselves.
+     * Every assessment of the piece, oldest first, with its replies, photos and workers, by
+     * every account. Client-deleted ones are included and marked: a customer report shows
+     * every assessment, and the part and full reports leave the deleted ones out
+     * themselves. Which accounts' assessments a report may read is the service's rule
+     * (`ReportService.readable`), not this query's.
      */
     suspend fun sessionsOf(pieceId: String): List<ReportSession>
 
@@ -32,14 +38,11 @@ interface ReportStore {
     /** Writes the row for one report issued, cached or rendered, and returns its id. */
     suspend fun record(row: ReportRow): String
 
-    /** Whether this account is linked (V31's two-sided match) to at least one studio, so it can send "My manager". */
-    suspend fun hasLinkedStudio(userId: String): Boolean
-
     /**
-     * The roster entry [workerId] of [userId]'s roster, with its name, when the entry is
-     * live and the match holds for the account its number belongs to. Null when the entry
-     * is not this account's (the route answers 404) or not linked (403): a report on a
-     * worker's work exists only while the link does.
+     * The roster entry [workerId] of [userId]'s roster, with its name and the worker's own
+     * account, when the entry is live and the match holds for the account its number
+     * belongs to. Null when the entry is not this account's (the route answers 404) or not
+     * linked (403): a report on a worker's work exists only while the link does.
      */
     suspend fun linkedWorker(userId: String, workerId: String): LinkedWorker?
 
@@ -52,18 +55,33 @@ interface ReportStore {
      * first by its first naming.
      */
     suspend fun piecesNaming(userId: String, workerId: String): List<PieceSessions>
+
+    /**
+     * The pieces [workerAccountId] made and labelled for the studio [userId] runs, while
+     * the match holds (V34, row 11), oldest first, each with every assessment of the piece
+     * by every account. The service keeps only the worker's and [userId]'s.
+     */
+    suspend fun labelledPiecesOf(userId: String, workerAccountId: String): List<PieceSessions>
 }
 
-/** A roster entry the match holds for. [name] is non-null: a cleared name's number is cleared too, which ends the link. */
-data class LinkedWorker(val workerId: String, val name: String)
+/**
+ * A roster entry the match holds for, and [accountId], the worker's own account. [name] is
+ * non-null: a cleared name's number is cleared too, which ends the link.
+ */
+data class LinkedWorker(val workerId: String, val name: String, val accountId: String = "")
 
 data class PieceSessions(val piece: ReportPiece, val sessions: List<ReportSession>)
 
 data class ReportPiece(
     val id: String,
+    /** The piece's maker. */
     val userId: String,
     val itemTypeId: String,
     val label: String?,
+    /** The studio entry the piece is labelled for (V34); null for "My own job" or never asked. */
+    val studioEntryId: String? = null,
+    /** The account that runs that studio while the match holds; null otherwise. */
+    val managerId: String? = null,
 )
 
 /** One assessment as stored: its replies in conversation order, its photos, and its workers. */
@@ -81,6 +99,10 @@ data class ReportSession(
     val photos: List<String>,
     /** Who worked on it, as `session_workers` records it, in insertion order. */
     val workers: List<ReportWorker>,
+    /** The account that made the assessment: the piece's maker, or its studio's manager (V34). */
+    val userId: String = "",
+    /** The final assessment of the finished piece (V34, row 27). */
+    val isFinal: Boolean = false,
 )
 
 data class ReportReply(val messageId: String, val text: String)
@@ -114,16 +136,47 @@ class PostgresReportStore(private val dataSource: DataSource) : ReportStore {
 
     override suspend fun piece(userId: String, pieceId: String): ReportPiece? = read { connection ->
         connection.prepareStatement(
-            "select id::text, user_id::text, item_type_id, label from pieces where id = ?::uuid and user_id = ?::uuid"
+            """
+            select $PIECE_FIELDS
+              from pieces p left join piece_managers pm on pm.piece_id = p.id
+             where p.id = ?::uuid and (p.user_id = ?::uuid or pm.manager_user_id = ?::uuid)
+            """.trimIndent()
         ).use { statement ->
             statement.setString(1, pieceId)
             statement.setString(2, userId)
-            statement.executeQuery().use { rows ->
-                if (rows.next()) ReportPiece(rows.getString(1), rows.getString(2), rows.getString(3), rows.getString(4))
-                else null
-            }
+            statement.setString(3, userId)
+            statement.executeQuery().use { rows -> if (rows.next()) rows.toPiece() else null }
         }
     }
+
+    override suspend fun labelledPiecesOf(userId: String, workerAccountId: String): List<PieceSessions> {
+        val pieces = read { connection ->
+            connection.prepareStatement(
+                """
+                select $PIECE_FIELDS
+                  from piece_managers pm join pieces p on p.id = pm.piece_id
+                 where pm.manager_user_id = ?::uuid and pm.worker_user_id = ?::uuid
+                 order by p.created_at, p.id
+                """.trimIndent()
+            ).use { statement ->
+                statement.setString(1, userId)
+                statement.setString(2, workerAccountId)
+                statement.executeQuery().use { rows ->
+                    buildList { while (rows.next()) add(rows.toPiece()) }
+                }
+            }
+        }
+        return pieces.map { PieceSessions(it, sessionsOf(it.id)) }
+    }
+
+    private fun java.sql.ResultSet.toPiece() = ReportPiece(
+        id = getString(1),
+        userId = getString(2),
+        itemTypeId = getString(3),
+        label = getString(4),
+        studioEntryId = getString(5),
+        managerId = getString(6),
+    )
 
     override suspend fun sessionsOf(pieceId: String): List<ReportSession> = read { connection ->
         val replies = mutableMapOf<String, MutableList<ReportReply>>()
@@ -192,7 +245,8 @@ class PostgresReportStore(private val dataSource: DataSource) : ReportStore {
             """
             select s.id::text, (extract(epoch from s.created_at) * 1000)::bigint,
                    (s.client_deleted_at is not null), s.intake_answers, s.verdict_language,
-                   (select count(*)::int from messages m where m.session_id = s.id)
+                   (select count(*)::int from messages m where m.session_id = s.id),
+                   s.user_id::text, s.is_final
               from sessions s
              where s.piece_id = ?::uuid
              order by s.created_at, s.id
@@ -213,6 +267,8 @@ class PostgresReportStore(private val dataSource: DataSource) : ReportStore {
                         replies = replies[id].orEmpty(),
                         photos = photos[id].orEmpty(),
                         workers = workers[id].orEmpty(),
+                        userId = rows.getString(7),
+                        isFinal = rows.getBoolean(8),
                     )
                 }
                 out
@@ -257,30 +313,23 @@ class PostgresReportStore(private val dataSource: DataSource) : ReportStore {
         }
     }
 
-    override suspend fun hasLinkedStudio(userId: String): Boolean = read { connection ->
-        connection.prepareStatement("select exists (select 1 from worker_links where worker_user_id = ?::uuid)").use { statement ->
-            statement.setString(1, userId)
-            statement.executeQuery().use { it.next() && it.getBoolean(1) }
-        }
-    }
-
     override suspend fun linkedWorker(userId: String, workerId: String): LinkedWorker? = read { connection ->
         // Linked by the pair, as FundiStore.listWorkers reads it: the match holds for this
         // roster's account and the account the entry's number belongs to.
         connection.prepareStatement(
             """
-            select w.name from workers w
+            select w.name, u.id::text from workers w
+              join users u on u.phone = w.phone
+              join worker_links l on l.worker_user_id = u.id and l.studio_user_id = w.user_id
              where w.id = ?::uuid and w.user_id = ?::uuid
                and w.archived_at is null and w.phone is not null and w.name is not null
-               and exists (
-                   select 1 from worker_links l join users u on u.id = l.worker_user_id
-                    where l.studio_user_id = w.user_id and u.phone = w.phone
-               )
             """.trimIndent()
         ).use { statement ->
             statement.setString(1, workerId)
             statement.setString(2, userId)
-            statement.executeQuery().use { rows -> if (rows.next()) LinkedWorker(workerId, rows.getString(1)) else null }
+            statement.executeQuery().use { rows ->
+                if (rows.next()) LinkedWorker(workerId, rows.getString(1), rows.getString(2)) else null
+            }
         }
     }
 
@@ -296,8 +345,8 @@ class PostgresReportStore(private val dataSource: DataSource) : ReportStore {
         val pieces = read { connection ->
             connection.prepareStatement(
                 """
-                select p.id::text, p.user_id::text, p.item_type_id, p.label
-                  from pieces p
+                select $PIECE_FIELDS
+                  from pieces p left join piece_managers pm on pm.piece_id = p.id
                  where p.user_id = ?::uuid
                    and exists (
                        select 1 from sessions s join session_workers sw on sw.session_id = s.id
@@ -315,12 +364,16 @@ class PostgresReportStore(private val dataSource: DataSource) : ReportStore {
                 statement.setString(2, workerId)
                 statement.setString(3, workerId)
                 statement.executeQuery().use { rows ->
-                    val out = mutableListOf<ReportPiece>()
-                    while (rows.next()) out += ReportPiece(rows.getString(1), rows.getString(2), rows.getString(3), rows.getString(4))
-                    out
+                    buildList { while (rows.next()) add(rows.toPiece()) }
                 }
             }
         }
         return pieces.map { PieceSessions(it, sessionsOf(it.id)) }
+    }
+
+    private companion object {
+        /** A piece's six fields for [toPiece], from `pieces p` left-joined to `piece_managers pm`. */
+        const val PIECE_FIELDS =
+            "p.id::text, p.user_id::text, p.item_type_id, p.label, p.studio_entry_id::text, pm.manager_user_id::text"
     }
 }

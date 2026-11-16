@@ -6,8 +6,10 @@ import com.qualityverifier.server.ReportFixtures.A_DAY
 import com.qualityverifier.server.ReportFixtures.DAY_ONE
 import com.qualityverifier.server.ReportFixtures.KAMAU
 import com.qualityverifier.server.ReportFixtures.MAKER
+import com.qualityverifier.server.ReportFixtures.MANAGER
 import com.qualityverifier.server.ReportFixtures.OTIENO
 import com.qualityverifier.server.ReportFixtures.PIECE_ID
+import com.qualityverifier.server.ReportFixtures.STUDIO_ENTRY
 import com.qualityverifier.server.ReportFixtures.session
 import com.qualityverifier.server.ReportFixtures.sha
 import com.qualityverifier.server.ReportFixtures.worker
@@ -73,7 +75,9 @@ class ReportRouteTest {
         photos = listOf(sha("p1"), sha("p2")),
         workers = listOf(worker(KAMAU, "Kamau", WorkPart.JOINERY)),
     )
-    private val fixed = session("s2", DAY_ONE + A_DAY, listOf(ReportFixtures.ALL_FIXED))
+    // The maker's final assessment of the finished piece (V34, row 27), so the customer
+    // report, which needs one, can be asked for.
+    private val fixed = session("s2", DAY_ONE + A_DAY, listOf(ReportFixtures.ALL_FIXED), isFinal = true)
 
     @Test
     fun `a fundi gets a PDF of their piece, and a row records it`() = testApplication {
@@ -110,7 +114,7 @@ class ReportRouteTest {
 
     @Test
     fun `a second request with the same inputs is served from the cache with the same hash`() = testApplication {
-        val store = FakeReportStore(sessions = listOf(table))
+        val store = FakeReportStore(sessions = listOf(table, fixed))
         val renders = CountingRenderer()
         val app = withReports(store, renderer = renders)
 
@@ -315,20 +319,27 @@ class ReportRouteTest {
 
     // Part 3: "My manager" and the linked-worker report.
     @Test
-    fun `a My manager report needs a linked studio, and is the full report with the sender's name`() = testApplication {
+    fun `a My manager report needs the piece labelled for a linked studio, and is the full report with the sender's name`() = testApplication {
         val store = FakeReportStore(sessions = listOf(table, fixed))
         val app = withReports(store)
 
+        // "My own job", or a label whose link does not hold: no manager to send it to.
         val refused = app.post("/v1/fundi/pieces/$PIECE_ID/reports") {
             auth(MAKER); contentType(ContentType.Application.Json); setBody("""{"kind":"to_manager"}""")
         }
         assertEquals(HttpStatusCode.Forbidden, refused.status)
         assertTrue(refused.bodyAsText().contains("no_linked_studio"))
+        store.piece = store.piece.copy(studioEntryId = STUDIO_ENTRY)
+        val unlinked = app.post("/v1/fundi/pieces/$PIECE_ID/reports") {
+            auth(MAKER); contentType(ContentType.Application.Json); setBody("""{"kind":"to_manager"}""")
+        }
+        assertEquals(HttpStatusCode.Forbidden, unlinked.status)
         assertTrue(store.rows.isEmpty())
 
-        store.studioLinked = true
+        store.piece = store.piece.copy(studioEntryId = STUDIO_ENTRY, managerId = MANAGER)
         val sent = app.post("/v1/fundi/pieces/$PIECE_ID/reports") {
-            auth(MAKER); contentType(ContentType.Application.Json); setBody("""{"kind":"to_manager","session_id":"s1"}""")
+            auth(MAKER); contentType(ContentType.Application.Json)
+            setBody("""{"kind":"to_manager","session_id":"s1","studio_id":"$STUDIO_ENTRY"}""")
         }
         assertEquals(HttpStatusCode.Created, sent.status)
         val text = ReportFixtures.text(sent.bodyAsBytes())
@@ -402,6 +413,242 @@ class ReportRouteTest {
         assertTrue(row.printedNames.contains("Kamau"))
     }
 
+    // v0.6.0, PR 1: the studio label, the manager's access, and the final assessment.
+
+    /** The maker's piece labelled for the studio [MANAGER] runs, with the link holding. */
+    private val labelledPiece = ReportFixtures.piece.copy(studioEntryId = STUDIO_ENTRY, managerId = MANAGER)
+
+    /** The manager's own assessment of that piece, the final one. */
+    private val managersFinal = session("m1", DAY_ONE + 2 * A_DAY, listOf(ReportFixtures.ALL_FIXED), userId = MANAGER, isFinal = true)
+
+    @Test
+    fun `a customer report waits for the final assessment of the finished piece`() = testApplication {
+        // No final assessment yet: refused with the code the phone acts on, and nothing written.
+        val store = FakeReportStore(sessions = listOf(table))
+        val waiting = withReports(store)
+        val refused = waiting.post("/v1/fundi/pieces/$PIECE_ID/reports") {
+            auth(MAKER); contentType(ContentType.Application.Json); setBody("""{"kind":"customer"}""")
+        }
+        assertEquals(HttpStatusCode.Conflict, refused.status)
+        assertTrue(refused.bodyAsText().contains("final_assessment_required"))
+        assertEquals(
+            HttpStatusCode.Conflict,
+            waiting.get("/v1/fundi/pieces/$PIECE_ID/reports/preview?kind=customer") { auth(MAKER) }.status,
+        )
+        assertTrue(store.rows.isEmpty())
+    }
+
+    @Test
+    fun `only the studio's own final assessment counts`() = testApplication {
+        // The worker's own final flag, on a piece labelled for the studio, is not the studio's.
+        val workersOwnFinal = table.copy(isFinal = true)
+        val store = FakeReportStore(piece = labelledPiece, sessions = listOf(workersOwnFinal))
+        val app = withReports(store)
+        val notYet = app.post("/v1/fundi/pieces/$PIECE_ID/reports") {
+            auth(MANAGER); contentType(ContentType.Application.Json); setBody("""{"kind":"customer"}""")
+        }
+        assertEquals(HttpStatusCode.Conflict, notYet.status)
+    }
+
+    @Test
+    fun `the studio's customer report includes the worker's assessments, prints no name, and is not the worker's to send`() = testApplication {
+        val store = FakeReportStore(piece = labelledPiece, sessions = listOf(table, managersFinal))
+        val app = withReports(store)
+
+        // The worker made the piece but labelled it for the studio: the customer report is the studio's.
+        val workers = app.post("/v1/fundi/pieces/$PIECE_ID/reports") {
+            auth(MAKER); contentType(ContentType.Application.Json); setBody("""{"kind":"customer"}""")
+        }
+        assertEquals(HttpStatusCode.Forbidden, workers.status)
+        assertTrue(workers.bodyAsText().contains("customer_report_is_the_studios"))
+
+        val response = app.post("/v1/fundi/pieces/$PIECE_ID/reports") {
+            auth(MANAGER); contentType(ContentType.Application.Json); setBody("""{"kind":"customer"}""")
+        }
+        assertEquals(HttpStatusCode.Created, response.status)
+        val row = store.rows.single()
+        assertEquals("the worker's assessment and the manager's final one", listOf("s1", "m1"), row.sessionIds)
+        assertTrue(row.printedNames.isEmpty())
+        val text = ReportFixtures.text(response.bodyAsBytes())
+        assertTrue(text, text.contains("Gap at the back left joint"))
+        assertTrue(text, text.contains("Final check of the finished piece"))
+        assertFalse(text, text.contains("Kamau"))
+        assertFalse(text, text.contains("Report made by"))
+    }
+
+    @Test
+    fun `a manager reports on a linked worker's labelled piece, and the worker never reads the manager's assessment`() = testApplication {
+        val store = FakeReportStore(piece = labelledPiece, sessions = listOf(table, managersFinal))
+        val app = withReports(store)
+
+        // The manager reads both: the newest is their own, and the worker's can be named.
+        val managers = app.get("/v1/fundi/pieces/$PIECE_ID/reports/preview?kind=full") { auth(MANAGER) }.bodyAsText()
+        assertTrue(managers, managers.contains("\"session_ids\":[\"m1\"]"))
+        val workersOne = app.get("/v1/fundi/pieces/$PIECE_ID/reports/preview?kind=full&session_id=s1") { auth(MANAGER) }
+        assertEquals(HttpStatusCode.OK, workersOne.status)
+
+        // The worker's newest is their own, and the manager's is not theirs to name.
+        val worker = app.get("/v1/fundi/pieces/$PIECE_ID/reports/preview?kind=full") { auth(MAKER) }.bodyAsText()
+        assertTrue(worker, worker.contains("\"session_ids\":[\"s1\"]"))
+        assertFalse(worker, worker.contains("All put right"))
+        val managersOne = app.get("/v1/fundi/pieces/$PIECE_ID/reports/preview?kind=full&session_id=m1") { auth(MAKER) }
+        assertEquals(HttpStatusCode.NotFound, managersOne.status)
+        val fixes = app.get("/v1/fundi/pieces/$PIECE_ID/reports/preview?kind=part_fixes&parts=joinery&session_id=s1") { auth(MAKER) }
+        assertEquals("the manager's later assessment is not the worker's previous one", HttpStatusCode.BadRequest, fixes.status)
+    }
+
+    @Test
+    fun `a manager is refused an unlinked worker's piece, one labelled for another studio, and a My own job piece`() = testApplication {
+        val store = FakeReportStore(sessions = listOf(table, fixed))
+        val app = withReports(store)
+        listOf(
+            ReportFixtures.piece.copy(studioEntryId = STUDIO_ENTRY, managerId = null),
+            ReportFixtures.piece.copy(studioEntryId = STUDIO_ENTRY, managerId = "55555555-2222-3333-4444-555555555555"),
+            ReportFixtures.piece.copy(studioEntryId = null, managerId = null),
+        ).forEach { piece ->
+            store.piece = piece
+            val response = app.get("/v1/fundi/pieces/$PIECE_ID/reports/preview?kind=full") { auth(MANAGER) }
+            assertEquals(piece.toString(), HttpStatusCode.NotFound, response.status)
+            assertTrue(response.bodyAsText().contains("no_such_piece"))
+        }
+    }
+
+    @Test
+    fun `a My manager report goes only to the studio the piece is labelled for`() = testApplication {
+        val store = FakeReportStore(piece = labelledPiece, sessions = listOf(table))
+        val app = withReports(store)
+
+        val elsewhere = app.post("/v1/fundi/pieces/$PIECE_ID/reports") {
+            auth(MAKER); contentType(ContentType.Application.Json)
+            setBody("""{"kind":"to_manager","studio_id":"c0ffee00-0000-4000-8000-0000000000e9"}""")
+        }
+        assertEquals(HttpStatusCode.Forbidden, elsewhere.status)
+        assertTrue(elsewhere.bodyAsText().contains("not_the_pieces_studio"))
+
+        // The manager cannot send the worker's "My manager" report to themselves either.
+        val byManager = app.post("/v1/fundi/pieces/$PIECE_ID/reports") {
+            auth(MANAGER); contentType(ContentType.Application.Json); setBody("""{"kind":"to_manager"}""")
+        }
+        assertEquals(HttpStatusCode.Forbidden, byManager.status)
+
+        // A studio_id on any other kind is a client bug.
+        val misplaced = app.post("/v1/fundi/pieces/$PIECE_ID/reports") {
+            auth(MAKER); contentType(ContentType.Application.Json)
+            setBody("""{"kind":"full","studio_id":"$STUDIO_ENTRY"}""")
+        }
+        assertEquals(HttpStatusCode.BadRequest, misplaced.status)
+        assertTrue(store.rows.isEmpty())
+
+        val sent = app.post("/v1/fundi/pieces/$PIECE_ID/reports") {
+            auth(MAKER); contentType(ContentType.Application.Json)
+            setBody("""{"kind":"to_manager","studio_id":"$STUDIO_ENTRY"}""")
+        }
+        assertEquals(HttpStatusCode.Created, sent.status)
+    }
+
+    /**
+     * The manager's roster entry for Kamau, linked to Kamau's own account, which made a
+     * piece labelled for the manager's studio: a worker-work report and the worker's page.
+     */
+    private fun workerStore(): FakeReportStore {
+        val theirPiece = ReportFixtures.piece.copy(
+            id = THEIR_PIECE, userId = KAMAU_ACCOUNT, label = "Kamau's stool",
+            studioEntryId = STUDIO_ENTRY, managerId = MAKER,
+        )
+        return FakeReportStore(sessions = listOf(table, fixed)).apply {
+            workers[KAMAU] = "Kamau"
+            linked += KAMAU
+            accounts[KAMAU] = KAMAU_ACCOUNT
+            labelled += PieceSessions(
+                theirPiece,
+                listOf(
+                    // Kamau's own assessment on his phone.
+                    session("w1", DAY_ONE + 4 * A_DAY, ReportFixtures.TABLE, userId = KAMAU_ACCOUNT),
+                    // The manager's assessment of the same piece, naming Kamau on the whole piece.
+                    session(
+                        "m2", DAY_ONE + 5 * A_DAY, listOf(ReportFixtures.ALL_FIXED),
+                        workers = listOf(worker(KAMAU, "Kamau", null)),
+                    ),
+                    // Another studio's manager, from before a label correction: never read here.
+                    session("x1", DAY_ONE + 6 * A_DAY, listOf(ReportFixtures.ALL_FIXED), userId = MANAGER),
+                ),
+            )
+        }
+    }
+
+    @Test
+    fun `a worker-work report includes the worker's own assessments of labelled pieces, each piece once`() = testApplication {
+        val store = workerStore()
+        val app = withReports(store)
+
+        val response = app.post("/v1/fundi/workers/$KAMAU/reports") {
+            auth(MAKER); contentType(ContentType.Application.Json); setBody("""{"kind":"worker_work"}""")
+        }
+        assertEquals(HttpStatusCode.Created, response.status)
+        val text = ReportFixtures.text(response.bodyAsBytes())
+        assertEquals("each piece once", 1, Regex("Kamau's stool").findAll(text).count())
+        assertTrue(text, text.contains("Their own assessment, made on their phone"))
+        assertEquals(listOf("s1", "w1", "m2"), store.rows.single().sessionIds)
+    }
+
+    @Test
+    fun `a worker-work report narrows to chosen pieces, and refuses a piece it does not cover`() = testApplication {
+        val store = workerStore()
+        val app = withReports(store)
+
+        val narrowed = app.post("/v1/fundi/workers/$KAMAU/reports") {
+            auth(MAKER); contentType(ContentType.Application.Json)
+            setBody("""{"kind":"worker_work","piece_ids":["$THEIR_PIECE"]}""")
+        }
+        assertEquals(HttpStatusCode.Created, narrowed.status)
+        assertEquals(listOf("w1", "m2"), store.rows.single().sessionIds)
+        assertFalse(ReportFixtures.text(narrowed.bodyAsBytes()).contains("Kiti cha Wanjirũ"))
+
+        val unknown = app.post("/v1/fundi/workers/$KAMAU/reports") {
+            auth(MAKER); contentType(ContentType.Application.Json)
+            setBody("""{"kind":"worker_work","piece_ids":["c0ffee00-0000-4000-8000-0000000000ff"]}""")
+        }
+        assertEquals(HttpStatusCode.NotFound, unknown.status)
+        val empty = app.post("/v1/fundi/workers/$KAMAU/reports") {
+            auth(MAKER); contentType(ContentType.Application.Json); setBody("""{"kind":"worker_work","piece_ids":[]}""")
+        }
+        assertEquals(HttpStatusCode.BadRequest, empty.status)
+        assertEquals(1, store.rows.size)
+    }
+
+    @Test
+    fun `the worker's page lists their labelled pieces with what the manager may read, and no score`() = testApplication {
+        val store = workerStore()
+        val app = withReports(store)
+
+        val body = app.get("/v1/fundi/workers/$KAMAU/pieces") { auth(MAKER) }.bodyAsText()
+        val pieces = kotlinx.serialization.json.Json.decodeFromString(com.qualityverifier.domain.WorkerPieces.serializer(), body)
+        val theirs = pieces.pieces.single { it.id == THEIR_PIECE }
+        assertTrue(theirs.theirs)
+        assertEquals(listOf("w1", "m2"), theirs.assessments.map { it.sessionId })
+        assertEquals(listOf(true, false), theirs.assessments.map { it.byWorker })
+        assertTrue(theirs.assessments.first().problems.any { it.title == "Gap at the back left joint" })
+        assertFalse("the manager's own piece is not the worker's", pieces.pieces.single { it.id == PIECE_ID }.theirs)
+        assertFalse(body, body.contains("score"))
+
+        store.linked -= KAMAU
+        assertEquals(HttpStatusCode.Forbidden, app.get("/v1/fundi/workers/$KAMAU/pieces") { auth(MAKER) }.status)
+        assertEquals(HttpStatusCode.NotFound, app.get("/v1/fundi/workers/$OTIENO/pieces") { auth(MAKER) }.status)
+    }
+
+    @Test
+    fun `whole-piece workers print under every chosen part of a part report`() = testApplication {
+        val wholePiece = session(
+            "s1", DAY_ONE, ReportFixtures.TABLE,
+            workers = listOf(worker(KAMAU, "Kamau", null), worker(OTIENO, "Otieno", WorkPart.JOINERY)),
+        )
+        val app = withReports(FakeReportStore(sessions = listOf(wholePiece, fixed)))
+        val body = app.get("/v1/fundi/pieces/$PIECE_ID/reports/preview?kind=part_issues&parts=finishing&session_id=s1") { auth(MAKER) }
+            .bodyAsText()
+        assertTrue("Kamau did the whole piece, finishing included: $body", body.contains("\"names\":[\"Kamau\"]"))
+        assertFalse(body, body.contains("Otieno"))
+    }
+
     @Test
     fun `no token is a 401`() = testApplication {
         val app = withReports(FakeReportStore(sessions = listOf(table)))
@@ -410,7 +657,7 @@ class ReportRouteTest {
 
     @Test
     fun `a second render while one is under way waits, then answers busy`() = testApplication {
-        val store = FakeReportStore(sessions = listOf(table))
+        val store = FakeReportStore(sessions = listOf(table, fixed))
         val gate = CountDownLatch(1)
         val started = CountDownLatch(1)
         // The first render blocks on the photo read until the test lets it go.
@@ -493,24 +740,35 @@ class ReportRouteTest {
         val rows = mutableListOf<ReportRow>()
         val ids = mutableListOf<String>()
 
+        /** The maker, or the manager the piece_managers view names: the SQL's rule. */
         override suspend fun piece(userId: String, pieceId: String): ReportPiece? =
-            piece.takeIf { it.id == pieceId && it.userId == userId }
+            (listOf(piece) + labelled.map { it.piece })
+                .firstOrNull { it.id == pieceId && (it.userId == userId || it.managerId == userId) }
 
         override suspend fun sessionsOf(pieceId: String): List<ReportSession> =
-            sessions.filter { pieceId == piece.id }.sortedBy { it.createdAt }
+            ((if (pieceId == piece.id) sessions else emptyList()) +
+                labelled.filter { it.piece.id == pieceId }.flatMap { it.sessions })
+                .sortedBy { it.createdAt }
+
+        /** A linked worker's own pieces labelled for a studio, with every account's sessions on them. */
+        val labelled = mutableListOf<PieceSessions>()
+
+        override suspend fun labelledPiecesOf(userId: String, workerAccountId: String): List<PieceSessions> =
+            labelled.filter { it.piece.managerId == userId && it.piece.userId == workerAccountId }
+
+        /** Each linked roster entry's own account, as the real store reads it through the match. */
+        val accounts = mutableMapOf<String, String>()
 
         override suspend fun accountName(userId: String): String? = name
 
-        /** The roster this fake holds: id to name; ids in [linked] hold the match; [studioLinked] is the other side. */
+        /** The roster this fake holds: id to name; ids in [linked] hold the match. */
         val workers = mutableMapOf<String, String>()
         val linked = mutableSetOf<String>()
-        var studioLinked = false
         /** The pieces a worker is named on, beyond [piece]: each with its sessions. */
         val morePieces = mutableListOf<PieceSessions>()
 
-        override suspend fun hasLinkedStudio(userId: String): Boolean = studioLinked
         override suspend fun linkedWorker(userId: String, workerId: String): LinkedWorker? =
-            workers[workerId]?.takeIf { workerId in linked }?.let { LinkedWorker(workerId, it) }
+            workers[workerId]?.takeIf { workerId in linked }?.let { LinkedWorker(workerId, it, accounts[workerId].orEmpty()) }
         override suspend fun ownsWorker(userId: String, workerId: String): Boolean = workerId in workers
         override suspend fun piecesNaming(userId: String, workerId: String): List<PieceSessions> =
             (listOf(PieceSessions(piece, sessions)) + morePieces)
@@ -545,5 +803,8 @@ class ReportRouteTest {
 
     private companion object {
         const val KEY = "a-signing-key-long-enough-to-be-real"
+        /** Kamau's own Fundi Bora account, which the manager's roster entry KAMAU is linked to. */
+        const val KAMAU_ACCOUNT = "44444444-2222-3333-4444-555555555555"
+        const val THEIR_PIECE = "c0ffee00-0000-4000-8000-00000000002b"
     }
 }

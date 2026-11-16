@@ -19,6 +19,21 @@ data class SessionSummaryDto(
     @SerialName("piece_label") val pieceLabel: String? = null,
     /** Who worked on it, by roster id and part. Names come from GET /v1/fundi/workers. */
     val workers: List<SessionWorkerDto> = emptyList(),
+    /**
+     * False for an assessment this account made on a linked worker's piece (V34, row 11):
+     * the piece is the worker's, so its label and correction are not this account's to show
+     * or change, and the three studio fields below are left out. An app before v0.6.0
+     * ignores all five.
+     */
+    @SerialName("piece_mine") val pieceMine: Boolean = true,
+    /** The studio entry the piece is for; null for "My own job" or never asked. */
+    @SerialName("piece_studio_id") val pieceStudioId: String? = null,
+    /** Whether the maker answered "Which studio is this for?" at all. */
+    @SerialName("piece_studio_chosen") val pieceStudioChosen: Boolean = false,
+    /** Whether the one correction has been used. */
+    @SerialName("piece_studio_corrected") val pieceStudioCorrected: Boolean = false,
+    /** The final assessment of the finished piece, before a customer report (row 27). */
+    val final: Boolean = false,
 )
 
 @Serializable

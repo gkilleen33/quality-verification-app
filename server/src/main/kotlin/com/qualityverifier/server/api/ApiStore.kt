@@ -45,8 +45,14 @@ interface ApiStore {
     /** Every link ever made between two accounts (V31), with its end where it has one, oldest first. */
     suspend fun workerLinks(limit: Int, offset: Int): List<ApiWorkerLink>
 
-    /** Every piece (V14), oldest first. */
+    /** Every piece (V14), oldest first, with its studio label (V34). */
     suspend fun pieces(limit: Int, offset: Int): List<ApiPiece>
+
+    /** Every change of a piece's studio label after creation (V34), oldest first. */
+    suspend fun pieceStudioChanges(limit: Int, offset: Int): List<ApiPieceStudioChange>
+
+    /** Every answer to "Which studio are you at today?" (V34), by day, then account. */
+    suspend fun studioDays(limit: Int, offset: Int): List<ApiStudioDay>
 
     /** Every report issued (V32), oldest first, with the names it printed left out. */
     suspend fun reports(limit: Int, offset: Int): List<ApiReport>
@@ -316,7 +322,9 @@ class PostgresApiStore(private val dataSource: DataSource) : ApiStore {
         connection.prepareStatement(
             """
             select p.id::text, p.user_id::text, p.item_type_id,
-                   (extract(epoch from p.created_at) * 1000)::bigint
+                   (extract(epoch from p.created_at) * 1000)::bigint,
+                   p.studio_entry_id::text,
+                   (extract(epoch from p.studio_chosen_at) * 1000)::bigint
               from pieces p
              order by p.created_at, p.id
              limit ? offset ?
@@ -331,6 +339,63 @@ class PostgresApiStore(private val dataSource: DataSource) : ApiStore {
                     userId = rows.getString(2),
                     itemTypeId = rows.getString(3),
                     createdAt = rows.getLong(4),
+                    studioEntryId = rows.getString(5),
+                    studioChosenAt = rows.nullableLong(6),
+                )
+                out
+            }
+        }
+    }
+
+    override suspend fun pieceStudioChanges(limit: Int, offset: Int): List<ApiPieceStudioChange> =
+        query { connection ->
+            connection.prepareStatement(
+                """
+                select c.id, c.piece_id::text, c.user_id::text, c.kind,
+                       c.old_studio_entry_id::text, c.new_studio_entry_id::text,
+                       (extract(epoch from c.at) * 1000)::bigint
+                  from piece_studio_changes c
+                 order by c.id
+                 limit ? offset ?
+                """.trimIndent()
+            ).use { statement ->
+                statement.setInt(1, limit)
+                statement.setInt(2, offset)
+                statement.executeQuery().use { rows ->
+                    val out = mutableListOf<ApiPieceStudioChange>()
+                    while (rows.next()) out += ApiPieceStudioChange(
+                        id = rows.getLong(1),
+                        pieceId = rows.getString(2),
+                        userId = rows.getString(3),
+                        kind = rows.getString(4),
+                        oldStudioEntryId = rows.getString(5),
+                        newStudioEntryId = rows.getString(6),
+                        at = rows.getLong(7),
+                    )
+                    out
+                }
+            }
+        }
+
+    override suspend fun studioDays(limit: Int, offset: Int): List<ApiStudioDay> = query { connection ->
+        connection.prepareStatement(
+            """
+            select d.user_id::text, d.day::text, d.studio_entry_id::text,
+                   (extract(epoch from d.answered_at) * 1000)::bigint
+              from fundi_studio_days d
+             order by d.day, d.user_id
+             limit ? offset ?
+            """.trimIndent()
+        ).use { statement ->
+            statement.setInt(1, limit)
+            statement.setInt(2, offset)
+            statement.executeQuery().use { rows ->
+                val out = mutableListOf<ApiStudioDay>()
+                while (rows.next()) out += ApiStudioDay(
+                    userId = rows.getString(1),
+                    day = rows.getString(2),
+                    studioEntryId = rows.getString(3),
+                    answeredAt = rows.getLong(4),
                 )
                 out
             }
@@ -513,6 +578,8 @@ class PostgresApiStore(private val dataSource: DataSource) : ApiStore {
             language = intake.language,
             pieceId = getString(15),
             promptSha = getString(16),
+            assessedAs = getString(17),
+            final = getBoolean(18),
         )
     }
 
@@ -574,7 +641,9 @@ class PostgresApiStore(private val dataSource: DataSource) : ApiStore {
                    s.app_version_code,
                    s.intake_answers,
                    s.piece_id::text,
-                   s.prompt_sha
+                   s.prompt_sha,
+                   s.assessed_as,
+                   s.is_final
         """
     }
 }

@@ -161,7 +161,7 @@ class PartReportsTest {
     }
 
     @Test
-    fun `a whole-piece worker is on the full report's own line, and on a part report only when it covers every part`() {
+    fun `a whole-piece worker is on the full report's own line, and under every part a part report covers`() {
         val wholePiece = first.copy(workers = first.workers + worker("c0ffee00-0000-4000-8000-0000000000a4", "Achieng", null))
 
         val full = compose(ReportKind.FULL, listOf(wholePiece), chosen = "s1")
@@ -170,10 +170,16 @@ class PartReportsTest {
         assertTrue(text, text.indexOf("Also worked on this piece") < text.indexOf("Frame"))
         assertFalse(text.contains("Worked on this part: Achieng"))
 
+        // Since v0.6.0 (Nathan, 16 November 2026, release scope row 23): Achieng made the
+        // whole piece, so a report on its joinery alone prints her under Joinery too.
         val onePart = compose(ReportKind.PART_ISSUES, listOf(wholePiece), chosen = "s1", parts = listOf(WorkPart.JOINERY))
-        assertFalse(onePart.text().contains("Achieng"))
+        assertTrue(onePart.text(), onePart.text().contains("Worked on this part: Kamau, Achieng"))
+        val fixes = compose(
+            ReportKind.PART_FIXES, listOf(first, wholePiece.copy(id = "s2")), chosen = "s2", previous = "s1",
+            parts = listOf(WorkPart.FINISHING),
+        )
+        assertTrue(fixes.text(), fixes.text().contains("Achieng"))
 
-        // A table offers every part but upholstery; naming them all covers the piece.
         val every = compose(
             ReportKind.PART_ISSUES, listOf(wholePiece), chosen = "s1",
             parts = listOf(WorkPart.FRAME, WorkPart.JOINERY, WorkPart.FINISHING, WorkPart.ASSEMBLY, WorkPart.OTHER),

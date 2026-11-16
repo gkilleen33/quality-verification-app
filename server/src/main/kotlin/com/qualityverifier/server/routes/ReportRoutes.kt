@@ -73,6 +73,25 @@ fun Route.reportRoutes(reports: ReportService, auth: AuthStore) {
                 ?: return@post call.respond(HttpStatusCode.NotFound, ErrorResponse("no_such_worker"))
             respondReport(reports.issue(userId, ReportTarget.Worker(workerId), call.receive<ReportRequest>()))
         }
+
+        // The worker's page under "My workers" (v0.6.0, rows 4, 11 and 22): the pieces a
+        // report of this linked worker's work covers, the worker's own pieces labelled for
+        // this studio among them, with the assessments this account may read. 404 for an
+        // entry not on the roster, 403 while the match does not hold, as for the report.
+        get("/v1/fundi/workers/{id}/pieces") {
+            val userId = call.principal<JWTPrincipal>()?.subject
+                ?: return@get call.respond(HttpStatusCode.Unauthorized, ErrorResponse("invalid_token"))
+            if (!call.requireFundi(auth, userId)) return@get
+            val workerId = call.parameters["id"]?.takeIf(::isUuid)
+                ?: return@get call.respond(HttpStatusCode.NotFound, ErrorResponse("no_such_worker"))
+            when (val outcome = reports.workerPieces(userId, workerId)) {
+                is ReportService.WorkerPiecesOutcome.Ready -> call.respond(outcome.pieces)
+                ReportService.WorkerPiecesOutcome.NoSuchWorker ->
+                    call.respond(HttpStatusCode.NotFound, ErrorResponse("no_such_worker"))
+                ReportService.WorkerPiecesOutcome.NotLinked ->
+                    call.respond(HttpStatusCode.Forbidden, ErrorResponse("worker_not_linked"))
+            }
+        }
     }
 }
 
@@ -83,9 +102,16 @@ private suspend fun RoutingContext.respondPreview(outcome: ReportService.Preview
         ReportService.PreviewOutcome.NoSuchSession -> call.respond(HttpStatusCode.NotFound, ErrorResponse("no_such_assessment"))
         ReportService.PreviewOutcome.NoSuchWorker -> call.respond(HttpStatusCode.NotFound, ErrorResponse("no_such_worker"))
         is ReportService.PreviewOutcome.NotLinked -> call.respond(HttpStatusCode.Forbidden, ErrorResponse(outcome.code))
+        ReportService.PreviewOutcome.FinalRequired -> call.respond(HttpStatusCode.Conflict, ErrorResponse(FINAL_REQUIRED))
         is ReportService.PreviewOutcome.Invalid -> call.respond(HttpStatusCode.BadRequest, ErrorResponse(outcome.code, outcome.detail))
     }
 }
+
+/**
+ * A customer report asked for before the final assessment of the finished piece (row 27).
+ * 409 with this code, so the phone offers the final assessment rather than an error.
+ */
+const val FINAL_REQUIRED = "final_assessment_required"
 
 private suspend fun RoutingContext.respondReport(outcome: ReportService.Outcome) {
     when (outcome) {
@@ -102,6 +128,7 @@ private suspend fun RoutingContext.respondReport(outcome: ReportService.Outcome)
         // The link the kind needs does not hold. 403 with the code, so the phone can say
         // why rather than retry.
         is ReportService.Outcome.NotLinked -> call.respond(HttpStatusCode.Forbidden, ErrorResponse(outcome.code))
+        ReportService.Outcome.FinalRequired -> call.respond(HttpStatusCode.Conflict, ErrorResponse(FINAL_REQUIRED))
         is ReportService.Outcome.Invalid -> call.respond(HttpStatusCode.BadRequest, ErrorResponse(outcome.code, outcome.detail))
         // Another render is under way and did not finish in time. The phone shows the
         // same "try again" as for a lost connection; a retry finds the cache.
@@ -109,11 +136,17 @@ private suspend fun RoutingContext.respondReport(outcome: ReportService.Outcome)
     }
 }
 
-/** `kind`, `parts` (comma-separated), and `session_id`, as the report body carries them. */
+/**
+ * `kind`, `parts` and `piece_ids` (comma-separated), `session_id` and `studio_id`, as the
+ * report body carries them.
+ */
 private fun ApplicationCall.requestFromQuery(): ReportRequest = ReportRequest(
     kind = request.queryParameters["kind"].orEmpty(),
-    parts = request.queryParameters["parts"]
-        ?.split(',')?.map { it.trim() }?.filter { it.isNotEmpty() }
-        ?.takeIf { it.isNotEmpty() },
+    parts = request.queryParameters.list("parts"),
     sessionId = request.queryParameters["session_id"]?.takeIf { it.isNotBlank() },
+    studioId = request.queryParameters["studio_id"]?.takeIf { it.isNotBlank() },
+    pieceIds = request.queryParameters.list("piece_ids"),
 )
+
+private fun io.ktor.http.Parameters.list(name: String): List<String>? =
+    this[name]?.split(',')?.map { it.trim() }?.filter { it.isNotEmpty() }?.takeIf { it.isNotEmpty() }

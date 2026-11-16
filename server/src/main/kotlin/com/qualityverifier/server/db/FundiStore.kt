@@ -100,6 +100,46 @@ interface FundiStore {
      * link record (V31) is brought up to date in the same transaction.
      */
     suspend fun upsertStudio(userId: String, studioId: String, name: String, phone: String, archived: Boolean): Boolean
+
+    /**
+     * Labels a piece with a studio after it was created (V34): [studioEntryId] is an entry
+     * of the maker's own list, or null for "My own job". A piece never asked takes its first
+     * answer; a piece already answered takes one correction, and no more. Each change is
+     * recorded in `piece_studio_changes` with the old and new values, in the same
+     * transaction.
+     */
+    suspend fun setPieceStudio(userId: String, pieceId: String, studioEntryId: String?): PieceStudioChange
+
+    /** Today's answer to "Which studio are you at today?" (V34), or null when not yet answered. */
+    suspend fun studioToday(userId: String): StudioDay?
+
+    /**
+     * Records today's answer, once per Nairobi day: a second answer the same day keeps the
+     * first and returns it. [studioEntryId] is an entry of the account's own list, or null
+     * for its own workshop; another account's entry is [StudioDayAnswer.NotYourStudio].
+     */
+    suspend fun answerStudioToday(userId: String, studioEntryId: String?): StudioDayAnswer
+}
+
+/** What a label change came to. */
+sealed interface PieceStudioChange {
+    data object Changed : PieceStudioChange
+    /** The label already says this: nothing written, and the correction is not spent. */
+    data object Unchanged : PieceStudioChange
+    /** Not this account's piece, or none: the route answers 404 either way. */
+    data object NoSuchPiece : PieceStudioChange
+    /** The entry is not on this account's own list. */
+    data object NotYourStudio : PieceStudioChange
+    /** The one correction has been used. */
+    data object AlreadyCorrected : PieceStudioChange
+}
+
+/** One account's answer for one Nairobi day. [studioEntryId] null is its own workshop. */
+data class StudioDay(val day: String, val studioEntryId: String?)
+
+sealed interface StudioDayAnswer {
+    data class Recorded(val day: StudioDay) : StudioDayAnswer
+    data object NotYourStudio : StudioDayAnswer
 }
 
 /**
@@ -526,6 +566,128 @@ class PostgresFundiStore(private val dataSource: DataSource) : FundiStore {
             if (written) recordLinkChanges(connection)
         }
     }
+
+    override suspend fun setPieceStudio(userId: String, pieceId: String, studioEntryId: String?): PieceStudioChange =
+        tx { connection ->
+            // Locked, so two corrections sent at once cannot both read "not yet corrected".
+            // The unique index would refuse the second anyway; this makes it an answer
+            // rather than a constraint violation.
+            val current = connection.prepareStatement(
+                """
+                select studio_entry_id::text, studio_chosen_at is not null
+                  from pieces where id = ?::uuid and user_id = ?::uuid
+                   for update
+                """.trimIndent()
+            ).use { statement ->
+                statement.setString(1, pieceId)
+                statement.setString(2, userId)
+                statement.executeQuery().use { rows ->
+                    if (rows.next()) rows.getString(1) to rows.getBoolean(2) else null
+                }
+            } ?: return@tx PieceStudioChange.NoSuchPiece
+            val (oldEntry, chosen) = current
+
+            if (studioEntryId != null) {
+                val ours = connection.prepareStatement(
+                    "select 1 from worker_studios where id = ?::uuid and user_id = ?::uuid"
+                ).use { statement ->
+                    statement.setString(1, studioEntryId)
+                    statement.setString(2, userId)
+                    statement.executeQuery().use { it.next() }
+                }
+                if (!ours) return@tx PieceStudioChange.NotYourStudio
+            }
+            if (chosen && oldEntry == studioEntryId) return@tx PieceStudioChange.Unchanged
+
+            val kind = if (chosen) "correction" else "first_choice"
+            if (chosen) {
+                val corrected = connection.prepareStatement(
+                    "select 1 from piece_studio_changes where piece_id = ?::uuid and kind = 'correction'"
+                ).use { statement ->
+                    statement.setString(1, pieceId)
+                    statement.executeQuery().use { it.next() }
+                }
+                if (corrected) return@tx PieceStudioChange.AlreadyCorrected
+            }
+            connection.prepareStatement(
+                """
+                insert into piece_studio_changes (piece_id, user_id, kind, old_studio_entry_id, new_studio_entry_id)
+                values (?::uuid, ?::uuid, ?, ?::uuid, ?::uuid)
+                """.trimIndent()
+            ).use { statement ->
+                statement.setString(1, pieceId)
+                statement.setString(2, userId)
+                statement.setString(3, kind)
+                statement.setString(4, oldEntry)
+                statement.setString(5, studioEntryId)
+                statement.executeUpdate()
+            }
+            connection.prepareStatement(
+                """
+                update pieces set studio_entry_id = ?::uuid,
+                                  studio_chosen_at = coalesce(studio_chosen_at, now())
+                 where id = ?::uuid
+                """.trimIndent()
+            ).use { statement ->
+                statement.setString(1, studioEntryId)
+                statement.setString(2, pieceId)
+                statement.executeUpdate()
+            }
+            PieceStudioChange.Changed
+        }
+
+    override suspend fun studioToday(userId: String): StudioDay? = tx { connection ->
+        connection.prepareStatement(
+            """
+            select day::text, studio_entry_id::text from fundi_studio_days
+             where user_id = ?::uuid and day = (now() at time zone 'Africa/Nairobi')::date
+            """.trimIndent()
+        ).use { statement ->
+            statement.setString(1, userId)
+            statement.executeQuery().use { rows ->
+                if (rows.next()) StudioDay(rows.getString(1), rows.getString(2)) else null
+            }
+        }
+    }
+
+    override suspend fun answerStudioToday(userId: String, studioEntryId: String?): StudioDayAnswer =
+        tx { connection ->
+            if (studioEntryId != null) {
+                val ours = connection.prepareStatement(
+                    "select 1 from worker_studios where id = ?::uuid and user_id = ?::uuid"
+                ).use { statement ->
+                    statement.setString(1, studioEntryId)
+                    statement.setString(2, userId)
+                    statement.executeQuery().use { it.next() }
+                }
+                if (!ours) return@tx StudioDayAnswer.NotYourStudio
+            }
+            // The Nairobi day, as the daily allowance counts it. The first answer stands: a
+            // phone that resends after a lost response must not move the day's answer.
+            connection.prepareStatement(
+                """
+                insert into fundi_studio_days (user_id, day, studio_entry_id)
+                values (?::uuid, (now() at time zone 'Africa/Nairobi')::date, ?::uuid)
+                on conflict (user_id, day) do nothing
+                """.trimIndent()
+            ).use { statement ->
+                statement.setString(1, userId)
+                statement.setString(2, studioEntryId)
+                statement.executeUpdate()
+            }
+            connection.prepareStatement(
+                """
+                select day::text, studio_entry_id::text from fundi_studio_days
+                 where user_id = ?::uuid and day = (now() at time zone 'Africa/Nairobi')::date
+                """.trimIndent()
+            ).use { statement ->
+                statement.setString(1, userId)
+                statement.executeQuery().use { rows ->
+                    rows.next()
+                    StudioDayAnswer.Recorded(StudioDay(rows.getString(1), rows.getString(2)))
+                }
+            }
+        }
 
     override suspend fun toolHistory(userId: String): List<RecordedToolChange> = tx { connection ->
         connection.prepareStatement(

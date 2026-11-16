@@ -25,6 +25,12 @@ import kotlin.random.Random
 object ReportFixtures {
 
     const val MAKER = "11111111-2222-3333-4444-555555555555"
+
+    /** The account that runs the studio a linked worker's piece is labelled for (V34). */
+    const val MANAGER = "33333333-2222-3333-4444-555555555555"
+
+    /** The maker's own entry for that studio, on the maker's list of studios they work for. */
+    const val STUDIO_ENTRY = "c0ffee00-0000-4000-8000-0000000000e1"
     const val PIECE_ID = "c0ffee00-0000-4000-8000-00000000001a"
     const val KAMAU = "c0ffee00-0000-4000-8000-0000000000a1"
     const val OTIENO = "c0ffee00-0000-4000-8000-0000000000a2"
@@ -67,6 +73,9 @@ object ReportFixtures {
         clientDeleted: Boolean = false,
         intake: String? = "fundi-en-evaluate",
         messageCount: Int = replies.size * 2,
+        /** Who made it: the piece's maker unless a test says otherwise (V34). */
+        userId: String = MAKER,
+        isFinal: Boolean = false,
     ): ReportSession = ReportSession(
         id = id,
         createdAt = createdAt,
@@ -77,6 +86,8 @@ object ReportFixtures {
         replies = replies.mapIndexed { index, text -> ReportReply("$id-r$index", text) },
         photos = photos,
         workers = workers,
+        userId = userId,
+        isFinal = isFinal,
     )
 
     fun worker(id: String?, name: String?, part: WorkPart?) = ReportWorker(id, part, name)

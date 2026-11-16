@@ -52,12 +52,20 @@ enum class ReportKind(val id: String) {
  *
  * [parts] only for the two part kinds; [sessionId] for every kind but the customer's, which
  * always covers every assessment. The server refuses anything else with 400.
+ *
+ * Since v0.6.0: [studioId] on a "My manager" report names the studio entry it is sent to,
+ * which must be the one the piece is labelled for (release scope row 3); [pieceIds] narrows
+ * a worker's work report to chosen pieces (row 22). Both are left out when null, so an
+ * older server, which refuses unknown fields, never sees them from a request that does not
+ * use them.
  */
 @Serializable
 data class ReportRequest(
     val kind: String,
     val parts: List<String>? = null,
     @SerialName("session_id") val sessionId: String? = null,
+    @SerialName("studio_id") val studioId: String? = null,
+    @SerialName("piece_ids") val pieceIds: List<String>? = null,
 )
 
 /**
