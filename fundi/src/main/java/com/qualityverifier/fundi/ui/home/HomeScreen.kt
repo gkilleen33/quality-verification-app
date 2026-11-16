@@ -104,6 +104,13 @@ fun HomeScreen(
             .map { (_, assessments) -> assessments.maxBy { it.updatedAt } to assessments.size }
             .sortedByDescending { (latest, _) -> latest.updatedAt }
     }
+    // Pieces the server holds: one of their assessments got a reply. Only these may have
+    // their studio label changed (row 2): the server refuses a change to a piece whose
+    // opening turn has not gone yet, and the turn would then carry the change as the
+    // first label, with no record and the correction still to spend.
+    val onServer = remember(sessions) {
+        sessions.filter { it.messageCount > 1 }.map { it.piece }.toSet()
+    }
 
     var choosing by remember { mutableStateOf(pieces.isEmpty()) }
 
@@ -216,6 +223,7 @@ fun HomeScreen(
                     spent = spending[latest.piece].orEmpty(),
                     studios = studios,
                     onSetStudio = { studioId -> model.setStudio(latest.piece, studioId) },
+                    onServer = latest.piece in onServer,
                 )
             }
         }
@@ -243,6 +251,8 @@ private fun PieceRow(
     studios: List<Studio> = emptyList(),
     /** A studio for the piece, or null for "My own job" (rows 1 and 2). */
     onSetStudio: (String?) -> Unit = {},
+    /** Whether the server holds the piece yet, which a label change needs. */
+    onServer: Boolean = true,
 ) {
     val labels = FundiLabels.ENGLISH
     var choosingStudio by remember { mutableStateOf(false) }
@@ -381,7 +391,7 @@ private fun PieceRow(
                             )
                         }
                         // The first answer for a piece never asked, then one correction (row 2).
-                        if (latest.pieceMine && studios.any { !it.archived } && !latest.pieceStudioCorrected) {
+                        if (latest.pieceMine && onServer && studios.any { !it.archived } && !latest.pieceStudioCorrected) {
                             DropdownMenuItem(
                                 text = {
                                     Text(if (latest.pieceStudioChosen) labels.pieceStudioChange else labels.pieceStudioChoose)

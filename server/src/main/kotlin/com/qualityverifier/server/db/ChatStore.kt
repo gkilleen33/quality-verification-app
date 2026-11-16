@@ -505,10 +505,14 @@ class PostgresChatStore(private val dataSource: DataSource) : ChatStore {
         true
     }
 
-    /** Whether [entryId] is on [userId]'s own list of studios it works for (V31). */
+    /**
+     * Whether [entryId] is a live entry of [userId]'s own list of studios it works for (V31).
+     * An archived entry has no manager, and a piece labelled with it could never have a
+     * customer report.
+     */
     private fun ownsStudioEntry(connection: Connection, userId: String, entryId: String): Boolean =
         connection.prepareStatement(
-            "select 1 from worker_studios where id = ?::uuid and user_id = ?::uuid"
+            "select 1 from worker_studios where id = ?::uuid and user_id = ?::uuid and archived_at is null"
         ).use { statement ->
             statement.setString(1, entryId)
             statement.setString(2, userId)
@@ -1013,7 +1017,7 @@ class PostgresChatStore(private val dataSource: DataSource) : ChatStore {
                            s.preview_text, count(m.id)::int,
                            s.verdict_level_id, s.verdict_language,
                            s.previous_session_id::text, s.intake_answers, s.piece_id::text,
-                           p.label, $PIECE_COLUMNS
+                           $PIECE_LABEL, $PIECE_COLUMNS
                     from sessions s left join messages m on m.session_id = s.id
                     left join pieces p on p.id = s.piece_id
                     where s.user_id = ?::uuid and s.client_deleted_at is null
@@ -1021,8 +1025,8 @@ class PostgresChatStore(private val dataSource: DataSource) : ChatStore {
                     order by s.updated_at desc
                     """.trimIndent()
                 ).use { statement ->
-                    statement.setString(1, userId)
-                    statement.setString(2, userId)
+                    // Three in the select list, one in the WHERE: every one the reader.
+                    (1..4).forEach { statement.setString(it, userId) }
                     statement.executeQuery().use { rows ->
                         val out = mutableListOf<SessionRow>()
                         while (rows.next()) out += rows.toSessionRow()
@@ -1068,17 +1072,19 @@ class PostgresChatStore(private val dataSource: DataSource) : ChatStore {
                        s.preview_text, count(m.id)::int,
                        s.verdict_level_id, s.verdict_language,
                        s.previous_session_id::text, s.intake_answers, s.piece_id::text,
-                       p.label, $PIECE_COLUMNS
+                       $PIECE_LABEL, $PIECE_COLUMNS
                 from sessions s left join messages m on m.session_id = s.id
                 left join pieces p on p.id = s.piece_id
                 where s.id = ?::uuid and s.user_id = ?::uuid and s.client_deleted_at is null
                 group by s.id, p.id
                 """.trimIndent()
             ).use { statement ->
-                // The first in the select list, the other two in the WHERE.
+                // The first three in the select list, the other two in the WHERE.
                 statement.setString(1, userId)
-                statement.setString(2, sessionId)
+                statement.setString(2, userId)
                 statement.setString(3, userId)
+                statement.setString(4, sessionId)
+                statement.setString(5, userId)
                 statement.executeQuery().use { rows ->
                     if (rows.next()) rows.toSessionRow() else null
                 }
@@ -1194,7 +1200,18 @@ class PostgresChatStore(private val dataSource: DataSource) : ChatStore {
 
     private companion object {
         /**
-         * Columns 13 to 17 of a session row (V34), after `p.label`: whether the piece is the
+         * Column 12 of a session row: what the maker calls the piece (two binds, the
+         * reader's id). On a linked worker's piece, only while the reader runs the studio it
+         * is labelled for (V34): the name is often the customer's, and a manager whose link
+         * ended, or whose studio the piece was relabelled away from, is sent it no more.
+         */
+        const val PIECE_LABEL = """
+            case when p.user_id = ?::uuid
+                   or exists (select 1 from piece_managers pm where pm.piece_id = p.id and pm.manager_user_id = ?::uuid)
+                 then p.label end"""
+
+        /**
+         * Columns 13 to 17 of a session row (V34), after the label: whether the piece is the
          * reader's own (one bind, the reader's id), its label, whether it was ever chosen,
          * whether its one correction is used, and whether the session is final. Needs
          * `pieces p` left-joined and `p.id` in the GROUP BY.

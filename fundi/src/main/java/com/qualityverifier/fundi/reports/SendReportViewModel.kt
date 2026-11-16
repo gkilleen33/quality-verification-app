@@ -68,7 +68,23 @@ class SendReportViewModel(
      * what decides the customer and "My manager" choices on a piece (v0.6.0).
      */
     private val studios: Flow<List<Studio>> = flowOf(emptyList()),
+    /**
+     * What the phone knows of a piece it may hold no assessment of: a linked worker's piece
+     * opened from the worker's page (row 11). Its kind, name, and that it is the worker's,
+     * for the final assessment the customer report asks for. Null from the pieces list.
+     */
+    private val hint: PieceHint? = null,
 ) : ViewModel() {
+
+    /** See [hint]. */
+    data class PieceHint(val itemType: ItemType, val mine: Boolean, val label: String?)
+
+    /** The final assessment step, from the newest assessment on the phone, else from [hint]. */
+    private fun finalNeeded(newest: SessionSummary?) = Step.FinalNeeded(
+        itemType = newest?.itemType ?: hint?.itemType ?: ItemType.OTHER,
+        pieceMine = newest?.pieceMine ?: hint?.mine ?: true,
+        pieceLabel = newest?.pieceLabel ?: hint?.label,
+    )
 
     /** One of the piece's assessments, as "Which assessment?" lists it. */
     data class Option(val sessionId: String, val summary: SessionSummary)
@@ -162,7 +178,7 @@ class SendReportViewModel(
      */
     val offered: StateFlow<List<ReportKind>> = combine(summaries, studios) { all, list ->
         val piece = all.filter { it.piece == target.id }.maxByOrNull { it.updatedAt }
-        val mine = piece?.pieceMine ?: true
+        val mine = piece?.pieceMine ?: hint?.mine ?: true
         val label = piece?.pieceStudioId?.takeIf { mine }
         val linked = label != null && list.any { it.id == label && it.linked && !it.archived }
         buildList {
@@ -199,10 +215,7 @@ class SendReportViewModel(
     private suspend fun openCustomer(): Next {
         val listed = listed()
         if (listed.any { it.isFinal && it.verdictLevel != null }) return Next.Preview(ReportRequest(kind = ReportKind.CUSTOMER.id))
-        val newest = listed.lastOrNull()
-        return Next.Show(
-            Step.FinalNeeded(newest?.itemType ?: ItemType.OTHER, newest?.pieceMine ?: true, newest?.pieceLabel),
-        )
+        return Next.Show(finalNeeded(listed.lastOrNull()))
     }
 
     /** Fetches the pieces a worker's work report covers, then lets the manager narrow them. */
@@ -383,8 +396,7 @@ class SendReportViewModel(
                 // The server found no final assessment where the phone thought there was one,
                 // made on another phone and deleted, say: offer it here too.
                 is PreviewOutcome.Refused -> if (outcome.code == CONFLICT && kind == ReportKind.CUSTOMER) {
-                    val newest = listed().lastOrNull()
-                    Step.FinalNeeded(newest?.itemType ?: ItemType.OTHER, newest?.pieceMine ?: true, newest?.pieceLabel)
+                    finalNeeded(listed().lastOrNull())
                 } else {
                     Step.Failed(request = null, refused = true)
                 }
@@ -414,7 +426,12 @@ class SendReportViewModel(
     }
 
     companion object {
-        fun factory(container: AppContainer, target: ReportTarget, fileFor: () -> File): ViewModelProvider.Factory =
+        fun factory(
+            container: AppContainer,
+            target: ReportTarget,
+            hint: PieceHint? = null,
+            fileFor: () -> File,
+        ): ViewModelProvider.Factory =
             viewModelFactory {
                 initializer {
                     val workers = container.workerRepository
@@ -435,6 +452,7 @@ class SendReportViewModel(
                         },
                         // Linked as the server last said, at the last sync; an archived entry is not.
                         studios = container.studioRepository.observeStudios(),
+                        hint = hint,
                     )
                 }
             }

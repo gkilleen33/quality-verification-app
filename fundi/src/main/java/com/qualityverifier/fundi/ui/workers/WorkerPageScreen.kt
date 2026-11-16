@@ -73,7 +73,7 @@ fun WorkerPageScreen(
     /** "Assess piece" on one of the worker's own pieces labelled for this studio (row 11). */
     onAssessPiece: (WorkerPiece) -> Unit = {},
     /** "Send report" on one of those pieces: the customer report among them (row 27). */
-    onSendPieceReport: (pieceId: String) -> Unit = {},
+    onSendPieceReport: (WorkerPiece) -> Unit = {},
 ) {
     val container = fundiContainer()
     val model: WorkerPageViewModel = viewModel(
@@ -188,7 +188,7 @@ fun WorkerPageScreen(
                             labels = labels,
                             piece = piece,
                             onAssess = { onAssessPiece(piece) },
-                            onSendReport = { onSendPieceReport(piece.id) },
+                            onSendReport = { onSendPieceReport(piece) },
                         )
                     }
                 }

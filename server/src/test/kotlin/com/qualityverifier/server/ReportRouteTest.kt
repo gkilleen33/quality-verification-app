@@ -481,11 +481,12 @@ class ReportRouteTest {
         val store = FakeReportStore(piece = labelledPiece, sessions = listOf(table, managersFinal))
         val app = withReports(store)
 
-        // The manager reads both: the newest is their own, and the worker's can be named.
+        // The manager's one-assessment reports cover the manager's own: on the worker's, the
+        // names recorded are the worker's roster, and "Me" would print the manager's name.
         val managers = app.get("/v1/fundi/pieces/$PIECE_ID/reports/preview?kind=full") { auth(MANAGER) }.bodyAsText()
         assertTrue(managers, managers.contains("\"session_ids\":[\"m1\"]"))
         val workersOne = app.get("/v1/fundi/pieces/$PIECE_ID/reports/preview?kind=full&session_id=s1") { auth(MANAGER) }
-        assertEquals(HttpStatusCode.OK, workersOne.status)
+        assertEquals(HttpStatusCode.NotFound, workersOne.status)
 
         // The worker's newest is their own, and the manager's is not theirs to name.
         val worker = app.get("/v1/fundi/pieces/$PIECE_ID/reports/preview?kind=full") { auth(MAKER) }.bodyAsText()
@@ -495,6 +496,14 @@ class ReportRouteTest {
         assertEquals(HttpStatusCode.NotFound, managersOne.status)
         val fixes = app.get("/v1/fundi/pieces/$PIECE_ID/reports/preview?kind=part_fixes&parts=joinery&session_id=s1") { auth(MAKER) }
         assertEquals("the manager's later assessment is not the worker's previous one", HttpStatusCode.BadRequest, fixes.status)
+    }
+
+    @Test
+    fun `an assessment the worker deleted from their phone is not in the manager's customer report`() = testApplication {
+        val store = FakeReportStore(piece = labelledPiece, sessions = listOf(table.copy(clientDeleted = true), managersFinal))
+        val app = withReports(store)
+        val body = app.get("/v1/fundi/pieces/$PIECE_ID/reports/preview?kind=customer") { auth(MANAGER) }.bodyAsText()
+        assertTrue(body, body.contains("\"session_ids\":[\"m1\"]"))
     }
 
     @Test
