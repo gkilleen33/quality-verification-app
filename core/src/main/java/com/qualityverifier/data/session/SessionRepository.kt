@@ -182,6 +182,14 @@ interface SessionRepository {
      */
     fun observeUnsentPieceIds(): Flow<Set<String>> = flowOf(emptySet())
 
+    /**
+     * The server's number for each synced photo of [sessionId], by local path (v0.6.0, row
+     * 19). A photo the sync could not download is absent, and the numbers of the rest stand,
+     * so a defect Claude names by number opens the right photo. Photos taken on this phone
+     * have no entry and are counted in order. Empty in fakes.
+     */
+    suspend fun photoNumbers(sessionId: String): Map<String, Int> = emptyMap()
+
     /** The change reached the server, or the server refused it for good; either way it is not resent. */
     suspend fun markPieceStudioSent(change: PieceStudioChange) = Unit
 }

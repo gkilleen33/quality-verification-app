@@ -170,14 +170,21 @@ class AssessmentSync(
                 continue
             }
 
+            // Each photo keeps the number the server gives it, counted across the whole
+            // conversation (PhotoShelf), whether or not it downloads: a defect names its
+            // photo by that number (row 19), and a gap must not shift the rest.
+            var photoNumber = 0
             val messages = detail.messages.map { message ->
+                val fetched = message.blobs.map { sha -> ++photoNumber to fetchPhoto(summary.id, sha) }
+                    .filter { it.second != null }
                 SyncedMessage(
                     id = message.id,
                     role = if (message.role == "USER") Role.USER else Role.ASSISTANT,
                     text = message.text,
                     ordinal = message.ordinal,
                     createdAt = message.createdAt,
-                    attachmentPaths = message.blobs.mapNotNull { fetchPhoto(summary.id, it) },
+                    attachmentPaths = fetched.map { it.second!! },
+                    attachmentNumbers = fetched.map { it.first },
                     composed = message.composed,
                 )
             }

@@ -118,6 +118,7 @@ fun AssessScreen(
     val studios by viewModel.studios.collectAsState()
     val askToday by viewModel.askToday.collectAsState()
     val reviewHelpful by viewModel.reviewHelpful.collectAsState()
+    val photoNumbers by viewModel.photoNumbers.collectAsState()
 
     val labels = FundiLabels.ENGLISH
     // The capture pipeline and the verdict speak ReportLabels, and follow the language
@@ -332,6 +333,7 @@ fun AssessScreen(
                     viewing = path
                     marked = floatArrayOf(mark.x.toFloat(), mark.y.toFloat())
                 },
+                photoNumbers = photoNumbers,
                 isTester = viewModel.isTester,
                 reviewHelpful = reviewHelpful,
                 onAnswerHelpful = viewModel::answerReviewHelpful,
@@ -372,6 +374,8 @@ private fun Conversation(
     onOpenPhoto: (String) -> Unit,
     /** A tap on a defect with a mark: opens its photo, by path, zoomed on the mark (row 19). */
     onOpenMark: (String, DefectMark) -> Unit,
+    /** The server's number for each synced photo, by path (row 19). */
+    photoNumbers: Map<String, Int>,
     /** Testers are asked "Was this review helpful?" after a verdict (row 7). */
     isTester: Boolean,
     reviewHelpful: Boolean?,
@@ -383,7 +387,7 @@ private fun Conversation(
     // A finding's button opens the photo Claude named, if this phone holds it.
     val showOnPhoto: (Finding) -> (() -> Unit)? = { finding ->
         finding.mark?.let { mark ->
-            photoNumbered(messages, mark.photo)?.let { path -> { onOpenMark(path, mark) } }
+            photoNumbered(messages, mark.photo, photoNumbers)?.let { path -> { onOpenMark(path, mark) } }
         }
     }
     val hasVerdict = remember(messages) {

@@ -196,4 +196,23 @@ class AssessmentPhotosTest {
         assertNull(photoNumbered(messages, 5))
         assertNull(photoNumbered(messages, 0))
     }
+
+    // A second phone synced the assessment and photo 2 would not download. The server's
+    // numbers stay on the photos that did, so photo 3 is still photo 3, and photo 2 has
+    // no file to open. A follow-up photo taken here comes after the last synced one.
+    @Test
+    fun `a photo the sync could not download leaves a gap, not a shift`() {
+        val messages = listOf(
+            user("u1", "/p/opening.jpg"),
+            assistant("a1", planText),
+            user("u2", "/p/joint.jpg", "/p/under.jpg"),
+            assistant("a2", "Diagnosis"),
+            user("u3", "/p/closer.jpg"),
+        )
+        val synced = mapOf("/p/opening.jpg" to 1, "/p/joint.jpg" to 3, "/p/under.jpg" to 4)
+        assertEquals("/p/opening.jpg", photoNumbered(messages, 1, synced))
+        assertNull(photoNumbered(messages, 2, synced))
+        assertEquals("/p/joint.jpg", photoNumbered(messages, 3, synced))
+        assertEquals("/p/closer.jpg", photoNumbered(messages, 5, synced))
+    }
 }

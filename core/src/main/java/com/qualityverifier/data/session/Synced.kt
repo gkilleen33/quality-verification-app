@@ -41,6 +41,8 @@ data class SyncedMessage(
     val createdAt: Long,
     /** Local file paths, already written by the sync before this reaches the database. */
     val attachmentPaths: List<String>,
+    /** The server's number in the conversation of each of [attachmentPaths], in step with it. */
+    val attachmentNumbers: List<Int> = emptyList(),
     /** Written by the app on the user's behalf. Carried so a rebuilt history keeps it. */
     val composed: Boolean = false,
 )

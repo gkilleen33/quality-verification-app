@@ -203,6 +203,15 @@ class AssessViewModel(
         sessions.observeMessages(sessionId)
             .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
+    /**
+     * The server's number for each synced photo, by path, read again whenever the
+     * conversation changes (row 19): a defect names its photo by that number.
+     */
+    val photoNumbers: StateFlow<Map<String, Int>> =
+        sessions.observeMessages(sessionId)
+            .map { sessions.photoNumbers(sessionId) }
+            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyMap())
+
     private val _sending = MutableStateFlow(false)
     val sending: StateFlow<Boolean> = _sending.asStateFlow()
 
