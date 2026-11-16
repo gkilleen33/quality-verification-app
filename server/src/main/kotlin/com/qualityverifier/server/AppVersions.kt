@@ -43,7 +43,7 @@ class AppVersions(private val policies: Map<AppId, VersionPolicy>) {
 
         /**
          * `KAGUA_APP_LATEST_<APP>`, `KAGUA_APP_MINIMUM_<APP>` and
-         * `KAGUA_APP_DOWNLOAD_URL_<APP>`, with `<APP>` `KAGUA` or `FUNDI`.
+         * `KAGUA_APP_DOWNLOAD_URL_<APP>`, with `<APP>` `KAGUA`, `FUNDI` or `TRACKER` (PesaLog).
          *
          * An unreadable or missing number reads as 1, never as something higher: a typo in
          * the minimum must not lock every phone out. A minimum above latest raises latest to

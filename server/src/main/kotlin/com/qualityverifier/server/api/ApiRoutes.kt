@@ -170,6 +170,34 @@ fun Route.apiRoutes(
             call.respond(ApiPage(rows.take(limit), rows.size > limit, limit, offset))
         }
 
+        // PesaLog's transactions (V33): counterparties as codes only, which join to the same
+        // codes in Fundi Bora's M-Pesa records. There is no route for those records yet.
+        get("/tracker-transactions") {
+            requireKey() ?: return@get
+            val limit = call.limit()
+            val offset = call.offset()
+            val rows = store.trackerTransactions(limit + 1, offset)
+            call.respond(ApiPage(rows.take(limit), rows.size > limit, limit, offset))
+        }
+
+        get("/tracker-unread-counts") {
+            requireKey() ?: return@get
+            val limit = call.limit()
+            val offset = call.offset()
+            val rows = store.trackerUnreadCounts(limit + 1, offset)
+            call.respond(ApiPage(rows.take(limit), rows.size > limit, limit, offset))
+        }
+
+        // When a person deleted their PesaLog records, and how many rows went: a gap in
+        // /tracker-transactions is explained here.
+        get("/tracker-deletions") {
+            requireKey() ?: return@get
+            val limit = call.limit()
+            val offset = call.offset()
+            val rows = store.trackerDeletions(limit + 1, offset)
+            call.respond(ApiPage(rows.take(limit), rows.size > limit, limit, offset))
+        }
+
         /**
          * The photo bytes.
          *

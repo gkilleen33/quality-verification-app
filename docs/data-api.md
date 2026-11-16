@@ -48,6 +48,9 @@ milliseconds throughout.
 | `GET /tester-feedback` | every evaluator critique, keyed on `session_id` |
 | `GET /pieces` | every piece a Fundi Bora maker has assessed: `id`, `user_id`, `item_type_id`, `created_at`. No label (see below) |
 | `GET /reports` | every PDF report the server issued (V32): `piece_id` or `worker_id`, `kind`, `session_ids`, `parts`, `defect_refs`, `defect_snapshot`, `sha256`, `byte_size`, `issued_at` |
+| `GET /tracker-transactions` | every PesaLog transaction (V33), oldest first: `user_id`, `network`, `code`, `direction`, `type`, amounts, `occurred_at`, `counterparty_code` and `counterparty_basis`, `category`, `comment` |
+| `GET /tracker-unread-counts` | per PesaLog account, `network` and `day`, how many mobile money messages the phone could not read |
+| `GET /tracker-deletions` | each deletion a person asked for from PesaLog: `user_id`, `deleted_at`, and how many rows went |
 | `GET /photos/{sha256}` | the JPEG bytes |
 
 ### Pulling the whole thing
@@ -210,6 +213,21 @@ a retry has the same `sha256` as the first attempt.
 - `sha256` is the hash of the bytes the phone received, which is what a check of a PDF
   somebody forwards would compare against.
 - A deleted account's reports stay, with their hashes; their snapshot is emptied to `{}`.
+
+## PesaLog
+
+PesaLog is a separate app that reads mobile money notifications (M-Pesa and Airtel Money)
+and signs in with a Fundi Bora account, so `user_id` joins its rows to that person's
+assessments. `counterparty_code` is an HMAC of the other party's number or name under the
+same key and rules as Fundi Bora's M-Pesa records, so the same person has the same code in
+both apps and across accounts; the number or name itself was never stored.
+
+- A `code` is unique per account and `network`; an M-Pesa code and an Airtel Money id can
+  coincide.
+- A person can delete their PesaLog rows from the app's Settings. Their transactions and
+  unread counts then disappear from these routes, and `/tracker-deletions` gains a row
+  saying when and how many.
+- Fundi Bora's own M-Pesa records (V29) have no data API route yet.
 
 ## Three things that will bite an analysis if nobody mentions them
 

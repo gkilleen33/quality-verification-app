@@ -1,7 +1,9 @@
 package com.qualityverifier.server
 
 import io.ktor.http.HttpStatusCode
+import io.ktor.http.decodeURLPart
 import io.ktor.serialization.kotlinx.json.json
+import java.sql.SQLException
 import io.ktor.server.application.Application
 import io.ktor.server.application.install
 import com.qualityverifier.server.blobs.BlobSweeper
@@ -68,6 +70,9 @@ import com.qualityverifier.server.routes.chatRoutes
 import com.qualityverifier.server.routes.consentRoutes
 import com.qualityverifier.server.routes.fundiRoutes
 import com.qualityverifier.server.routes.mpesaRoutes
+import com.qualityverifier.server.routes.trackerRoutes
+import com.qualityverifier.server.tracker.PostgresTrackerStore
+import com.qualityverifier.server.tracker.TrackerStore
 import com.qualityverifier.server.mpesa.CounterpartyCoder
 import com.qualityverifier.server.mpesa.MpesaStore
 import com.qualityverifier.server.mpesa.PostgresMpesaStore
@@ -81,6 +86,7 @@ import com.qualityverifier.server.reports.ReportService
 import com.qualityverifier.server.terms.ConsentStore
 import com.qualityverifier.server.terms.PostgresConsentStore
 import com.qualityverifier.server.terms.TermsGate
+import com.qualityverifier.server.terms.TermsApp
 import com.qualityverifier.server.terms.TermsGatePlugin
 import com.qualityverifier.server.terms.TermsTexts
 import okhttp3.OkHttpClient
@@ -236,15 +242,20 @@ fun main() {
     // Fundi Bora's M-Pesa uploads. Need the database and the HMAC key: without the key a
     // counterparty could only be stored in the clear, so the routes are not mounted and the
     // phones keep their data until they are. A key too short to trust is treated as none.
-    val mpesa = if (database != null && config.mpesaHmacKey != null) {
+    val coder = if (database != null && config.mpesaHmacKey != null) {
         runCatching { CounterpartyCoder(config.mpesaHmacKey) }
-            .onFailure { log.error("M-Pesa uploads are disabled: {}", it.message) }
+            .onFailure { log.error("M-Pesa and PesaLog uploads are disabled: {}", it.message) }
             .getOrNull()
-            ?.let { Mpesa(PostgresMpesaStore(database.source), it) }
     } else {
-        log.warn("M-Pesa uploads are disabled: need a database and KAGUA_MPESA_HMAC_KEY.")
+        log.warn("M-Pesa and PesaLog uploads are disabled: need a database and KAGUA_MPESA_HMAC_KEY.")
         null
     }
+    val mpesa = if (database != null && coder != null) Mpesa(PostgresMpesaStore(database.source), coder) else null
+
+    // PesaLog's records (V33). The status and deletion routes need only the database; the
+    // uploads need the same coder as the M-Pesa routes, so a counterparty gets one code in
+    // both datasets, and are not mounted without it.
+    val tracker = database?.let { Tracker(PostgresTrackerStore(it.source), coder) }
 
     log.info("Kagua server {} starting on {}:{}", config.version, config.host, config.port)
     if (config.dailyAssessmentLimit > 0) {
@@ -270,7 +281,7 @@ fun main() {
     )
 
     embeddedServer(Netty, port = config.port, host = config.host) {
-        module(config.version, database, auth, chat, fundi, admin, config.appVersions, settings, terms, mpesa, reports)
+        module(config.version, database, auth, chat, fundi, admin, config.appVersions, settings, terms, mpesa, reports, tracker)
     }.start(wait = true)
 }
 
@@ -292,6 +303,20 @@ private val REPORT_SWEEP_INTERVAL = 1.hours
 /** Every M-Pesa route starts with this. Their unreadable bodies are logged without the parser's message. */
 internal const val MPESA_PATH_PREFIX = "/v1/fundi/mpesa"
 
+/** Every PesaLog route starts with this, and is logged as the M-Pesa routes are. */
+internal const val TRACKER_PATH_PREFIX = "/v1/tracker"
+
+/**
+ * Whether [path] reaches an M-Pesa or PesaLog route, whose bodies and database rows carry
+ * people's money and must not reach a log. Decoded first, since the router decodes before
+ * it matches ("/v1/%74racker/..." is a PesaLog route); one that will not decode is treated
+ * as one of them.
+ */
+internal fun carriesMoneyRecords(path: String): Boolean {
+    val decoded = runCatching { path.decodeURLPart() }.getOrNull() ?: return true
+    return decoded.startsWith(MPESA_PATH_PREFIX) || decoded.startsWith(TRACKER_PATH_PREFIX)
+}
+
 /** Bundled so the module signature does not grow a parameter per collaborator. */
 class Auth(val store: AuthStore, val accessTokens: AccessTokens)
 
@@ -312,15 +337,18 @@ class Fundi(val store: FundiStore)
 class Terms(val gate: TermsGate, val consents: ConsentStore, val texts: TermsTexts) {
 
     /** What `/v1/me` says about [audience]'s current terms at [version]: each language and its hash. */
-    fun describe(audience: Audience, version: String): MeTerms = MeTerms(
+    fun describe(audience: Audience, version: String): MeTerms = describe(TermsApp.of(audience), version)
+
+    /** As above, for any app's terms: `/v1/tracker/status` describes PesaLog's this way. */
+    fun describe(app: TermsApp, version: String): MeTerms = MeTerms(
         version = version,
-        languages = texts.languages(audience, version).mapNotNull { language ->
-            texts.file(audience, version, language)?.let { file ->
+        languages = texts.languages(app, version).mapNotNull { language ->
+            texts.file(app, version, language)?.let { file ->
                 MeTermsLanguage(
                     language = language.id,
                     sha256 = file.sha256,
                     // Under v1/: production nginx passes nothing else to the app (TermsRoutes).
-                    path = "v1/terms/${audience.id}/$version/${language.id}",
+                    path = "v1/terms/${app.id}/$version/${language.id}",
                 )
             }
         },
@@ -332,6 +360,12 @@ class Terms(val gate: TermsGate, val consents: ConsentStore, val texts: TermsTex
  * a code before anything is stored. Absent without the HMAC key, and then not mounted.
  */
 class Mpesa(val store: MpesaStore, val coder: CounterpartyCoder)
+
+/**
+ * PesaLog's records (V33): the store, and the M-Pesa routes' coder, or null without the HMAC
+ * key, and then only the status and deletion routes are mounted.
+ */
+class Tracker(val store: TrackerStore, val coder: CounterpartyCoder?)
 
 /** Fundi Bora's PDF reports (V32). Absent without a database, and then not mounted. */
 class Reports(val service: ReportService)
@@ -400,6 +434,8 @@ fun Application.module(
     mpesa: Mpesa? = null,
     /** The PDF reports. Mounted only with auth, which every report route needs. */
     reports: Reports? = null,
+    /** PesaLog's records. Mounted only with auth and terms: every route checks PesaLog's agreements. */
+    tracker: Tracker? = null,
 ) {
     install(ContentNegotiation) { json() }
     // Before routing, so it runs ahead of authentication. See installAppVersionGate.
@@ -460,7 +496,7 @@ fun Application.module(
             // upload holds counterparties' numbers and names, which must never reach a log.
             // So those paths log only the kind of failure.
             val path = call.request.path()
-            if (path.startsWith(MPESA_PATH_PREFIX)) {
+            if (carriesMoneyRecords(path)) {
                 log.warn("Unreadable request on {}: {}", path, cause.javaClass.simpleName)
             } else {
                 log.warn("Unreadable request on {}: {}", path, cause.message)
@@ -473,7 +509,16 @@ fun Application.module(
         exception<SerializationException> { call, cause -> badRequest(call, cause) }
 
         exception<Throwable> { call, cause ->
-            log.error("Unhandled failure on {}", call.request.path(), cause)
+            val path = call.request.path()
+            if (carriesMoneyRecords(path)) {
+                // A database error's message quotes the statement's values or the row it
+                // refused: amounts, codes, comments. The kind and the SQL state say what
+                // broke without them.
+                val state = (cause as? SQLException)?.sqlState?.let { " (SQL state $it)" }.orEmpty()
+                log.error("Unhandled failure on {}: {}{}", path, cause.javaClass.name, state)
+            } else {
+                log.error("Unhandled failure on {}", path, cause)
+            }
             // The message stays server-side. A stack trace on the wire tells an
             // attacker about the stack and tells the customer nothing.
             call.respond(HttpStatusCode.InternalServerError, mapOf("error" to "internal_error"))
@@ -521,6 +566,9 @@ fun Application.module(
         // Needs the terms bundle as well as auth: whether an account may upload is its
         // mpesa_send agreement, which lives in the consent records.
         if (auth != null && terms != null) mpesa?.let { mpesaRoutes(it.store, it.coder, auth.store, terms) }
+
+        // PesaLog's, for the same reason: every route reads PesaLog's agreements.
+        if (auth != null && terms != null) tracker?.let { trackerRoutes(it.store, it.coder, auth.store, terms) }
 
         // The reports, beside the other Fundi Bora routes and for the same reason outside
         // the chat block: they read stored replies and need no Anthropic key.

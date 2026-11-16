@@ -27,8 +27,17 @@ class ConsentVocabularyTest {
 
     private val migration: String by lazy { read("V28__consents.sql") }
 
-    /** Replaces consents_kind_known and consents_only_transfer_withdrawn for the M-Pesa questions. */
-    private val mpesa: String by lazy { read("V29__mpesa.sql") }
+    /**
+     * The newest migration that replaces consents_kind_known and
+     * consents_only_transfer_withdrawn: V29 for the M-Pesa questions, then V33 for PesaLog's
+     * four kinds. Found rather than named, so the next replacement is checked without an edit here.
+     */
+    private val mpesa: String by lazy {
+        val latest = File("db/migrations").listFiles { f -> f.name.endsWith(".sql") }.orEmpty()
+            .sortedBy { it.name.substringAfter("V").substringBefore("__").toInt() }
+            .last { it.readText().contains("ADD CONSTRAINT consents_kind_known") }
+        read(latest.name)
+    }
 
     private fun wordsIn(constraint: String, column: String, sql: String = migration): Set<String> {
         // The last definition, since a later migration replaces a CHECK under the same name.

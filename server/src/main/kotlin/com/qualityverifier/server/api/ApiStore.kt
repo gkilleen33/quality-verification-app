@@ -51,6 +51,15 @@ interface ApiStore {
     /** Every report issued (V32), oldest first, with the names it printed left out. */
     suspend fun reports(limit: Int, offset: Int): List<ApiReport>
 
+    /** Every PesaLog transaction (V33), in the order the server received them. */
+    suspend fun trackerTransactions(limit: Int, offset: Int): List<ApiTrackerTransaction>
+
+    /** Every PesaLog unread count (V33), by account, network and day. */
+    suspend fun trackerUnreadCounts(limit: Int, offset: Int): List<ApiTrackerUnreadCount>
+
+    /** Every deletion a person asked for from PesaLog (V33), oldest first. */
+    suspend fun trackerDeletions(limit: Int, offset: Int): List<ApiTrackerDeletion>
+
     /** Whether any assessment refers to this photo. Guards the bytes endpoint. */
     suspend fun photoExists(sha256: String): Boolean
 }
@@ -366,6 +375,110 @@ class PostgresApiStore(private val dataSource: DataSource) : ApiStore {
                         issuedAt = rows.getLong(12),
                     )
                 }
+                out
+            }
+        }
+    }
+
+    // By id, which is the order of first receipt and never changes, so offset paging over a
+    // table that only grows at the end does not skip or repeat rows. A row deleted on request
+    // between two pages shifts the later ones by one; a pull is run end to end, not resumed.
+    override suspend fun trackerTransactions(limit: Int, offset: Int): List<ApiTrackerTransaction> =
+        query { connection ->
+            connection.prepareStatement(
+                """
+                select t.id, t.user_id::text, t.network, t.code, t.direction, t.tx_type,
+                       t.amount_kes::float8, t.fee_kes::float8, t.balance_after_kes::float8,
+                       (extract(epoch from t.occurred_at) * 1000)::bigint,
+                       t.counterparty_code, t.counterparty_basis, t.parser_version, t.app_version,
+                       (extract(epoch from t.received_at) * 1000)::bigint,
+                       t.category, t.comment,
+                       (extract(epoch from t.annotated_at) * 1000)::bigint
+                  from tracker_transactions t
+                 order by t.id
+                 limit ? offset ?
+                """.trimIndent()
+            ).use { statement ->
+                statement.setInt(1, limit)
+                statement.setInt(2, offset)
+                statement.executeQuery().use { rows ->
+                    val out = mutableListOf<ApiTrackerTransaction>()
+                    while (rows.next()) out += ApiTrackerTransaction(
+                        id = rows.getLong(1),
+                        userId = rows.getString(2),
+                        network = rows.getString(3),
+                        code = rows.getString(4),
+                        direction = rows.getString(5),
+                        type = rows.getString(6),
+                        amountKes = rows.getDouble(7),
+                        feeKes = rows.nullableDouble(8),
+                        balanceAfterKes = rows.nullableDouble(9),
+                        occurredAt = rows.getLong(10),
+                        counterpartyCode = rows.getString(11),
+                        counterpartyBasis = rows.getString(12),
+                        parserVersion = rows.getInt(13),
+                        appVersion = rows.getInt(14),
+                        receivedAt = rows.getLong(15),
+                        category = rows.getString(16),
+                        comment = rows.getString(17),
+                        annotatedAt = rows.nullableLong(18),
+                    )
+                    out
+                }
+            }
+        }
+
+    override suspend fun trackerUnreadCounts(limit: Int, offset: Int): List<ApiTrackerUnreadCount> =
+        query { connection ->
+            connection.prepareStatement(
+                """
+                select u.user_id::text, u.network, u.day::text, u.unread, u.parser_version, u.app_version,
+                       (extract(epoch from u.updated_at) * 1000)::bigint
+                  from tracker_unread_counts u
+                 order by u.user_id, u.network, u.day
+                 limit ? offset ?
+                """.trimIndent()
+            ).use { statement ->
+                statement.setInt(1, limit)
+                statement.setInt(2, offset)
+                statement.executeQuery().use { rows ->
+                    val out = mutableListOf<ApiTrackerUnreadCount>()
+                    while (rows.next()) out += ApiTrackerUnreadCount(
+                        userId = rows.getString(1),
+                        network = rows.getString(2),
+                        day = rows.getString(3),
+                        unread = rows.getInt(4),
+                        parserVersion = rows.getInt(5),
+                        appVersion = rows.getInt(6),
+                        updatedAt = rows.getLong(7),
+                    )
+                    out
+                }
+            }
+        }
+
+    override suspend fun trackerDeletions(limit: Int, offset: Int): List<ApiTrackerDeletion> = query { connection ->
+        connection.prepareStatement(
+            """
+            select d.id, d.user_id::text, (extract(epoch from d.deleted_at) * 1000)::bigint,
+                   d.transactions_deleted, d.unread_days_deleted, d.app_version
+              from tracker_deletions d
+             order by d.id
+             limit ? offset ?
+            """.trimIndent()
+        ).use { statement ->
+            statement.setInt(1, limit)
+            statement.setInt(2, offset)
+            statement.executeQuery().use { rows ->
+                val out = mutableListOf<ApiTrackerDeletion>()
+                while (rows.next()) out += ApiTrackerDeletion(
+                    id = rows.getLong(1),
+                    userId = rows.getString(2),
+                    deletedAt = rows.getLong(3),
+                    transactionsDeleted = rows.getInt(4),
+                    unreadDaysDeleted = rows.getInt(5),
+                    appVersion = rows.nullableInt(6),
+                )
                 out
             }
         }

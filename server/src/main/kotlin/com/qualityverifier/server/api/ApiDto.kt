@@ -296,5 +296,64 @@ data class ApiReport(
     @SerialName("issued_at") val issuedAt: Long,
 )
 
+/**
+ * One PesaLog transaction (V33). `counterparty_code` is the same HMAC as in Fundi Bora's
+ * M-Pesa records, so it joins across the two apps and across accounts; the number or name it
+ * came from was never stored. Join `user_id` to `/api/v1/users`: a PesaLog account is a
+ * Fundi Bora account.
+ */
+@Serializable
+data class ApiTrackerTransaction(
+    val id: Long,
+    @SerialName("user_id") val userId: String,
+    /** `mpesa` or `airtel`. */
+    val network: String,
+    /** The transaction code the message printed; unique per account and network. */
+    val code: String,
+    /** `in`, `out`, or `other` for money that stayed the person's own. */
+    val direction: String,
+    val type: String,
+    @SerialName("amount_kes") val amountKes: Double,
+    @SerialName("fee_kes") val feeKes: Double?,
+    @SerialName("balance_after_kes") val balanceAfterKes: Double?,
+    /** When the phone received the message, on the phone's clock. */
+    @SerialName("occurred_at") val occurredAt: Long,
+    @SerialName("counterparty_code") val counterpartyCode: String?,
+    /** `phone` or `name`: what the code was computed from. */
+    @SerialName("counterparty_basis") val counterpartyBasis: String?,
+    @SerialName("parser_version") val parserVersion: Int,
+    @SerialName("app_version") val appVersion: Int,
+    /** The server's clock, at the first upload. */
+    @SerialName("received_at") val receivedAt: Long,
+    val category: String?,
+    /** Free text the person typed; can name people. */
+    val comment: String?,
+    @SerialName("annotated_at") val annotatedAt: Long?,
+)
+
+/** How many mobile money messages PesaLog could not read, for one account, network and day. */
+@Serializable
+data class ApiTrackerUnreadCount(
+    @SerialName("user_id") val userId: String,
+    val network: String,
+    /** Nairobi date, "2026-11-12". */
+    val day: String,
+    val unread: Int,
+    @SerialName("parser_version") val parserVersion: Int,
+    @SerialName("app_version") val appVersion: Int,
+    @SerialName("updated_at") val updatedAt: Long,
+)
+
+/** One deletion a person asked for from PesaLog's Settings, and how many rows it removed. */
+@Serializable
+data class ApiTrackerDeletion(
+    val id: Long,
+    @SerialName("user_id") val userId: String,
+    @SerialName("deleted_at") val deletedAt: Long,
+    @SerialName("transactions_deleted") val transactionsDeleted: Int,
+    @SerialName("unread_days_deleted") val unreadDaysDeleted: Int,
+    @SerialName("app_version") val appVersion: Int?,
+)
+
 @Serializable
 data class ApiError(val error: String, val detail: String? = null)
