@@ -43,7 +43,12 @@ import io.ktor.http.contentType
 import io.ktor.serialization.kotlinx.json.json
 import io.ktor.server.testing.ApplicationTestBuilder
 import io.ktor.server.testing.testApplication
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeout
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import org.junit.Assert.assertEquals
@@ -94,6 +99,48 @@ class BenchRouteTest {
         assertEquals(1, bench.rows.size)
     }
 
+    // The phone's read timed out while Claude was still answering, and the fundi tapped
+    // "Try again": the second request must not start a second paid call.
+    @Test
+    fun `a retry while the first call is still open is told to wait, not paid twice`() = testApplication {
+        val gate = CompletableDeferred<Unit>()
+        val claude = BenchClaude(gate)
+        val app = withBench(FakeBench(), UsageOnly(), claude)
+        val id = UUID.randomUUID().toString()
+
+        coroutineScope {
+            val first = async { app.post("/v1/fundi/bench-photos") { auth(); body(id) } }
+            withTimeout(10_000) { while (claude.calls == 0) delay(10) }
+            val retry = app.post("/v1/fundi/bench-photos") { auth(); body(id) }
+            assertEquals(HttpStatusCode.Conflict, retry.status)
+            assertTrue(retry.bodyAsText().contains("bench_in_progress"))
+            gate.complete(Unit)
+            assertEquals(HttpStatusCode.OK, first.await().status)
+        }
+        assertEquals(1, claude.calls)
+    }
+
+    // "Try again" after a failure may upload different bytes for the same photo id. Claude
+    // reads the photo the row holds, so the draft always describes the stored photo.
+    @Test
+    fun `the call reads the photo the row holds, whatever a retry uploaded`() = testApplication {
+        val bench = FakeBench()
+        val claude = BenchClaude()
+        val app = withBench(bench, UsageOnly(), claude)
+        val id = UUID.randomUUID().toString()
+        // The row already holds this id with the first hash, and no draft yet.
+        bench.record(FUNDI, id, sha, null, BENCH_PHOTOS_PER_DAY)
+        val other = "another encoding".toByteArray()
+        val otherSha = MessageDigest.getInstance("SHA-256").digest(other).joinToString("") { "%02x".format(it) }
+        blobs.put(otherSha, other)
+
+        val response = app.post("/v1/fundi/bench-photos") {
+            auth(); contentType(ContentType.Application.Json); setBody("""{"id":"$id","sha256":"$otherSha"}""")
+        }
+        assertEquals(HttpStatusCode.OK, response.status)
+        assertEquals(listOf(photo.toList()), claude.read.map { it.toList() })
+    }
+
     @Test
     fun `the sixth bench photo of the day is refused before anything is spent`() = testApplication {
         val bench = FakeBench()
@@ -123,13 +170,15 @@ class BenchRouteTest {
 
     // ---------------------------------------------------------------- harness
 
+    private lateinit var blobs: BlobStore
+
     private fun ApplicationTestBuilder.withBench(
         bench: FakeBench,
         usage: UsageOnly,
         claude: BenchClaude,
         storePhoto: Boolean = true,
     ) = run {
-        val blobs = BlobStore(folder.newFolder())
+        blobs = BlobStore(folder.newFolder())
         if (storePhoto) runBlocking { blobs.put(sha, photo) }
         application {
             module(
@@ -154,15 +203,22 @@ class BenchRouteTest {
     /** The store's rules in memory: one row per id, five a day. */
     private class FakeBench : BenchStore {
         val rows = mutableMapOf<String, String>()
+        private val hashes = mutableMapOf<String, String>()
         val drafts = mutableMapOf<String, String>()
         override suspend fun record(
             userId: String, photoId: String, sha256: String, location: SessionLocation?, dailyLimit: Int,
         ): BenchRecord {
             rows[photoId]?.let { owner ->
-                return if (owner == userId) BenchRecord.Ready(BenchPhoto(photoId, sha256, drafts[photoId])) else BenchRecord.NotYours
+                // As the real store: the row's own hash, not the one this request named.
+                return if (owner == userId) {
+                    BenchRecord.Ready(BenchPhoto(photoId, hashes.getValue(photoId), drafts[photoId]))
+                } else {
+                    BenchRecord.NotYours
+                }
             }
             if (rows.values.count { it == userId } >= dailyLimit) return BenchRecord.LimitReached(dailyLimit)
             rows[photoId] = userId
+            hashes[photoId] = sha256
             return BenchRecord.Ready(BenchPhoto(photoId, sha256, null))
         }
         override suspend fun saveDraft(photoId: String, draftJson: String, promptSha: String, model: String?) {
@@ -170,14 +226,18 @@ class BenchRouteTest {
         }
     }
 
-    private class BenchClaude : ClaudeClient {
-        var calls = 0
+    /** Answers with a two-tool draft; with a [gate], only once it opens. */
+    private class BenchClaude(private val gate: CompletableDeferred<Unit>? = null) : ClaudeClient {
+        @Volatile var calls = 0
+        /** The photo bytes each call was given. */
+        val read = mutableListOf<ByteArray>()
         override suspend fun send(
             systemPrompt: String, history: List<ChatMessage>, imageBytes: (Attachment) -> ByteArray?, photos: PhotoShelf?,
         ): ClaudeResult {
             calls++
             // The photo reaches the call as the one attachment of the one turn.
-            check(history.single().attachments.single().let(imageBytes) != null)
+            read += checkNotNull(history.single().attachments.single().let(imageBytes))
+            gate?.await()
             return ClaudeResult.Success(
                 "```qv-bench\n{\"tools\":[{\"kind\":\"clamps\",\"seen\":\"right\"},{\"kind\":\"chisels\"}]}\n```",
                 TokenUsage(10, 5, 0, 0), "m",

@@ -105,7 +105,10 @@ class BenchClient(
                     BenchOutcome.Unavailable
                 }
                 it.code == 429 -> BenchOutcome.LimitReached
-                it.code in 400..499 -> BenchOutcome.Refused
+                // A malformed request or another account's id: a retry sends the same.
+                it.code == 400 || it.code == 404 -> BenchOutcome.Refused
+                // 409 (the photo is still being read, or its bytes did not arrive), 403 and
+                // 426 included: nothing about the photo is wrong, so it is not "unreadable".
                 else -> BenchOutcome.Unavailable
             }
         }

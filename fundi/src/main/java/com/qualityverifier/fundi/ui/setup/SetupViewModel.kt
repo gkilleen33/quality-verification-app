@@ -21,7 +21,10 @@ import com.qualityverifier.domain.ToolKind
 import com.qualityverifier.domain.ToolOwnership
 import com.qualityverifier.domain.Workshop
 import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -81,12 +84,32 @@ class SetupViewModel(
     /** The photo being sent, and its id, kept so a retry is the same photo to the server. */
     private var benchPhoto: Pair<String, File>? = null
 
+    /**
+     * The photo processed for upload, once. Processing again on a retry would re-encode the
+     * file and change its hash, so the server would hold one photo and be sent another.
+     */
+    private var benchProcessed: Deferred<Boolean>? = null
+
+    /**
+     * The GPS point, started when the photo is taken and waited for at most
+     * [BENCH_FIX_WAIT_MILLIS] (a capture may take a minute and a half). A retry reuses it.
+     */
+    private var benchFix: Deferred<LocationFix?>? = null
+
     /** Where the camera writes the bench photo. Null when it cannot be made. */
     fun newBenchFile(): File? = runCatching { images?.newImageFile(BENCH_FOLDER) }.getOrNull()
 
     /** The camera has written the photo: process it as an assessment's, then ask for the draft. */
     fun onBenchPhoto(file: File) {
         benchPhoto = UUID.randomUUID().toString() to file
+        benchProcessed = viewModelScope.async(io) {
+            runCatching { file.length() > 0 && images?.normaliseInPlace(file) != false }.getOrDefault(false)
+        }
+        benchFix = if (benchLocation.isAvailable) {
+            viewModelScope.async { runCatching { benchLocation.capture() }.getOrNull() }
+        } else {
+            null
+        }
         sendBench()
     }
 
@@ -94,16 +117,18 @@ class SetupViewModel(
     fun retryBench() = sendBench()
 
     private fun sendBench() {
+        // A second tap while the first send is under way would start a second upload.
+        if (_bench.value == Bench.Sending) return
         val (photoId, file) = benchPhoto ?: return
+        val processed = benchProcessed ?: return
         val api = bench ?: return
         _bench.value = Bench.Sending
         viewModelScope.launch {
-            val ready = withContext(io) { file.length() > 0 && images?.normaliseInPlace(file) != false }
-            if (!ready) {
+            if (!processed.await()) {
                 _bench.value = Bench.Failed(Bench.Reason.UNREADABLE)
                 return@launch
             }
-            val fix = if (benchLocation.isAvailable) runCatching { benchLocation.capture() }.getOrNull() else null
+            val fix = benchFix?.let { pending -> withTimeoutOrNull(BENCH_FIX_WAIT_MILLIS) { pending.await() } }
             _bench.value = when (val outcome = runCatching { api.draft(photoId, file, fix) }.getOrDefault(BenchOutcome.Unavailable)) {
                 is BenchOutcome.Drafted ->
                     if (outcome.draft.tools.isEmpty()) Bench.Done
@@ -293,6 +318,13 @@ class SetupViewModel(
     companion object {
         /** The folder the bench photo is written to, beside the assessments' own. */
         const val BENCH_FOLDER = "bench"
+
+        /**
+         * How long the bench photo waits for its GPS point. The point is a check on where the
+         * workshop is, not the reason for the photo; a fundi under a tin roof should see their
+         * tools, not a spinner, and the photo goes without a point after this.
+         */
+        const val BENCH_FIX_WAIT_MILLIS = 15_000L
 
         fun factory(container: AppContainer): ViewModelProvider.Factory = viewModelFactory {
             initializer {
