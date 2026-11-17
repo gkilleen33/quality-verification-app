@@ -1,12 +1,16 @@
 package com.qualityverifier.prompts
 
 import com.qualityverifier.data.prompts.DefaultPrompts
+import com.qualityverifier.domain.FundiProfile
 import com.qualityverifier.domain.MeasurementUnit
+import com.qualityverifier.domain.OwnedTool
 import com.qualityverifier.domain.SkillDimension
 import com.qualityverifier.domain.ToolKind
+import com.qualityverifier.domain.ToolOwnership
 import com.qualityverifier.domain.ItemType
 import com.qualityverifier.domain.TestDiagram
 import com.qualityverifier.text.FundiLabels
+import com.qualityverifier.text.buildFundiContextMessage
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -243,25 +247,37 @@ class DefaultPromptsInSyncTest {
             fundi.contains("what the customer will notice once the improvement is made"),
         )
         assertTrue("tool_line is no longer optional", fundi.contains("tool_line: optional"))
+        assertTrue("the numbers rule is gone", fundi.contains("spell out numbers from one to nine"))
         // The verdict level is for the record and research; the maker never reads its word.
-        assertTrue("the rating word may reach the maker", fundi.contains("Never put the verdict level's word"))
+        assertTrue("the rating word may reach the maker", fundi.contains("Never rate the piece with the verdict level's word"))
         assertFalse("general praise is back in the verdict example", fundi.contains("Good work overall"))
     }
 
     // tool_line may only name a tool the maker has. The opening message lists those under
-    // the heading FundiLabels writes, so the prompt has to use the same words for it.
+    // the headings FundiLabels writes, so the tool_line rule has to use the same words. A
+    // rental goes out marked "(borrowed)" since V35, and a borrowed tool did before it; the
+    // prompt is fetched by every build, so the rule has to fit both.
     @Test
     fun `tool_line names only a tool from the list the opening message carries`() {
         val fundi = DefaultPrompts.FUNDI_MASTER
         val labels = FundiLabels.ENGLISH
-        listOf(labels.contextToolsHave, labels.contextToolsNone, labels.contextToolsUnknown).forEach { heading ->
-            assertTrue("the prompt does not name the heading $heading", fundi.contains("\"${heading.removeSuffix(":")}\""))
-        }
+        val rule = fundi.lineSequence().single { it.startsWith("- tool_line: optional. When a tool") }
+        fun quoted(heading: String) = "\"${heading.removeSuffix(":")}\""
+        assertTrue("tool_line may suggest a tool off the list", rule.contains("Suggest only a tool listed under ${quoted(labels.contextToolsHave)}"))
+        assertTrue(
+            "tool_line may suggest a tool the maker lacks",
+            rule.contains("Never suggest a tool listed under ${quoted(labels.contextToolsNone)} or ${quoted(labels.contextToolsUnknown)}"),
+        )
+        assertTrue("tool_line may give a price", rule.contains("Never give a price"))
         assertTrue(
             "a rented tool is no longer recognised by its marker",
-            fundi.contains("A tool marked borrowed there is one they rented: say they could rent it again"),
+            rule.contains("A tool marked borrowed there was rented or borrowed: say they could rent or borrow it again"),
         )
-        assertTrue(labels.borrowed("sander").contains("borrowed"))
+        val profile = FundiProfile(tools = listOf(OwnedTool(ToolKind.SANDER, ToolOwnership.RENTAL)))
+        assertTrue(
+            "a rental no longer reaches Claude marked borrowed",
+            buildFundiContextMessage(profile, labels).contains(labels.borrowed(labels.nameOf(ToolKind.SANDER))),
+        )
     }
 
     @Test
