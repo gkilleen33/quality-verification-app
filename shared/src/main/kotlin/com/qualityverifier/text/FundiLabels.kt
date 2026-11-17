@@ -485,7 +485,6 @@ data class FundiLabels(
             setupGoalsBlurb = "Pick any that fit.",
             ownershipNames = mapOf(
                 ToolOwnership.WORKER to "Mine",
-                ToolOwnership.MANAGER to "My manager's",
                 ToolOwnership.STUDIO to "The studio's",
                 ToolOwnership.RENTAL to "Rented",
                 ToolOwnership.NONE to "Do not have",

@@ -4,8 +4,10 @@
 -- Nathan, 14 November 2026): who owns each tool, the bench photo that drafts the tool list
 -- at setup, and the tools an assessment had to hand.
 --
--- TOOL OWNERS. A tool on a fundi's list is now owned by the worker (the account itself), the
--- manager, the studio, or is a rental, in place of "owned" and "borrowed". "none" and
+-- TOOL OWNERS. A tool on a fundi's list is now owned by the worker (the account itself) or
+-- the studio, or is a rental, in place of "owned" and "borrowed". There is no separate
+-- manager owner (Nathan, 17 November 2026): in these workshops the manager's tools are the
+-- studio's, and a fourth owner would ask fundis to draw a line nobody draws. "none" and
 -- "unknown" stay: they are not owners but answers that the tool is not to hand, and V20's
 -- reason for "unknown" (what the fundi has been taught) still holds. The three CHECKs that
 -- list the states are replaced, as V20 replaced them.
@@ -14,7 +16,7 @@
 --     owned    -> worker   the fundi's own tool, which is what "Have it" meant
 --     borrowed -> rental   a tool from outside the fundi's own kit. "Can borrow" did not say
 --                          from whom; most accounts so far are workshop owners, for whom it
---                          meant another workshop's. A worker who meant the manager's tool
+--                          meant another workshop's. A worker who meant the studio's tool
 --                          can correct it on the setup screen.
 --     none     -> none
 --     unknown  -> unknown
@@ -22,7 +24,7 @@
 -- time, so its rows keep "owned" and "borrowed"; its CHECKs allow both vocabularies. A
 -- rewrite of the current answer writes no change row: nothing about the tool changed.
 --
--- The opening turn names a "worker", "manager" or "studio" tool as plainly as it named an
+-- The opening turn names a "worker" or "studio" tool as plainly as it named an
 -- "owned" one, and a "rental" as it named a "borrowed" one (FundiContextMessage), so the
 -- assessment prompt's input is the same bytes for every profile this migration rewrites.
 --
@@ -54,18 +56,18 @@ UPDATE fundi_tools
    SET ownership = CASE ownership WHEN 'owned' THEN 'worker' WHEN 'borrowed' THEN 'rental' END
  WHERE ownership IN ('owned', 'borrowed');
 ALTER TABLE fundi_tools ADD CONSTRAINT fundi_tools_ownership_known
-    CHECK (ownership IN ('worker', 'manager', 'studio', 'rental', 'none', 'unknown'));
+    CHECK (ownership IN ('worker', 'studio', 'rental', 'none', 'unknown'));
 
 -- The record keeps what was answered at the time, in either vocabulary.
 ALTER TABLE fundi_tool_changes DROP CONSTRAINT fundi_tool_changes_from_known;
 ALTER TABLE fundi_tool_changes ADD CONSTRAINT fundi_tool_changes_from_known
     CHECK (from_ownership IS NULL
-           OR from_ownership IN ('worker', 'manager', 'studio', 'rental', 'none', 'unknown',
+           OR from_ownership IN ('worker', 'studio', 'rental', 'none', 'unknown',
                                  'owned', 'borrowed'));
 
 ALTER TABLE fundi_tool_changes DROP CONSTRAINT fundi_tool_changes_to_known;
 ALTER TABLE fundi_tool_changes ADD CONSTRAINT fundi_tool_changes_to_known
-    CHECK (to_ownership IN ('worker', 'manager', 'studio', 'rental', 'none', 'unknown',
+    CHECK (to_ownership IN ('worker', 'studio', 'rental', 'none', 'unknown',
                             'owned', 'borrowed'));
 
 -- --------------------------------------------------------------- bench photos
@@ -123,7 +125,7 @@ CREATE TABLE session_tools (
         CHECK (source IN ('maker', 'studio')),
     -- Only tools to hand: never 'none' or 'unknown'.
     CONSTRAINT session_tools_owner_known
-        CHECK (owner IN ('worker', 'manager', 'studio', 'rental'))
+        CHECK (owner IN ('worker', 'studio', 'rental'))
 );
 
 -- Self-test of the mapping and the CHECKs, before anonymise_user is redefined below:
@@ -141,9 +143,9 @@ BEGIN
 
         -- Every owner and both answers that are not owners are allowed.
         INSERT INTO fundi_tools (user_id, kind, ownership)
-        VALUES (probe, 'hand_saw', 'worker'), (probe, 'hammer_mallet', 'manager'),
-               (probe, 'chisels', 'studio'), (probe, 'plane_no4', 'rental'),
-               (probe, 'router', 'none'), (probe, 'marking_gauge', 'unknown');
+        VALUES (probe, 'hand_saw', 'worker'), (probe, 'chisels', 'studio'),
+               (probe, 'plane_no4', 'rental'), (probe, 'router', 'none'),
+               (probe, 'marking_gauge', 'unknown');
 
         -- The old words are refused on the current answer...
         refused := false;
@@ -156,9 +158,20 @@ BEGIN
             RAISE EXCEPTION 'V35 self-test: fundi_tools accepted owned';
         END IF;
 
-        -- ...and allowed in the record, beside the new ones.
+        -- ...and so is a manager owner, which there is not (Nathan, 17 November 2026).
+        refused := false;
+        BEGIN
+            INSERT INTO fundi_tools (user_id, kind, ownership) VALUES (probe, 'clamps', 'manager');
+        EXCEPTION WHEN check_violation THEN
+            refused := true;
+        END;
+        IF NOT refused THEN
+            RAISE EXCEPTION 'V35 self-test: fundi_tools accepted manager';
+        END IF;
+
+        -- The old words are allowed in the record, beside the new ones.
         INSERT INTO fundi_tool_changes (user_id, kind, from_ownership, to_ownership)
-        VALUES (probe, 'clamps', 'borrowed', 'owned'), (probe, 'square', 'owned', 'manager');
+        VALUES (probe, 'clamps', 'borrowed', 'owned'), (probe, 'square', 'owned', 'studio');
 
         refused := false;
         BEGIN

@@ -64,7 +64,7 @@ fun Route.fundiRoutes(store: FundiStore, auth: AuthStore) {
             val sent = call.receive<FundiProfileDto>()
             var profile = sent.toDomain()
             // An app older than v0.6.0 sends "owned" for a tool a newer phone recorded as the
-            // manager's or the studio's (V35); that owner is kept.
+            // studio's (V35); that owner is kept.
             if (sent.tools.any { ToolOwnership.isLegacy(it.ownership) }) {
                 profile = profile.keepingOwnersFrom(store.profileFor(userId), sent)
             }

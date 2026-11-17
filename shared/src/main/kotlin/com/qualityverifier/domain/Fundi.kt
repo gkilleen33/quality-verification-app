@@ -173,8 +173,9 @@ object WorkerNames {
 
 /**
  * Who owns a tool the fundi has to hand, or why they have none (V35; design of 3 and 4
- * November 2026): the worker themselves, their manager, the studio, or a rental. These four
- * replaced "owned" and "borrowed" in v0.6.0.
+ * November 2026): the worker themselves, the studio, or a rental. These three replaced
+ * "owned" and "borrowed" in v0.6.0. There is no manager owner (Nathan, 17 November 2026): a
+ * manager's tools are the studio's.
  *
  * "None" and "unknown" are not owners but answers: the tool is not to hand. "Unknown" —
  * they do not know what the tool is — was added in V20 and stays its own answer. It is not
@@ -190,7 +191,6 @@ object WorkerNames {
  */
 enum class ToolOwnership(val id: String, val legacyId: String) {
     WORKER("worker", "owned"),
-    MANAGER("manager", "owned"),
     STUDIO("studio", "owned"),
     RENTAL("rental", "borrowed"),
     NONE("none", "none"),

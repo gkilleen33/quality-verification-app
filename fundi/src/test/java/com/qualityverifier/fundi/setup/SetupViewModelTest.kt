@@ -307,7 +307,7 @@ class SetupViewModelTest {
         assertEquals(SetupViewModel.Bench.Confirm(drafted.draft.tools, 0, askingOwner = false), model.benchStep.value)
 
         model.confirmTool(true)                                   // clamps: yes ...
-        model.chooseOwner(ToolOwnership.MANAGER)                  // ... my manager's
+        model.chooseOwner(ToolOwnership.STUDIO)                   // ... the studio's
         model.confirmTool(false)                                  // chisels: no
         model.confirmTool(true)                                   // drill: yes, then nobody says whose
         model.skipBench()
@@ -315,7 +315,7 @@ class SetupViewModelTest {
 
         model.save()
         advanceUntilIdle()
-        assertEquals(listOf(OwnedTool(ToolKind.CLAMPS, ToolOwnership.MANAGER)), profiles.sent!!.tools)
+        assertEquals(listOf(OwnedTool(ToolKind.CLAMPS, ToolOwnership.STUDIO)), profiles.sent!!.tools)
     }
 
     @Test
