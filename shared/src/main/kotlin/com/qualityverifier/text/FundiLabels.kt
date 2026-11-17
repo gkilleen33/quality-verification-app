@@ -291,6 +291,12 @@ data class FundiLabels(
     val intakeFinishedHint: String,
     val intakeFinishedYes: String,
     val intakeFinishedNo: String,
+    /**
+     * Below the active studios or workers (Nathan, 17 November 2026): opens and closes the
+     * archived ones, kept apart from the list; {n} is how many.
+     */
+    private val archivedShowFormat: String,
+    val archivedHide: String,
     /** "Which pieces?" before a worker's work report (row 22). */
     val reportWhichPieces: String,
     val reportWhichPiecesHint: String,
@@ -336,6 +342,8 @@ data class FundiLabels(
     fun pieceFor(studio: String) = pieceForFormat.replace("{studio}", studio)
 
     fun reportPhotos(n: Int) = reportPhotosFormat.replace("{n}", n.toString())
+
+    fun archivedShow(n: Int) = archivedShowFormat.replace("{n}", n.toString())
 
     /**
      * The "Who is this for?" choice for a kind. A worker's choice is listed under
@@ -747,6 +755,8 @@ data class FundiLabels(
             intakeFinishedHint = "If it is, you can send this assessment to the customer in a report.",
             intakeFinishedYes = "Yes, it is finished",
             intakeFinishedNo = "No, I am still making it",
+            archivedShowFormat = "Show archived ({n})",
+            archivedHide = "Hide archived",
             reportWhichPieces = "Which pieces?",
             reportWhichPiecesHint = "The report covers the pieces you choose.",
             benchTitle = "Photograph your bench",
