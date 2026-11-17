@@ -674,8 +674,11 @@ data class FundiLabels(
             workerPageProblemsUnknown = "The problems could not be read. Open the assessment.",
             workerPagePurposeUnknown = "Assessment",
             studiosTitle = "Studios I work for",
-            studiosEmpty = "None yet. Add the workshops you work for. When a workshop also " +
-                "lists you, the app links you to it.",
+            // "Other": a manager's own workshop is the account itself, never an entry here
+            // (Nathan, 17 November 2026).
+            studiosEmpty = "None yet. Add any other workshops you work for. Your own " +
+                "workshop is already included. When a workshop also lists you, the app " +
+                "links you to it.",
             studioAddTitle = "Add a studio",
             studioEditTitle = "Edit studio",
             studioNameHint = "Workshop or owner's name",
