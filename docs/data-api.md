@@ -212,7 +212,7 @@ manager on a labelled piece, or by the maker on one that is not labelled.
 ## Tools
 
 Since v0.6.0 (V35) a tool on a fundi's list is owned by the `worker` (the account itself),
-the `manager`, the `studio`, or is a `rental`; `none` and `unknown` are unchanged. Answers
+the `studio`, or is a `rental`; `none` and `unknown` are unchanged. Answers
 given before V35 were rewritten: `owned` became `worker` and `borrowed` became `rental`.
 
 An assessment of a piece made from v0.6.0 on has `tools`: one row per tool to hand when it

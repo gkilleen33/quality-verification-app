@@ -15,7 +15,7 @@ class InferredToolsTest {
 
     private val workersList = listOf(
         OwnedTool(ToolKind.HAND_SAW, ToolOwnership.WORKER),
-        OwnedTool(ToolKind.CLAMPS, ToolOwnership.MANAGER),
+        OwnedTool(ToolKind.CLAMPS, ToolOwnership.STUDIO),
         OwnedTool(ToolKind.ROUTER, ToolOwnership.STUDIO),
         OwnedTool(ToolKind.SANDER, ToolOwnership.RENTAL),
         OwnedTool(ToolKind.DRILL, ToolOwnership.NONE),
@@ -40,7 +40,7 @@ class InferredToolsTest {
             listOf(
                 InferredTools.Row(ToolKind.HAND_SAW, InferredTools.MAKER, ToolOwnership.WORKER),
                 InferredTools.Row(ToolKind.ROUTER, InferredTools.MAKER, ToolOwnership.STUDIO),
-                InferredTools.Row(ToolKind.CLAMPS, InferredTools.MAKER, ToolOwnership.MANAGER),
+                InferredTools.Row(ToolKind.CLAMPS, InferredTools.MAKER, ToolOwnership.STUDIO),
                 InferredTools.Row(ToolKind.SANDER, InferredTools.MAKER, ToolOwnership.RENTAL),
                 InferredTools.Row(ToolKind.PLANE_NO4, InferredTools.STUDIO, ToolOwnership.STUDIO),
                 InferredTools.Row(ToolKind.CIRCULAR_SAW, InferredTools.STUDIO, ToolOwnership.WORKER),
