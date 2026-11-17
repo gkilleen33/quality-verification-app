@@ -26,6 +26,7 @@ import com.qualityverifier.data.mpesa.MpesaPreference
 import com.qualityverifier.data.mpesa.MpesaRepository
 import com.qualityverifier.data.reports.ReportApi
 import com.qualityverifier.data.reports.ReportClient
+import com.qualityverifier.data.session.ReviewAnswers
 import com.qualityverifier.data.session.RoomSessionRepository
 import com.qualityverifier.data.session.SessionRepository
 import com.qualityverifier.data.sync.AccountActions
@@ -287,6 +288,9 @@ class AppContainer(
      */
     val studioDays: StudioDays = StudioDays(database.sessionDao(), syncClient)
 
+    /** A tester's "Was this review helpful?" after a Fundi Bora verdict (V36). */
+    val reviewAnswers: ReviewAnswers = ReviewAnswers(database.sessionDao(), syncClient)
+
     val assessmentSync: AssessmentSync = AssessmentSync(
         client = syncClient,
         sessions = sessionRepository,
@@ -298,6 +302,7 @@ class AppContainer(
         // Same rule as the roster: an app on Fundi Bora's endpoint is the one that reads.
         mpesa = if (rosterEnabled) mpesa::push else null,
         studioDays = studioDays.takeIf { rosterEnabled },
+        reviewAnswers = reviewAnswers.takeIf { rosterEnabled },
     )
 
     /** True when this account is one of our evaluators. Read from the cached profile. */
@@ -450,6 +455,7 @@ class AppContainer(
             rosterEnabled = rosterEnabled,
             mpesa = if (rosterEnabled) mpesaAs::push else null,
             studioDays = StudioDays(database.sessionDao(), client).takeIf { rosterEnabled },
+            reviewAnswers = ReviewAnswers(database.sessionDao(), client).takeIf { rosterEnabled },
         )
     }
 

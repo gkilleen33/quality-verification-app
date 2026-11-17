@@ -13,6 +13,7 @@ import com.qualityverifier.data.fundi.FundiProfiles
 import com.qualityverifier.data.fundi.ProfileOutcome
 import com.qualityverifier.data.location.LocationSource
 import com.qualityverifier.data.session.PieceStudioChoice
+import com.qualityverifier.data.session.ReviewAnswers
 import com.qualityverifier.data.session.SessionRepository
 import com.qualityverifier.data.workers.StudioDays
 import com.qualityverifier.data.workers.StudioRepository
@@ -144,7 +145,26 @@ class AssessViewModel(
     private val studioList: StudioRepository? = null,
     /** "Which studio are you at today?" (row 9). Null in tests about conversations. */
     private val studioDays: StudioDays? = null,
+    /** Whether this account is one of our testers, who are asked "Was this review helpful?" (row 7). */
+    val isTester: Boolean = false,
+    /** Where a tester's answer is kept and sent. Null in tests about conversations. */
+    private val reviewAnswers: ReviewAnswers? = null,
 ) : ViewModel() {
+
+    /**
+     * The tester's answer to "Was this review helpful?" for this assessment, or null before
+     * one. One per assessment, the first kept; the card shows after a verdict until then.
+     */
+    val reviewHelpful: StateFlow<Boolean?> =
+        (reviewAnswers?.answerFor(sessionId) ?: flowOf(null))
+            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
+
+    /** Records the tester's Yes or No. Never added to the conversation, so Claude never sees it. */
+    fun answerReviewHelpful(helpful: Boolean) {
+        val answers = reviewAnswers ?: return
+        if (!isTester) return
+        viewModelScope.launch { answers.answer(sessionId, helpful) }
+    }
 
     /** Live entries of "Studios I work for", read from the phone as stored. */
     private val liveStudios = (studioList?.observeStudios() ?: flowOf(emptyList()))
@@ -182,6 +202,15 @@ class AssessViewModel(
     val messages: StateFlow<List<ChatMessage>> =
         sessions.observeMessages(sessionId)
             .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    /**
+     * The server's number for each synced photo, by path, read again whenever the
+     * conversation changes (row 19): a defect names its photo by that number.
+     */
+    val photoNumbers: StateFlow<Map<String, Int>> =
+        sessions.observeMessages(sessionId)
+            .map { sessions.photoNumbers(sessionId) }
+            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyMap())
 
     private val _sending = MutableStateFlow(false)
     val sending: StateFlow<Boolean> = _sending.asStateFlow()
@@ -746,6 +775,8 @@ class AssessViewModel(
                     givenLabel = givenLabel,
                     studioList = container.studioRepository,
                     studioDays = container.studioDays,
+                    isTester = container.isTester,
+                    reviewAnswers = container.reviewAnswers,
                 )
             }
         }

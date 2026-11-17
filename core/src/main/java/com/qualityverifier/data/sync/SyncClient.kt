@@ -333,6 +333,32 @@ class SyncClient(
     }
 
     /**
+     * A tester's "Was this review helpful?" (V36). True when the server holds an answer, its
+     * own first one included, and also when it never will: a 403 (not a tester) or a 404
+     * (not this account's verdict) is dropped, as [submitTesterFeedback] drops a review.
+     */
+    suspend fun answerReviewHelpful(sessionId: String, helpful: Boolean): Boolean = withContext(io) {
+        val body = """{"helpful":$helpful}""".toRequestBody(JSON)
+        authenticated { token ->
+            Request.Builder().url(baseUrl + "v1/fundi/sessions/" + sessionId + "/helpful")
+                .addHeader("Authorization", "Bearer $token").put(body).build()
+        }?.use { response ->
+            when {
+                response.isSuccessful -> true
+                response.code == UPGRADE_REQUIRED -> false
+                // New terms to agree to: the answer is kept and sent once the tester has
+                // agreed. Peeked, as FundiProfileClient does, so the body stays readable.
+                response.code == 403 && response.peekBody(512).string().contains("terms_required") -> false
+                response.code in 400..499 -> {
+                    Log.w(TAG, "Server refused a review answer (${response.code}); dropping it")
+                    true
+                }
+                else -> false
+            }
+        } ?: false
+    }
+
+    /**
      * `{"studio_id": ...}`. A null id is written out, since encodeDefaults is off and would
      * drop it; absent and null read the same to the server, but the body says what is meant.
      */

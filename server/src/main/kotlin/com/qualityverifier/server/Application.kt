@@ -62,6 +62,9 @@ import com.qualityverifier.server.db.PostgresFundiStore
 import com.qualityverifier.server.db.BenchStore
 import com.qualityverifier.server.db.PostgresBenchStore
 import com.qualityverifier.server.routes.benchRoutes
+import com.qualityverifier.server.db.HelpfulStore
+import com.qualityverifier.server.db.PostgresHelpfulStore
+import com.qualityverifier.server.routes.helpfulRoutes
 import com.qualityverifier.server.db.PostgresAuthStore
 import com.qualityverifier.domain.Audience
 import com.qualityverifier.server.routes.ErrorResponse
@@ -152,6 +155,7 @@ fun main() {
             testerDailyAssessmentLimit = config.testerDailyAssessmentLimit,
             fundiDailyAssessmentLimit = config.fundiDailyAssessmentLimit,
             bench = PostgresBenchStore(database.source),
+            helpful = PostgresHelpfulStore(database.source),
         )
     } else {
         log.warn("Chat is disabled: needs a database and KAGUA_ANTHROPIC_API_KEY.")
@@ -411,6 +415,11 @@ class Chat(
      * client, prompts and photo store as an assessment. Null mounts no bench route.
      */
     val bench: BenchStore? = null,
+    /**
+     * A tester's "Was this review helpful?" after a Fundi Bora verdict (V36). Beside
+     * [feedback], Kagua's critique, which it does not replace. Null mounts no route.
+     */
+    val helpful: HelpfulStore? = null,
 )
 
 @Serializable
@@ -567,6 +576,8 @@ fun Application.module(
             syncRoutes(it.store, auth.store, auth.accessTokens, it.blobs, it.feedback)
             // The bench photo at setup (V35): a Claude call outside any assessment.
             it.bench?.let { bench -> benchRoutes(bench, it.store, auth.store, it.blobs, it.claude, it.prompts) }
+            // A tester's Yes or No after a Fundi Bora verdict (V36). Never read for a request.
+            it.helpful?.let { helpful -> helpfulRoutes(helpful, auth.store) }
         }
 
         // Also behind auth, but deliberately not inside the `chat` block: the setup

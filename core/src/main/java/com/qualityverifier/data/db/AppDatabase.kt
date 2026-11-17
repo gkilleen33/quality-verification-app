@@ -21,8 +21,9 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         MpesaUnreadDayEntity::class,
         StudioEntity::class,
         StudioDayEntity::class,
+        ReviewHelpfulEntity::class,
     ],
-    version = 16,
+    version = 17,
     exportSchema = true,
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -319,10 +320,28 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        /**
+         * Fundi Bora v0.6.0: a tester's "Was this review helpful?" answers (server V36), and
+         * each synced photo's number in its conversation as the server counts it, so a
+         * defect's photo is found even when the sync could not download an earlier one.
+         * Existing photos have no number and are counted in order, as before.
+         */
+        val MIGRATION_16_17 = object : Migration(16, 17) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE attachments ADD COLUMN photoNumber INTEGER")
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `review_helpful` (" +
+                        "`sessionId` TEXT NOT NULL, `helpful` INTEGER NOT NULL, " +
+                        "`answeredAt` INTEGER NOT NULL, `syncedAt` INTEGER, PRIMARY KEY(`sessionId`))"
+                )
+            }
+        }
+
         val MIGRATIONS = arrayOf(
             MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6,
             MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11,
             MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16,
+            MIGRATION_16_17,
         )
     }
 }

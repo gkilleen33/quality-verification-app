@@ -9,6 +9,7 @@ import com.qualityverifier.data.session.SyncedSession
 import com.qualityverifier.data.workers.ServerStudio
 import com.qualityverifier.data.workers.ServerWorker
 import com.qualityverifier.data.workers.StudioDays
+import com.qualityverifier.data.session.ReviewAnswers
 import com.qualityverifier.data.workers.StudioRepository
 import com.qualityverifier.data.workers.WorkerRepository
 import com.qualityverifier.domain.Employment
@@ -55,6 +56,8 @@ class AssessmentSync(
     private val mpesa: (suspend () -> Int)? = null,
     /** Fundi Bora's answers to "Which studio are you at today?" (V34). Null in Kagua. */
     private val studioDays: StudioDays? = null,
+    /** Fundi Bora testers' "Was this review helpful?" answers (V36). Null in Kagua. */
+    private val reviewAnswers: ReviewAnswers? = null,
     private val io: CoroutineDispatcher = Dispatchers.IO,
 ) {
 
@@ -135,14 +138,21 @@ class AssessmentSync(
                 continue
             }
 
+            // Each photo keeps the number the server gives it, counted across the whole
+            // conversation (PhotoShelf), whether or not it downloads: a defect names its
+            // photo by that number (row 19), and a gap must not shift the rest.
+            var photoNumber = 0
             val messages = detail.messages.map { message ->
+                val fetched = message.blobs.map { sha -> ++photoNumber to fetchPhoto(summary.id, sha) }
+                    .filter { it.second != null }
                 SyncedMessage(
                     id = message.id,
                     role = if (message.role == "USER") Role.USER else Role.ASSISTANT,
                     text = message.text,
                     ordinal = message.ordinal,
                     createdAt = message.createdAt,
-                    attachmentPaths = message.blobs.mapNotNull { fetchPhoto(summary.id, it) },
+                    attachmentPaths = fetched.map { it.second!! },
+                    attachmentNumbers = fetched.map { it.first },
                     composed = message.composed,
                 )
             }
@@ -209,7 +219,7 @@ class AssessmentSync(
 
         // Reviews go up before anything comes down, same as deletes: they are the phone's
         // own unsent work, and a pull failing should not strand them for another cycle.
-        val reviews = pushReviews()
+        val reviews = pushReviews() + (reviewAnswers?.push() ?: 0)
 
         // Names too, and before the pull for the same reason: a pull that landed first
         // would write the server's older name over the one the maker just typed.

@@ -73,6 +73,29 @@ fun assessmentPhotos(
 }
 
 /**
+ * The file of photo [number] as the server and Claude number them (v0.6.0, row 19): from 1,
+ * in the order the photographs were attached across the whole conversation (`PhotoShelf`).
+ * Null when the conversation on this phone has no such photo, and then the defect has no
+ * "See it on the photo".
+ *
+ * Counted over every attachment of the maker's turns, before [assessmentPhotos] drops a
+ * repeated file, so the numbers match the server's. A synced photo has the server's own
+ * number in [synced] (`SessionRepository.photoNumbers`, by path), so one the sync could not
+ * download leaves a gap instead of shifting the rest; a photo taken here follows the one
+ * before it.
+ */
+fun photoNumbered(messages: List<ChatMessage>, number: Int, synced: Map<String, Int> = emptyMap()): String? {
+    if (number < 1) return null
+    var counted = 0
+    for (attachment in messages.asSequence().filter { it.role == Role.USER }.flatMap { it.attachments.asSequence() }) {
+        counted = synced[attachment.path] ?: (counted + 1)
+        if (counted == number) return attachment.path
+        if (counted > number) return null
+    }
+    return null
+}
+
+/**
  * The titles of the shots a submission turn's [count] photographs answer, in order, or
  * nulls when the turn cannot be read against [plan].
  *

@@ -108,6 +108,21 @@ class PhotoFrameTest {
         assertTrue(frame.takesDrag(atEdge, dx = -5f, dy = 50f))
     }
 
+    // A defect's photo opens zoomed on its mark (v0.6.0, row 19): the mark at the centre of
+    // the screen when the edges allow it, and as near as they allow when it is at an edge.
+    @Test
+    fun `a mark opens zoomed with the mark at the centre, or as near as the edges allow`() {
+        // Inside the limits: at scale 3 the 810 px fitted height pans at most 115 px.
+        val inner = frame.focusOn(0.4f, 0.48f)
+        assertEquals(frame.doubleTapScale, inner.scale)
+        val (px, py) = frame.pointAt(0.4f, 0.48f)
+        assertEquals(Math.round(px) to Math.round(py), photoPointUnder(inner, 0f, 0f))
+
+        val corner = frame.focusOn(0f, 0f)
+        assertEquals(frame.maxPanX(corner.scale), corner.panX)
+        assertEquals(frame.maxPanY(corner.scale), corner.panY)
+    }
+
     /** The photo point, in fitted-photo pixels from its centre, shown at screen point ([x], [y]). */
     private fun photoPointUnder(position: PhotoPosition, x: Float, y: Float): Pair<Int, Int> =
         Math.round((x - position.panX) / position.scale) to Math.round((y - position.panY) / position.scale)

@@ -271,12 +271,13 @@ class RoomSessionRepository(
         messages.forEach { message ->
             if (message.attachmentPaths.isEmpty()) return@forEach
             dao.upsertAttachments(
-                message.attachmentPaths.map { path ->
+                message.attachmentPaths.mapIndexed { index, path ->
                     AttachmentEntity(
                         id = UUID.randomUUID().toString(),
                         messageId = message.id,
                         relativePath = images.relativePathOf(java.io.File(path)),
                         mimeType = "image/jpeg",
+                        photoNumber = message.attachmentNumbers.getOrNull(index),
                     )
                 }
             )
@@ -350,6 +351,9 @@ class RoomSessionRepository(
         dao.insertPieceIfAbsent(PieceEntity(id = pieceId))
         dao.setPieceStudio(pieceId, studioId, now())
     }
+
+    override suspend fun photoNumbers(sessionId: String): Map<String, Int> =
+        dao.photoNumbers(sessionId).associate { images.resolve(it.relativePath).absolutePath to it.photoNumber }
 
     override suspend fun unsyncedPieceStudios(): List<PieceStudioChange> =
         dao.unsyncedPieceStudios().mapNotNull { piece ->

@@ -54,6 +54,9 @@ interface ApiStore {
     /** Every answer to "Which studio are you at today?" (V34), by day, then account. */
     suspend fun studioDays(limit: Int, offset: Int): List<ApiStudioDay>
 
+    /** Testers' answers to "Was this review helpful?" (V36), oldest first. */
+    suspend fun reviewHelpful(limit: Int, offset: Int): List<ApiReviewHelpful>
+
     /** Every bench photo (V35), oldest first, with its point and the draft Claude made. */
     suspend fun benchPhotos(limit: Int, offset: Int): List<ApiBenchPhoto>
 
@@ -445,6 +448,31 @@ class PostgresApiStore(private val dataSource: DataSource) : ApiStore {
                     userId = rows.getString(1),
                     day = rows.getString(2),
                     studioEntryId = rows.getString(3),
+                    answeredAt = rows.getLong(4),
+                )
+                out
+            }
+        }
+    }
+
+    override suspend fun reviewHelpful(limit: Int, offset: Int): List<ApiReviewHelpful> = query { connection ->
+        connection.prepareStatement(
+            """
+            select h.session_id::text, h.user_id::text, h.helpful,
+                   (extract(epoch from h.answered_at) * 1000)::bigint
+              from fundi_review_helpful h
+             order by h.answered_at, h.session_id
+             limit ? offset ?
+            """.trimIndent()
+        ).use { statement ->
+            statement.setInt(1, limit)
+            statement.setInt(2, offset)
+            statement.executeQuery().use { rows ->
+                val out = mutableListOf<ApiReviewHelpful>()
+                while (rows.next()) out += ApiReviewHelpful(
+                    sessionId = rows.getString(1),
+                    userId = rows.getString(2),
+                    helpful = rows.getBoolean(3),
                     answeredAt = rows.getLong(4),
                 )
                 out

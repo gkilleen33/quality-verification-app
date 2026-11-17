@@ -1,6 +1,9 @@
 package com.qualityverifier.fundi.ui.coach
 
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.material3.TextButton
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -57,6 +60,11 @@ fun DiagnosisCard(
      */
     reportLabels: ReportLabels,
     modifier: Modifier = Modifier,
+    /**
+     * Opens the photo a finding names, zoomed on its mark (v0.6.0, row 19). Null for a
+     * finding with no mark, or whose photo is not on this phone: it then has no button.
+     */
+    showOnPhoto: (Finding) -> (() -> Unit)? = { null },
 ) {
     Card(
         modifier = modifier.fillMaxWidth(),
@@ -82,7 +90,7 @@ fun DiagnosisCard(
             // chooses what to work on; the fix plan below is for the first.
             diagnosis.findings.filter { it.title.isNotBlank() }.forEachIndexed { index, finding ->
                 if (index > 0) HorizontalDivider(Modifier.padding(vertical = 4.dp))
-                FindingDetail(finding, labels, reportLabels)
+                FindingDetail(finding, labels, reportLabels, showOnPhoto(finding))
             }
 
             if (diagnosis.awaitingCheck) {
@@ -98,9 +106,13 @@ private fun FindingDetail(
     finding: Finding,
     labels: FundiLabels,
     reportLabels: ReportLabels,
+    /** Opens the finding's photo at its mark; null draws no button. */
+    onShowOnPhoto: (() -> Unit)?,
 ) {
     Row(
-        Modifier.fillMaxWidth(),
+        // The whole title is a way in too: a maker reading "Gap at the back left joint"
+        // taps the problem, not a button below it.
+        Modifier.fillMaxWidth().let { if (onShowOnPhoto != null) it.clickable(onClick = onShowOnPhoto) else it },
         horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         Text(
@@ -109,6 +121,11 @@ private fun FindingDetail(
             modifier = Modifier.weight(1f),
         )
         SeverityTag(finding.severity, reportLabels::severity)
+    }
+    onShowOnPhoto?.let { show ->
+        TextButton(onClick = show, contentPadding = PaddingValues(0.dp)) {
+            Text(labels.seeOnPhoto)
+        }
     }
 
     // The chain the whole card exists for: observation, then the step in the making, then

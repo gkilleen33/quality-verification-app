@@ -46,6 +46,7 @@ milliseconds throughout.
 | `GET /assessments` | assessments, newest last, each with the `app_version_code` that started it, its `purpose`, `language`, `piece_id`, `prompt_sha`, `assessed_as` and `final` (V34). Filters: `user`, `item`, `testers=1`, `updated_since` |
 | `GET /assessments/{id}` | one assessment with its messages, photo hashes in order, each photo's camera metadata, its `problems`, the evaluator's critique if there is one, and its `tools` (V35, see below) |
 | `GET /tester-feedback` | every evaluator critique, keyed on `session_id` |
+| `GET /review-helpful` | each Fundi Bora tester's answer to "Was this review helpful?" after a verdict (V36): `session_id`, `user_id` (null once the tester's account is deleted), `helpful`, `answered_at`. One per assessment, the first answer given |
 | `GET /pieces` | every piece a Fundi Bora maker has assessed: `id`, `user_id`, `item_type_id`, `created_at`, and its studio label, `studio_entry_id` and `studio_chosen_at` (V34). No name (see below) |
 | `GET /piece-studio-changes` | each change of a piece's studio label after it was made (V34): `piece_id`, `user_id`, `kind` (`first_choice` or `correction`), `old_studio_entry_id`, `new_studio_entry_id`, `at` |
 | `GET /studio-days` | each answer to "Which studio are you at today?" (V34): `user_id`, `day` (Nairobi date), `studio_entry_id` (null for the fundi's own workshop), `answered_at` |

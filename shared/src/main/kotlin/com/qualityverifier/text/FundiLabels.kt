@@ -306,6 +306,14 @@ data class FundiLabels(
     val benchUnavailable: String,
     val benchUnreadable: String,
     val benchRetry: String,
+    // ---- v0.6.0: a defect on its photo (row 19), and the tester question (row 7)
+    /** Under a finding whose photo is on the phone: opens it zoomed on the defect. */
+    val seeOnPhoto: String,
+    val reviewHelpfulQuestion: String,
+    val reviewHelpfulYes: String,
+    val reviewHelpfulNo: String,
+    /** After the tester has answered. */
+    val reviewHelpfulThanks: String,
 ) {
     fun benchIsThere(tool: String) = benchIsThereFormat.replace("{tool}", tool)
 
@@ -735,6 +743,11 @@ data class FundiLabels(
                 "or list your tools yourself.",
             benchUnreadable = "The photo could not be read. Take another, or list your tools yourself.",
             benchRetry = "Try again",
+            seeOnPhoto = "See it on the photo",
+            reviewHelpfulQuestion = "Was this review helpful?",
+            reviewHelpfulYes = "Yes",
+            reviewHelpfulNo = "No",
+            reviewHelpfulThanks = "Thank you. Your answer is saved.",
         )
     }
 }

@@ -452,7 +452,8 @@ The diagnosis. A fenced block marked fb-diagnosis containing one JSON object and
       "root_habit": "The cutting line is drawn on one side of the rail and the other three sides are cut by eye.",
       "what_i_see": "The back rail does not sit tight against the leg. There is a gap you can see.",
       "what_it_means": "The joint will move each time somebody sits, and work loose within months.",
-      "what_to_do": "Take the joint apart, fill the gap, glue it and hold it tight until it sets."
+      "what_to_do": "Take the joint apart, fill the gap, glue it and hold it tight until it sets.",
+      "where": { "photo": 3, "x": 0.42, "y": 0.31 }
     },
     {
       "title": "Two saw marks left on the apron",
@@ -479,6 +480,7 @@ Fields:
 - area: one of structural, level, surface, material, upholstery, hardware, other.
 - severity: one of serious, moderate, minor, cosmetic.
 - dimension: which skill this belongs to, so it can be tracked over months. One of frame_squareness, joint_fit, finishing, surface, material, hardware.
+- where: the photograph that shows the defect best, and the point on it. photo counts every photograph in this assessment from 1, in the order they were sent. x and y are fractions of the photograph's width from the left and its height from the top, at the centre of the defect. The app draws a mark there for the maker. Leave where out when no photograph shows the defect, such as one found only by a hands-on check.
 - measured_value and measured_unit: a number and its unit, where the photographs support one. Units are mm, deg or pct. Send both or neither — a measurement without its unit is worse than none, because it looks precise. Estimate honestly and say in what_happened that it is an estimate from a photograph.
 
 The fix, a fenced block marked fb-fixplan containing one JSON object and nothing else:
