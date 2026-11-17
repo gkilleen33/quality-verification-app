@@ -94,9 +94,12 @@ fun BenchScreen(
 
             is SetupViewModel.Bench.Confirm -> {
                 val tool = step.draft[step.index]
+                // Capitalised where the name stands on its own after the colon, lower case
+                // inside "Who owns the hand saw?".
                 val name = ToolKind.fromId(tool.kind)?.let(labels::nameOf) ?: tool.kind
+                val shown = ToolKind.fromId(tool.kind)?.let(labels::displayNameOf) ?: tool.kind
                 if (!step.askingOwner) {
-                    Text(labels.benchIsThere(name), style = MaterialTheme.typography.titleLarge)
+                    Text(labels.benchIsThere(shown), style = MaterialTheme.typography.titleLarge)
                     // Where Claude saw it, so the fundi can check the photo against the bench.
                     if (tool.seen.isNotBlank()) {
                         Text(

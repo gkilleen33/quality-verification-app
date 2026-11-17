@@ -390,6 +390,13 @@ data class FundiLabels(
     fun borrowed(tool: String): String = borrowedFormat.replace("{tool}", tool)
 
     fun nameOf(kind: ToolKind): String = toolNames[kind] ?: kind.id.replace('_', ' ')
+
+    /**
+     * "Hand saw": [nameOf] with its first letter capitalised, for a tool shown on its own as a
+     * heading or list item (Nathan, 17 November 2026: lower case read as informal). Screens
+     * only. The opening turn keeps [nameOf], so the assessment prompt's input is unchanged.
+     */
+    fun displayNameOf(kind: ToolKind): String = nameOf(kind).replaceFirstChar { it.titlecase() }
     fun nameOf(goal: FundiGoal): String = goalNames[goal] ?: goal.id.replace('_', ' ')
 
     /**
