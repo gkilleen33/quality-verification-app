@@ -334,6 +334,8 @@ class RoomSessionRepository(
 
     override suspend fun pieceLabel(pieceId: String): String? = dao.findPiece(pieceId)?.label
 
+    override suspend fun pieceIsForStudio(pieceId: String): Boolean = dao.findPiece(pieceId)?.studioId != null
+
     override suspend fun setPieceLabel(pieceId: String, label: String?) {
         // A row first, for a piece from before Room 11; then the rename as an update, so
         // the piece's studio label (V34) survives it.

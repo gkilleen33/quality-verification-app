@@ -153,6 +153,13 @@ interface SessionRepository {
     suspend fun pieceLabel(pieceId: String): String?
 
     /**
+     * Whether one of this account's pieces is labelled for a studio (V34). False for "My own
+     * job" and for a piece never asked. Decides whether its maker may make the final
+     * assessment (row 27). False in fakes and in Kagua, which has no pieces.
+     */
+    suspend fun pieceIsForStudio(pieceId: String): Boolean = false
+
+    /**
      * Renames a piece, or clears its name with null. Written locally first and sent on
      * the next sync, before the pull, so a name given offline is not overwritten.
      */

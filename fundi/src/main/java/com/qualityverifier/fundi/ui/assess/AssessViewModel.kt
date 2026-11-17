@@ -212,6 +212,33 @@ class AssessViewModel(
             .map { sessions.photoNumbers(sessionId) }
             .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyMap())
 
+    /**
+     * Whether to ask "Is this piece finished?" (Nathan, 17 November 2026): asked of an account
+     * that may make the final assessment a customer report needs (row 27), so a studio owner
+     * who has just assessed the finished piece can send the report without assessing it again.
+     * The server's rule (`ChatStore.pieceFooting`): the maker of a piece not labelled for a
+     * studio, or the manager of the studio a worker's piece is labelled for. Not asked when the
+     * assessment is already the final one. On a new piece the intake skips it when the maker
+     * labels the piece for a studio.
+     */
+    private val _askFinished = MutableStateFlow(false)
+    val askFinished: StateFlow<Boolean> = _askFinished.asStateFlow()
+
+    /** The maker's answer to "Is this piece finished?"; yes makes this the final assessment. */
+    private var finished = false
+
+    fun answerFinished(yes: Boolean) {
+        finished = yes
+    }
+
+    init {
+        if (!isFinal) {
+            viewModelScope.launch {
+                _askFinished.value = !pieceMine || !runCatching { sessions.pieceIsForStudio(pieceId) }.getOrDefault(true)
+            }
+        }
+    }
+
     private val _sending = MutableStateFlow(false)
     val sending: StateFlow<Boolean> = _sending.asStateFlow()
 
@@ -434,7 +461,7 @@ class AssessViewModel(
                         pieceLabel = if (pieceMine) pieceLabel else givenLabel,
                         pieceStudio = studio,
                         pieceMine = pieceMine,
-                        isFinal = isFinal,
+                        isFinal = isFinal || finished,
                     )
                     if (pieceMine) _pieceLabel.value = pieceLabel
                     // Recorded as already sent: the opening turn carries the set, and the

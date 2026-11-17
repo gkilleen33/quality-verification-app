@@ -286,6 +286,11 @@ data class FundiLabels(
     val workerPageFinal: String,
     val reportFinalNeeded: String,
     val reportAssessFinished: String,
+    /** "Is this piece finished?" at the intake, for an account that may make the final assessment. */
+    val intakeFinishedTitle: String,
+    val intakeFinishedHint: String,
+    val intakeFinishedYes: String,
+    val intakeFinishedNo: String,
     /** "Which pieces?" before a worker's work report (row 22). */
     val reportWhichPieces: String,
     val reportWhichPiecesHint: String,
@@ -738,6 +743,10 @@ data class FundiLabels(
             reportFinalNeeded = "Before a customer report, assess the finished piece once more. " +
                 "Any problem it finds is listed in the report.",
             reportAssessFinished = "Assess the finished piece",
+            intakeFinishedTitle = "Is this piece finished?",
+            intakeFinishedHint = "If it is, you can send this assessment to the customer in a report.",
+            intakeFinishedYes = "Yes, it is finished",
+            intakeFinishedNo = "No, I am still making it",
             reportWhichPieces = "Which pieces?",
             reportWhichPiecesHint = "The report covers the pieces you choose.",
             benchTitle = "Photograph your bench",

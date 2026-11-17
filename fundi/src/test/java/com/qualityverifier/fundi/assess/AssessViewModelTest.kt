@@ -291,6 +291,57 @@ class AssessViewModelTest {
         assertFalse(sessions.userTurns.single().text.contains("What you recorded the last time"))
     }
 
+    // "Is this piece finished?" (Nathan, 17 November 2026): a yes from an account that may
+    // make the final assessment makes this one final, so the customer report needs no other.
+    @Test
+    fun `the maker of a piece not for a studio is asked whether it is finished, and a yes makes it final`() = runTest {
+        val sessions = FakeSessions()
+        val model = model(sessions = sessions, pieceId = "p1", returning = true)
+        advanceUntilIdle()
+        assertTrue(model.askFinished.value)
+
+        model.answerFinished(true)
+        model.start(FundiIntake(AssessmentLanguage.ENGLISH, FundiPurpose.REEVALUATE), "/tmp/whole.jpg")
+        advanceUntilIdle()
+        assertTrue("final", sessions.createdWith.single().third)
+    }
+
+    @Test
+    fun `a no, or no answer, leaves the assessment ordinary`() = runTest {
+        val sessions = FakeSessions()
+        val model = model(sessions = sessions, pieceId = "p1", returning = true)
+        advanceUntilIdle()
+
+        model.answerFinished(true)
+        model.answerFinished(false)
+        model.start(FundiIntake(AssessmentLanguage.ENGLISH, FundiPurpose.REEVALUATE), "/tmp/whole.jpg")
+        advanceUntilIdle()
+        assertFalse("final", sessions.createdWith.single().third)
+    }
+
+    @Test
+    fun `the maker of a piece labelled for a studio is not asked`() = runTest {
+        val sessions = FakeSessions().apply { forStudio = true }
+        val model = model(sessions = sessions, pieceId = "p1", returning = true)
+        advanceUntilIdle()
+        assertFalse(model.askFinished.value)
+    }
+
+    @Test
+    fun `the studio's manager on a worker's piece is asked, and the final assessment from the report is not`() = runTest {
+        fun managerModel(isFinal: Boolean) = AssessViewModel(
+            sessionId = "m1", itemType = ItemType.WOODEN_TABLE, pieceId = "worker-piece", returning = true,
+            sessions = FakeSessions().apply { forStudio = true }, chat = FakeChat(), images = FakeImages(),
+            profiles = FakeProfiles(), workers = FakeWorkers(), io = dispatcher,
+            isFinal = isFinal, pieceMine = false, givenLabel = "Kamau's stool",
+        )
+        val asked = managerModel(isFinal = false)
+        val alreadyFinal = managerModel(isFinal = true)
+        advanceUntilIdle()
+        assertTrue(asked.askFinished.value)
+        assertFalse(alreadyFinal.askFinished.value)
+    }
+
     @Test
     fun `a skipped name passes no name, and the intake prefills the existing one`() = runTest {
         val sessions = FakeSessions().apply { existingLabel = "Old stool" }
@@ -1059,6 +1110,10 @@ class AssessViewModelTest {
 
         /** The studio answer, whose piece, and the final flag each session was created with (v0.6.0). */
         val createdWith = mutableListOf<Triple<com.qualityverifier.data.session.PieceStudioChoice, Boolean, Boolean>>()
+
+        /** Whether this account's piece is labelled for a studio (V34). */
+        var forStudio = false
+        override suspend fun pieceIsForStudio(pieceId: String) = forStudio
 
         /** The name this piece already has, for the prefilled intake. */
         var existingLabel: String? = null
