@@ -38,6 +38,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import coil.compose.AsyncImage
+import com.qualityverifier.data.session.PieceStudioChoice
 import com.qualityverifier.domain.ChatMessage
 import com.qualityverifier.domain.FundiIntake
 import com.qualityverifier.domain.FundiPurpose
@@ -67,7 +68,7 @@ import com.qualityverifier.ui.turn.UnansweredTurnRow
 import java.io.File
 
 /** Which part of the loop the maker is in. */
-private enum class Stage { LOADING, INTAKE, OPENING_PHOTO, TALKING, SHOOTING, TESTING, INSPECTING }
+private enum class Stage { LOADING, TODAY, INTAKE, OPENING_PHOTO, TALKING, SHOOTING, TESTING, INSPECTING }
 
 /**
  * One assessment, end to end: intake, opening photograph, conversation.
@@ -82,10 +83,16 @@ fun AssessScreen(
     pieceId: String,
     returning: Boolean,
     onDone: () -> Unit,
+    /** The final assessment of the finished piece, before a customer report (v0.6.0, row 27). */
+    isFinal: Boolean = false,
+    /** False for a linked worker's piece, assessed from the worker's page (row 11). */
+    pieceMine: Boolean = true,
+    /** The worker's name for their piece, when [pieceMine] is false. */
+    givenLabel: String? = null,
 ) {
     val container = fundiContainer()
     val viewModel: AssessViewModel = viewModel(
-        factory = AssessViewModel.factory(container, sessionId, itemType, pieceId, returning),
+        factory = AssessViewModel.factory(container, sessionId, itemType, pieceId, returning, isFinal, pieceMine, givenLabel),
     )
 
     val existing by viewModel.existing.collectAsState()
@@ -103,6 +110,8 @@ fun AssessScreen(
     val openingSent by viewModel.openingSent.collectAsState()
     val processing by viewModel.processing.collectAsState()
     val unanswered by viewModel.unansweredTurn.collectAsState()
+    val studios by viewModel.studios.collectAsState()
+    val askToday by viewModel.askToday.collectAsState()
 
     val labels = FundiLabels.ENGLISH
     // The capture pipeline and the verdict speak ReportLabels, and follow the language
@@ -114,17 +123,20 @@ fun AssessScreen(
     var intake by remember { mutableStateOf<FundiIntake?>(null) }
     var name by remember { mutableStateOf<String?>(null) }
     var workedOn by remember { mutableStateOf<List<WorkerSlot>>(emptyList()) }
+    var studio by remember { mutableStateOf<PieceStudioChoice>(PieceStudioChoice.NotAsked) }
 
-    // A finished assessment opens on its conversation; a new one on its intake. Decided
-    // once it is known which this is, never from the message list, which arrives late.
-    // An intake already sent counts as finished: `existing` is read once when the view
-    // model starts, and a screen rebuilt after the intake went out (a rotation resets
-    // `stage`) would otherwise walk the maker through the intake again.
-    LaunchedEffect(existing, openingSent) {
+    // A finished assessment opens on its conversation; a new one on its intake, after
+    // "Which studio are you at today?" on the day's first. Decided once it is known which
+    // this is, never from the message list, which arrives late. An intake already sent
+    // counts as finished: `existing` is read once when the view model starts, and a screen
+    // rebuilt after the intake went out (a rotation resets `stage`) would otherwise walk
+    // the maker through the intake again.
+    LaunchedEffect(existing, openingSent, askToday) {
         if (stage != Stage.LOADING) return@LaunchedEffect
         when {
             existing == true || openingSent -> stage = Stage.TALKING
-            existing == false -> stage = Stage.INTAKE
+            existing == false && askToday == true -> stage = Stage.TODAY
+            existing == false && askToday == false -> stage = Stage.INTAKE
         }
     }
 
@@ -167,6 +179,16 @@ fun AssessScreen(
         when (stage) {
             Stage.LOADING -> Box(Modifier.fillMaxSize())
 
+            Stage.TODAY -> StudioTodayQuestion(
+                labels = labels,
+                studios = studios,
+                onAnswer = { answer ->
+                    viewModel.answerToday(answer)
+                    stage = Stage.INTAKE
+                },
+                onCancel = onDone,
+            )
+
             Stage.INTAKE -> IntakeFlow(
                 labels = labels,
                 returning = returning,
@@ -176,13 +198,17 @@ fun AssessScreen(
                 roster = roster,
                 initialWorkers = previousWorkers,
                 onAddWorker = viewModel::addWorker,
-                onComplete = { answered, pieceLabel, people ->
+                onComplete = { answered, pieceLabel, people, forStudio ->
                     intake = answered
                     name = pieceLabel
                     workedOn = people
+                    studio = forStudio
                     stage = Stage.OPENING_PHOTO
                 },
                 onCancel = onDone,
+                studios = studios,
+                askName = pieceMine,
+                fixedPurpose = if (isFinal) FundiPurpose.REEVALUATE else null,
             )
 
             Stage.OPENING_PHOTO -> {
@@ -199,7 +225,7 @@ fun AssessScreen(
                     onCaptured = { file ->
                         viewModel.onPhotoCaptured(
                             file,
-                            PhotoTarget.Opening(answered, name, workedOn),
+                            PhotoTarget.Opening(answered, name, workedOn, studio),
                         )
                     },
                     onKeep = viewModel::keepReviewedPhoto,
@@ -215,7 +241,7 @@ fun AssessScreen(
                         {
                             viewModel.leaveCamera()
                             stage = Stage.TALKING
-                            viewModel.start(answered, null, name, workedOn)
+                            viewModel.start(answered, null, name, workedOn, studio)
                         }
                     } else {
                         null

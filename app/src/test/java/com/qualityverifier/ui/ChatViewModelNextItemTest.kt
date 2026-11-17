@@ -310,6 +310,9 @@ class ChatViewModelNextItemTest {
             pieceId: String?,
             intakeCode: String?,
             pieceLabel: String?,
+            pieceStudio: com.qualityverifier.data.session.PieceStudioChoice,
+            pieceMine: Boolean,
+            isFinal: Boolean,
         ) {
             createdFrom = previousSessionId
             createdIntake = intake?.takeIf { it.isComplete }

@@ -636,6 +636,7 @@ class SyncRouteTest {
             previousSessionId: String?, intakeAnswers: String?, promptSha: String?,
             audience: Audience,
             dailyLimit: Int, testerDailyLimit: Int, pieceId: String?, pieceLabel: String?,
+            pieceStudio: com.qualityverifier.server.db.PieceStudio, isFinal: Boolean,
             workers: List<WorkerSlot>,
             appVersionCode: Int?,
         ) = SessionAccess.Ok(created = true)

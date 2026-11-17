@@ -234,6 +234,9 @@ class ChatViewModelUnansweredTurnTest {
             pieceId: String?,
             intakeCode: String?,
             pieceLabel: String?,
+            pieceStudio: com.qualityverifier.data.session.PieceStudioChoice,
+            pieceMine: Boolean,
+            isFinal: Boolean,
         ) {
             sessionExists = true
         }

@@ -113,6 +113,16 @@ data class ApiAssessment(
      * of the protocol wrote the replies. Null where nothing recorded it.
      */
     @SerialName("prompt_sha") val promptSha: String? = null,
+    /**
+     * On what footing [userId] assessed the piece (V34), written when the assessment
+     * started: `maker` for the piece's own maker, `manager` for the account that ran the
+     * studio the piece was labelled for (a manager assessing a linked worker's piece, row
+     * 11). Null for Kagua and for an assessment of no piece. A manager's wrong pick, a
+     * different piece from the one the worker logged, is found among the `manager` rows.
+     */
+    @SerialName("assessed_as") val assessedAs: String? = null,
+    /** The final assessment of the finished piece, made before a customer report (V34, row 27). */
+    val final: Boolean = false,
 )
 
 /**
@@ -261,6 +271,48 @@ data class ApiPiece(
     @SerialName("user_id") val userId: String,
     @SerialName("item_type_id") val itemTypeId: String,
     @SerialName("created_at") val createdAt: Long,
+    /**
+     * The studio the piece is for (V34, row 1): an entry of the maker's own list of studios
+     * they work for (`worker_studios.id`), or null for "My own job" and for a piece never
+     * asked. The entry's number is what links it to the studio's account
+     * (`/api/v1/worker-links`).
+     */
+    @SerialName("studio_entry_id") val studioEntryId: String? = null,
+    /**
+     * When the maker answered "Which studio is this for?": at creation, or later for a piece
+     * made before v0.6.0. Null for a piece never asked, which is not "My own job".
+     */
+    @SerialName("studio_chosen_at") val studioChosenAt: Long? = null,
+)
+
+/**
+ * One change of a piece's studio label after the piece was made (V34, row 2): the first
+ * answer for a piece never asked (`first_choice`), or its one `correction`. Append-only.
+ */
+@Serializable
+data class ApiPieceStudioChange(
+    val id: Long,
+    @SerialName("piece_id") val pieceId: String,
+    /** The maker, who made the change. */
+    @SerialName("user_id") val userId: String,
+    /** `first_choice` or `correction`. */
+    val kind: String,
+    /** Null for none: a first choice, or "My own job". */
+    @SerialName("old_studio_entry_id") val oldStudioEntryId: String?,
+    @SerialName("new_studio_entry_id") val newStudioEntryId: String?,
+    /** The server's clock. */
+    val at: Long,
+)
+
+/** One answer to "Which studio are you at today?" (V34, row 9): one per account and Nairobi day. */
+@Serializable
+data class ApiStudioDay(
+    @SerialName("user_id") val userId: String,
+    /** Nairobi date, "2026-11-16". */
+    val day: String,
+    /** An entry of the account's own list of studios, or null for its own workshop. */
+    @SerialName("studio_entry_id") val studioEntryId: String?,
+    @SerialName("answered_at") val answeredAt: Long,
 )
 
 /**

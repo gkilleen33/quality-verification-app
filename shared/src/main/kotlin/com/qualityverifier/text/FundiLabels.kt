@@ -201,7 +201,7 @@ data class FundiLabels(
     /** The newest diagnosis would not decode: not known, which is not the same as none. */
     val workerPageProblemsUnknown: String,
     val workerPagePurposeUnknown: String,
-    // ---- "Studios I work at" (V31), and the server's "Linked" mark on both lists
+    // ---- "Studios I work for" (V31; "work at" until v0.6.0), and the server's "Linked" mark on both lists
     val studiosTitle: String,
     val studiosEmpty: String,
     val studioAddTitle: String,
@@ -257,7 +257,43 @@ data class FundiLabels(
     val reportForManagerHint: String,
     /** On a linked worker's page: the report of their work across pieces. */
     val workerPageSendReport: String,
+    // ---- v0.6.0: which studio a piece is for (rows 1 and 2), today's studio (row 9)
+    val intakeStudioTitle: String,
+    /** The choice for a piece that is not for any studio on the list. */
+    val studioOwnJob: String,
+    /** Under the choice, once a studio is picked: who can see the assessments (Nathan, 16 November 2026). */
+    private val intakeStudioNoticeFormat: String,
+    /** On a piece's card: the studio it is for. */
+    private val pieceForFormat: String,
+    /** On a piece's card, for a piece made before the question existed. */
+    val pieceStudioNotChosen: String,
+    val pieceStudioChoose: String,
+    val pieceStudioChange: String,
+    /** In the change dialog, before a choice that spends the one correction. */
+    val pieceStudioChangeOnce: String,
+    val pieceStudioCancel: String,
+    val todayStudioTitle: String,
+    /** "Which studio are you at today?": the fundi's own workshop. */
+    val todayStudioOwn: String,
+    // ---- v0.6.0: a linked worker's pieces on their page (rows 4, 11), the final assessment (row 27)
+    val workerPageTheirPieces: String,
+    val workerPageTheirPiecesHint: String,
+    val workerPageTheirPiecesNone: String,
+    val workerPageTheirPiecesOffline: String,
+    val workerPageAssessPiece: String,
+    val workerPageByThem: String,
+    val workerPageByYou: String,
+    val workerPageFinal: String,
+    val reportFinalNeeded: String,
+    val reportAssessFinished: String,
+    /** "Which pieces?" before a worker's work report (row 22). */
+    val reportWhichPieces: String,
+    val reportWhichPiecesHint: String,
 ) {
+    fun intakeStudioNotice(studio: String) = intakeStudioNoticeFormat.replace("{studio}", studio)
+
+    fun pieceFor(studio: String) = pieceForFormat.replace("{studio}", studio)
+
     fun reportPhotos(n: Int) = reportPhotosFormat.replace("{n}", n.toString())
 
     /**
@@ -580,8 +616,8 @@ data class FundiLabels(
             workerPageNoProblems = "No problems found",
             workerPageProblemsUnknown = "The problems could not be read. Open the assessment.",
             workerPagePurposeUnknown = "Assessment",
-            studiosTitle = "Studios I work at",
-            studiosEmpty = "None yet. Add the workshops you work at. When a workshop also " +
+            studiosTitle = "Studios I work for",
+            studiosEmpty = "None yet. Add the workshops you work for. When a workshop also " +
                 "lists you, the app links you to it.",
             studioAddTitle = "Add a studio",
             studioEditTitle = "Edit studio",
@@ -632,9 +668,34 @@ data class FundiLabels(
             reportWhichAssessment = "Which assessment?",
             reportWorkersUnsent = "Worker changes not yet sent. Connect and try again.",
             reportForManager = "My manager",
-            reportForManagerHint = "The full report on one assessment of a piece you assessed, with " +
-                "your name on it, to send to a workshop you are linked to.",
+            reportForManagerHint = "The full report on one assessment of this piece, with your " +
+                "name on it, for the manager of the studio the piece is for.",
             workerPageSendReport = "Send report",
+            intakeStudioTitle = "Which studio is this piece for?",
+            studioOwnJob = "My own job",
+            intakeStudioNoticeFormat = "The manager of {studio} can see your assessments of this piece.",
+            pieceForFormat = "For: {studio}",
+            pieceStudioNotChosen = "Studio not chosen",
+            pieceStudioChoose = "Choose studio",
+            pieceStudioChange = "Change studio",
+            pieceStudioChangeOnce = "You can change the studio once.",
+            pieceStudioCancel = "Cancel",
+            todayStudioTitle = "Which studio are you at today?",
+            todayStudioOwn = "My own workshop",
+            workerPageTheirPieces = "Their pieces for your studio",
+            workerPageTheirPiecesHint = "Pieces they made and labelled for your studio, with their " +
+                "own assessments. Tap Assess piece to check one yourself.",
+            workerPageTheirPiecesNone = "None yet.",
+            workerPageTheirPiecesOffline = "Connect to the internet to see their pieces.",
+            workerPageAssessPiece = "Assess piece",
+            workerPageByThem = "Their assessment",
+            workerPageByYou = "Your assessment",
+            workerPageFinal = "Final check",
+            reportFinalNeeded = "Before a customer report, assess the finished piece once more. " +
+                "Any problem it finds is listed in the report.",
+            reportAssessFinished = "Assess the finished piece",
+            reportWhichPieces = "Which pieces?",
+            reportWhichPiecesHint = "The report covers the pieces you choose.",
         )
     }
 }

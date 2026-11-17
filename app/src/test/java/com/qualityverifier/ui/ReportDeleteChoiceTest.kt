@@ -134,6 +134,9 @@ class ReportDeleteChoiceTest {
             pieceId: String?,
             intakeCode: String?,
             pieceLabel: String?,
+            pieceStudio: com.qualityverifier.data.session.PieceStudioChoice,
+            pieceMine: Boolean,
+            isFinal: Boolean,
         ) = Unit
         override suspend fun appendUserMessage(
             sessionId: String,

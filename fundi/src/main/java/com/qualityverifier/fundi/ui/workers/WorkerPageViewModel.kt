@@ -5,6 +5,7 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
+import com.qualityverifier.data.reports.WorkerPiecesOutcome
 import com.qualityverifier.data.sync.AssessmentSync
 import com.qualityverifier.data.workers.WorkerRepository
 import com.qualityverifier.di.AppContainer
@@ -14,6 +15,7 @@ import com.qualityverifier.domain.SessionSummary
 import com.qualityverifier.domain.Worker
 import com.qualityverifier.domain.WorkerDetails
 import com.qualityverifier.domain.WorkerNames
+import com.qualityverifier.domain.WorkerPiece
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -40,7 +42,43 @@ class WorkerPageViewModel(
     private val intakeCodeOf: suspend (sessionId: String) -> String?,
     /** Null in tests, where nothing is sent. */
     private val sync: AssessmentSync?,
+    /**
+     * The worker's own pieces labelled for this studio, from the server (v0.6.0, rows 4
+     * and 11). Null in tests that never ask. Never written to the phone's tables: what the
+     * worker's assessments found must not reach this account's own assessments of the
+     * piece, which read their earlier findings from those tables.
+     */
+    private val workerPieces: (suspend (workerId: String) -> WorkerPiecesOutcome)? = null,
 ) : ViewModel() {
+
+    /** What the server says of the worker's pieces, while the link holds. */
+    sealed interface TheirPieces {
+        data object NotAsked : TheirPieces
+        data object Loading : TheirPieces
+        data object Offline : TheirPieces
+        data class Loaded(val pieces: List<WorkerPiece>) : TheirPieces
+    }
+
+    private val _theirPieces = MutableStateFlow<TheirPieces>(TheirPieces.NotAsked)
+    val theirPieces: StateFlow<TheirPieces> = _theirPieces.asStateFlow()
+
+    /**
+     * Asks the server for the worker's own pieces labelled for this studio. Called when
+     * the page opens on a linked worker, and again after an assessment. Only the worker's
+     * pieces are kept: the manager's own pieces naming them are already on this phone.
+     */
+    fun loadTheirPieces() {
+        val fetch = workerPieces ?: return
+        if (_theirPieces.value !is TheirPieces.Loaded) _theirPieces.value = TheirPieces.Loading
+        viewModelScope.launch {
+            _theirPieces.value = when (val outcome = runCatching { fetch(workerId) }.getOrNull()) {
+                is WorkerPiecesOutcome.Loaded -> TheirPieces.Loaded(outcome.pieces.pieces.filter { it.theirs })
+                // 403: the link ended since the last sync. Nothing of theirs is to be shown.
+                is WorkerPiecesOutcome.Refused -> TheirPieces.Loaded(emptyList())
+                else -> TheirPieces.Offline
+            }
+        }
+    }
 
     /** The worker, archived or not: an archived worker's page still opens. Null while loading, or if gone. */
     val worker: StateFlow<Worker?> =
@@ -104,6 +142,7 @@ class WorkerPageViewModel(
                     messagesOf = container.sessionRepository::messagesOnce,
                     intakeCodeOf = { id -> container.sessionRepository.startOf(id)?.intakeCode },
                     sync = container.assessmentSync,
+                    workerPieces = container.reports::workerPieces,
                 )
             }
         }

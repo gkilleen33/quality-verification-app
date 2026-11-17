@@ -50,6 +50,11 @@ class RoomSessionRepository(
                     verdictUnverifiedCount = row.verdictUnverifiedCount,
                     pieceId = row.pieceId,
                     pieceLabel = row.pieceLabel,
+                    pieceStudioId = row.pieceStudioId,
+                    pieceStudioChosen = row.pieceStudioChosen,
+                    pieceStudioCorrected = row.pieceStudioCorrected,
+                    pieceMine = row.pieceMine,
+                    isFinal = row.isFinal,
                 )
             }
         }
@@ -62,6 +67,10 @@ class RoomSessionRepository(
 
     override suspend fun startOf(sessionId: String): SessionStart? =
         dao.findSession(sessionId)?.let { row ->
+            val piece = dao.findPiece(row.pieceId ?: row.id)
+            // A linked worker's piece is the worker's: its name and label are not sent as
+            // this account's (the server would ignore them, being no turn's to create).
+            val mine = piece?.mine ?: true
             SessionStart(
                 itemType = ItemType.fromId(row.itemTypeId),
                 previousSessionId = row.previousSessionId,
@@ -69,11 +78,14 @@ class RoomSessionRepository(
                 location = row.locationFix(),
                 pieceId = row.pieceId,
                 // Read from the piece each time, so a rename reaches the next turn.
-                pieceLabel = dao.findPiece(row.pieceId ?: row.id)?.label,
+                pieceLabel = piece?.label?.takeIf { mine },
                 workers = dao.sessionWorkerSlots(sessionId).map {
                     WorkerSlot(it.workerId, it.name, it.part?.let(WorkPart::fromId))
                 },
                 intakeCode = row.intakeAnswers,
+                pieceStudioId = piece?.studioId?.takeIf { mine },
+                pieceStudioChosen = mine && piece?.studioChosen == true,
+                isFinal = row.isFinal,
             )
         }
 
@@ -100,16 +112,32 @@ class RoomSessionRepository(
         pieceId: String?,
         intakeCode: String?,
         pieceLabel: String?,
+        pieceStudio: PieceStudioChoice,
+        pieceMine: Boolean,
+        isFinal: Boolean,
     ) {
         val timestamp = now()
         if (pieceId != null) {
             when {
+                // A linked worker's piece, assessed by its studio's manager: kept under the
+                // worker's name and never renamed or relabelled from here.
+                !pieceMine -> {
+                    dao.insertPieceIfAbsent(
+                        PieceEntity(pieceId, pieceLabel, labelSyncedAt = timestamp, mine = false),
+                    )
+                    dao.applySyncedStudio(pieceId, null, chosen = false, corrected = false, mine = false)
+                }
                 // A new piece: its first assessment uses its own id as the piece id. The
-                // opening turn carries the name, so it is already as good as sent. Decided
-                // from the ids, not from the row: a piece from before Room 11 has no row
-                // and is still not new, and the server would ignore a label sent for it.
+                // opening turn carries the name and the studio, so both are already as good
+                // as sent. Decided from the ids, not from the row: a piece from before Room
+                // 11 has no row and is still not new, and the server would ignore a label
+                // sent for it.
                 pieceId == sessionId -> dao.upsertPiece(
-                    PieceEntity(pieceId, pieceLabel, labelUpdatedAt = timestamp, labelSyncedAt = timestamp)
+                    PieceEntity(
+                        pieceId, pieceLabel, labelUpdatedAt = timestamp, labelSyncedAt = timestamp,
+                        studioId = (pieceStudio as? PieceStudioChoice.Studio)?.studioId,
+                        studioChosen = pieceStudio != PieceStudioChoice.NotAsked,
+                    ),
                 )
                 // A returning piece given a different name at the intake. Null means the
                 // maker skipped the question, never "clear it": clearing is the card's job.
@@ -129,6 +157,7 @@ class RoomSessionRepository(
                 // when there is nothing whole to carry into the next piece.
                 intakeAnswers = intakeCode ?: intake?.let(::encodeIntake),
                 pieceId = pieceId,
+                isFinal = isFinal,
             )
         )
     }
@@ -198,15 +227,26 @@ class RoomSessionRepository(
                 // without it every earlier assessment would read as its own piece and the
                 // next re-assessment would start a new one.
                 pieceId = session.pieceId,
+                isFinal = session.isFinal,
             )
         )
         session.pieceId?.let { pieceId ->
             // The server's name wins unless this phone holds a rename it has not sent.
             // Two statements that each decide for themselves, so a rename made between
-            // them is kept rather than overwritten.
+            // them is kept rather than overwritten. The studio label likewise (V34).
             val syncedAt = now()
-            dao.insertPieceIfAbsent(PieceEntity(pieceId, session.pieceLabel, labelSyncedAt = syncedAt))
+            dao.insertPieceIfAbsent(
+                PieceEntity(
+                    pieceId, session.pieceLabel, labelSyncedAt = syncedAt,
+                    studioId = session.pieceStudioId, studioChosen = session.pieceStudioChosen,
+                    studioCorrected = session.pieceStudioCorrected, mine = session.pieceMine,
+                ),
+            )
             dao.applySyncedLabel(pieceId, session.pieceLabel, syncedAt)
+            dao.applySyncedStudio(
+                pieceId, session.pieceStudioId, session.pieceStudioChosen,
+                session.pieceStudioCorrected, session.pieceMine,
+            )
         }
         // Cleared and rewritten rather than merged. The server is authoritative for a
         // synced assessment, and merging two orderings of the same conversation is a
@@ -294,9 +334,10 @@ class RoomSessionRepository(
     override suspend fun pieceLabel(pieceId: String): String? = dao.findPiece(pieceId)?.label
 
     override suspend fun setPieceLabel(pieceId: String, label: String?) {
-        dao.upsertPiece(
-            PieceEntity(id = pieceId, label = label, labelUpdatedAt = now(), labelSyncedAt = null)
-        )
+        // A row first, for a piece from before Room 11; then the rename as an update, so
+        // the piece's studio label (V34) survives it.
+        dao.insertPieceIfAbsent(PieceEntity(id = pieceId))
+        dao.renamePiece(pieceId, label, now())
     }
 
     override suspend fun unsyncedPieceLabels(): List<PieceLabelChange> =
@@ -304,6 +345,19 @@ class RoomSessionRepository(
 
     override suspend fun markPieceLabelSynced(change: PieceLabelChange) =
         dao.markPieceSynced(change.pieceId, change.asOf, now())
+
+    override suspend fun setPieceStudio(pieceId: String, studioId: String?) {
+        dao.insertPieceIfAbsent(PieceEntity(id = pieceId))
+        dao.setPieceStudio(pieceId, studioId, now())
+    }
+
+    override suspend fun unsyncedPieceStudios(): List<PieceStudioChange> =
+        dao.unsyncedPieceStudios().mapNotNull { piece ->
+            piece.studioPendingAt?.let { PieceStudioChange(piece.id, piece.studioId, it) }
+        }
+
+    override suspend fun markPieceStudioSent(change: PieceStudioChange) =
+        dao.markPieceStudioSent(change.pieceId, change.asOf)
 
     private suspend fun insert(
         sessionId: String,

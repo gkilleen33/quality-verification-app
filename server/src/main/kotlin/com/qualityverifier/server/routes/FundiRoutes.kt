@@ -6,6 +6,8 @@ import com.qualityverifier.server.db.AuthStore
 import com.qualityverifier.server.db.FundiStore
 import com.qualityverifier.server.db.PhoneChange
 import com.qualityverifier.server.db.PieceLabels
+import com.qualityverifier.server.db.PieceStudioChange
+import com.qualityverifier.server.db.StudioDayAnswer
 import io.ktor.http.HttpStatusCode
 import io.ktor.server.application.ApplicationCall
 import io.ktor.server.auth.authenticate
@@ -267,6 +269,68 @@ fun Route.fundiRoutes(store: FundiStore, auth: AuthStore) {
                 return@put
             }
             call.respond(HttpStatusCode.NoContent)
+        }
+
+        // The studio a piece is for (V34, rows 1 and 2): the first answer for a piece that
+        // was never asked, or the one correction of a wrong label. Only the piece's maker;
+        // a linked manager reads the piece but never relabels it.
+        put("/v1/fundi/pieces/{id}/studio") {
+            val userId = call.principal<JWTPrincipal>()?.subject
+                ?: return@put call.respond(
+                    HttpStatusCode.Unauthorized, ErrorResponse("invalid_token"),
+                )
+            if (!call.requireFundi(auth, userId)) return@put
+
+            val pieceId = call.parameters["id"]?.takeIf(::isUuid)
+                ?: return@put call.respond(HttpStatusCode.NotFound, ErrorResponse("no_such_piece"))
+            val studioId = call.receive<PieceStudioDto>().studioId
+            if (studioId != null && !isUuid(studioId)) {
+                call.respond(HttpStatusCode.BadRequest, ErrorResponse("invalid_request", "studio_id must be a uuid"))
+                return@put
+            }
+            when (store.setPieceStudio(userId, pieceId, studioId)) {
+                PieceStudioChange.Changed, PieceStudioChange.Unchanged -> call.respond(HttpStatusCode.NoContent)
+                // 404 for both: an entry id is client-made too.
+                PieceStudioChange.NoSuchPiece -> call.respond(HttpStatusCode.NotFound, ErrorResponse("no_such_piece"))
+                PieceStudioChange.NotYourStudio -> call.respond(HttpStatusCode.NotFound, ErrorResponse("no_such_studio"))
+                // 409 with a code the phone acts on: it stops offering the change.
+                PieceStudioChange.AlreadyCorrected -> call.respond(HttpStatusCode.Conflict, ErrorResponse("already_corrected"))
+            }
+        }
+
+        // "Which studio are you at today?" (V34, row 9). The phone asks before the day's
+        // first assessment and stores the answer here; a reinstalled phone reads it back
+        // rather than asking twice.
+        get("/v1/fundi/studio-today") {
+            val userId = call.principal<JWTPrincipal>()?.subject
+                ?: return@get call.respond(
+                    HttpStatusCode.Unauthorized, ErrorResponse("invalid_token"),
+                )
+            if (!call.requireFundi(auth, userId)) return@get
+            val today = store.studioToday(userId)
+            call.respond(
+                if (today == null) StudioTodayDto(answered = false)
+                else StudioTodayDto(answered = true, studioId = today.studioEntryId, day = today.day),
+            )
+        }
+
+        put("/v1/fundi/studio-today") {
+            val userId = call.principal<JWTPrincipal>()?.subject
+                ?: return@put call.respond(
+                    HttpStatusCode.Unauthorized, ErrorResponse("invalid_token"),
+                )
+            if (!call.requireFundi(auth, userId)) return@put
+            val studioId = call.receive<StudioTodayDto>().studioId
+            if (studioId != null && !isUuid(studioId)) {
+                call.respond(HttpStatusCode.BadRequest, ErrorResponse("invalid_request", "studio_id must be a uuid"))
+                return@put
+            }
+            when (val answer = store.answerStudioToday(userId, studioId)) {
+                is StudioDayAnswer.Recorded -> call.respond(
+                    StudioTodayDto(answered = true, studioId = answer.day.studioEntryId, day = answer.day.day),
+                )
+                StudioDayAnswer.NotYourStudio -> call.respond(HttpStatusCode.NotFound, ErrorResponse("no_such_studio"))
+            }
         }
     }
 }

@@ -279,6 +279,11 @@ private fun SessionRow.toDto() = SessionSummaryDto(
     pieceId = pieceId,
     pieceLabel = pieceLabel,
     workers = workers.map { SessionWorkerDto(workerId = it.workerId, part = it.part) },
+    pieceMine = pieceMine,
+    pieceStudioId = pieceStudio.studioEntryId.takeIf { pieceMine },
+    pieceStudioChosen = pieceStudio.chosen && pieceMine,
+    pieceStudioCorrected = pieceStudio.corrected && pieceMine,
+    final = isFinal,
 )
 
 private fun MessageRow.toDto() = MessageDto(

@@ -9,24 +9,26 @@ import com.qualityverifier.data.reports.PreviewOutcome
 import com.qualityverifier.data.reports.ReportApi
 import com.qualityverifier.data.reports.ReportOutcome
 import com.qualityverifier.data.reports.ReportTarget
+import com.qualityverifier.data.reports.WorkerPiecesOutcome
 import com.qualityverifier.di.AppContainer
 import com.qualityverifier.domain.ItemType
 import com.qualityverifier.domain.ReportKind
 import com.qualityverifier.domain.ReportPreview
 import com.qualityverifier.domain.ReportRequest
 import com.qualityverifier.domain.SessionSummary
+import com.qualityverifier.domain.Studio
 import com.qualityverifier.domain.WorkPart
 import com.qualityverifier.domain.WorkerParts
+import com.qualityverifier.domain.WorkerPiece
 import com.qualityverifier.domain.WorkerSlot
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.emptyFlow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flowOf
-import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import java.io.File
@@ -52,7 +54,7 @@ class SendReportViewModel(
     /** Where the next report goes: the cleared reports folder. Null in tests, which share nothing. */
     private val fileFor: (() -> File)?,
     /** Every assessment on the phone; the piece's are picked out here. */
-    private val summaries: Flow<List<SessionSummary>> = emptyFlow(),
+    private val summaries: Flow<List<SessionSummary>> = flowOf(emptyList()),
     /** Who is recorded on an assessment, as the phone holds it. */
     private val workersOf: suspend (sessionId: String) -> List<WorkerSlot> = { emptyList() },
     /**
@@ -61,9 +63,28 @@ class SendReportViewModel(
      * names the maker has since changed.
      */
     private val pushWorkers: suspend () -> Boolean = { true },
-    /** Whether this account is linked to at least one studio, which is what "My manager" is for. */
-    linkedStudio: Flow<Boolean> = flowOf(false),
+    /**
+     * This account's "Studios I work for", with the server's word on which are linked:
+     * what decides the customer and "My manager" choices on a piece (v0.6.0).
+     */
+    private val studios: Flow<List<Studio>> = flowOf(emptyList()),
+    /**
+     * What the phone knows of a piece it may hold no assessment of: a linked worker's piece
+     * opened from the worker's page (row 11). Its kind, name, and that it is the worker's,
+     * for the final assessment the customer report asks for. Null from the pieces list.
+     */
+    private val hint: PieceHint? = null,
 ) : ViewModel() {
+
+    /** See [hint]. */
+    data class PieceHint(val itemType: ItemType, val mine: Boolean, val label: String?)
+
+    /** The final assessment step, from the newest assessment on the phone, else from [hint]. */
+    private fun finalNeeded(newest: SessionSummary?) = Step.FinalNeeded(
+        itemType = newest?.itemType ?: hint?.itemType ?: ItemType.OTHER,
+        pieceMine = newest?.pieceMine ?: hint?.mine ?: true,
+        pieceLabel = newest?.pieceLabel ?: hint?.label,
+    )
 
     /** One of the piece's assessments, as "Which assessment?" lists it. */
     data class Option(val sessionId: String, val summary: SessionSummary)
@@ -89,6 +110,18 @@ class SendReportViewModel(
             val options: List<Option>,
             val selected: String,
         ) : Step
+
+        /**
+         * A customer report before the final assessment of the finished piece (row 27):
+         * the screen offers that assessment instead. [itemType] is what it assesses.
+         */
+        data class FinalNeeded(val itemType: ItemType, val pieceMine: Boolean, val pieceLabel: String?) : Step
+
+        /**
+         * On a linked worker, before the preview (row 22): the pieces the report can cover,
+         * all chosen at first. [all] is null while they load.
+         */
+        data class ChoosePieces(val all: List<WorkerPiece>?, val chosen: Set<String>) : Step
 
         /** The preview is being fetched for [kind]. */
         data class LoadingPreview(val kind: ReportKind) : Step
@@ -134,31 +167,89 @@ class SendReportViewModel(
 
     /**
      * The kinds the first step offers, in the order shown. [ReportKind.PART_ISSUES] stands
-     * for "A worker"; issues or fixes is chosen later. "My manager" is offered only to an
-     * account with a linked studio; the share sheet picks the recipient, which the app
-     * cannot restrict (plan v7).
+     * for "A worker"; issues or fixes is chosen later.
+     *
+     * Since v0.6.0 the piece's studio label decides two of them, as the server does. The
+     * customer report is the studio's: offered on a piece of this account's own that is not
+     * labelled for a studio, and on a linked worker's piece this account assesses as the
+     * studio's manager; not to a worker on a piece labelled for a studio. "My manager" is
+     * offered only on a piece labelled for a studio the link holds with (row 3). The share
+     * sheet picks the recipient, which the app cannot restrict (plan v7).
      */
-    val offered: StateFlow<List<ReportKind>> = linkedStudio.map { linked ->
-        listOf(ReportKind.CUSTOMER, ReportKind.PART_ISSUES, ReportKind.FULL) +
-            (if (linked) listOf(ReportKind.TO_MANAGER) else emptyList())
-    }.stateIn(viewModelScope, SharingStarted.Eagerly, listOf(ReportKind.CUSTOMER, ReportKind.PART_ISSUES, ReportKind.FULL))
+    val offered: StateFlow<List<ReportKind>> = combine(summaries, studios) { all, list ->
+        val piece = all.filter { it.piece == target.id }.maxByOrNull { it.updatedAt }
+        val mine = piece?.pieceMine ?: hint?.mine ?: true
+        val label = piece?.pieceStudioId?.takeIf { mine }
+        val linked = label != null && list.any { it.id == label && it.linked && !it.archived }
+        buildList {
+            if (!mine || label == null) add(ReportKind.CUSTOMER)
+            add(ReportKind.PART_ISSUES)
+            add(ReportKind.FULL)
+            if (linked) add(ReportKind.TO_MANAGER)
+        }
+    }.stateIn(viewModelScope, SharingStarted.Eagerly, listOf(ReportKind.PART_ISSUES, ReportKind.FULL))
 
     /** Counts the times the flow was started over, so an answer to an earlier start is dropped. */
     private var generation = 0
 
     init {
-        // On a worker there is one report and no choice: the flow opens on its preview.
-        if (target is ReportTarget.Worker) loadPreview(ReportRequest(kind = ReportKind.WORKER_WORK.id))
+        // On a worker there is one report: the flow opens on the pieces it can cover.
+        if (target is ReportTarget.Worker) openPieces()
     }
 
     fun choose(kind: ReportKind) {
         if (target !is ReportTarget.Piece) return
         when (kind) {
-            ReportKind.CUSTOMER -> loadPreview(ReportRequest(kind = kind.id))
+            ReportKind.CUSTOMER -> step { openCustomer() }
             ReportKind.PART_ISSUES, ReportKind.PART_FIXES -> step { openParts() }
             ReportKind.FULL, ReportKind.TO_MANAGER -> step { openAssessments(kind, emptyList()) }
             ReportKind.WORKER_WORK -> Unit
         }
+    }
+
+    /**
+     * The customer report, or first the final assessment it needs (row 27): this account's
+     * own assessment of the piece, marked final, with a verdict. Read from the phone; the
+     * server checks again and answers 409 if the phone was wrong.
+     */
+    private suspend fun openCustomer(): Next {
+        val listed = listed()
+        if (listed.any { it.isFinal && it.verdictLevel != null }) return Next.Preview(ReportRequest(kind = ReportKind.CUSTOMER.id))
+        return Next.Show(finalNeeded(listed.lastOrNull()))
+    }
+
+    /** Fetches the pieces a worker's work report covers, then lets the manager narrow them. */
+    private fun openPieces() {
+        val mine = ++generation
+        _step.value = Step.ChoosePieces(all = null, chosen = emptySet())
+        viewModelScope.launch {
+            val outcome = reports.workerPieces(target.id)
+            if (mine != generation) return@launch
+            when (outcome) {
+                is WorkerPiecesOutcome.Loaded -> {
+                    val all = outcome.pieces.pieces
+                    // One piece or none leaves nothing to choose.
+                    if (all.size <= 1) loadPreview(ReportRequest(kind = ReportKind.WORKER_WORK.id))
+                    else _step.value = Step.ChoosePieces(all, all.map { it.id }.toSet())
+                }
+                // An older server has no such route: the report covers every piece, as before.
+                else -> loadPreview(ReportRequest(kind = ReportKind.WORKER_WORK.id))
+            }
+        }
+    }
+
+    fun togglePiece(pieceId: String) {
+        val current = _step.value as? Step.ChoosePieces ?: return
+        _step.value = current.copy(chosen = if (pieceId in current.chosen) current.chosen - pieceId else current.chosen + pieceId)
+    }
+
+    /** "Next" on the pieces: every piece chosen sends no list, which the server reads as all. */
+    fun piecesChosen() {
+        val current = _step.value as? Step.ChoosePieces ?: return
+        val all = current.all ?: return
+        if (current.chosen.isEmpty()) return
+        val narrowed = all.map { it.id }.filter { it in current.chosen }.takeIf { it.size < all.size }
+        loadPreview(ReportRequest(kind = ReportKind.WORKER_WORK.id, pieceIds = narrowed))
     }
 
     /**
@@ -214,7 +305,7 @@ class SendReportViewModel(
     /** "Next" on the assessments: the request is complete; push the worker edits and preview. */
     fun assessmentChosen() {
         val current = _step.value as? Step.WhichAssessment ?: return
-        loadPreview(request(current.kind, current.parts, current.selected))
+        step { Next.Preview(request(current.kind, current.parts, current.selected)) }
     }
 
     /** The preview "Send" was tapped on, shown again after the share sheet so it can be sent twice. */
@@ -232,7 +323,7 @@ class SendReportViewModel(
             is Step.Failed -> when {
                 current.workersUnsent && current.request != null -> loadPreview(current.request)
                 current.request != null -> download(current.request)
-                target is ReportTarget.Worker -> loadPreview(ReportRequest(kind = ReportKind.WORKER_WORK.id))
+                target is ReportTarget.Worker -> openPieces()
                 else -> _step.value = Step.WhoFor
             }
             else -> Unit
@@ -278,10 +369,12 @@ class SendReportViewModel(
         }
     }
 
-    private fun request(kind: ReportKind, parts: List<WorkPart>, sessionId: String?) = ReportRequest(
+    private suspend fun request(kind: ReportKind, parts: List<WorkPart>, sessionId: String?) = ReportRequest(
         kind = kind.id,
         parts = parts.map { it.id }.takeIf { kind.takesParts },
         sessionId = sessionId,
+        // "My manager" names the studio the piece is for, which the server holds it to.
+        studioId = if (kind == ReportKind.TO_MANAGER) listed().lastOrNull()?.pieceStudioId else null,
     )
 
     private fun loadPreview(request: ReportRequest) {
@@ -300,7 +393,13 @@ class SendReportViewModel(
             if (mine != generation) return@launch
             _step.value = when (outcome) {
                 is PreviewOutcome.Loaded -> Step.Preview(request, outcome.preview)
-                is PreviewOutcome.Refused -> Step.Failed(request = null, refused = true)
+                // The server found no final assessment where the phone thought there was one,
+                // made on another phone and deleted, say: offer it here too.
+                is PreviewOutcome.Refused -> if (outcome.code == CONFLICT && kind == ReportKind.CUSTOMER) {
+                    finalNeeded(listed().lastOrNull())
+                } else {
+                    Step.Failed(request = null, refused = true)
+                }
                 else -> Step.Failed(request = null)
             }
         }
@@ -327,7 +426,12 @@ class SendReportViewModel(
     }
 
     companion object {
-        fun factory(container: AppContainer, target: ReportTarget, fileFor: () -> File): ViewModelProvider.Factory =
+        fun factory(
+            container: AppContainer,
+            target: ReportTarget,
+            hint: PieceHint? = null,
+            fileFor: () -> File,
+        ): ViewModelProvider.Factory =
             viewModelFactory {
                 initializer {
                     val workers = container.workerRepository
@@ -347,10 +451,13 @@ class SendReportViewModel(
                             }.getOrDefault(false)
                         },
                         // Linked as the server last said, at the last sync; an archived entry is not.
-                        linkedStudio = container.studioRepository.observeStudios()
-                            .map { studios -> studios.any { it.linked && !it.archived } },
+                        studios = container.studioRepository.observeStudios(),
+                        hint = hint,
                     )
                 }
             }
+
+        /** The server's answer to a customer report with no final assessment (row 27). */
+        private const val CONFLICT = 409
     }
 }

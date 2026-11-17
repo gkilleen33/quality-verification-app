@@ -37,6 +37,7 @@ import com.qualityverifier.data.update.AppIdentityInterceptor
 import com.qualityverifier.data.update.AppVersionCheck
 import com.qualityverifier.data.workers.RoomStudioRepository
 import com.qualityverifier.data.workers.RoomWorkerRepository
+import com.qualityverifier.data.workers.StudioDays
 import com.qualityverifier.data.workers.StudioRepository
 import com.qualityverifier.data.workers.WorkerRepository
 import com.qualityverifier.domain.AppId
@@ -278,6 +279,12 @@ class AppContainer(
         api = MpesaClient(client = httpClient, tokens = tokenProvider, baseUrl = baseUrl, json = json),
     )
 
+    /**
+     * "Which studio are you at today?" (V34). Fundi Bora's, as the studio list is; Kagua
+     * links it and never asks.
+     */
+    val studioDays: StudioDays = StudioDays(database.sessionDao(), syncClient)
+
     val assessmentSync: AssessmentSync = AssessmentSync(
         client = syncClient,
         sessions = sessionRepository,
@@ -288,6 +295,7 @@ class AppContainer(
         rosterEnabled = rosterEnabled,
         // Same rule as the roster: an app on Fundi Bora's endpoint is the one that reads.
         mpesa = if (rosterEnabled) mpesa::push else null,
+        studioDays = studioDays.takeIf { rosterEnabled },
     )
 
     /** True when this account is one of our evaluators. Read from the cached profile. */
@@ -420,8 +428,9 @@ class AppContainer(
             prefs = mpesaPreference,
             api = MpesaClient(client = pushHttpClient, tokens = tokens, baseUrl = baseUrl, json = json),
         )
+        val client = SyncClient(client = pushHttpClient, tokens = tokens, baseUrl = baseUrl, json = json)
         return AssessmentSync(
-            client = SyncClient(client = pushHttpClient, tokens = tokens, baseUrl = baseUrl, json = json),
+            client = client,
             sessions = sessionRepository,
             images = images,
             tokens = held,
@@ -429,6 +438,7 @@ class AppContainer(
             studios = studioRepository,
             rosterEnabled = rosterEnabled,
             mpesa = if (rosterEnabled) mpesaAs::push else null,
+            studioDays = StudioDays(database.sessionDao(), client).takeIf { rosterEnabled },
         )
     }
 

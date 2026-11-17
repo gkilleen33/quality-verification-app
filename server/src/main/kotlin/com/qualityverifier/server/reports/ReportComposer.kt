@@ -16,7 +16,6 @@ import com.qualityverifier.domain.Severity
 import com.qualityverifier.domain.TextBlock
 import com.qualityverifier.domain.Verdict
 import com.qualityverifier.domain.WorkPart
-import com.qualityverifier.domain.WorkerParts
 import com.qualityverifier.server.db.ReportPiece
 import com.qualityverifier.server.db.ReportSession
 import com.qualityverifier.server.db.ReportWorker
@@ -52,6 +51,10 @@ data class ReportAssessment(
     val sourceMessageId: String?,
     val photos: List<String>,
     val workers: List<ReportWorker>,
+    /** The account that made it: the piece's maker, or its studio's manager (V34). */
+    val userId: String = "",
+    /** The final assessment of the finished piece (row 27). */
+    val isFinal: Boolean = false,
 ) {
     /** Whether the maker's own tap on "Send report" can name this assessment: not deleted, as the home list shows. */
     val listed: Boolean get() = !clientDeleted
@@ -75,6 +78,8 @@ data class ReportAssessment(
                 sourceMessageId = sourceOf(parsedNewestFirst, problems),
                 photos = session.photos,
                 workers = session.workers,
+                userId = session.userId,
+                isFinal = session.isFinal,
             )
         }
 
@@ -122,10 +127,16 @@ data class ReportInput(
 data class WorkerWorkInput(
     val workerId: String,
     val workerName: String,
-    /** Every piece the worker was named on, oldest first, each with every assessment of the piece. */
+    /**
+     * The pieces the report covers, each once, each with the assessments the manager may
+     * read: the manager's pieces that name the worker, and the worker's own pieces labelled
+     * for the manager's studio (row 22).
+     */
     val pieces: List<Pair<ReportPiece, List<ReportAssessment>>>,
     val makerName: String?,
     val madeAt: Long,
+    /** The worker's own account, whose assessments on their own phone the report includes. Blank for none. */
+    val workerAccountId: String = "",
 )
 
 /**
@@ -227,8 +238,14 @@ class ReportComposer {
      * rating, and never calls a problem the worker's fault.
      */
     fun composeWorkerWork(input: WorkerWorkInput): ReportContent {
-        val named = input.pieces.flatMap { it.second }
-            .filter { assessment -> assessment.listed && assessment.workers.any { it.workerId == input.workerId } }
+        // The worker's own assessment of a piece they labelled for the studio (row 22): the
+        // whole piece is theirs, and the report says it is their own rather than naming them
+        // under each part, since nobody recorded them there.
+        fun ownBy(assessment: ReportAssessment) =
+            input.workerAccountId.isNotBlank() && assessment.userId == input.workerAccountId
+        fun onWorker(assessment: ReportAssessment) =
+            assessment.listed && (ownBy(assessment) || assessment.workers.any { it.workerId == input.workerId })
+        val named = input.pieces.flatMap { it.second }.filter(::onWorker)
         val labels = labelsFor(named)
         val pdf = labels.pdf
         val record = Record()
@@ -239,17 +256,17 @@ class ReportComposer {
         record.names += input.workerName
 
         for ((piece, assessments) in input.pieces) {
-            val onPiece = assessments
-                .filter { it.listed && it.workers.any { row -> row.workerId == input.workerId } }
-                .sortedBy { it.createdAt }
+            val onPiece = assessments.filter(::onWorker).sortedBy { it.createdAt }
             if (onPiece.isEmpty()) continue
             blocks += HeadingBlock(pieceName(piece, labels), level = 2)
             for (assessment in onPiece) {
                 blocks += HeadingBlock(assessmentHeading(assessment, labels), level = 3)
                 blocks += verdictLine(assessment, labels)
+                val own = ownBy(assessment)
                 val rows = assessment.workers.filter { it.workerId == input.workerId }
-                val wholePiece = rows.any { it.part == null }
-                if (wholePiece) blocks += LineBlock(pdf.workedOn, pdf.wholePiece)
+                val wholePiece = own || rows.any { it.part == null }
+                if (own) blocks += TextBlock(pdf.theirOwnAssessment)
+                else if (wholePiece) blocks += LineBlock(pdf.workedOn, pdf.wholePiece)
                 if (assessment.problems.unknown) {
                     blocks += TextBlock(pdf.problemsUnknown)
                     continue
@@ -267,15 +284,19 @@ class ReportComposer {
                 }
                 for (part in parts) {
                     blocks += HeadingBlock(pdf.part(part), level = 4)
-                    blocks += NamesBlock(pdf.workedOnThisPart, listOf(input.workerName))
-                    val row = SnapshotWorker(assessment.sessionId, if (wholePiece) null else part.id, input.workerId, input.workerName)
-                    if (row !in record.workers) record.workers += row
+                    if (!own) {
+                        blocks += NamesBlock(pdf.workedOnThisPart, listOf(input.workerName))
+                        val row = SnapshotWorker(assessment.sessionId, if (wholePiece) null else part.id, input.workerId, input.workerName)
+                        if (row !in record.workers) record.workers += row
+                    }
                     blocks += partProblems(assessment, part, labels, record)
                 }
                 if (unplaced.isNotEmpty()) {
                     blocks += HeadingBlock(pdf.partNotGiven, level = 4)
-                    val row = SnapshotWorker(assessment.sessionId, null, input.workerId, input.workerName)
-                    if (row !in record.workers) record.workers += row
+                    if (!own) {
+                        val row = SnapshotWorker(assessment.sessionId, null, input.workerId, input.workerName)
+                        if (row !in record.workers) record.workers += row
+                    }
                     blocks += problemBlocks(assessment, unplaced, labels, forCustomer = false, record = record)
                 }
             }
@@ -318,6 +339,9 @@ class ReportComposer {
         val record = Record()
         input.assessments.forEachIndexed { index, assessment ->
             blocks += HeadingBlock(assessmentHeading(assessment, labels), level = 2)
+            // The check the report waited for (row 27). Who made it is not printed: the
+            // customer report names nobody.
+            if (assessment.isFinal) blocks += TextBlock(pdf.finalCheck)
             blocks += verdictLine(assessment, labels)
             photoPlan.forAssessment(index).takeIf { it.isNotEmpty() }?.let { blocks += PhotosBlock(it) }
             blocks += problemBlocks(assessment, assessment.problems.problems.indices.toList(), labels, forCustomer = true, record = record)
@@ -350,6 +374,9 @@ class ReportComposer {
      * chosen parts, each with what was seen, what it means, and what to do, and under each
      * part the workers recorded on it. A re-assessment judges the whole piece afresh, so
      * nothing is carried from earlier assessments.
+     *
+     * A worker recorded on the whole piece is printed under every chosen part (Nathan,
+     * 16 November 2026, row 23): they did that part too, whichever parts the report covers.
      */
     private fun partIssues(input: ReportInput): ReportContent {
         val chosen = requireNotNull(input.chosen) { "a part report needs its assessment" }
@@ -358,10 +385,9 @@ class ReportComposer {
         val record = Record()
         val blocks = mutableListOf<ReportBlock>()
         blocks += opening(input, ReportKind.PART_ISSUES, chosen, labels)
-        val everyPart = coversEveryPart(input)
         for (part in input.parts) {
             blocks += HeadingBlock(pdf.part(part), level = 3)
-            blocks += namesBlock(pdf.workedOnThisPart, chosen, part, everyPart, input.makerName, record)
+            blocks += namesBlock(pdf.workedOnThisPart, chosen, part, wholePieceToo = true, input.makerName, record)
             blocks += partProblems(chosen, part, labels, record)
         }
         blocks += closing(input, labels)
@@ -383,10 +409,10 @@ class ReportComposer {
         val record = Record()
         val blocks = mutableListOf<ReportBlock>()
         blocks += opening(input, ReportKind.PART_FIXES, chosen, labels)
-        val everyPart = coversEveryPart(input)
         for (part in input.parts) {
             blocks += HeadingBlock(pdf.part(part), level = 3)
-            blocks += namesBlock(pdf.workedOnThisPartThisAssessment, chosen, part, everyPart, input.makerName, record)
+            // Whole-piece workers under every chosen part, as on the issues report (row 23).
+            blocks += namesBlock(pdf.workedOnThisPartThisAssessment, chosen, part, wholePieceToo = true, input.makerName, record)
             blocks += HeadingBlock(pdf.foundInAssessmentOf(day(previous.createdAt)), level = 4)
             blocks += partProblems(previous, part, labels, record)
             blocks += HeadingBlock(pdf.foundThisTime, level = 4)
@@ -497,8 +523,8 @@ class ReportComposer {
     /**
      * The names recorded on [part] of [assessment] as a block, or nothing when none is
      * recorded. A null [part] is the whole piece. [wholePieceToo] adds the whole-piece
-     * workers to a part's line: a part report that covers every part of the piece prints
-     * them, one that covers some parts does not. The manager's own row (no roster entry)
+     * workers to a part's line: both part reports print them under every chosen part
+     * (row 23); the full report prints them once, above the first part. The manager's own row (no roster entry)
      * prints the account's name. A roster entry whose name was cleared prints nothing.
      */
     private fun namesBlock(
@@ -533,12 +559,6 @@ class ReportComposer {
         // said "No full verdict", and the record line would read as cleared.
         if (onPart.isEmpty()) return if (assessment.verdict != null) listOf(TextBlock(labels.pdf.noIssuesOnPart)) else emptyList()
         return problemBlocks(assessment, onPart, labels, forCustomer = false, record = record)
-    }
-
-    /** True when the chosen parts cover every part the piece's type offers, so whole-piece workers belong on them. */
-    private fun coversEveryPart(input: ReportInput): Boolean {
-        val type = ItemType.fromId(input.piece.itemTypeId) ?: ItemType.OTHER
-        return input.parts.containsAll(WorkerParts.partsFor(type))
     }
 
     /** "Assessment of 12 Nov 2026", with "Not finished" after one the maker never completed. */

@@ -40,6 +40,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.qualityverifier.domain.SessionSummary
 import com.qualityverifier.domain.WorkerDetails
+import com.qualityverifier.domain.WorkerPiece
 import com.qualityverifier.fundi.ui.assess.partName
 import com.qualityverifier.fundi.ui.fundiContainer
 import com.qualityverifier.text.FundiLabels
@@ -69,6 +70,10 @@ fun WorkerPageScreen(
     onOpenPiece: (SessionSummary) -> Unit,
     /** "Send report": the worker's work across pieces, offered only while the link holds. */
     onSendReport: (workerId: String) -> Unit = {},
+    /** "Assess piece" on one of the worker's own pieces labelled for this studio (row 11). */
+    onAssessPiece: (WorkerPiece) -> Unit = {},
+    /** "Send report" on one of those pieces: the customer report among them (row 27). */
+    onSendPieceReport: (WorkerPiece) -> Unit = {},
 ) {
     val container = fundiContainer()
     val model: WorkerPageViewModel = viewModel(
@@ -81,7 +86,14 @@ fun WorkerPageScreen(
     val pieces = loaded.orEmpty()
     val shown = model.shown.collectAsState().value.orEmpty()
     val filter by model.filter.collectAsState()
+    val theirPieces by model.theirPieces.collectAsState()
     val labels = FundiLabels.ENGLISH
+
+    // The worker's own pieces come from the server, and only while the link holds. Asked
+    // again each time the page comes back into view (the navigation host leaves it while
+    // an assessment is open), so an assessment just made shows.
+    val linkedNow = worker?.let { it.linked && !it.archived } == true
+    androidx.compose.runtime.LaunchedEffect(linkedNow) { if (linkedNow) model.loadTheirPieces() }
 
     // Saveable: the contacts app comes in front of the activity from the form, and the
     // form must come back with it (see WorkerForm).
@@ -144,6 +156,45 @@ fun WorkerPageScreen(
                 }
             }
             Spacer(Modifier.height(8.dp))
+        }
+
+        // Their own pieces labelled for this studio (rows 4 and 11), above the pieces this
+        // account named them on. Only while linked; the server refuses otherwise.
+        if (linkedNow) {
+            item {
+                Text(labels.workerPageTheirPieces, style = MaterialTheme.typography.titleLarge)
+                Text(
+                    labels.workerPageTheirPiecesHint,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            when (val state = theirPieces) {
+                WorkerPageViewModel.TheirPieces.Offline -> item {
+                    Text(labels.workerPageTheirPiecesOffline, style = MaterialTheme.typography.bodyMedium)
+                }
+                is WorkerPageViewModel.TheirPieces.Loaded -> {
+                    if (state.pieces.isEmpty()) {
+                        item {
+                            Text(
+                                labels.workerPageTheirPiecesNone,
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                    }
+                    items(state.pieces, key = { "theirs-" + it.id }) { piece ->
+                        TheirPieceCard(
+                            labels = labels,
+                            piece = piece,
+                            onAssess = { onAssessPiece(piece) },
+                            onSendReport = { onSendPieceReport(piece) },
+                        )
+                    }
+                }
+                else -> Unit
+            }
+            item { Spacer(Modifier.height(8.dp)) }
         }
 
         if (pieces.isNotEmpty()) {
@@ -226,6 +277,64 @@ private fun PieceCard(labels: FundiLabels, piece: WorkerPages.Piece, onOpen: () 
             piece.assessments.forEach { assessment ->
                 HorizontalDivider(Modifier.padding(vertical = 4.dp))
                 AssessmentLines(labels, assessment)
+            }
+        }
+    }
+}
+
+/**
+ * One of the worker's own pieces labelled for this studio, with each assessment the
+ * manager may read: the worker's and the manager's own, each with its date, whose it is,
+ * its verdict and the problems it found. No score (Nathan, 4 November 2026).
+ */
+@Composable
+private fun TheirPieceCard(
+    labels: FundiLabels,
+    piece: WorkerPiece,
+    onAssess: () -> Unit,
+    onSendReport: () -> Unit,
+) {
+    val muted = MaterialTheme.colorScheme.onSurfaceVariant
+    Card(
+        Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
+    ) {
+        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Text(
+                piece.label ?: com.qualityverifier.domain.ItemType.fromId(piece.itemTypeId)?.homeLabel ?: piece.itemTypeId,
+                style = MaterialTheme.typography.titleMedium,
+            )
+            piece.assessments.asReversed().forEach { assessment ->
+                HorizontalDivider(Modifier.padding(vertical = 4.dp))
+                val verdict = assessment.verdictLevelId?.let(com.qualityverifier.domain.VerdictLevel::fromId)
+                    ?.let { ReportLabels.ENGLISH.verdictWord(it, false) } ?: labels.workerPageNoVerdict
+                Text(
+                    listOfNotNull(
+                        assessment.createdAt.asDay(),
+                        if (assessment.byWorker) labels.workerPageByThem else labels.workerPageByYou,
+                        labels.workerPageFinal.takeIf { assessment.final },
+                        verdict,
+                    ).joinToString(" · "),
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+                when {
+                    !assessment.problemsKnown ->
+                        Text(labels.workerPageProblemsUnknown, style = MaterialTheme.typography.bodySmall, color = muted)
+                    assessment.problems.isEmpty() ->
+                        Text(labels.workerPageNoProblems, style = MaterialTheme.typography.bodySmall, color = muted)
+                    else -> assessment.problems.forEach { problem ->
+                        val severity = ReportLabels.ENGLISH.severity(com.qualityverifier.domain.Severity.fromId(problem.severity))
+                        Text(
+                            "• " + problem.title + if (severity.isNotBlank()) " ($severity)" else "",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = muted,
+                        )
+                    }
+                }
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedButton(onClick = onAssess) { Text(labels.workerPageAssessPiece) }
+                TextButton(onClick = onSendReport) { Text(labels.reportMenuItem) }
             }
         }
     }

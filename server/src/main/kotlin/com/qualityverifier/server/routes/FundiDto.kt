@@ -151,6 +151,25 @@ data class WorkerUpsertDto(
 @Serializable
 data class PieceLabelDto(val label: String? = null)
 
+/**
+ * The body of PUT /v1/fundi/pieces/{id}/studio (V34): the studio entry the piece is for,
+ * or null for "My own job".
+ */
+@Serializable
+data class PieceStudioDto(@SerialName("studio_id") val studioId: String? = null)
+
+/**
+ * "Which studio are you at today?" (V34, row 9). The body of PUT /v1/fundi/studio-today, and
+ * the answer to both routes. [studioId] null is the account's own workshop; [answered] says
+ * whether today has an answer at all, and [day] is the Nairobi day it is for.
+ */
+@Serializable
+data class StudioTodayDto(
+    val answered: Boolean = true,
+    @SerialName("studio_id") val studioId: String? = null,
+    val day: String? = null,
+)
+
 /** One fix of the maker's shop. All three, always: a point without its accuracy is a false precision. */
 @Serializable
 data class WorkshopLocationDto(

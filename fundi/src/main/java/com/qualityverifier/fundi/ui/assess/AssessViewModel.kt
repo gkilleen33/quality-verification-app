@@ -12,7 +12,10 @@ import com.qualityverifier.data.db.SessionImageStore
 import com.qualityverifier.data.fundi.FundiProfiles
 import com.qualityverifier.data.fundi.ProfileOutcome
 import com.qualityverifier.data.location.LocationSource
+import com.qualityverifier.data.session.PieceStudioChoice
 import com.qualityverifier.data.session.SessionRepository
+import com.qualityverifier.data.workers.StudioDays
+import com.qualityverifier.data.workers.StudioRepository
 import com.qualityverifier.data.workers.WorkerRepository
 import com.qualityverifier.di.AppContainer
 import com.qualityverifier.domain.AssessmentLanguage
@@ -26,6 +29,7 @@ import com.qualityverifier.domain.LocationFix
 import com.qualityverifier.domain.PlanRun
 import com.qualityverifier.domain.PriorIssue
 import com.qualityverifier.domain.Role
+import com.qualityverifier.domain.Studio
 import com.qualityverifier.domain.Worker
 import com.qualityverifier.domain.WorkerDetails
 import com.qualityverifier.domain.WorkerSlot
@@ -47,6 +51,8 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
@@ -74,6 +80,7 @@ sealed interface PhotoTarget {
         val intake: FundiIntake,
         val pieceLabel: String?,
         val workedOn: List<WorkerSlot>,
+        val studio: PieceStudioChoice = PieceStudioChoice.NotAsked,
     ) : PhotoTarget
 
     data class PlanShot(val index: Int) : PhotoTarget
@@ -120,7 +127,45 @@ class AssessViewModel(
      */
     private val location: LocationSource = LocationSource.None,
     private val io: CoroutineDispatcher = Dispatchers.IO,
+    /**
+     * The final assessment of the finished piece, before a customer report (v0.6.0, row
+     * 27). Its purpose is a full re-assessment and is not asked.
+     */
+    val isFinal: Boolean = false,
+    /**
+     * False when this account assesses a linked worker's piece as the manager of the studio
+     * it is labelled for (row 11). The piece stays the worker's: its name is not asked, and
+     * nothing of the worker's assessments is on this phone to reach the opening turn.
+     */
+    val pieceMine: Boolean = true,
+    /** The worker's name for their piece, shown when [pieceMine] is false. */
+    private val givenLabel: String? = null,
+    /** "Studios I work for". Null in tests about conversations. */
+    private val studioList: StudioRepository? = null,
+    /** "Which studio are you at today?" (row 9). Null in tests about conversations. */
+    private val studioDays: StudioDays? = null,
 ) : ViewModel() {
+
+    /** Live entries of "Studios I work for", read from the phone as stored. */
+    private val liveStudios = (studioList?.observeStudios() ?: flowOf(emptyList()))
+        .map { list -> list.filter { !it.archived } }
+
+    /** Live entries of "Studios I work for", for the intake and today's question. */
+    val studios: StateFlow<List<Studio>> =
+        liveStudios.stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+
+    /**
+     * Whether to ask "Which studio are you at today?" before this assessment: a new one,
+     * on a day not yet answered, by an account with a studio on its list. Null until known.
+     */
+    private val _askToday = MutableStateFlow<Boolean?>(null)
+    val askToday: StateFlow<Boolean?> = _askToday.asStateFlow()
+
+    /** Records today's answer; the assessment goes on to its intake. */
+    fun answerToday(studioId: String?) {
+        _askToday.value = false
+        viewModelScope.launch { runCatching { studioDays?.answer(studioId) } }
+    }
 
     /** The roster, for the picker. Archived workers are left out there, not here. */
     val roster: StateFlow<List<Worker>> =
@@ -245,6 +290,11 @@ class AssessViewModel(
     init {
         viewModelScope.launch {
             val exists = sessions.sessionExists(sessionId)
+            // Asked before `existing` is set, so the screen never shows the intake for a
+            // frame before the question. The list is read as stored; an account whose list
+            // has not synced to this phone yet is not asked.
+            _askToday.value = !exists && studioDays != null &&
+                runCatching { liveStudios.first().isNotEmpty() && !studioDays.answeredToday() }.getOrDefault(false)
             _existing.value = exists
             // Only for an assessment that is beginning. Reopening one from Home must not
             // record where it was read, which would be both wrong and a second point.
@@ -256,7 +306,7 @@ class AssessViewModel(
                 _purpose.value = why
             }
         }
-        viewModelScope.launch { _pieceLabel.value = sessions.pieceLabel(pieceId) }
+        viewModelScope.launch { _pieceLabel.value = sessions.pieceLabel(pieceId) ?: givenLabel }
         if (returning) loadPriorIssues()
     }
 
@@ -330,6 +380,8 @@ class AssessViewModel(
         pieceLabel: String? = null,
         /** Who worked on the piece, from the picker. Empty when skipped. */
         workedOn: List<WorkerSlot> = emptyList(),
+        /** The studio a new piece is for; [PieceStudioChoice.NotAsked] for a returning one. */
+        studio: PieceStudioChoice = PieceStudioChoice.NotAsked,
     ) {
         // Once per assessment. A second intake would be a second opening turn in the same
         // session, read by the model as the maker starting over mid-plan.
@@ -349,9 +401,13 @@ class AssessViewModel(
                         itemType = itemType,
                         pieceId = pieceId,
                         intakeCode = FundiIntake.encode(intake),
-                        pieceLabel = pieceLabel,
+                        // A linked worker's piece keeps the worker's name, never this one's.
+                        pieceLabel = if (pieceMine) pieceLabel else givenLabel,
+                        pieceStudio = studio,
+                        pieceMine = pieceMine,
+                        isFinal = isFinal,
                     )
-                    _pieceLabel.value = pieceLabel
+                    if (pieceMine) _pieceLabel.value = pieceLabel
                     // Recorded as already sent: the opening turn carries the set, and the
                     // server writes it when it creates the session.
                     workers.recordWorkersOf(sessionId, workedOn)
@@ -535,7 +591,7 @@ class AssessViewModel(
         // A retake that worked answers the earlier "could not be read".
         if (_error.value?.message == UNREADABLE_PHOTO) _error.value = null
         when (target) {
-            is PhotoTarget.Opening -> start(target.intake, path, target.pieceLabel, target.workedOn)
+            is PhotoTarget.Opening -> start(target.intake, path, target.pieceLabel, target.workedOn, target.studio)
             is PhotoTarget.PlanShot -> attachShot(target.index, path)
         }
     }
@@ -669,6 +725,9 @@ class AssessViewModel(
             itemType: ItemType,
             pieceId: String,
             returning: Boolean,
+            isFinal: Boolean = false,
+            pieceMine: Boolean = true,
+            givenLabel: String? = null,
         ): ViewModelProvider.Factory = viewModelFactory {
             initializer {
                 AssessViewModel(
@@ -682,6 +741,11 @@ class AssessViewModel(
                     profiles = container.fundiProfiles,
                     workers = container.workerRepository,
                     location = container.locationCapture,
+                    isFinal = isFinal,
+                    pieceMine = pieceMine,
+                    givenLabel = givenLabel,
+                    studioList = container.studioRepository,
+                    studioDays = container.studioDays,
                 )
             }
         }

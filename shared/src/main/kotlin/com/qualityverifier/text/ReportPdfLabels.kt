@@ -65,6 +65,13 @@ data class ReportPdfLabels(
     val wholePiece: String,
     /** The parts of a piece as the reports name them. */
     private val partNames: Map<WorkPart, String>,
+    /**
+     * On a worker-work report (v0.6.0, row 22), under an assessment the worker made on their
+     * own phone, of a piece they labelled for the studio.
+     */
+    val theirOwnAssessment: String,
+    /** On a customer report (v0.6.0, row 27), under the final assessment of the finished piece. */
+    val finalCheck: String,
 ) {
     fun title(kind: ReportKind, workerName: String? = null): String =
         titles.getValue(kind).replace("{name}", workerName.orEmpty())
@@ -120,6 +127,8 @@ data class ReportPdfLabels(
                 WorkPart.ASSEMBLY to "Assembly",
                 WorkPart.OTHER to "Other",
             ),
+            theirOwnAssessment = "Their own assessment, made on their phone",
+            finalCheck = "Final check of the finished piece",
         )
 
         // REVIEW: unreviewed Swahili throughout; see the class comment.
@@ -163,6 +172,8 @@ data class ReportPdfLabels(
                 WorkPart.ASSEMBLY to "Kuunganisha",
                 WorkPart.OTHER to "Nyingine",
             ),
+            theirOwnAssessment = "Ukaguzi wake mwenyewe, uliofanywa kwenye simu yake",
+            finalCheck = "Ukaguzi wa mwisho wa kipande kilichokamilika",
         )
     }
 }

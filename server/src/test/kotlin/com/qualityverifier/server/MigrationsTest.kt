@@ -295,6 +295,8 @@ class MigrationsTest {
         "V31__worker_studios.sql" to "worker_link_events",
         // V33: each deletion a person asked for from PesaLog.
         "V33__tracker.sql" to "tracker_deletions",
+        // V34: a piece's first studio label after creation, and its one correction.
+        "V34__pieces_studios.sql" to "piece_studio_changes",
     )
 
     /**

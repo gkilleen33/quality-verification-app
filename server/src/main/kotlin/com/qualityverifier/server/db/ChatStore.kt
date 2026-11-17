@@ -60,10 +60,49 @@ data class SessionRow(
     val pieceLabel: String? = null,
     /** Who worked on it, as recorded at the assessment. Fundi Bora only. */
     val workers: List<SessionWorker> = emptyList(),
+    /**
+     * False when the piece is another account's: an assessment this account made on a
+     * linked worker's piece (V34). True for every piece of its own, and for no piece.
+     */
+    val pieceMine: Boolean = true,
+    /** The piece's studio label (V34). Empty for a piece that is not this account's. */
+    val pieceStudio: PieceStudioLabel = PieceStudioLabel(),
+    /** The final assessment of the finished piece (V34). */
+    val isFinal: Boolean = false,
 )
 
 /** One `session_workers` row. A null [workerId] is the manager; a null [part], the whole piece. */
 data class SessionWorker(val workerId: String?, val part: String?)
+
+/**
+ * A piece's studio label as stored (V34): the entry of its maker's list, whether the maker
+ * answered at all ("My own job" is answered with no entry), and whether the one correction
+ * has been used.
+ */
+data class PieceStudioLabel(
+    val studioEntryId: String? = null,
+    val chosen: Boolean = false,
+    val corrected: Boolean = false,
+)
+
+/**
+ * The answer to "Which studio is this for?" carried by the turn that creates a piece (V34).
+ * [NotAsked] is an app older than v0.6.0, which has no such question.
+ */
+sealed interface PieceStudio {
+    data object NotAsked : PieceStudio
+    data object OwnJob : PieceStudio
+    data class Entry(val studioEntryId: String) : PieceStudio
+
+    companion object {
+        /** An entry counts as an answer even if the flag was left off. */
+        fun of(chosen: Boolean, studioEntryId: String?): PieceStudio = when {
+            studioEntryId != null -> Entry(studioEntryId)
+            chosen -> OwnJob
+            else -> NotAsked
+        }
+    }
+}
 
 data class MessageRow(
     val id: String,
@@ -106,9 +145,10 @@ interface ChatStore {
         testerDailyLimit: Int,
         /**
          * The physical piece this assessment is of, for Fundi Bora. Linked only if the
-         * piece belongs to this account — a piece id is a client-supplied uuid, and one
-         * account must not be able to attach its assessments to another's piece and
-         * skew that maker's record.
+         * piece belongs to this account, or is a linked worker's piece labelled for the
+         * studio this account runs (V34's piece_managers) — a piece id is a client-supplied
+         * uuid, and no other account may attach its assessments to a maker's piece and
+         * skew that maker's record. Which of the two is recorded in `assessed_as`.
          */
         pieceId: String? = null,
         /**
@@ -117,6 +157,17 @@ interface ChatStore {
          * optional data on a turn somebody is about to spend minutes on.
          */
         pieceLabel: String? = null,
+        /**
+         * The piece's studio label, written only when this turn creates the piece. An entry
+         * that is not on this account's own list is stored as never asked.
+         */
+        pieceStudio: PieceStudio = PieceStudio.NotAsked,
+        /**
+         * The final assessment of the finished piece (row 27). Kept only for the account
+         * that runs the piece's studio, or the maker of a piece that is not labelled for a
+         * studio; anyone else's flag is dropped and logged, and the assessment goes ahead.
+         */
+        isFinal: Boolean = false,
         /**
          * Who worked on the piece, written only when this turn creates the session, and
          * only for a Fundi Bora assessment. A slot naming another account's worker is
@@ -289,6 +340,8 @@ class PostgresChatStore(private val dataSource: DataSource) : ChatStore {
         testerDailyLimit: Int,
         pieceId: String?,
         pieceLabel: String?,
+        pieceStudio: PieceStudio,
+        isFinal: Boolean,
         workers: List<WorkerSlot>,
         appVersionCode: Int?,
     ): SessionAccess = tx { connection ->
@@ -351,10 +404,18 @@ class PostgresChatStore(private val dataSource: DataSource) : ChatStore {
         // does not update it, so a second account naming the same id changes nothing.
         val linkPiece = pieceId != null && audience == Audience.FUNDI
         if (linkPiece) {
+            // The label only from this account's own list (V34); anything else is stored as
+            // never asked, since a CHECK cannot see whose entry it is.
+            val entry = (pieceStudio as? PieceStudio.Entry)?.studioEntryId
+                ?.takeIf { ownsStudioEntry(connection, userId, it) }
+            if (pieceStudio is PieceStudio.Entry && entry == null) {
+                log.warn("Session {} labelled its piece with a studio entry not on the account's list; dropped", sessionId)
+            }
+            val chosen = entry != null || pieceStudio == PieceStudio.OwnJob
             connection.prepareStatement(
                 """
-                insert into pieces (id, user_id, item_type_id, label)
-                values (?::uuid, ?::uuid, ?, ?)
+                insert into pieces (id, user_id, item_type_id, label, studio_entry_id, studio_chosen_at)
+                values (?::uuid, ?::uuid, ?, ?, ?::uuid, case when ? then now() end)
                 on conflict (id) do nothing
                 """.trimIndent()
             ).use { statement ->
@@ -362,21 +423,29 @@ class PostgresChatStore(private val dataSource: DataSource) : ChatStore {
                 statement.setString(2, userId)
                 statement.setString(3, itemTypeId)
                 statement.setString(4, PieceLabels.normalise(pieceLabel))
+                statement.setString(5, entry)
+                statement.setBoolean(6, chosen)
                 statement.executeUpdate()
             }
+        }
+
+        // On what footing this account assesses the piece: its maker, or the account that
+        // runs the studio the piece is labelled for while the match holds. Anybody else's
+        // piece id resolves to no piece rather than linking, so nobody can append to
+        // another maker's record.
+        val footing = if (linkPiece) pieceFooting(connection, userId, pieceId!!) else null
+        val keepFinal = isFinal && footing?.mayMakeFinal == true
+        if (isFinal && !keepFinal) {
+            log.warn("Session {} asked to be a final assessment by an account that cannot make one; kept as ordinary", sessionId)
         }
 
         connection.prepareStatement(
             """
             insert into sessions (
                 id, user_id, item_type_id, previous_session_id, intake_answers, prompt_sha,
-                audience, piece_id, app_version_code
+                audience, piece_id, app_version_code, assessed_as, is_final
             ) values (
-                ?::uuid, ?::uuid, ?, ?::uuid, ?, ?, ?,
-                -- Only this account's own piece. Somebody else's id resolves to null
-                -- rather than linking, so nobody can append to another maker's record.
-                (select p.id from pieces p where p.id = ?::uuid and p.user_id = ?::uuid),
-                ?
+                ?::uuid, ?::uuid, ?, ?::uuid, ?, ?, ?, ?::uuid, ?, ?, ?
             )
             on conflict (id) do nothing
             """.trimIndent()
@@ -389,13 +458,16 @@ class PostgresChatStore(private val dataSource: DataSource) : ChatStore {
             statement.setString(6, promptSha)
             // Written once, here. Nothing updates it afterwards.
             statement.setString(7, audience.id)
-            statement.setString(8, pieceId.takeIf { linkPiece })
-            statement.setString(9, userId)
+            statement.setString(8, pieceId.takeIf { footing != null })
             // Beside prompt_sha, and for the same reason: which build asked is part of
             // what produced the assessment. Written once; a later turn from an updated
             // app does not change it.
-            if (appVersionCode == null) statement.setNull(10, java.sql.Types.INTEGER)
-            else statement.setInt(10, appVersionCode)
+            if (appVersionCode == null) statement.setNull(9, java.sql.Types.INTEGER)
+            else statement.setInt(9, appVersionCode)
+            // Written once too: a link that ends later does not change on what footing
+            // this assessment was made, and a wrong pick is found by this column.
+            statement.setString(10, footing?.assessedAs)
+            statement.setBoolean(11, keepFinal)
             statement.executeUpdate()
         }
         // Fundi Bora only, like the piece. Kagua's endpoint never sends any.
@@ -429,6 +501,57 @@ class PostgresChatStore(private val dataSource: DataSource) : ChatStore {
         writeSessionWorkers(connection, userId, sessionId, workers)
         true
     }
+
+    /**
+     * Whether [entryId] is a live entry of [userId]'s own list of studios it works for (V31).
+     * An archived entry has no manager, and a piece labelled with it could never have a
+     * customer report.
+     */
+    private fun ownsStudioEntry(connection: Connection, userId: String, entryId: String): Boolean =
+        connection.prepareStatement(
+            "select 1 from worker_studios where id = ?::uuid and user_id = ?::uuid and archived_at is null"
+        ).use { statement ->
+            statement.setString(1, entryId)
+            statement.setString(2, userId)
+            statement.executeQuery().use { it.next() }
+        }
+
+    /**
+     * On what footing [userId] may add an assessment to [pieceId], or null when it may not.
+     *
+     * The maker always may. The account that runs the studio the piece is labelled for may
+     * while the two-sided match holds (V34's piece_managers), and its assessment stays its
+     * own: its allowance, its deletion. A final assessment (row 27) is the studio's to make,
+     * so the maker may make one only on a piece that is not labelled for a studio.
+     */
+    private fun pieceFooting(connection: Connection, userId: String, pieceId: String): PieceFooting? =
+        connection.prepareStatement(
+            """
+            select p.user_id::text, p.studio_entry_id is null,
+                   exists (
+                       select 1 from piece_managers pm
+                        where pm.piece_id = p.id and pm.manager_user_id = ?::uuid
+                   )
+              from pieces p where p.id = ?::uuid
+            """.trimIndent()
+        ).use { statement ->
+            statement.setString(1, userId)
+            statement.setString(2, pieceId)
+            statement.executeQuery().use { rows ->
+                if (!rows.next()) return@use null
+                val maker = rows.getString(1)
+                val unlabelled = rows.getBoolean(2)
+                val manages = rows.getBoolean(3)
+                when {
+                    maker == userId -> PieceFooting("maker", mayMakeFinal = unlabelled)
+                    manages -> PieceFooting("manager", mayMakeFinal = true)
+                    else -> null
+                }
+            }
+        }
+
+    /** `sessions.assessed_as` (V34), and whether this account may mark the assessment final. */
+    private data class PieceFooting(val assessedAs: String, val mayMakeFinal: Boolean)
 
     private fun workerExists(connection: Connection, workerId: String): Boolean =
         connection.prepareStatement("select 1 from workers where id = ?::uuid").use { statement ->
@@ -849,15 +972,16 @@ class PostgresChatStore(private val dataSource: DataSource) : ChatStore {
                            s.preview_text, count(m.id)::int,
                            s.verdict_level_id, s.verdict_language,
                            s.previous_session_id::text, s.intake_answers, s.piece_id::text,
-                           p.label
+                           $PIECE_LABEL, $PIECE_COLUMNS
                     from sessions s left join messages m on m.session_id = s.id
                     left join pieces p on p.id = s.piece_id
                     where s.user_id = ?::uuid and s.client_deleted_at is null
-                    group by s.id, p.label
+                    group by s.id, p.id
                     order by s.updated_at desc
                     """.trimIndent()
                 ).use { statement ->
-                    statement.setString(1, userId)
+                    // Three in the select list, one in the WHERE: every one the reader.
+                    (1..4).forEach { statement.setString(it, userId) }
                     statement.executeQuery().use { rows ->
                         val out = mutableListOf<SessionRow>()
                         while (rows.next()) out += rows.toSessionRow()
@@ -903,15 +1027,19 @@ class PostgresChatStore(private val dataSource: DataSource) : ChatStore {
                        s.preview_text, count(m.id)::int,
                        s.verdict_level_id, s.verdict_language,
                        s.previous_session_id::text, s.intake_answers, s.piece_id::text,
-                       p.label
+                       $PIECE_LABEL, $PIECE_COLUMNS
                 from sessions s left join messages m on m.session_id = s.id
                 left join pieces p on p.id = s.piece_id
                 where s.id = ?::uuid and s.user_id = ?::uuid and s.client_deleted_at is null
-                group by s.id, p.label
+                group by s.id, p.id
                 """.trimIndent()
             ).use { statement ->
-                statement.setString(1, sessionId)
+                // The first three in the select list, the other two in the WHERE.
+                statement.setString(1, userId)
                 statement.setString(2, userId)
+                statement.setString(3, userId)
+                statement.setString(4, sessionId)
+                statement.setString(5, userId)
                 statement.executeQuery().use { rows ->
                     if (rows.next()) rows.toSessionRow() else null
                 }
@@ -1015,7 +1143,43 @@ class PostgresChatStore(private val dataSource: DataSource) : ChatStore {
         intakeAnswers = getString(10),
         pieceId = getString(11),
         pieceLabel = getString(12),
+        pieceMine = getBoolean(13),
+        pieceStudio = if (getBoolean(13)) {
+            PieceStudioLabel(studioEntryId = getString(14), chosen = getBoolean(15), corrected = getBoolean(16))
+        } else {
+            // A linked worker's piece: its label is the worker's entry, nothing of this account's.
+            PieceStudioLabel()
+        },
+        isFinal = getBoolean(17),
     )
+
+    private companion object {
+        /**
+         * Column 12 of a session row: what the maker calls the piece (two binds, the
+         * reader's id). On a linked worker's piece, only while the reader runs the studio it
+         * is labelled for (V34): the name is often the customer's, and a manager whose link
+         * ended, or whose studio the piece was relabelled away from, is sent it no more.
+         */
+        const val PIECE_LABEL = """
+            case when p.user_id = ?::uuid
+                   or exists (select 1 from piece_managers pm where pm.piece_id = p.id and pm.manager_user_id = ?::uuid)
+                 then p.label end"""
+
+        /**
+         * Columns 13 to 17 of a session row (V34), after the label: whether the piece is the
+         * reader's own (one bind, the reader's id), its label, whether it was ever chosen,
+         * whether its one correction is used, and whether the session is final. Needs
+         * `pieces p` left-joined and `p.id` in the GROUP BY.
+         */
+        const val PIECE_COLUMNS = """
+            (p.id is null or p.user_id = ?::uuid),
+            p.studio_entry_id::text, (p.studio_chosen_at is not null),
+            exists (
+                select 1 from piece_studio_changes c
+                 where c.piece_id = p.id and c.kind = 'correction'
+            ),
+            s.is_final"""
+    }
 
     private fun touch(connection: Connection, sessionId: String, preview: String) {
         connection.prepareStatement(

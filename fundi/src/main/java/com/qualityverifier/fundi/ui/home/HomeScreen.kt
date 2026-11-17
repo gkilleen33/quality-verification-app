@@ -24,6 +24,7 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -46,6 +47,7 @@ import com.qualityverifier.domain.ItemType
 import com.qualityverifier.domain.MpesaCategory
 import com.qualityverifier.domain.PieceNames
 import com.qualityverifier.domain.SessionSummary
+import com.qualityverifier.domain.Studio
 import com.qualityverifier.domain.UpdatePrompt
 import com.qualityverifier.domain.Worker
 import com.qualityverifier.domain.WorkerDetails
@@ -80,7 +82,7 @@ fun HomeScreen(
     onStart: (ItemType) -> Unit,
     /** The roster screen. */
     onWorkers: () -> Unit,
-    /** "Studios I work at" (V31): the other side of the roster. */
+    /** "Studios I work for" (V31): the other side of the roster. */
     onStudios: () -> Unit,
     /** Password, the location switch, sign-out, and account deletion. */
     onSettings: () -> Unit,
@@ -92,6 +94,7 @@ fun HomeScreen(
     val sessions by model.pieces.collectAsState()
     val roster by model.roster.collectAsState()
     val spending by model.spending.collectAsState()
+    val studios by model.studios.collectAsState()
     val update by container.appVersionCheck.state.collectAsState()
     // One row per physical piece rather than per assessment. A stool assessed on Monday
     // and re-assessed on Tuesday is one stool, and listing it twice would make the maker
@@ -100,6 +103,13 @@ fun HomeScreen(
         sessions.groupBy { it.piece }
             .map { (_, assessments) -> assessments.maxBy { it.updatedAt } to assessments.size }
             .sortedByDescending { (latest, _) -> latest.updatedAt }
+    }
+    // Pieces the server holds: one of their assessments got a reply. Only these may have
+    // their studio label changed (row 2): the server refuses a change to a piece whose
+    // opening turn has not gone yet, and the turn would then carry the change as the
+    // first label, with no record and the correction still to spend.
+    val onServer = remember(sessions) {
+        sessions.filter { it.messageCount > 1 }.map { it.piece }.toSet()
     }
 
     var choosing by remember { mutableStateOf(pieces.isEmpty()) }
@@ -211,6 +221,9 @@ fun HomeScreen(
                     onSetWorkers = { people -> model.setWorkers(latest.id, people) },
                     onAddWorker = model::addWorker,
                     spent = spending[latest.piece].orEmpty(),
+                    studios = studios,
+                    onSetStudio = { studioId -> model.setStudio(latest.piece, studioId) },
+                    onServer = latest.piece in onServer,
                 )
             }
         }
@@ -234,7 +247,29 @@ private fun PieceRow(
     onAddWorker: (WorkerDetails, (Worker) -> Unit) -> Unit,
     /** M-Pesa money out assigned to this piece, by category; null for none given yet. */
     spent: Map<MpesaCategory?, Double>,
+    /** "Studios I work for", archived ones too, for the studio line and its change. */
+    studios: List<Studio> = emptyList(),
+    /** A studio for the piece, or null for "My own job" (rows 1 and 2). */
+    onSetStudio: (String?) -> Unit = {},
+    /** Whether the server holds the piece yet, which a label change needs. */
+    onServer: Boolean = true,
 ) {
+    val labels = FundiLabels.ENGLISH
+    var choosingStudio by remember { mutableStateOf(false) }
+    if (choosingStudio) {
+        StudioDialog(
+            labels = labels,
+            studios = studios.filter { !it.archived },
+            current = latest.pieceStudioId.takeIf { latest.pieceStudioChosen },
+            spendsCorrection = latest.pieceStudioChosen,
+            onChoose = { studioId ->
+                choosingStudio = false
+                // Unchanged, nothing is written and the correction is not spent.
+                if (!latest.pieceStudioChosen || studioId != latest.pieceStudioId) onSetStudio(studioId)
+            },
+            onDismiss = { choosingStudio = false },
+        )
+    }
     var renaming by remember { mutableStateOf(false) }
     var editingWorkers by remember { mutableStateOf(false) }
     var menuOpen by remember { mutableStateOf(false) }
@@ -292,6 +327,19 @@ private fun PieceRow(
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
+            // The studio the piece is for (row 1). Only on this maker's own pieces: a linked
+            // worker's piece carries the worker's label, which is not this account's.
+            if (latest.pieceMine && studios.isNotEmpty()) {
+                Text(
+                    when {
+                        !latest.pieceStudioChosen -> labels.pieceStudioNotChosen
+                        latest.pieceStudioId == null -> labels.pieceFor(labels.studioOwnJob)
+                        else -> labels.pieceFor(studios.firstOrNull { it.id == latest.pieceStudioId }?.name ?: "?")
+                    },
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
             // An assessment with one turn is one somebody started and did not finish —
             // a phone call mid-plan, usually. Saying so is the difference between a list
             // they trust and a list of things they cannot account for.
@@ -332,13 +380,28 @@ private fun PieceRow(
                         )
                     }
                     DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
-                        DropdownMenuItem(
-                            text = { Text("Rename") },
-                            onClick = {
-                                menuOpen = false
-                                renaming = true
-                            },
-                        )
+                        // A linked worker's piece keeps the worker's name and label.
+                        if (latest.pieceMine) {
+                            DropdownMenuItem(
+                                text = { Text("Rename") },
+                                onClick = {
+                                    menuOpen = false
+                                    renaming = true
+                                },
+                            )
+                        }
+                        // The first answer for a piece never asked, then one correction (row 2).
+                        if (latest.pieceMine && onServer && studios.any { !it.archived } && !latest.pieceStudioCorrected) {
+                            DropdownMenuItem(
+                                text = {
+                                    Text(if (latest.pieceStudioChosen) labels.pieceStudioChange else labels.pieceStudioChoose)
+                                },
+                                onClick = {
+                                    menuOpen = false
+                                    choosingStudio = true
+                                },
+                            )
+                        }
                         // The dialog's own title, so the item says what it opens.
                         DropdownMenuItem(
                             text = { Text("Who worked on this?") },
@@ -361,6 +424,57 @@ private fun PieceRow(
             }
         }
     }
+}
+
+/**
+ * "Which studio is this piece for?" from the card: the first answer for a piece made before
+ * the question existed, or the one correction (rows 1 and 2). Says so when the choice spends
+ * the correction, and who can see the assessments once a studio is picked.
+ */
+@Composable
+private fun StudioDialog(
+    labels: FundiLabels,
+    studios: List<Studio>,
+    current: String?,
+    spendsCorrection: Boolean,
+    onChoose: (String?) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    // Nothing chosen to begin with, as at the intake.
+    var picked by remember { mutableStateOf<String?>(null) }
+    var ownJob by remember { mutableStateOf(false) }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(labels.intakeStudioTitle) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                if (spendsCorrection) Text(labels.pieceStudioChangeOnce, style = MaterialTheme.typography.bodyMedium)
+                studios.forEach { each ->
+                    FilterChip(
+                        selected = picked == each.id,
+                        onClick = { picked = each.id; ownJob = false },
+                        label = { Text(each.name + if (each.id == current) " ✓" else "") },
+                    )
+                }
+                FilterChip(
+                    selected = ownJob,
+                    onClick = { picked = null; ownJob = true },
+                    label = { Text(labels.studioOwnJob) },
+                )
+                studios.firstOrNull { it.id == picked }?.let {
+                    Text(
+                        labels.intakeStudioNotice(it.name),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = { onChoose(picked) }, enabled = picked != null || ownJob) { Text("Save") }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text(labels.pieceStudioCancel) } },
+    )
 }
 
 /**

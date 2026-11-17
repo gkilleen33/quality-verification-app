@@ -38,6 +38,26 @@ data class ChatRequest(
      */
     @SerialName("piece_label") val pieceLabel: String? = null,
     /**
+     * The studio the piece is for (V34): an entry of this account's own list of studios it
+     * works for, or null for "My own job" when [pieceStudioChosen] is true. Stored with the
+     * piece when this turn creates it, and ignored afterwards: a correction goes through
+     * PUT /v1/fundi/pieces/{id}/studio. An entry of another account's list is stored as no
+     * choice at all, as a stranger's piece id is not linked.
+     */
+    @SerialName("piece_studio_id") val pieceStudioId: String? = null,
+    /**
+     * Whether the maker answered "Which studio is this for?". False from an app older than
+     * v0.6.0, which never asked; the piece is then recorded as never asked rather than as
+     * "My own job".
+     */
+    @SerialName("piece_studio_chosen") val pieceStudioChosen: Boolean = false,
+    /**
+     * This is the final assessment of the finished piece, made before a customer report
+     * (V34, release scope row 27). Written once, when the session is created, and only for
+     * the account that runs the piece's studio, or the maker of a "My own job" piece.
+     */
+    val final: Boolean = false,
+    /**
      * Who worked on the piece, from the roster, each on an optional part. Stored with
      * the session when it is created and ignored afterwards; an edit goes through
      * PUT /v1/sessions/{id}/workers.

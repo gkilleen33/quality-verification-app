@@ -17,7 +17,10 @@ import com.qualityverifier.server.db.AuthStore
 import com.qualityverifier.server.db.Credentials
 import com.qualityverifier.server.db.FundiStore
 import com.qualityverifier.server.db.PhoneChange
+import com.qualityverifier.server.db.PieceStudioChange
 import com.qualityverifier.server.db.RecordedToolChange
+import com.qualityverifier.server.db.StudioDay
+import com.qualityverifier.server.db.StudioDayAnswer
 import com.qualityverifier.server.db.RegisterOutcome
 import com.qualityverifier.server.db.Registration
 import com.qualityverifier.server.db.StoredRefresh
@@ -506,6 +509,97 @@ class FundiRouteTest {
         assertTrue(store.workers.isEmpty())
     }
 
+    // V34, rows 1 and 2: the studio a piece is for, and its one logged correction.
+    @Test
+    fun `a piece never asked takes a first label, then one correction, and refuses a second`() = testApplication {
+        val other = "c0ffee00-0000-4000-8000-00000000001d"
+        val store = FakeFundiStore().apply {
+            pieces[PIECE] = null
+            studios[STUDIO] = FakeFundiStore.FakeStudio("Mama Njeri's", "+254712345678", archived = false)
+            studios[other] = FakeFundiStore.FakeStudio("Otieno's", "+254712345679", archived = false)
+        }
+        val app = withFundi(store, audience = Audience.FUNDI)
+        suspend fun label(studio: String?) = app.put("/v1/fundi/pieces/$PIECE/studio") {
+            auth(FUNDI); contentType(ContentType.Application.Json)
+            setBody(if (studio == null) """{"studio_id":null}""" else """{"studio_id":"$studio"}""")
+        }
+
+        // A piece made before v0.6.0: its first answer is not the correction.
+        assertEquals(HttpStatusCode.NoContent, label(STUDIO).status)
+        // The same answer again changes nothing and spends nothing.
+        assertEquals(HttpStatusCode.NoContent, label(STUDIO).status)
+        // The one correction, to "My own job".
+        assertEquals(HttpStatusCode.NoContent, label(null).status)
+        // A second correction is refused with a code the phone acts on.
+        val second = label(other)
+        assertEquals(HttpStatusCode.Conflict, second.status)
+        assertTrue(second.bodyAsText().contains("already_corrected"))
+
+        assertEquals(
+            listOf(Triple("first_choice", null, STUDIO), Triple("correction", STUDIO, null)),
+            store.labelChanges[PIECE],
+        )
+        assertEquals(FakeFundiStore.Label(null, chosen = true), store.labels[PIECE])
+    }
+
+    @Test
+    fun `a label must be one of the maker's own studios, and the piece the maker's own`() = testApplication {
+        val stranger = "c0ffee00-0000-4000-8000-00000000001e"
+        val store = FakeFundiStore().apply {
+            pieces[PIECE] = null
+            strangers += stranger
+        }
+        val app = withFundi(store, audience = Audience.FUNDI)
+
+        val notOurs = app.put("/v1/fundi/pieces/$PIECE/studio") {
+            auth(FUNDI); contentType(ContentType.Application.Json); setBody("""{"studio_id":"$stranger"}""")
+        }
+        assertEquals(HttpStatusCode.NotFound, notOurs.status)
+        assertTrue(notOurs.bodyAsText().contains("no_such_studio"))
+
+        val noPiece = app.put("/v1/fundi/pieces/$WORKER/studio") {
+            auth(FUNDI); contentType(ContentType.Application.Json); setBody("""{"studio_id":null}""")
+        }
+        assertEquals(HttpStatusCode.NotFound, noPiece.status)
+
+        val malformed = app.put("/v1/fundi/pieces/$PIECE/studio") {
+            auth(FUNDI); contentType(ContentType.Application.Json); setBody("""{"studio_id":"not-a-uuid"}""")
+        }
+        assertEquals(HttpStatusCode.BadRequest, malformed.status)
+        assertTrue(store.labelChanges.isEmpty())
+    }
+
+    // V34, row 9: "Which studio are you at today?", one answer per day.
+    @Test
+    fun `today's studio is unanswered until answered, and the first answer stands`() = testApplication {
+        val store = FakeFundiStore().apply {
+            studios[STUDIO] = FakeFundiStore.FakeStudio("Mama Njeri's", "+254712345678", archived = false)
+        }
+        val app = withFundi(store, audience = Audience.FUNDI)
+
+        val before = app.get("/v1/fundi/studio-today") { auth(FUNDI) }.bodyAsText()
+        assertTrue(before, before.contains("\"answered\":false"))
+
+        val answered = app.put("/v1/fundi/studio-today") {
+            auth(FUNDI); contentType(ContentType.Application.Json); setBody("""{"studio_id":"$STUDIO"}""")
+        }
+        assertEquals(HttpStatusCode.OK, answered.status)
+        assertTrue(answered.bodyAsText().contains(STUDIO))
+
+        // Their own workshop, sent later the same day: the morning's answer is kept.
+        val again = app.put("/v1/fundi/studio-today") {
+            auth(FUNDI); contentType(ContentType.Application.Json); setBody("""{"studio_id":null}""")
+        }
+        assertTrue(again.bodyAsText().contains(STUDIO))
+        assertEquals(StudioDay("2026-11-16", STUDIO), store.today)
+
+        val stranger = app.put("/v1/fundi/studio-today") {
+            auth(FUNDI); contentType(ContentType.Application.Json)
+            setBody("""{"studio_id":"c0ffee00-0000-4000-8000-00000000001f"}""")
+        }
+        assertEquals(HttpStatusCode.NotFound, stranger.status)
+    }
+
     @Test
     fun `a Kagua account cannot name a piece`() = testApplication {
         val store = FakeFundiStore().apply { pieces[PIECE] = null }
@@ -782,6 +876,39 @@ class FundiRouteTest {
             userId: String, latitude: Double, longitude: Double, accuracyMetres: Double,
         ) {
             locations[userId] = Triple(latitude, longitude, accuracyMetres)
+        }
+
+        /**
+         * Each piece's label as the SQL keeps it (V34): the entry, whether it was ever
+         * chosen, and the changes recorded, oldest first, as (kind, old, new).
+         */
+        data class Label(val entry: String?, val chosen: Boolean)
+        val labels = mutableMapOf<String, Label>()
+        val labelChanges = mutableMapOf<String, MutableList<Triple<String, String?, String?>>>()
+        override suspend fun setPieceStudio(userId: String, pieceId: String, studioEntryId: String?): PieceStudioChange {
+            if (pieceId !in pieces) return PieceStudioChange.NoSuchPiece
+            if (studioEntryId != null && (studioEntryId !in studios || studioEntryId in strangers)) {
+                return PieceStudioChange.NotYourStudio
+            }
+            val current = labels[pieceId] ?: Label(null, chosen = false)
+            if (current.chosen && current.entry == studioEntryId) return PieceStudioChange.Unchanged
+            val changes = labelChanges.getOrPut(pieceId) { mutableListOf() }
+            val kind = if (current.chosen) "correction" else "first_choice"
+            if (changes.any { it.first == kind }) return PieceStudioChange.AlreadyCorrected
+            changes += Triple(kind, current.entry, studioEntryId)
+            labels[pieceId] = Label(studioEntryId, chosen = true)
+            return PieceStudioChange.Changed
+        }
+
+        /** Today's answer; the first one stands, as the SQL's ON CONFLICT DO NOTHING keeps it. */
+        var today: StudioDay? = null
+        override suspend fun studioToday(userId: String): StudioDay? = today
+        override suspend fun answerStudioToday(userId: String, studioEntryId: String?): StudioDayAnswer {
+            if (studioEntryId != null && (studioEntryId !in studios || studioEntryId in strangers)) {
+                return StudioDayAnswer.NotYourStudio
+            }
+            val day = today ?: StudioDay("2026-11-16", studioEntryId).also { today = it }
+            return StudioDayAnswer.Recorded(day)
         }
     }
 

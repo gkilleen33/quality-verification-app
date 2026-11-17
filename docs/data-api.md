@@ -43,10 +43,12 @@ milliseconds throughout.
 | Endpoint | Returns |
 |---|---|
 | `GET /users` | accounts, with phone, name, business, latitude/longitude and accuracy |
-| `GET /assessments` | assessments, newest last, each with the `app_version_code` that started it, its `purpose`, `language`, `piece_id`, and `prompt_sha`. Filters: `user`, `item`, `testers=1`, `updated_since` |
+| `GET /assessments` | assessments, newest last, each with the `app_version_code` that started it, its `purpose`, `language`, `piece_id`, `prompt_sha`, `assessed_as` and `final` (V34). Filters: `user`, `item`, `testers=1`, `updated_since` |
 | `GET /assessments/{id}` | one assessment with its messages, photo hashes in order, each photo's camera metadata, its `problems`, and the evaluator's critique if there is one |
 | `GET /tester-feedback` | every evaluator critique, keyed on `session_id` |
-| `GET /pieces` | every piece a Fundi Bora maker has assessed: `id`, `user_id`, `item_type_id`, `created_at`. No label (see below) |
+| `GET /pieces` | every piece a Fundi Bora maker has assessed: `id`, `user_id`, `item_type_id`, `created_at`, and its studio label, `studio_entry_id` and `studio_chosen_at` (V34). No name (see below) |
+| `GET /piece-studio-changes` | each change of a piece's studio label after it was made (V34): `piece_id`, `user_id`, `kind` (`first_choice` or `correction`), `old_studio_entry_id`, `new_studio_entry_id`, `at` |
+| `GET /studio-days` | each answer to "Which studio are you at today?" (V34): `user_id`, `day` (Nairobi date), `studio_entry_id` (null for the fundi's own workshop), `answered_at` |
 | `GET /reports` | every PDF report the server issued (V32): `piece_id` or `worker_id`, `kind`, `session_ids`, `parts`, `defect_refs`, `defect_snapshot`, `sha256`, `byte_size`, `issued_at` |
 | `GET /tracker-transactions` | every PesaLog transaction (V33), oldest first: `user_id`, `network`, `code`, `direction`, `type`, amounts, `occurred_at`, `counterparty_code` and `counterparty_basis`, `category`, `comment` |
 | `GET /tracker-unread-counts` | per PesaLog account, `network` and `day`, how many mobile money messages the phone could not read |
@@ -191,15 +193,31 @@ re-assessment of the same stool shares its piece with the first. It carries no l
 the maker calls a piece is often the customer's name, and whether it may leave the server is
 a question for the PIs (plan v7, section 9); the research team does not need it to join.
 
+Since v0.6.0 (V34) a piece carries the studio it is for. `studio_entry_id` is an entry of
+the maker's own "Studios I work for" list (`worker_studios`, V31), whose number links it to
+the studio's account through `/worker-links`; null is "My own job" when `studio_chosen_at` is
+set, and a piece never asked (made before v0.6.0 or by an older app) when it is null. A wrong
+label can be corrected once; `/piece-studio-changes` holds each change with its old and new
+entry, and the first answer for a piece never asked is a `first_choice`, not the correction.
+
+The account that runs the studio a piece is labelled for may add its own assessments to the
+worker's piece while the two sides are linked. Such an assessment has the manager's
+`user_id`, the worker's `piece_id`, and `assessed_as` = `manager`; the maker's own have
+`maker`. Kagua's, and an assessment of no piece, have null. There is no undo for a manager
+who assesses the wrong piece, so wrong picks are found among the `manager` rows. `final` marks
+the assessment of the finished piece that a customer report needs first: by the studio's
+manager on a labelled piece, or by the maker on one that is not labelled.
+
 `GET /reports` is one row per PDF report the server issued, written whether the file was
 freshly rendered or served from the day-long cache, so the rows count downloads started and
 a retry has the same `sha256` as the first attempt.
 
 - `kind` is one of `customer`, `part_issues`, `part_fixes`, `full`, `to_manager`, or
-  `worker_work`. A `customer` report covers every assessment of the piece and prints no
-  worker name and no part; the others cover one chosen assessment, except `worker_work`,
-  which is one roster worker's work across pieces and has `worker_id` set and `piece_id`
-  null.
+  `worker_work`. A `customer` report covers every assessment of the piece the sender may
+  read (on a worker's labelled piece, the worker's and the manager's) and prints no worker
+  name and no part; the others cover one chosen assessment, except `worker_work`, which is
+  one roster worker's work across pieces, their own assessments of pieces labelled for the
+  studio included (v0.6.0), and has `worker_id` set and `piece_id` null.
 - `defect_refs` names each problem printed as `<message_id>:<ordinal>` in the reply the
   problem list was read from (the newest reply of the session with a verdict or a
   diagnosis). A corrected verdict is a newer reply, so its problems have new references.

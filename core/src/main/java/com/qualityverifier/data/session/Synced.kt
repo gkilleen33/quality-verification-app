@@ -24,6 +24,13 @@ data class SyncedSession(
     val intakeAnswers: String?,
     val pieceId: String? = null,
     val pieceLabel: String? = null,
+    /** False for a linked worker's piece this account assessed as the studio's manager (V34). */
+    val pieceMine: Boolean = true,
+    /** The piece's studio label (V34); empty for a piece that is not this account's. */
+    val pieceStudioId: String? = null,
+    val pieceStudioChosen: Boolean = false,
+    val pieceStudioCorrected: Boolean = false,
+    val isFinal: Boolean = false,
 )
 
 data class SyncedMessage(

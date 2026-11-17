@@ -102,7 +102,28 @@ class RoomMigrationTest {
         }
     }
 
+    @Test
+    fun `15 to 16 adds the studio label, the final flag and today's studio, as schema 16 has them`() {
+        val statements = statementsOf(AppDatabase.MIGRATION_15_16)
+        // The CREATE TABLE as Room exported it, as for the studio list above.
+        assertEquals(createSql(16, "studio_days").replace("\${TABLE_NAME}", "studio_days"), statements.last())
+        // Each column added is in schema 16's table, with the same default.
+        val pieces = createSql(16, "pieces")
+        listOf(
+            "`studioId` TEXT", "`studioChosen` INTEGER NOT NULL DEFAULT 0",
+            "`studioCorrected` INTEGER NOT NULL DEFAULT 0", "`studioPendingAt` INTEGER", "`mine` INTEGER NOT NULL DEFAULT 1",
+        ).forEach { column ->
+            assertTrue(column, pieces.contains(column))
+            assertTrue(column, statements.contains("ALTER TABLE pieces ADD COLUMN ${column.replace("`", "")}"))
+        }
+        assertTrue(createSql(16, "sessions").contains("`isFinal` INTEGER NOT NULL DEFAULT 0"))
+        assertTrue(statements.contains("ALTER TABLE sessions ADD COLUMN isFinal INTEGER NOT NULL DEFAULT 0"))
+        listOf("workers", "worker_studios", "session_workers", "mpesa_transactions").forEach { table ->
+            assertEquals(table, createSql(15, table), createSql(16, table))
+        }
+    }
+
     private companion object {
-        const val CURRENT = 15
+        const val CURRENT = 16
     }
 }

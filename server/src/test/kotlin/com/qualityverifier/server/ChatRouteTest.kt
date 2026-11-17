@@ -1134,6 +1134,44 @@ class ChatRouteTest {
         assertEquals("Kiti cha Wanjirũ", store.sawPieceLabel)
     }
 
+    // V34: the studio the new piece is for, and the final flag, travel the same way. Which
+    // entry may be the label and who may make a final assessment are the store's rules.
+    @Test
+    fun `the studio answer and the final flag reach the store, and an older app's turn reads as never asked`() {
+        val studio = UUID.randomUUID().toString()
+        val piece = UUID.randomUUID().toString()
+        listOf(
+            ",\"piece_id\":\"$piece\",\"piece_studio_id\":\"$studio\",\"piece_studio_chosen\":true" to
+                (com.qualityverifier.server.db.PieceStudio.Entry(studio) to false),
+            ",\"piece_id\":\"$piece\",\"piece_studio_chosen\":true,\"final\":true" to
+                (com.qualityverifier.server.db.PieceStudio.OwnJob to true),
+            ",\"piece_id\":\"$piece\"" to (com.qualityverifier.server.db.PieceStudio.NotAsked to false),
+        ).forEach { (extra, expected) ->
+            testApplication {
+                val store = FakeChatStore()
+                val app = withChat(store, FakeClaude(ClaudeResult.Success("ok", TokenUsage(), null)), accountAudience = Audience.FUNDI)
+                app.post("/v1/fundi/chat") {
+                    auth()
+                    setBody(TextContent(requestJsonWith(extra), ContentType.Application.Json))
+                }
+                assertEquals(extra, expected.first, store.sawPieceStudio)
+                assertEquals(extra, expected.second, store.sawFinal)
+            }
+        }
+    }
+
+    @Test
+    fun `a studio id that is not a uuid is refused before anything is spent`() = testApplication {
+        val store = FakeChatStore()
+        val claude = FakeClaude(ClaudeResult.Success("ok", TokenUsage(), null))
+        val refused = withChat(store, claude, accountAudience = Audience.FUNDI).post("/v1/fundi/chat") {
+            auth()
+            setBody(TextContent(requestJsonWith(",\"piece_studio_id\":\"Mama Njeri\""), ContentType.Application.Json))
+        }
+        assertEquals(HttpStatusCode.BadRequest, refused.status)
+        assertEquals(0, claude.calls)
+    }
+
     // Who worked on the piece travels with the opening turn. The route checks the slots
     // and hands them down; which worker may be linked is decided in the SQL.
     @Test
@@ -1653,6 +1691,7 @@ class ChatRouteTest {
             previousSessionId: String?, intakeAnswers: String?, promptSha: String?,
             audience: Audience,
             dailyLimit: Int, testerDailyLimit: Int, pieceId: String?, pieceLabel: String?,
+            pieceStudio: com.qualityverifier.server.db.PieceStudio, isFinal: Boolean,
             workers: List<WorkerSlot>,
             appVersionCode: Int?,
         ) = access.also {
@@ -1661,10 +1700,18 @@ class ChatRouteTest {
             storedAudience = audience
             sawPieceId = pieceId
             sawPieceLabel = pieceLabel
+            sawPieceStudio = pieceStudio
+            sawFinal = isFinal
             sawWorkers = workers
             sawAppVersionCode = appVersionCode
             ensuredSessions++
         }
+
+        /** The studio answer and the final flag the route handed down (V34). */
+        var sawPieceStudio: com.qualityverifier.server.db.PieceStudio? = null
+            private set
+        var sawFinal: Boolean? = null
+            private set
 
         /** The versionCode the route read from X-App-Version; null when it sent none. */
         var sawAppVersionCode: Int? = null

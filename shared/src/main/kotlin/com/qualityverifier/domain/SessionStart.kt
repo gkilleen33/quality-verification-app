@@ -45,4 +45,13 @@ data class SessionStart(
      * raw value is what travels to the server; [intake] is Kagua's decoded view of it.
      */
     val intakeCode: String? = null,
+    /**
+     * The studio the piece is for, and whether the maker answered at all (Fundi Bora
+     * v0.6.0). Sent only when this account made the piece; the server keeps them only when
+     * the turn creates the piece.
+     */
+    val pieceStudioId: String? = null,
+    val pieceStudioChosen: Boolean = false,
+    /** The final assessment of the finished piece, before a customer report. */
+    val isFinal: Boolean = false,
 )

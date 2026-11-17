@@ -34,7 +34,7 @@ import com.qualityverifier.fundi.ui.fundiContainer
 import com.qualityverifier.text.FundiLabels
 
 /**
- * "Studios I work at" (V31): one card per studio, archived ones last and greyed, in the
+ * "Studios I work for" (V31): one card per studio, archived ones last and greyed, in the
  * style of "My workers". Add opens [StudioForm]; tapping a card opens it to edit, with
  * Archive. A card reads "Linked" when the server's two-sided match holds: that studio's
  * roster names this account's number too. Nothing else is shown about the other side.
