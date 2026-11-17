@@ -12,10 +12,10 @@ import com.qualityverifier.domain.ToolOwnership
  * before.
  *
  * "The worker" is the piece's maker. On a piece labelled for a studio, everything on the
- * maker's list that is to hand counts, since a worker's list names the studio's and the
- * manager's tools where they work, and so does everything to hand on the list of the
+ * maker's list that is to hand counts, since a worker's list names the studio's tools
+ * where they work, and so does everything to hand on the list of the
  * account that runs the studio. On "My own job", or a piece never asked, only the tools the
- * maker owns themselves: the manager's and the studio's stay at the studio, and a rental
+ * maker owns themselves: the studio's stay at the studio, and a rental
  * was for one job.
  */
 object InferredTools {

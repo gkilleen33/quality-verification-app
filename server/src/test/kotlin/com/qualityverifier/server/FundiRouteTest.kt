@@ -769,15 +769,15 @@ class FundiRouteTest {
         assertTrue(body.contains("\"day_rate_kes\":400"))
     }
 
-    // V35 replaced owned/borrowed with four owners. A v0.5.0 phone knows only the old words
+    // V35 replaced owned/borrowed with three owners. A v0.5.0 phone knows only the old words
     // and drops a word it has never seen, so it is sent the old ones, and its "owned" back
-    // does not overwrite a manager's or studio's owner a newer phone recorded.
+    // does not overwrite a studio's owner a newer phone recorded.
     @Test
     fun `an app before versionCode 6 is sent the old owner words and its owned keeps a stored owner`() = testApplication {
         val store = FakeFundiStore(
             existing = FundiProfile(
                 tools = listOf(
-                    OwnedTool(ToolKind.CLAMPS, ToolOwnership.MANAGER),
+                    OwnedTool(ToolKind.CLAMPS, ToolOwnership.STUDIO),
                     OwnedTool(ToolKind.ROUTER, ToolOwnership.STUDIO),
                     OwnedTool(ToolKind.SANDER, ToolOwnership.RENTAL),
                     OwnedTool(ToolKind.DRILL, ToolOwnership.WORKER),
@@ -791,10 +791,10 @@ class FundiRouteTest {
         for (body in listOf(old, none)) {
             assertTrue(body.contains(""""kind":"clamps","ownership":"owned""""))
             assertTrue(body.contains(""""kind":"sander","ownership":"borrowed""""))
-            assertFalse(body.contains("\"manager\""))
+            assertFalse(body.contains("\"studio\""))
         }
         val new = app.get("/v1/fundi/profile") { auth(FUNDI); header(AppVersionHeaders.VERSION, "6") }.bodyAsText()
-        assertTrue(new.contains(""""kind":"clamps","ownership":"manager""""))
+        assertTrue(new.contains(""""kind":"clamps","ownership":"studio""""))
         assertTrue(new.contains(""""kind":"router","ownership":"studio""""))
         assertTrue(new.contains(""""kind":"sander","ownership":"rental""""))
 
@@ -810,7 +810,7 @@ class FundiRouteTest {
             )
         }
         val owners = store.saved.getValue(FUNDI).tools.associate { it.kind to it.ownership }
-        assertEquals(ToolOwnership.MANAGER, owners[ToolKind.CLAMPS])
+        assertEquals(ToolOwnership.STUDIO, owners[ToolKind.CLAMPS])
         assertEquals(ToolOwnership.STUDIO, owners[ToolKind.ROUTER])
         assertEquals(ToolOwnership.RENTAL, owners[ToolKind.SANDER])
         assertEquals(ToolOwnership.WORKER, owners[ToolKind.DRILL])
