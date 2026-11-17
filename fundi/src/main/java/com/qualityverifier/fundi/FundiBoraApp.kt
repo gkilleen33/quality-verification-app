@@ -51,6 +51,10 @@ class FundiBoraApp : Application() {
         // session on the phone (plan v7 §5.4). Also cleared before each new report.
         background.launch { ReportFiles.clear(this@FundiBoraApp) }
 
+        // Nothing M-Pesa runs while the build has the reading off (build.gradle.kts,
+        // mpesaSmsReading): the receiver is not in the manifest, so switching it would fail.
+        if (!BuildConfig.MPESA_SMS_READING) return
+
         // The M-Pesa receiver follows the reading switch for as long as the process lives,
         // so turning reading off in Settings disables it at once.
         background.launch {

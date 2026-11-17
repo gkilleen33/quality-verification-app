@@ -10,7 +10,7 @@ Fundi Bora is a mobile app developed by the Development Innovation Lab (DIL) at 
 
 Fundi Bora gives carpenters (fundis) feedback on the furniture they make. It sends your photos and messages to an artificial-intelligence model, Claude, made by Anthropic. Claude looks at the photos and writes an assessment and advice.
 
-Fundi Bora also lets you keep a list of the workers in your workshop and the studios you work for, list your tools from a photo of your workbench, send reports about your pieces, and, if you agree, track your M-Pesa payments.
+Fundi Bora also lets you keep a list of the workers in your workshop and the studios you work for, list your tools from a photo of your workbench, and send reports about your pieces.
 
 The assessments come from a computer model. They can be wrong or incomplete. They are not a guarantee of quality, a safety certificate, or professional advice. Use your own judgement before you act on them, and before you sell or repair a piece. DIL and Anthropic are not responsible for poor advice in an assessment, or for any damage to a piece, lost sale, or other loss that comes from following it.
 
@@ -40,13 +40,12 @@ The assessments come from a computer model. They can be wrong or incomplete. The
 - **Which studio each piece is for,** when you say so, and which studio you work at each day, if you answer that question. While your account and the studio's are linked, the studio's manager can see your assessments of the pieces you made for that studio, add their own assessments of those pieces, and send a report on them to the customer.
 - **Tools you list, and who owns each** (you, the studio, or a rental), to tailor advice to the tools you have.
 - **A photo of your workbench,** if you take one, to suggest your tool list. Claude looks at the photo, and you check each tool it suggests. Where the photo was taken is kept only while the location switch in Settings is on.
-- **M-Pesa payments, only if you agree** to the M-Pesa questions in the app. Fundi Bora then reads M-Pesa messages that arrive after you agree and keeps each payment's details on your phone. If you also agree to the second question, it sends those details to the server. The other person's phone number or name is replaced by a code, and the text of the message is never sent.
 - **Reports you send:** which report you sent and what it showed, including the names printed on it.
 - **App version and usage records** (the time, length, and cost of each request), to run, fix, and pay for the service.
 
 Your name, phone number, password, and photos are needed to use Fundi Bora. Everything else is optional: you can leave it out or turn it off, and the app still works.
 
-Fundi Bora reads SMS messages only if you agree to the M-Pesa question, and then only messages from M-Pesa. It does not read your contacts: when you pick a worker from your contacts, Fundi Bora receives only the name and number you pick. It does not read other apps.
+Fundi Bora does not read your SMS messages. It does not read your contacts: when you pick a worker from your contacts, Fundi Bora receives only the name and number you pick. It does not read other apps.
 
 ## 6. How DIL uses the information
 
@@ -55,7 +54,7 @@ DIL uses the information to:
 - produce assessments and advice, and keep your history in the app;
 - run and secure Fundi Bora;
 - improve the app's functionality, including the instructions given to Claude;
-- conduct research on carpentry workshops and the quality of their work, including M-Pesa payments only if you agreed to send them;
+- conduct research on carpentry workshops and the quality of their work;
 - contact you about your account or the app.
 
 DIL does not sell your information and does not use it for advertising or any other commercial purpose.
@@ -63,7 +62,7 @@ DIL does not sell your information and does not use it for advertising or any ot
 ## 7. Who else handles the information
 
 - **Anthropic** runs Claude and is based in the United States. It receives your photos and messages to write each reply, and handles them on DIL's behalf under its terms for business customers. Under those terms, Anthropic does not use them to train its models, and it deletes them within 30 days. Anthropic may keep them for up to 2 years if its automated safety systems flag them as breaking its usage policy, and for longer where the law requires.
-- **Amazon Web Services** hosts the server that stores your account, assessments, and any M-Pesa payments you send, in the United States.
+- **Amazon Web Services** hosts the server that stores your account and assessments, in the United States.
 - **DIL staff** are bound by confidentiality and handle your data to improve the app's functionality and for the research in section 6.
 - **People you send reports to.** A report is a PDF file that you share yourself, for example by WhatsApp. A report for a customer shows no names. On a piece made for a linked studio, the studio's manager sends the customer report, and it includes your assessments of the piece. Other reports show your name and the names of the workers on the piece. The person who receives a report can keep it and pass it on.
 
@@ -80,7 +79,7 @@ Fundi Bora's code is open source under the MIT licence. The Fundi Bora name and 
 ## 9. How long the information is kept
 
 - You can delete an assessment in the app. It disappears from your phone at once and is deleted from the server within 7 days.
-- You can delete your account in Settings. DIL then removes your name, phone number, password, workshop location, the GPS points of your assessments and of your workbench photos, your piece names, your workers' names and phone numbers, the studios you listed, your M-Pesa payments, and the names printed in reports you sent, and your account cannot be used again. Your photos and assessments are kept without your name.
+- You can delete your account in Settings. DIL then removes your name, phone number, password, workshop location, the GPS points of your assessments and of your workbench photos, your piece names, your workers' names and phone numbers, the studios you listed, any M-Pesa payments an earlier version of the app sent, and the names printed in reports you sent, and your account cannot be used again. Your photos and assessments are kept without your name.
 - Backup copies of the server are kept for up to 30 days, so deleted information may remain in a backup for up to 30 days.
 
 ## 10. Your rights
@@ -92,7 +91,6 @@ Under Kenya's Data Protection Act, 2019, you have the right to:
 - object to the use of all or part of your data;
 - ask DIL to correct data that is false or misleading;
 - ask DIL to delete data that is false or misleading, or that DIL is no longer allowed to keep;
-- withdraw your agreement to Fundi Bora reading or sending your M-Pesa payments, in Settings;
 - withdraw your agreement to sending your information out of Kenya (section 14).
 
 To use these rights, contact DIL (section 15). If you are not satisfied with DIL's answer, you may complain to the Office of the Data Protection Commissioner (www.odpc.go.ke).
@@ -115,7 +113,7 @@ Fundi Bora is free. Your mobile network may charge for data.
 
 ## 14. Sending your information out of Kenya
 
-Fundi Bora sends your information, including photos of your furniture and your workbench, your workshop location, and, if you agreed, your M-Pesa payments, to Anthropic and Amazon Web Services in the United States. Amazon Web Services and Anthropic each have written terms that require them to keep your information secure and use it only to provide their service.
+Fundi Bora sends your information, including photos of your furniture and your workbench, and your workshop location, to Anthropic and Amazon Web Services in the United States. Amazon Web Services and Anthropic each have written terms that require them to keep your information secure and use it only to provide their service.
 
 This transfer has risks:
 
