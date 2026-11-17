@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Fundi Bora's own M-Pesa SMS reading. Merged into the app's manifest only while
+     build.gradle.kts sets mpesaSmsReading to true; off since 17 November 2026, so the app
+     declares no SMS permission. Kept here, whole, so turning it back on is one line. -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!-- The M-Pesa reader's (fundi/mpesa), whose code is in this module and nowhere else,
+         so Kagua never asks for them. Asked at run time only after the fundi says yes to
+         reading; refused, the reader stays off. -->
+    <uses-permission android:name="android.permission.RECEIVE_SMS" />
+    <uses-permission android:name="android.permission.READ_SMS" />
+    <!-- The SMS permissions imply telephony. Not required: a phone without it installs the
+         app and simply has nothing for the reader to read. -->
+    <uses-feature android:name="android.hardware.telephony" android:required="false" />
+
+    <application>
+        <!-- Off until the fundi agrees to reading; MpesaReader.applySwitch turns it on and
+             off with the switch. Only the system, holding BROADCAST_SMS, can call it. -->
+        <receiver
+            android:name="com.qualityverifier.fundi.mpesa.MpesaSmsReceiver"
+            android:enabled="false"
+            android:exported="true"
+            android:permission="android.permission.BROADCAST_SMS">
+            <intent-filter>
+                <action android:name="android.provider.Telephony.SMS_RECEIVED" />
+            </intent-filter>
+        </receiver>
+    </application>
+</manifest>

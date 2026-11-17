@@ -23,6 +23,14 @@ val releaseKeyAlias = extra["releaseKeyAlias"] as String
 val releaseKeyPassword = extra["releaseKeyPassword"] as String?
 val hasReleaseSigning = extra["hasReleaseSigning"] as Boolean
 
+// Fundi Bora's own M-Pesa SMS reading: off (Nathan, 17 November 2026). PesaLog reads M-Pesa
+// notifications instead, and an app that declares SMS permissions faces Google Play's SMS
+// policy. Off, the app declares no SMS permission and shows no M-Pesa question, Finances
+// tab or M-Pesa switch; the code stays, unused. To bring it back, set this to true: the
+// permissions and the receiver in src/mpesaSms/AndroidManifest.xml are merged in again.
+// The fundi terms must describe the reading again before such a build ships.
+val mpesaSmsReading = false
+
 android {
     namespace = "com.qualityverifier.fundi"
     compileSdk = 36
@@ -34,8 +42,8 @@ android {
         applicationId = "com.qualityverifier.fundibora"
         minSdk = 24
         targetSdk = 36
-        versionCode = 5
-        versionName = "0.5.0"
+        versionCode = 6
+        versionName = "0.6.0"
 
         // The same backend as Kagua, which is the whole architecture — one server, one
         // database, two apps. Compiled in, as it is there.
@@ -44,6 +52,7 @@ android {
             "SERVER_BASE_URL",
             "\"https://kagua.gradykilleen.me/\"",
         )
+        buildConfigField("boolean", "MPESA_SMS_READING", mpesaSmsReading.toString())
     }
 
     signingConfigs {
@@ -105,6 +114,15 @@ android {
 
     packaging {
         resources.excludes += setOf("/META-INF/{AL2.0,LGPL2.1}")
+    }
+}
+
+// The SMS permissions and receiver, only while the reading is on (see mpesaSmsReading).
+androidComponents {
+    onVariants { variant ->
+        if (mpesaSmsReading) {
+            variant.sources.manifests.addStaticManifestFile("src/mpesaSms/AndroidManifest.xml")
+        }
     }
 }
 

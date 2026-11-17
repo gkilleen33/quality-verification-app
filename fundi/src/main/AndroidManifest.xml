@@ -5,14 +5,9 @@
          foreground location permissions from :core, CAMERA from :capture. A permission
          this app needs but whose code lives elsewhere belongs with that code. -->
 
-    <!-- The M-Pesa reader's (fundi/mpesa), whose code is in this module and nowhere else,
-         so Kagua never asks for them. Asked at run time only after the fundi says yes to
-         reading; refused, the reader stays off. -->
-    <uses-permission android:name="android.permission.RECEIVE_SMS" />
-    <uses-permission android:name="android.permission.READ_SMS" />
-    <!-- The SMS permissions imply telephony. Not required: a phone without it installs the
-         app and simply has nothing for the reader to read. -->
-    <uses-feature android:name="android.hardware.telephony" android:required="false" />
+    <!-- The M-Pesa reader's SMS permissions and its receiver are in
+         src/mpesaSms/AndroidManifest.xml, merged in only while build.gradle.kts turns the
+         reading on (off since 17 November 2026). -->
 
     <application
         android:name=".FundiBoraApp"
@@ -48,17 +43,5 @@
                 android:name="android.support.FILE_PROVIDER_PATHS"
                 android:resource="@xml/file_paths" />
         </provider>
-
-        <!-- Off until the fundi agrees to reading; MpesaReader.applySwitch turns it on and
-             off with the switch. Only the system, holding BROADCAST_SMS, can call it. -->
-        <receiver
-            android:name=".mpesa.MpesaSmsReceiver"
-            android:enabled="false"
-            android:exported="true"
-            android:permission="android.permission.BROADCAST_SMS">
-            <intent-filter>
-                <action android:name="android.provider.Telephony.SMS_RECEIVED" />
-            </intent-filter>
-        </receiver>
     </application>
 </manifest>

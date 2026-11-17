@@ -8,6 +8,7 @@ import com.qualityverifier.domain.LocationFix
 import com.qualityverifier.domain.SessionStart
 import com.qualityverifier.domain.SessionSummary
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.flowOf
 
 /**
  * Conversation history.
@@ -152,6 +153,13 @@ interface SessionRepository {
     suspend fun pieceLabel(pieceId: String): String?
 
     /**
+     * Whether one of this account's pieces is labelled for a studio (V34). False for "My own
+     * job" and for a piece never asked. Decides whether its maker may make the final
+     * assessment (row 27). False in fakes and in Kagua, which has no pieces.
+     */
+    suspend fun pieceIsForStudio(pieceId: String): Boolean = false
+
+    /**
      * Renames a piece, or clears its name with null. Written locally first and sent on
      * the next sync, before the pull, so a name given offline is not overwritten.
      */
@@ -174,6 +182,12 @@ interface SessionRepository {
 
     /** Label changes the server has not been told yet. */
     suspend fun unsyncedPieceStudios(): List<PieceStudioChange> = emptyList()
+
+    /**
+     * Pieces with a name or a studio change the server has not had yet, as they change
+     * (v0.6.0, row 6): the pieces list tags each "Not sent yet". Empty in fakes.
+     */
+    fun observeUnsentPieceIds(): Flow<Set<String>> = flowOf(emptySet())
 
     /**
      * The server's number for each synced photo of [sessionId], by local path (v0.6.0, row

@@ -29,11 +29,13 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.qualityverifier.domain.Worker
+import com.qualityverifier.fundi.ui.SyncFailedLine
 import com.qualityverifier.fundi.ui.fundiContainer
 import com.qualityverifier.text.FundiLabels
 
 /**
- * "My workers": the roster, one card per person, archived ones last and greyed.
+ * "My workers": the roster, one card per person. Archived workers are kept apart, below
+ * the list, behind "Show archived" (Nathan, 17 November 2026).
  *
  * Add opens the worker form ([WorkerForm]): name, a number from contacts or typed, and
  * employee or temporary. Tapping a card opens the worker's page ([WorkerPageScreen]),
@@ -46,7 +48,12 @@ fun WorkersScreen(onBack: () -> Unit, onOpen: (Worker) -> Unit) {
     val container = fundiContainer()
     val model: WorkersViewModel = viewModel(factory = WorkersViewModel.factory(container))
     val roster by model.roster.collectAsState()
-    val sorted = remember(roster) { roster.sortedWith(compareBy({ it.archived }, { it.name.lowercase() })) }
+    val unsent by model.unsent.collectAsState()
+    val syncStatus by model.syncStatus.collectAsState()
+    val (active, archived) = remember(roster) {
+        roster.sortedBy { it.name.lowercase() }.partition { !it.archived }
+    }
+    var showArchived by rememberSaveable { mutableStateOf(false) }
     val labels = FundiLabels.ENGLISH
 
     // Saveable: the contacts app comes in front, and the form must come back with the
@@ -73,6 +80,7 @@ fun WorkersScreen(onBack: () -> Unit, onOpen: (Worker) -> Unit) {
         item {
             Text("My workers", style = MaterialTheme.typography.displaySmall)
             Spacer(Modifier.height(8.dp))
+            SyncFailedLine(syncStatus, labels)
         }
         item {
             Button(
@@ -80,7 +88,7 @@ fun WorkersScreen(onBack: () -> Unit, onOpen: (Worker) -> Unit) {
                 modifier = Modifier.fillMaxWidth().height(56.dp),
             ) { Text(labels.workerAddTitle) }
         }
-        if (sorted.isEmpty()) {
+        if (roster.isEmpty()) {
             item {
                 Text(
                     "Nobody yet. Add the people who work with you, so a report can say " +
@@ -90,8 +98,18 @@ fun WorkersScreen(onBack: () -> Unit, onOpen: (Worker) -> Unit) {
                 )
             }
         }
-        items(sorted, key = { it.id }) { worker ->
-            WorkerRow(worker, labels, onClick = { onOpen(worker) })
+        items(active, key = { it.id }) { worker ->
+            WorkerRow(worker, labels, unsent = worker.id in unsent, onClick = { onOpen(worker) })
+        }
+        if (archived.isNotEmpty()) {
+            item {
+                ArchivedToggle(labels, archived.size, showArchived) { showArchived = !showArchived }
+            }
+            if (showArchived) {
+                items(archived, key = { it.id }) { worker ->
+                    WorkerRow(worker, labels, unsent = worker.id in unsent, onClick = { onOpen(worker) })
+                }
+            }
         }
         item {
             TextButton(onClick = onBack, modifier = Modifier.fillMaxWidth()) { Text("Back") }
@@ -100,7 +118,7 @@ fun WorkersScreen(onBack: () -> Unit, onOpen: (Worker) -> Unit) {
 }
 
 @Composable
-private fun WorkerRow(worker: Worker, labels: FundiLabels, onClick: () -> Unit) {
+private fun WorkerRow(worker: Worker, labels: FundiLabels, unsent: Boolean, onClick: () -> Unit) {
     val muted = MaterialTheme.colorScheme.onSurfaceVariant
     Card(
         Modifier.fillMaxWidth().clickable(onClick = onClick),
@@ -125,6 +143,11 @@ private fun WorkerRow(worker: Worker, labels: FundiLabels, onClick: () -> Unit) 
                     style = MaterialTheme.typography.bodySmall,
                     color = muted,
                 )
+                // An add or edit the server has not had yet (row 6): kept here, sent at the
+                // next sync. A link cannot form until it is sent.
+                if (unsent) {
+                    Text(labels.notSentYet, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+                }
             }
             // "Linked" is the server's word (V31), from the last sync: this worker's own
             // account lists this workshop too. "Archived" wins over it.

@@ -334,6 +334,8 @@ class RoomSessionRepository(
 
     override suspend fun pieceLabel(pieceId: String): String? = dao.findPiece(pieceId)?.label
 
+    override suspend fun pieceIsForStudio(pieceId: String): Boolean = dao.findPiece(pieceId)?.studioId != null
+
     override suspend fun setPieceLabel(pieceId: String, label: String?) {
         // A row first, for a piece from before Room 11; then the rename as an update, so
         // the piece's studio label (V34) survives it.
@@ -351,6 +353,8 @@ class RoomSessionRepository(
         dao.insertPieceIfAbsent(PieceEntity(id = pieceId))
         dao.setPieceStudio(pieceId, studioId, now())
     }
+
+    override fun observeUnsentPieceIds(): Flow<Set<String>> = dao.observeUnsentPieceIds().map { it.toSet() }
 
     override suspend fun photoNumbers(sessionId: String): Map<String, Int> =
         dao.photoNumbers(sessionId).associate { images.resolve(it.relativePath).absolutePath to it.photoNumber }

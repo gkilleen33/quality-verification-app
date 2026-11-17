@@ -37,7 +37,7 @@ import com.qualityverifier.domain.WorkerDetails
 import com.qualityverifier.domain.WorkerSlot
 import com.qualityverifier.text.FundiLabels
 
-private enum class Step { NAME, STUDIO, WORKERS, LANGUAGE, PURPOSE, DETAILS }
+private enum class Step { NAME, STUDIO, WORKERS, FINISHED, LANGUAGE, PURPOSE, DETAILS }
 
 /**
  * The questions asked before anything is sent.
@@ -87,11 +87,27 @@ fun IntakeFlow(
      * re-assessment (row 27), so its purpose is not asked.
      */
     fixedPurpose: FundiPurpose? = null,
+    /**
+     * Whether to ask "Is this piece finished?" (Nathan, 17 November 2026): true for an account
+     * that may make the final assessment (`AssessViewModel.askFinished`). Skipped here as well
+     * when the maker labels a new piece for a studio, whose manager makes that assessment.
+     */
+    askFinished: Boolean = false,
+    /** The answer to "Is this piece finished?", given before [onComplete]. */
+    onFinished: (Boolean) -> Unit = {},
 ) {
     var step by remember { mutableStateOf(if (askName) Step.NAME else Step.WORKERS) }
     val askStudio = !returning && studios.isNotEmpty()
     // Nothing chosen to begin with: the fundi picks, so a wrong label is never a default.
     var studio by remember { mutableStateOf<PieceStudioChoice?>(null) }
+    val askingFinished = askFinished && studio !is PieceStudioChoice.Studio
+    val afterWorkers = if (askingFinished) Step.FINISHED else Step.LANGUAGE
+
+    /** On from "Who worked on this?". An earlier yes is withdrawn when the question no longer applies. */
+    fun leaveWorkers() {
+        if (!askingFinished) onFinished(false)
+        step = afterWorkers
+    }
     // Keyed on the name, which loads a moment after this first composes: without the
     // key a returning piece's name would arrive too late to prefill the field.
     var name by remember(initialName) { mutableStateOf(initialName.orEmpty()) }
@@ -184,19 +200,39 @@ fun IntakeFlow(
                     onAddWorker = onAddWorker,
                 )
                 Button(
-                    onClick = { step = Step.LANGUAGE },
+                    onClick = { leaveWorkers() },
                     modifier = Modifier.fillMaxWidth().height(56.dp),
                 ) { Text(labels.intakeContinue) }
                 // Skip records nobody, which reads as "not said" rather than "nobody".
                 Secondary(labels.intakeNameSkip) {
                     workedOn = emptyList()
-                    step = Step.LANGUAGE
+                    leaveWorkers()
                 }
                 if (askName) {
                     Secondary(labels.setupBack) { step = if (askStudio) Step.STUDIO else Step.NAME }
                 } else {
                     Secondary(labels.setupBack, onCancel)
                 }
+            }
+
+            // A yes makes this the final assessment a customer report needs (row 27), so the
+            // owner can send the report straight after its verdict.
+            Step.FINISHED -> {
+                Title(labels.intakeFinishedTitle)
+                Text(
+                    labels.intakeFinishedHint,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Choice(labels.intakeFinishedYes) {
+                    onFinished(true)
+                    step = Step.LANGUAGE
+                }
+                Choice(labels.intakeFinishedNo) {
+                    onFinished(false)
+                    step = Step.LANGUAGE
+                }
+                Secondary(labels.setupBack) { step = Step.WORKERS }
             }
 
             Step.LANGUAGE -> {
@@ -209,7 +245,7 @@ fun IntakeFlow(
                         afterLanguage(choice)
                     }
                 }
-                Secondary(labels.setupBack) { step = Step.WORKERS }
+                Secondary(labels.setupBack) { step = afterWorkers.takeIf { it == Step.FINISHED } ?: Step.WORKERS }
             }
 
             Step.PURPOSE -> {

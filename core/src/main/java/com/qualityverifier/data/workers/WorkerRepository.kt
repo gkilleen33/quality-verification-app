@@ -10,6 +10,7 @@ import com.qualityverifier.domain.Worker
 import com.qualityverifier.domain.WorkerDetails
 import com.qualityverifier.domain.WorkerSlot
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
 import java.util.UUID
 
@@ -39,6 +40,12 @@ interface WorkerRepository {
 
     /** Workers the server has not been told about, oldest first. */
     suspend fun unsynced(): List<WorkerChange>
+
+    /**
+     * The ids of workers with a change the server has not been told about, as they change
+     * (v0.6.0, row 6): the workers screen tags each "Not sent yet". Empty in fakes.
+     */
+    fun observeUnsentIds(): Flow<Set<String>> = flowOf(emptySet())
 
     suspend fun markSynced(change: WorkerChange)
 
@@ -159,6 +166,8 @@ class RoomWorkerRepository(
 
     /** Strictly after the last write, so the sync's `updatedAt` guard can tell two edits apart. */
     private fun later(existing: WorkerEntity): Long = maxOf(now(), existing.updatedAt + 1)
+
+    override fun observeUnsentIds(): Flow<Set<String>> = dao.observeUnsyncedWorkerIds().map { it.toSet() }
 
     override suspend fun unsynced(): List<WorkerChange> =
         dao.unsyncedWorkers().map {

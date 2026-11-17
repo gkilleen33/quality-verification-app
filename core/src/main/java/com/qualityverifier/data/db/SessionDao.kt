@@ -255,6 +255,19 @@ interface SessionDao {
     @Query("SELECT * FROM pieces WHERE studioPendingAt IS NOT NULL ORDER BY studioPendingAt")
     suspend fun unsyncedPieceStudios(): List<PieceEntity>
 
+    /**
+     * Pieces with a name, a studio change, or an assessment's "who worked on this" the server
+     * has not had, for "Not sent yet". A worker set waits while its assessment's opening turn
+     * is unsent, and the sync reports it as not finished, so its piece carries the tag too.
+     * A first assessment's piece is its own session id.
+     */
+    @Query(
+        "SELECT id FROM pieces WHERE labelSyncedAt IS NULL OR studioPendingAt IS NOT NULL " +
+            "UNION SELECT COALESCE(s.pieceId, s.id) FROM sessions s " +
+            "JOIN pending_session_workers p ON p.sessionId = s.id"
+    )
+    fun observeUnsentPieceIds(): Flow<List<String>>
+
     /** Marks the change sent, unless another was made while it was in flight. */
     @Query("UPDATE pieces SET studioPendingAt = NULL WHERE id = :pieceId AND studioPendingAt = :asOf")
     suspend fun markPieceStudioSent(pieceId: String, asOf: Long)
@@ -309,6 +322,10 @@ interface SessionDao {
 
     @Query("SELECT * FROM workers WHERE syncedAt IS NULL ORDER BY updatedAt")
     suspend fun unsyncedWorkers(): List<WorkerEntity>
+
+    /** The ids of [unsyncedWorkers], as they change, for the "Not sent yet" tag. */
+    @Query("SELECT id FROM workers WHERE syncedAt IS NULL")
+    fun observeUnsyncedWorkerIds(): Flow<List<String>>
 
     /** Guarded on `updatedAt`, so an edit made while the send was in flight stays unsent. */
     @Query("UPDATE workers SET syncedAt = :syncedAt WHERE id = :workerId AND updatedAt = :asOf")

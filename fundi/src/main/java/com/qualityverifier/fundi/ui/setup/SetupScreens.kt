@@ -240,7 +240,7 @@ fun ToolsScreen(
     // answered reads back to them in the order they answered it.
     ToolKind.entries.filter { it != ToolKind.OTHER }.forEach { kind ->
         Column(Modifier.fillMaxWidth().padding(top = 4.dp)) {
-            Text(labels.nameOf(kind), style = MaterialTheme.typography.bodyLarge)
+            Text(labels.displayNameOf(kind), style = MaterialTheme.typography.bodyLarge)
             // Wraps: four answers, one of them a whole phrase, do not fit one line on a
             // small phone.
             FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {

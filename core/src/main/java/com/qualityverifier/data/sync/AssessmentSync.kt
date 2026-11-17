@@ -20,6 +20,9 @@ import com.qualityverifier.domain.WorkerSlot
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.withContext
 
 /**
@@ -59,6 +62,7 @@ class AssessmentSync(
     /** Fundi Bora testers' "Was this review helpful?" answers (V36). Null in Kagua. */
     private val reviewAnswers: ReviewAnswers? = null,
     private val io: CoroutineDispatcher = Dispatchers.IO,
+    private val now: () -> Long = System::currentTimeMillis,
 ) {
 
     data class Result(
@@ -71,7 +75,33 @@ class AssessmentSync(
         val names: Int = 0,
         /** Roster writes and session worker sets that reached the server. */
         val rosterWrites: Int = 0,
+        /** The push steps that did not finish ([Pushed.failed]). */
+        val failed: List<SyncStep> = emptyList(),
     )
+
+    private val _status = MutableStateFlow(SyncStatus())
+
+    /** How the last [run] went: when it failed and what did not go, or nothing once one finished. */
+    val status: StateFlow<SyncStatus> = _status.asStateFlow()
+
+    /**
+     * Pushes what the phone owes, then fetches anything it does not have, and records in
+     * [status] whether it all went. A step that failed is named there, and the rest of the
+     * sync still ran.
+     */
+    suspend fun run(): Result {
+        val result = try {
+            pushAndPull()
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            _status.value = SyncStatus(failedAt = now(), failed = listOf(SyncStep.PULL))
+            throw e
+        }
+        val failed = result.failed + listOfNotNull(SyncStep.PULL.takeUnless { result.reachedServer })
+        _status.value = if (failed.isEmpty()) SyncStatus() else SyncStatus(failedAt = now(), failed = failed)
+        return result
+    }
 
     /**
      * Pushes what the phone owes, then fetches anything it does not have.
@@ -81,8 +111,9 @@ class AssessmentSync(
      * Evaluator reviews go up in the same pass and for the same reason — they are unsent
      * local work, and a failing pull should not strand them for another cycle.
      */
-    suspend fun run(): Result = withContext(io) {
-        val (deletes, reviews, names, rosterWrites) = push()
+    private suspend fun pushAndPull(): Result = withContext(io) {
+        val pushed = push()
+        val (deletes, reviews, names, rosterWrites) = pushed
 
         // Refreshed here so a promotion in the portal reaches the phone without a
         // re-install. Null means the server was unreachable, in which case the cached
@@ -113,6 +144,7 @@ class AssessmentSync(
         val remote = client.sessions()
             ?: return@withContext Result(
                 0, deletes, reachedServer = false, reviews = reviews, names = names, rosterWrites = rosterWrites,
+                failed = pushed.failed,
             )
 
         val known = sessions.knownSessions()
@@ -184,7 +216,10 @@ class AssessmentSync(
             )
             fetched++
         }
-        Result(fetched, deletes, reachedServer = true, reviews = reviews, names = names, rosterWrites = rosterWrites)
+        Result(
+            fetched, deletes, reachedServer = true, reviews = reviews, names = names, rosterWrites = rosterWrites,
+            failed = pushed.failed,
+        )
     }
 
     /** What one [push] sent, counted as [Result] counts it. */
@@ -195,6 +230,8 @@ class AssessmentSync(
         val rosterWrites: Int,
         /** M-Pesa transactions, notes and unread days the server confirmed. */
         val mpesa: Int = 0,
+        /** The steps that threw, or left rows unsent; each was logged. Empty when all went. */
+        val failed: List<SyncStep> = emptyList(),
     )
 
     /**
@@ -209,79 +246,140 @@ class AssessmentSync(
      * customer's to choose with the retry on that conversation (see `ChatViewModel`).
      */
     suspend fun push(): Pushed = withContext(io) {
-        var deletes = 0
-        for (id in sessions.pendingRemoteDeletes()) {
-            if (client.deleteSession(id)) {
-                sessions.clearPendingRemoteDelete(id)
-                deletes++
+        // Each step on its own (v0.6.0, row 6): one that throws, a full disk or a reply
+        // that will not parse, used to end the push there, and every later step waited a
+        // cycle behind it. Now it is logged and named in [Pushed.failed], and the rest go.
+        // A step whose rows stay unsent without throwing is named too, so the screens can
+        // say the last sync did not finish.
+        val failed = mutableListOf<SyncStep>()
+        suspend fun step(which: SyncStep, block: suspend () -> Pair<Int, Boolean>): Int =
+            try {
+                val (sent, allSent) = block()
+                if (!allSent) failed += which
+                sent
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Log.w(TAG, "Sync step ${which.name} failed; kept for the next sync", e)
+                failed += which
+                0
             }
+
+        val deletes = step(SyncStep.DELETES) {
+            var sent = 0
+            var all = true
+            for (id in sessions.pendingRemoteDeletes()) {
+                if (client.deleteSession(id)) {
+                    sessions.clearPendingRemoteDelete(id)
+                    sent++
+                } else {
+                    all = false
+                }
+            }
+            sent to all
         }
 
         // Reviews go up before anything comes down, same as deletes: they are the phone's
         // own unsent work, and a pull failing should not strand them for another cycle.
-        val reviews = pushReviews() + (reviewAnswers?.push() ?: 0)
+        val reviews = step(SyncStep.REVIEWS) { pushReviews() to sessions.pendingTesterFeedback().isEmpty() } +
+            step(SyncStep.REVIEW_ANSWERS) {
+                val answers = reviewAnswers ?: return@step 0 to true
+                answers.push().let { it to answers.allSent() }
+            }
 
         // Names too, and before the pull for the same reason: a pull that landed first
         // would write the server's older name over the one the maker just typed.
-        var names = 0
-        for (change in sessions.unsyncedPieceLabels()) {
-            if (client.renamePiece(change.pieceId, change.label)) {
-                sessions.markPieceLabelSynced(change)
-                names++
+        var names = step(SyncStep.PIECE_NAMES) {
+            var sent = 0
+            var all = true
+            for (change in sessions.unsyncedPieceLabels()) {
+                if (client.renamePiece(change.pieceId, change.label)) {
+                    sessions.markPieceLabelSynced(change)
+                    sent++
+                } else {
+                    all = false
+                }
             }
+            sent to all
         }
         // Studio labels (V34) on the same footing as the names: a pull landing first would
         // put the server's label back over the maker's correction.
-        for (change in sessions.unsyncedPieceStudios()) {
-            if (client.setPieceStudio(change.pieceId, change.studioId)) {
-                sessions.markPieceStudioSent(change)
-                names++
+        names += step(SyncStep.PIECE_STUDIOS) {
+            var sent = 0
+            var all = true
+            for (change in sessions.unsyncedPieceStudios()) {
+                if (client.setPieceStudio(change.pieceId, change.studioId)) {
+                    sessions.markPieceStudioSent(change)
+                    sent++
+                } else {
+                    all = false
+                }
             }
+            sent to all
         }
         // Today's studio, if answering it did not reach the server at the time.
-        studioDays?.let { names += it.push() }
+        names += step(SyncStep.STUDIO_DAYS) {
+            val days = studioDays ?: return@step 0 to true
+            days.push().let { it to days.allSent() }
+        }
 
         // The roster before any session that names it, so the server never meets a
         // worker id it has no row for.
-        var rosterWrites = 0
         var rosterAllSent = true
-        if (rosterEnabled) for (change in workers.unsynced()) {
-            if (client.upsertWorker(change.id, change.name, change.archived, change.phone, change.employment)) {
-                workers.markSynced(change)
-                rosterWrites++
-            } else {
-                rosterAllSent = false
+        var rosterWrites = step(SyncStep.WORKERS) {
+            var sent = 0
+            if (rosterEnabled) for (change in workers.unsynced()) {
+                if (client.upsertWorker(change.id, change.name, change.archived, change.phone, change.employment)) {
+                    workers.markSynced(change)
+                    sent++
+                } else {
+                    rosterAllSent = false
+                }
             }
+            sent to rosterAllSent
         }
+        if (SyncStep.WORKERS in failed) rosterAllSent = false
         // The studio list, on the same footing as the roster: the phone's own unsent work.
-        if (rosterEnabled) for (change in studios.unsynced()) {
-            if (client.upsertStudio(change.id, change.name, change.phone, change.archived)) {
-                studios.markSynced(change)
-                rosterWrites++
+        rosterWrites += step(SyncStep.STUDIOS) {
+            var sent = 0
+            var all = true
+            if (rosterEnabled) for (change in studios.unsynced()) {
+                if (client.upsertStudio(change.id, change.name, change.phone, change.archived)) {
+                    studios.markSynced(change)
+                    sent++
+                } else {
+                    all = false
+                }
             }
+            sent to all
         }
         // Only once every worker is there: a set naming a worker the server has not got
         // would be refused for good, and the edit lost. Left pending, it goes next time.
-        if (rosterEnabled && rosterAllSent) for (pending in workers.pendingSessions()) {
-            if (client.replaceSessionWorkers(pending.sessionId, workers.workersOf(pending.sessionId))) {
-                workers.clearPending(pending)
-                rosterWrites++
+        rosterWrites += step(SyncStep.SESSION_WORKERS) {
+            var sent = 0
+            var all = true
+            if (rosterEnabled && rosterAllSent) {
+                for (pending in workers.pendingSessions()) {
+                    if (client.replaceSessionWorkers(pending.sessionId, workers.workersOf(pending.sessionId))) {
+                        workers.clearPending(pending)
+                        sent++
+                    } else {
+                        all = false
+                    }
+                }
+            } else if (rosterEnabled) {
+                all = workers.pendingSessions().isEmpty()
             }
+            sent to all
         }
         // Last, after the names: a note naming a piece is refused until the server has the
         // piece, and an assessment's own turns are what put it there. A failure here leaves
         // the rows on the phone for the next push, and costs the rest of this one nothing.
-        val mpesaSent = mpesa?.let {
-            try {
-                it()
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                Log.w(TAG, "M-Pesa push failed; kept for the next sync", e)
-                0
-            }
-        } ?: 0
-        Pushed(deletes = deletes, reviews = reviews, names = names, rosterWrites = rosterWrites, mpesa = mpesaSent)
+        val mpesaSent = step(SyncStep.MPESA) { (mpesa?.invoke() ?: 0) to true }
+        Pushed(
+            deletes = deletes, reviews = reviews, names = names, rosterWrites = rosterWrites, mpesa = mpesaSent,
+            failed = failed.toList(),
+        )
     }
 
     /**
@@ -331,3 +429,16 @@ class AssessmentSync(
         const val TAG = "AssessmentSync"
     }
 }
+
+/** The steps of [AssessmentSync.push], named in [AssessmentSync.Pushed.failed] and the log. */
+enum class SyncStep {
+    DELETES, REVIEWS, REVIEW_ANSWERS, PIECE_NAMES, PIECE_STUDIOS, STUDIO_DAYS,
+    WORKERS, STUDIOS, SESSION_WORKERS, MPESA, PULL,
+}
+
+/**
+ * How the last sync went (v0.6.0, row 6), for the workers screen and the pieces list.
+ * [failedAt] is when the most recent sync failed, or null once one has finished; [failed]
+ * names what did not go. Kept in memory: a restarted app syncs again before it matters.
+ */
+data class SyncStatus(val failedAt: Long? = null, val failed: List<SyncStep> = emptyList())

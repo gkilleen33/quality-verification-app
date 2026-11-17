@@ -63,6 +63,9 @@ class StudioDays(
         return sent
     }
 
+    /** Whether nothing from today is still waiting to be sent, for the sync's report. */
+    suspend fun allSent(): Boolean = dao.unsyncedStudioDays().none { it.day == today() }
+
     private companion object {
         val NAIROBI: TimeZone = TimeZone.getTimeZone("Africa/Nairobi")
     }

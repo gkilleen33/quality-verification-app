@@ -6,11 +6,13 @@ import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
 import com.qualityverifier.data.sync.AssessmentSync
+import com.qualityverifier.data.sync.SyncStatus
 import com.qualityverifier.data.workers.WorkerRepository
 import com.qualityverifier.di.AppContainer
 import com.qualityverifier.domain.Worker
 import com.qualityverifier.domain.WorkerDetails
 import com.qualityverifier.domain.WorkerNames
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.stateIn
@@ -32,6 +34,14 @@ class WorkersViewModel(
     val roster: StateFlow<List<Worker>> =
         workers.observeWorkers()
             .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    /** Workers with a change the server has not had yet, tagged "Not sent yet" (row 6). */
+    val unsent: StateFlow<Set<String>> =
+        workers.observeUnsentIds()
+            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptySet())
+
+    /** When the last sync failed, if it did, for the line above the list (row 6). */
+    val syncStatus: StateFlow<SyncStatus> = sync?.status ?: MutableStateFlow(SyncStatus())
 
     fun add(details: WorkerDetails) = write { workers.add(details) }
 

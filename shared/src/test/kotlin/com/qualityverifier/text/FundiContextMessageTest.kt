@@ -27,6 +27,15 @@ class FundiContextMessageTest {
      */
     private val language = "Please answer me in English."
 
+    // Screens capitalise a tool's name; the opening turn, the prompt's input, does not.
+    @Test
+    fun `tool names are capitalised on screen and not in the opening turn`() {
+        assertEquals("Hand saw", labels.displayNameOf(ToolKind.HAND_SAW))
+        assertEquals("No. 4 plane", labels.displayNameOf(ToolKind.PLANE_NO4))
+        val profile = FundiProfile(tools = listOf(OwnedTool(ToolKind.HAND_SAW, ToolOwnership.WORKER)))
+        assertEquals("Tools I have: hand saw.\n" + language, message(profile))
+    }
+
     @Test
     fun `an empty profile still says which language to answer in`() {
         // A maker who skipped setup entirely gets no tool list, which costs them worse

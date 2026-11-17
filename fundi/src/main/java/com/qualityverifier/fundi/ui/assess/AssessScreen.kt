@@ -119,6 +119,7 @@ fun AssessScreen(
     val askToday by viewModel.askToday.collectAsState()
     val reviewHelpful by viewModel.reviewHelpful.collectAsState()
     val photoNumbers by viewModel.photoNumbers.collectAsState()
+    val askFinished by viewModel.askFinished.collectAsState()
 
     val labels = FundiLabels.ENGLISH
     // The capture pipeline and the verdict speak ReportLabels, and follow the language
@@ -221,6 +222,8 @@ fun AssessScreen(
                 studios = studios,
                 askName = pieceMine,
                 fixedPurpose = if (isFinal) FundiPurpose.REEVALUATE else null,
+                askFinished = askFinished,
+                onFinished = viewModel::answerFinished,
             )
 
             Stage.OPENING_PHOTO -> {

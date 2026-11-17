@@ -34,6 +34,7 @@ import androidx.navigation.navArgument
 import com.qualityverifier.domain.ItemType
 import com.qualityverifier.domain.UpdatePrompt
 import com.qualityverifier.data.reports.ReportTarget
+import com.qualityverifier.fundi.BuildConfig
 import com.qualityverifier.fundi.reports.SendReportScreen
 import com.qualityverifier.fundi.reports.SendReportViewModel
 import com.qualityverifier.fundi.ui.assess.AssessScreen
@@ -225,8 +226,14 @@ fun FundiNav() {
                     // Setup, not home, for an account with no workshop profile: a new
                     // account, or a maker who quit at the terms screen before setup. The
                     // M-Pesa questions come first, between the terms and setup (Nathan,
-                    // 11 November 2026).
-                    TermsStep.SETUP -> navController.navigate(Routes.mpesaConsent(MpesaQuestion.READ, signUp = true)) {
+                    // 11 November 2026), while the build has the reading on.
+                    TermsStep.SETUP -> navController.navigate(
+                        if (BuildConfig.MPESA_SMS_READING) {
+                            Routes.mpesaConsent(MpesaQuestion.READ, signUp = true)
+                        } else {
+                            Routes.SETUP_WORKSHOP
+                        },
+                    ) {
                         popUpTo(0) { inclusive = true }
                     }
                     else -> navController.navigate(Routes.HOME) { popUpTo(0) { inclusive = true } }
@@ -424,11 +431,14 @@ fun FundiNav() {
         composable(Routes.HOME) {
             // Two tabs: the pieces, and the Finances tab (Grady's description, Slack,
             // 11 November 2026). Saveable, so returning from a transaction lands on Finances.
+            // Finances only while the build has the M-Pesa reading on; with one tab left,
+            // there is no tab bar.
             var tab by rememberSaveable { mutableStateOf(HomeTab.PIECES) }
+            val tabs = if (BuildConfig.MPESA_SMS_READING) HomeTab.entries else listOf(HomeTab.PIECES)
             Scaffold(
                 bottomBar = {
-                    NavigationBar {
-                        HomeTab.entries.forEach { each ->
+                    if (tabs.size > 1) NavigationBar {
+                        tabs.forEach { each ->
                             NavigationBarItem(
                                 selected = tab == each,
                                 onClick = { tab = each },
@@ -598,11 +608,14 @@ fun FundiNav() {
                 agreementSection = {
                     Column {
                         // The two M-Pesa switches above the transfer withdrawal: they are the
-                        // ones somebody comes here to change.
-                        MpesaSettingsSection(
-                            onAsk = { question -> navController.navigate(Routes.mpesaConsent(question)) },
-                        )
-                        Spacer(Modifier.height(28.dp))
+                        // ones somebody comes here to change. Only while the build has the
+                        // reading on.
+                        if (BuildConfig.MPESA_SMS_READING) {
+                            MpesaSettingsSection(
+                                onAsk = { question -> navController.navigate(Routes.mpesaConsent(question)) },
+                            )
+                            Spacer(Modifier.height(28.dp))
+                        }
                         AgreementSection(
                             onWithdrawn = {
                                 navController.navigate(Routes.terms(TermsMode.WITHDRAWN)) {

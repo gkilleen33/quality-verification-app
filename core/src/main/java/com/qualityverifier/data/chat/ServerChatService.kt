@@ -149,8 +149,7 @@ class ServerChatService(
         // behind the same authentication as everything else — the first device test of
         // this path failed on exactly that, because HEAD and PUT were built without the
         // header and a 401 on a photo reads to the customer as "please sign in again".
-        val token = tokens.accessToken()
-            ?: return@withContext ChatResult.Failure(ChatErrorKind.AUTH, "Please sign in again.")
+        val token = tokens.accessToken() ?: return@withContext noToken()
 
         val hashes = mutableListOf<String>()
         val photoMeta = mutableMapOf<String, JsonObject>()
@@ -214,8 +213,7 @@ class ServerChatService(
         hashes: List<String>,
         allowRetry: Boolean,
     ): ChatResult {
-        val token = tokens.accessToken()
-            ?: return ChatResult.Failure(ChatErrorKind.AUTH, "Please sign in again.")
+        val token = tokens.accessToken() ?: return noToken()
 
         val request = Request.Builder()
             .url(baseUrl + chatPath)
@@ -241,7 +239,8 @@ class ServerChatService(
                         // the new token without spending the refresh token again.
                         val refreshed = tokens.refreshAfterUnauthorized(token)
                         if (refreshed == null) {
-                            ChatResult.Failure(ChatErrorKind.AUTH, "Please sign in again.")
+                            // The refresh itself may have failed for want of signal.
+                            noToken()
                         } else {
                             postTurn(body, turn, hashes, allowRetry = false)
                         }
@@ -281,8 +280,7 @@ class ServerChatService(
             val bytes = images.bytesForUpload(java.io.File(attachment.path)) ?: continue
             val sha = sha256(bytes)
             if (sha in wanted) {
-                val token = tokens.accessToken()
-                    ?: return ChatResult.Failure(ChatErrorKind.AUTH, "Please sign in again.")
+                val token = tokens.accessToken() ?: return noToken()
                 ensureUploaded(sha, bytes, token, force = true)?.let { return it }
             }
         }
@@ -334,6 +332,14 @@ class ServerChatService(
         ChatErrorKind.NETWORK,
         "No internet connection. Your answers were saved — tap retry when you're back online.",
     )
+
+    /**
+     * No token to send (v0.6.0, row 6). Only a server that refused the sign-in means signing
+     * in again; a refresh that could not reach the server keeps the sign-in, and the maker
+     * offline in a workshop is told there is no connection, with the turn kept for Retry.
+     */
+    private fun noToken(): ChatResult.Failure =
+        if (tokens.holdsSignIn()) networkFailure() else ChatResult.Failure(ChatErrorKind.AUTH, "Please sign in again.")
 
     /**
      * The server's wording never reaches a customer: it is written for an operator and can

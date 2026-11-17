@@ -286,6 +286,17 @@ data class FundiLabels(
     val workerPageFinal: String,
     val reportFinalNeeded: String,
     val reportAssessFinished: String,
+    /** "Is this piece finished?" at the intake, for an account that may make the final assessment. */
+    val intakeFinishedTitle: String,
+    val intakeFinishedHint: String,
+    val intakeFinishedYes: String,
+    val intakeFinishedNo: String,
+    /**
+     * Below the active studios or workers (Nathan, 17 November 2026): opens and closes the
+     * archived ones, kept apart from the list; {n} is how many.
+     */
+    private val archivedShowFormat: String,
+    val archivedHide: String,
     /** "Which pieces?" before a worker's work report (row 22). */
     val reportWhichPieces: String,
     val reportWhichPiecesHint: String,
@@ -314,7 +325,14 @@ data class FundiLabels(
     val reviewHelpfulNo: String,
     /** After the tester has answered. */
     val reviewHelpfulThanks: String,
+    // ---- v0.6.0: offline (row 6)
+    /** Beside a worker or a piece the server has not been told about yet. */
+    val notSentYet: String,
+    /** Above the workers and the pieces when the last sync failed; {time} is its time, "14:32". */
+    private val lastSyncFailedFormat: String,
 ) {
+    fun lastSyncFailed(time: String) = lastSyncFailedFormat.replace("{time}", time)
+
     fun benchIsThere(tool: String) = benchIsThereFormat.replace("{tool}", tool)
 
     fun benchWhoOwns(tool: String) = benchWhoOwnsFormat.replace("{tool}", tool)
@@ -324,6 +342,8 @@ data class FundiLabels(
     fun pieceFor(studio: String) = pieceForFormat.replace("{studio}", studio)
 
     fun reportPhotos(n: Int) = reportPhotosFormat.replace("{n}", n.toString())
+
+    fun archivedShow(n: Int) = archivedShowFormat.replace("{n}", n.toString())
 
     /**
      * The "Who is this for?" choice for a kind. A worker's choice is listed under
@@ -383,6 +403,13 @@ data class FundiLabels(
     fun borrowed(tool: String): String = borrowedFormat.replace("{tool}", tool)
 
     fun nameOf(kind: ToolKind): String = toolNames[kind] ?: kind.id.replace('_', ' ')
+
+    /**
+     * "Hand saw": [nameOf] with its first letter capitalised, for a tool shown on its own as a
+     * heading or list item (Nathan, 17 November 2026: lower case read as informal). Screens
+     * only. The opening turn keeps [nameOf], so the assessment prompt's input is unchanged.
+     */
+    fun displayNameOf(kind: ToolKind): String = nameOf(kind).replaceFirstChar { it.titlecase() }
     fun nameOf(goal: FundiGoal): String = goalNames[goal] ?: goal.id.replace('_', ' ')
 
     /**
@@ -647,8 +674,11 @@ data class FundiLabels(
             workerPageProblemsUnknown = "The problems could not be read. Open the assessment.",
             workerPagePurposeUnknown = "Assessment",
             studiosTitle = "Studios I work for",
-            studiosEmpty = "None yet. Add the workshops you work for. When a workshop also " +
-                "lists you, the app links you to it.",
+            // "Other": a manager's own workshop is the account itself, never an entry here
+            // (Nathan, 17 November 2026).
+            studiosEmpty = "None yet. Add any other workshops you work for. Your own " +
+                "workshop is already included. When a workshop also lists you, the app " +
+                "links you to it.",
             studioAddTitle = "Add a studio",
             studioEditTitle = "Edit studio",
             studioNameHint = "Workshop or owner's name",
@@ -724,6 +754,12 @@ data class FundiLabels(
             reportFinalNeeded = "Before a customer report, assess the finished piece once more. " +
                 "Any problem it finds is listed in the report.",
             reportAssessFinished = "Assess the finished piece",
+            intakeFinishedTitle = "Is this piece finished?",
+            intakeFinishedHint = "If it is, you can send this assessment to the customer in a report.",
+            intakeFinishedYes = "Yes, it is finished",
+            intakeFinishedNo = "No, I am still making it",
+            archivedShowFormat = "Show archived ({n})",
+            archivedHide = "Hide archived",
             reportWhichPieces = "Which pieces?",
             reportWhichPiecesHint = "The report covers the pieces you choose.",
             benchTitle = "Photograph your bench",
@@ -748,6 +784,9 @@ data class FundiLabels(
             reviewHelpfulYes = "Yes",
             reviewHelpfulNo = "No",
             reviewHelpfulThanks = "Thank you. Your answer is saved.",
+            notSentYet = "Not sent yet",
+            lastSyncFailedFormat = "The last sync at {time} did not finish. What is marked \"Not sent yet\" " +
+                "is kept on this phone and is sent at the next sync.",
         )
     }
 }

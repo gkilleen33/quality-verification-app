@@ -34,17 +34,22 @@ import com.qualityverifier.fundi.ui.fundiContainer
 import com.qualityverifier.text.FundiLabels
 
 /**
- * "Studios I work for" (V31): one card per studio, archived ones last and greyed, in the
- * style of "My workers". Add opens [StudioForm]; tapping a card opens it to edit, with
- * Archive. A card reads "Linked" when the server's two-sided match holds: that studio's
- * roster names this account's number too. Nothing else is shown about the other side.
+ * "Studios I work for" (V31): one card per studio, in the style of "My workers". Archived
+ * studios are kept apart, below the list, behind "Show archived" (Nathan, 17 November
+ * 2026), so the list holds only the studios in use. Add opens [StudioForm]; tapping a card
+ * opens it to edit, with Archive. A card reads "Linked" when the server's two-sided match
+ * holds: that studio's roster names this account's number too. Nothing else is shown about
+ * the other side.
  */
 @Composable
 fun StudiosScreen(onBack: () -> Unit) {
     val container = fundiContainer()
     val model: StudiosViewModel = viewModel(factory = StudiosViewModel.factory(container))
     val studios by model.list.collectAsState()
-    val sorted = remember(studios) { studios.sortedWith(compareBy({ it.archived }, { it.name.lowercase() })) }
+    val (active, archived) = remember(studios) {
+        studios.sortedBy { it.name.lowercase() }.partition { !it.archived }
+    }
+    var showArchived by rememberSaveable { mutableStateOf(false) }
     val labels = FundiLabels.ENGLISH
 
     // Saveable: the contacts app comes in front, and the form must come back with the
@@ -98,7 +103,8 @@ fun StudiosScreen(onBack: () -> Unit) {
                 modifier = Modifier.fillMaxWidth().height(56.dp),
             ) { Text(labels.studioAddTitle) }
         }
-        if (sorted.isEmpty()) {
+        // "None yet" only when there is truly nothing: archived studios are still studios.
+        if (studios.isEmpty()) {
             item {
                 Text(
                     labels.studiosEmpty,
@@ -107,12 +113,33 @@ fun StudiosScreen(onBack: () -> Unit) {
                 )
             }
         }
-        items(sorted, key = { it.id }) { studio ->
+        items(active, key = { it.id }) { studio ->
             StudioRow(studio, labels, onClick = { editingId = studio.id })
+        }
+        if (archived.isNotEmpty()) {
+            item {
+                ArchivedToggle(labels, archived.size, showArchived) { showArchived = !showArchived }
+            }
+            if (showArchived) {
+                items(archived, key = { it.id }) { studio ->
+                    StudioRow(studio, labels, onClick = { editingId = studio.id })
+                }
+            }
         }
         item {
             TextButton(onClick = onBack, modifier = Modifier.fillMaxWidth()) { Text("Back") }
         }
+    }
+}
+
+/**
+ * "Show archived (2)" below a list, and "Hide archived" once open. Shared by Studios and
+ * My workers, which keep archived entries the same way.
+ */
+@Composable
+internal fun ArchivedToggle(labels: FundiLabels, count: Int, open: Boolean, onToggle: () -> Unit) {
+    TextButton(onClick = onToggle, modifier = Modifier.fillMaxWidth()) {
+        Text(if (open) labels.archivedHide else labels.archivedShow(count))
     }
 }
 
