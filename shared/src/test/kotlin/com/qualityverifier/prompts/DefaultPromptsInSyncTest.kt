@@ -58,6 +58,18 @@ class DefaultPromptsInSyncTest {
     }
 
     @Test
+    fun `compiled-in bench prompt matches its prompt file, and names every tool kind`() {
+        val onDisk = promptFile("fundi-bench.txt").readText().trimEnd('\n')
+        assertEquals("DefaultPrompts.FUNDI_BENCH is stale - regenerate it", onDisk, DefaultPrompts.FUNDI_BENCH)
+        // A kind the prompt never names can never be drafted; one it names that the app
+        // does not know is dropped by the parser.
+        ToolKind.entries.forEach { kind ->
+            assertTrue("${kind.id} is missing from the bench prompt", DefaultPrompts.FUNDI_BENCH.contains("- ${kind.id}:"))
+        }
+        assertTrue(DefaultPrompts.FUNDI_BENCH.contains("qv-bench"))
+    }
+
+    @Test
     fun `both masters keep a follow-up short and know how to look again`() {
         // Follow-ups were slow because nearly every one re-issued the whole verdict.
         for (master in listOf(DefaultPrompts.MASTER, DefaultPrompts.FUNDI_MASTER)) {

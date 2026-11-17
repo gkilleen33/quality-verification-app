@@ -172,26 +172,44 @@ object WorkerNames {
 }
 
 /**
- * Four states, not two.
+ * Who owns a tool the fundi has to hand, or why they have none (V35; design of 3 and 4
+ * November 2026): the worker themselves, the studio, or a rental. These three replaced
+ * "owned" and "borrowed" in v0.6.0. There is no manager owner (Nathan, 17 November 2026): a
+ * manager's tools are the studio's.
  *
- * "Borrowed" is its own answer because it changes the advice rather than the inventory: a
- * borrowed circular saw is available for this piece and possibly not for the next one, so
- * a habit built around it is a habit that will break.
+ * "None" and "unknown" are not owners but answers: the tool is not to hand. "Unknown" —
+ * they do not know what the tool is — was added in V20 and stays its own answer. It is not
+ * available, like [NONE], but it says something [NONE] does not: a fix that names it has to
+ * explain it, and the move from unknown to owned is the plainest evidence of learning the
+ * record can hold.
  *
- * "Unknown" — they do not know what the tool is — is its own answer for the same kind of
- * reason, and was added in V20. It is not available, like [NONE], but it says something
- * [NONE] does not: a fix that names it has to explain it, and the move from unknown to
- * owned is the plainest evidence of learning the record can hold.
+ * A rental is marked in the opening turn as a borrowed tool was, because it changes the
+ * advice rather than the inventory: available for this piece and possibly not the next.
+ *
+ * [legacyId] is the word an app older than v0.6.0 reads and writes: the server sends it to
+ * such an app, and [fromId] reads the old words as their V35 mapping.
  */
-enum class ToolOwnership(val id: String) {
-    OWNED("owned"),
-    BORROWED("borrowed"),
-    NONE("none"),
-    UNKNOWN("unknown");
+enum class ToolOwnership(val id: String, val legacyId: String) {
+    WORKER("worker", "owned"),
+    STUDIO("studio", "owned"),
+    RENTAL("rental", "borrowed"),
+    NONE("none", "none"),
+    UNKNOWN("unknown", "unknown");
+
+    /** Whether the fundi has the tool to hand: any owner, not "none" or "unknown". */
+    val toHand: Boolean get() = this != NONE && this != UNKNOWN
 
     companion object {
-        fun fromId(id: String): ToolOwnership? =
-            entries.firstOrNull { it.id == id.trim().lowercase() }
+        /** The V35 mapping of the words before it: "owned" the worker's, "borrowed" a rental. */
+        private val LEGACY = mapOf("owned" to WORKER, "borrowed" to RENTAL)
+
+        fun fromId(id: String): ToolOwnership? {
+            val key = id.trim().lowercase()
+            return entries.firstOrNull { it.id == key } ?: LEGACY[key]
+        }
+
+        /** Whether [id] is a word only an app older than v0.6.0 writes. */
+        fun isLegacy(id: String): Boolean = id.trim().lowercase() in LEGACY
     }
 }
 

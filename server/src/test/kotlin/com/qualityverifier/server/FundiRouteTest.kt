@@ -1,5 +1,6 @@
 package com.qualityverifier.server
 
+import com.qualityverifier.domain.AppVersionHeaders
 import com.qualityverifier.domain.Audience
 import com.qualityverifier.domain.Employment
 import com.qualityverifier.domain.FundiGoal
@@ -693,8 +694,8 @@ class FundiRouteTest {
                 existing = FundiProfile(
                     workshop = Workshop(makes = "stools"),
                     tools = listOf(
-                        OwnedTool(ToolKind.CIRCULAR_SAW, ToolOwnership.OWNED),
-                        OwnedTool(ToolKind.ROUTER, ToolOwnership.OWNED),
+                        OwnedTool(ToolKind.CIRCULAR_SAW, ToolOwnership.WORKER),
+                        OwnedTool(ToolKind.ROUTER, ToolOwnership.WORKER),
                     ),
                 ),
             )
@@ -718,7 +719,7 @@ class FundiRouteTest {
             assertEquals(2, changes.size)
 
             val saw = changes.single { it.kind == ToolKind.CIRCULAR_SAW }
-            assertEquals(ToolOwnership.OWNED, saw.from)
+            assertEquals(ToolOwnership.WORKER, saw.from)
             assertEquals(ToolChangeReason.SOLD, saw.reason)
             assertEquals("bad month", saw.note)
 
@@ -734,7 +735,7 @@ class FundiRouteTest {
         val store = FakeFundiStore(
             existing = FundiProfile(
                 workshop = Workshop(makes = "stools"),
-                tools = listOf(OwnedTool(ToolKind.CHISELS, ToolOwnership.OWNED)),
+                tools = listOf(OwnedTool(ToolKind.CHISELS, ToolOwnership.WORKER)),
             ),
         )
         val app = withFundi(store, audience = Audience.FUNDI)
@@ -758,7 +759,7 @@ class FundiRouteTest {
     fun `the rental answers survive the round trip`() = testApplication {
         val profile = FundiProfile(
             workshop = Workshop(makes = "stools", rentsTools = true),
-            tools = listOf(OwnedTool(ToolKind.ROUTER, ToolOwnership.OWNED, dayRateKes = 400)),
+            tools = listOf(OwnedTool(ToolKind.ROUTER, ToolOwnership.WORKER, dayRateKes = 400)),
         )
         val app = withFundi(FakeFundiStore(existing = profile), audience = Audience.FUNDI)
 
@@ -766,6 +767,55 @@ class FundiRouteTest {
 
         assertTrue(body.contains("\"rents_tools\":true"))
         assertTrue(body.contains("\"day_rate_kes\":400"))
+    }
+
+    // V35 replaced owned/borrowed with three owners. A v0.5.0 phone knows only the old words
+    // and drops a word it has never seen, so it is sent the old ones, and its "owned" back
+    // does not overwrite a studio's owner a newer phone recorded.
+    @Test
+    fun `an app before versionCode 6 is sent the old owner words and its owned keeps a stored owner`() = testApplication {
+        val store = FakeFundiStore(
+            existing = FundiProfile(
+                tools = listOf(
+                    OwnedTool(ToolKind.CLAMPS, ToolOwnership.STUDIO),
+                    OwnedTool(ToolKind.ROUTER, ToolOwnership.STUDIO),
+                    OwnedTool(ToolKind.SANDER, ToolOwnership.RENTAL),
+                    OwnedTool(ToolKind.DRILL, ToolOwnership.WORKER),
+                ),
+            ),
+        )
+        val app = withFundi(store, audience = Audience.FUNDI)
+
+        val old = app.get("/v1/fundi/profile") { auth(FUNDI); header(AppVersionHeaders.VERSION, "5") }.bodyAsText()
+        val none = app.get("/v1/fundi/profile") { auth(FUNDI) }.bodyAsText()
+        for (body in listOf(old, none)) {
+            assertTrue(body.contains(""""kind":"clamps","ownership":"owned""""))
+            assertTrue(body.contains(""""kind":"sander","ownership":"borrowed""""))
+            assertFalse(body.contains("\"studio\""))
+        }
+        val new = app.get("/v1/fundi/profile") { auth(FUNDI); header(AppVersionHeaders.VERSION, "6") }.bodyAsText()
+        assertTrue(new.contains(""""kind":"clamps","ownership":"studio""""))
+        assertTrue(new.contains(""""kind":"router","ownership":"studio""""))
+        assertTrue(new.contains(""""kind":"sander","ownership":"rental""""))
+
+        // The v0.5.0 phone saves what it was sent, plus a new tool it calls owned.
+        app.put("/v1/fundi/profile") {
+            auth(FUNDI)
+            header(AppVersionHeaders.VERSION, "5")
+            contentType(ContentType.Application.Json)
+            setBody(
+                """{"tools":[{"kind":"clamps","ownership":"owned"},{"kind":"router","ownership":"owned"},
+                   {"kind":"sander","ownership":"borrowed"},{"kind":"drill","ownership":"owned"},
+                   {"kind":"chisels","ownership":"owned"}]}""",
+            )
+        }
+        val owners = store.saved.getValue(FUNDI).tools.associate { it.kind to it.ownership }
+        assertEquals(ToolOwnership.STUDIO, owners[ToolKind.CLAMPS])
+        assertEquals(ToolOwnership.STUDIO, owners[ToolKind.ROUTER])
+        assertEquals(ToolOwnership.RENTAL, owners[ToolKind.SANDER])
+        assertEquals(ToolOwnership.WORKER, owners[ToolKind.DRILL])
+        assertEquals(ToolOwnership.WORKER, owners[ToolKind.CHISELS])
+        assertTrue("nothing the old phone resent is a change", store.toolHistory(FUNDI).map { it.change.kind } == listOf(ToolKind.CHISELS))
     }
 
     // ---------------------------------------------------------------- harness

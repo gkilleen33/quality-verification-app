@@ -15,6 +15,8 @@ import com.qualityverifier.data.chat.ChatService
 import com.qualityverifier.data.chat.ServerChatService
 import com.qualityverifier.data.db.AppDatabase
 import com.qualityverifier.data.db.ImageFileStore
+import com.qualityverifier.data.fundi.BenchApi
+import com.qualityverifier.data.fundi.BenchClient
 import com.qualityverifier.data.fundi.FundiProfileClient
 import com.qualityverifier.data.fundi.FundiProfiles
 import com.qualityverifier.data.location.LocationCapture
@@ -330,6 +332,15 @@ class AppContainer(
     val fundiProfiles: FundiProfiles = FundiProfileClient(
         client = httpClient,
         tokens = tokenProvider,
+        baseUrl = baseUrl,
+        json = json,
+    )
+
+    /** The bench photo at setup (V35). Fundi Bora's; Kagua links it and never calls it. */
+    val bench: BenchApi = BenchClient(
+        client = httpClient,
+        tokens = tokenProvider,
+        images = images,
         baseUrl = baseUrl,
         json = json,
     )

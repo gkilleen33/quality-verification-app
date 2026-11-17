@@ -53,6 +53,12 @@ class FundiVocabularyTest {
     /** Replaces the three ownership CHECKs to add "unknown". */
     private val toolNotKnown: String by lazy { read("V20__tool_not_known.sql") }
 
+    /**
+     * Replaces them again with the tool owners (v0.6.0), and adds the bench photo's call kind
+     * and the inferred tools' table, which restates the tool kinds and owners.
+     */
+    private val tools: String by lazy { read("V35__tools.sql") }
+
     /** The roster, and the parts of a piece a worker can be named on. */
     private val workers: String by lazy { read("V23__workers.sql") }
 
@@ -91,8 +97,25 @@ class FundiVocabularyTest {
     fun `every ownership state is allowed by the constraint`() {
         assertAllAllowed(
             "ownership", ToolOwnership.entries.map { it.id },
-            sql = toolNotKnown, where = "V20",
+            sql = tools, where = "V35",
         )
+    }
+
+    // V35's inferred tools restate the kinds, and the owners a tool to hand can have; the
+    // bench photo's usage rows add a call kind. A kind or owner added to the enums and not
+    // here would fail the session that first named it.
+    @Test
+    fun `the inferred tools and the bench photo's usage know every kind, owner and call kind`() {
+        assertAllAllowed("tool kind", ToolKind.entries.map { it.id }, sql = tools, where = "V35")
+        assertAllAllowed(
+            "owner", ToolOwnership.entries.filter { it.toHand }.map { it.id },
+            sql = tools, where = "V35",
+        )
+        assertAllAllowed(
+            "source", listOf(com.qualityverifier.server.db.InferredTools.MAKER, com.qualityverifier.server.db.InferredTools.STUDIO),
+            sql = tools, where = "V35",
+        )
+        assertAllAllowed("call kind", listOf(com.qualityverifier.server.routes.BENCH_CALL_KIND), sql = tools, where = "V35")
     }
 
     @Test
@@ -156,7 +179,7 @@ class FundiVocabularyTest {
         )
         assertAllAllowed(
             "ownership", ToolOwnership.entries.map { it.id },
-            sql = toolNotKnown, where = "V20",
+            sql = tools, where = "V35",
         )
     }
 

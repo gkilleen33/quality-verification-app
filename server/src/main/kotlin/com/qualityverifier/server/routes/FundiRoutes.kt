@@ -1,7 +1,9 @@
 package com.qualityverifier.server.routes
 
+import com.qualityverifier.domain.AppVersionHeaders
 import com.qualityverifier.domain.Audience
 import com.qualityverifier.domain.Employment
+import com.qualityverifier.domain.ToolOwnership
 import com.qualityverifier.server.db.AuthStore
 import com.qualityverifier.server.db.FundiStore
 import com.qualityverifier.server.db.PhoneChange
@@ -49,7 +51,7 @@ fun Route.fundiRoutes(store: FundiStore, auth: AuthStore) {
                 call.respond(HttpStatusCode.NotFound, ErrorResponse("no_profile"))
                 return@get
             }
-            call.respond(profile.toDto())
+            call.respond(profile.toDto(legacy = call.knowsOnlyOldOwners()))
         }
 
         put("/v1/fundi/profile") {
@@ -59,13 +61,19 @@ fun Route.fundiRoutes(store: FundiStore, auth: AuthStore) {
                 )
             if (!call.requireFundi(auth, userId)) return@put
 
-            val profile = call.receive<FundiProfileDto>().toDomain()
+            val sent = call.receive<FundiProfileDto>()
+            var profile = sent.toDomain()
+            // An app older than v0.6.0 sends "owned" for a tool a newer phone recorded as the
+            // studio's (V35); that owner is kept.
+            if (sent.tools.any { ToolOwnership.isLegacy(it.ownership) }) {
+                profile = profile.keepingOwnersFrom(store.profileFor(userId), sent)
+            }
             store.saveProfile(userId, profile)
             log.info(
                 "Fundi profile saved for {}: {} tools, {} goals",
                 userId, profile.tools.size, profile.goals.size,
             )
-            call.respond(HttpStatusCode.OK, profile.toDto())
+            call.respond(HttpStatusCode.OK, profile.toDto(legacy = call.knowsOnlyOldOwners()))
         }
 
         // The shop's GPS point, sent only when the maker said they were at the shop and
@@ -333,6 +341,17 @@ fun Route.fundiRoutes(store: FundiStore, auth: AuthStore) {
             }
         }
     }
+}
+
+/**
+ * The first Fundi Bora versionCode that knows V35's tool owners (v0.6.0). An app below it,
+ * or one too old to send its version, is sent "owned" and "borrowed" instead.
+ */
+const val FIRST_TOOL_OWNERS_VERSION = 6
+
+private fun ApplicationCall.knowsOnlyOldOwners(): Boolean {
+    val version = AppVersionHeaders.parseVersion(request.headers[AppVersionHeaders.VERSION])
+    return version == null || version < FIRST_TOOL_OWNERS_VERSION
 }
 
 /**

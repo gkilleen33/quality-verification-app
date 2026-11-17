@@ -41,6 +41,7 @@ def read(path):
 master = read(PROMPTS / "master.txt")
 fundi_master = read(PROMPTS / "fundi-master.txt")
 compact = read(PROMPTS / "compact.txt")
+bench = read(PROMPTS / "fundi-bench.txt")
 
 items = []
 for path in sorted((PROMPTS / "items").glob("*.txt")):
@@ -95,6 +96,15 @@ object DefaultPrompts {{
 {compact}
 """.trimIndent()
 
+    /**
+     * Fundi Bora's bench photo at setup (v0.6.0, V35): the tools Claude can see on the
+     * maker's bench, as a draft the maker confirms tool by tool. Its own call and its own
+     * prompt, with no protocol and no conversation.
+     */
+    val FUNDI_BENCH: String = """
+{bench}
+""".trimIndent()
+
     /** Keyed by [ItemType.id]. Items with an empty prompt file are simply absent. */
     private val ITEMS: Map<String, String> = mapOf(
 {entries}
@@ -105,5 +115,6 @@ object DefaultPrompts {{
 ''')
 print(
     f"wrote {OUT.relative_to(ROOT)}: master={len(master)} chars, "
-    f"fundi={len(fundi_master)} chars, compact={len(compact)} chars, items={[s for s, _ in items]}"
+    f"fundi={len(fundi_master)} chars, compact={len(compact)} chars, bench={len(bench)} chars, "
+    f"items={[s for s, _ in items]}"
 )

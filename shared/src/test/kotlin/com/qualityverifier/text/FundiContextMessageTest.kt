@@ -41,7 +41,7 @@ class FundiContextMessageTest {
     fun `tools they do not have are stated, not left out`() {
         val profile = FundiProfile(
             tools = listOf(
-                OwnedTool(ToolKind.CHISELS, ToolOwnership.OWNED),
+                OwnedTool(ToolKind.CHISELS, ToolOwnership.WORKER),
                 OwnedTool(ToolKind.CLAMPS, ToolOwnership.NONE),
             ),
         )
@@ -59,7 +59,7 @@ class FundiContextMessageTest {
     fun `a tool they do not know is its own list, and not available`() {
         val profile = FundiProfile(
             tools = listOf(
-                OwnedTool(ToolKind.CHISELS, ToolOwnership.OWNED),
+                OwnedTool(ToolKind.CHISELS, ToolOwnership.WORKER),
                 OwnedTool(ToolKind.CLAMPS, ToolOwnership.NONE),
                 OwnedTool(ToolKind.MARKING_GAUGE, ToolOwnership.UNKNOWN),
             ),
@@ -78,7 +78,7 @@ class FundiContextMessageTest {
     @Test
     fun `a tool nobody asked about appears in neither list`() {
         val profile = FundiProfile(
-            tools = listOf(OwnedTool(ToolKind.CHISELS, ToolOwnership.OWNED)),
+            tools = listOf(OwnedTool(ToolKind.CHISELS, ToolOwnership.WORKER)),
         )
 
         val text = message(profile)
@@ -90,14 +90,34 @@ class FundiContextMessageTest {
     fun `a borrowed tool is available but marked`() {
         val profile = FundiProfile(
             tools = listOf(
-                OwnedTool(ToolKind.SQUARE, ToolOwnership.BORROWED),
-                OwnedTool(ToolKind.DRILL, ToolOwnership.OWNED),
+                OwnedTool(ToolKind.SQUARE, ToolOwnership.RENTAL),
+                OwnedTool(ToolKind.DRILL, ToolOwnership.WORKER),
             ),
         )
 
         // Square before drill: ToolKind's declaration order, not the order they were
         // answered in and not alphabetical, so the same profile always reads the same way.
         assertEquals("Tools I have: square (borrowed), drill.\n" + language, message(profile))
+    }
+
+    // V35 rewrote "owned" to the worker's and "borrowed" to a rental; the
+    // studio's is named as an owned tool was. The opening turn, which is the assessment
+    // prompt's input, is then the same bytes for every profile the migration rewrote.
+    @Test
+    fun `the new owners give the opening turn the bytes the old answers gave`() {
+        val asBefore = "Tools I have: hand saw, chisels, square (borrowed), drill.\n" + language
+        val owners = FundiProfile(
+            tools = listOf(
+                OwnedTool(ToolKind.HAND_SAW, ToolOwnership.WORKER),
+                OwnedTool(ToolKind.CHISELS, ToolOwnership.STUDIO),
+                OwnedTool(ToolKind.SQUARE, ToolOwnership.RENTAL),
+                OwnedTool(ToolKind.DRILL, ToolOwnership.STUDIO),
+            ),
+        )
+        assertEquals(asBefore, message(owners))
+        // And the old words, as an older app sends them, read as their mapping.
+        assertEquals(ToolOwnership.WORKER, ToolOwnership.fromId("owned"))
+        assertEquals(ToolOwnership.RENTAL, ToolOwnership.fromId("borrowed"))
     }
 
     @Test
@@ -144,7 +164,7 @@ class FundiContextMessageTest {
     fun `renting out tools is never mentioned to the assistant`() {
         val profile = FundiProfile(
             workshop = Workshop(makes = "stools", rentsTools = true),
-            tools = listOf(OwnedTool(ToolKind.ROUTER, ToolOwnership.OWNED, dayRateKes = 400)),
+            tools = listOf(OwnedTool(ToolKind.ROUTER, ToolOwnership.WORKER, dayRateKes = 400)),
         )
 
         val text = message(profile)
@@ -176,7 +196,7 @@ class FundiContextMessageTest {
             workshop = Workshop(makes = "stools"),
             tools = listOf(
                 OwnedTool(ToolKind.CLAMPS, ToolOwnership.NONE),
-                OwnedTool(ToolKind.HAND_SAW, ToolOwnership.OWNED),
+                OwnedTool(ToolKind.HAND_SAW, ToolOwnership.WORKER),
             ),
             goals = setOf(FundiGoal.MORE_ORDERS),
         )

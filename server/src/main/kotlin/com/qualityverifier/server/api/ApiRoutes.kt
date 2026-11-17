@@ -179,6 +179,16 @@ fun Route.apiRoutes(
             call.respond(ApiPage(rows.take(limit), rows.size > limit, limit, offset))
         }
 
+        // Bench photos at setup (V35), each with the draft Claude made, for the accuracy
+        // check against the tools the fundi then confirmed.
+        get("/bench-photos") {
+            requireKey() ?: return@get
+            val limit = call.limit()
+            val offset = call.offset()
+            val rows = store.benchPhotos(limit + 1, offset)
+            call.respond(ApiPage(rows.take(limit), rows.size > limit, limit, offset))
+        }
+
         // Every report issued (V32): what left the server, for whom, and its hash. The
         // names it printed stay in the row; join worker_id to /workers.
         get("/reports") {

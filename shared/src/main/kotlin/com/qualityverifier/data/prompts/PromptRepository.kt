@@ -31,6 +31,13 @@ interface PromptRepository {
      */
     suspend fun compactionPrompt(): String
 
+    /**
+     * Fundi Bora's bench photo at setup (`prompts/fundi-bench.txt`, v0.6.0): the tools Claude
+     * can see on the bench. A default for the test doubles; the GitHub repository fetches
+     * the file as it fetches the others.
+     */
+    suspend fun benchPrompt(): String = DefaultPrompts.FUNDI_BENCH
+
     /** Drop cached copies so the next read re-fetches. */
     suspend fun clearCache()
 }

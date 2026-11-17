@@ -289,7 +289,28 @@ data class FundiLabels(
     /** "Which pieces?" before a worker's work report (row 22). */
     val reportWhichPieces: String,
     val reportWhichPiecesHint: String,
+    // ---- v0.6.0: the bench photo at setup (row 5)
+    val benchTitle: String,
+    val benchBlurb: String,
+    val benchTakePhoto: String,
+    val benchSkip: String,
+    /** Under the camera: what to photograph. */
+    val benchCameraInstruction: String,
+    val benchSending: String,
+    private val benchIsThereFormat: String,
+    private val benchWhoOwnsFormat: String,
+    val benchYes: String,
+    val benchNo: String,
+    val benchSkipRest: String,
+    val benchLimit: String,
+    val benchUnavailable: String,
+    val benchUnreadable: String,
+    val benchRetry: String,
 ) {
+    fun benchIsThere(tool: String) = benchIsThereFormat.replace("{tool}", tool)
+
+    fun benchWhoOwns(tool: String) = benchWhoOwnsFormat.replace("{tool}", tool)
+
     fun intakeStudioNotice(studio: String) = intakeStudioNoticeFormat.replace("{studio}", studio)
 
     fun pieceFor(studio: String) = pieceForFormat.replace("{studio}", studio)
@@ -455,8 +476,9 @@ data class FundiLabels(
             setupGoalsTitle = "What you want from this",
             setupGoalsBlurb = "Pick any that fit.",
             ownershipNames = mapOf(
-                ToolOwnership.OWNED to "Have it",
-                ToolOwnership.BORROWED to "Can borrow",
+                ToolOwnership.WORKER to "Mine",
+                ToolOwnership.STUDIO to "The studio's",
+                ToolOwnership.RENTAL to "Rented",
                 ToolOwnership.NONE to "Do not have",
                 ToolOwnership.UNKNOWN to "Don't know what this tool is",
             ),
@@ -696,6 +718,23 @@ data class FundiLabels(
             reportAssessFinished = "Assess the finished piece",
             reportWhichPieces = "Which pieces?",
             reportWhichPiecesHint = "The report covers the pieces you choose.",
+            benchTitle = "Photograph your bench",
+            benchBlurb = "Take one photo of your bench with your tools on it. The app suggests " +
+                "your tools from the photo, and you check each one.",
+            benchTakePhoto = "Take a photo",
+            benchSkip = "Skip, I will list my tools",
+            benchCameraInstruction = "Your whole bench, with your tools on it",
+            benchSending = "Looking at your bench",
+            benchIsThereFormat = "Is this on your bench: {tool}?",
+            benchWhoOwnsFormat = "Who owns the {tool}?",
+            benchYes = "Yes",
+            benchNo = "No",
+            benchSkipRest = "List the rest myself",
+            benchLimit = "You have sent five bench photos today. List your tools on the next screen.",
+            benchUnavailable = "The photo could not be sent. Check your connection and try again, " +
+                "or list your tools yourself.",
+            benchUnreadable = "The photo could not be read. Take another, or list your tools yourself.",
+            benchRetry = "Try again",
         )
     }
 }

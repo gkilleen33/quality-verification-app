@@ -1,6 +1,10 @@
 package com.qualityverifier.fundi.setup
 
+import com.qualityverifier.data.fundi.BenchApi
+import com.qualityverifier.data.fundi.BenchOutcome
 import com.qualityverifier.data.fundi.FundiProfiles
+import com.qualityverifier.domain.BenchDraft
+import com.qualityverifier.domain.BenchTool
 import com.qualityverifier.data.fundi.ProfileOutcome
 import com.qualityverifier.domain.FundiGoal
 import com.qualityverifier.domain.FundiProfile
@@ -13,7 +17,11 @@ import com.qualityverifier.fundi.ui.setup.SetupViewModel
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.StandardTestDispatcher
+import com.qualityverifier.data.location.LocationSource
+import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.advanceUntilIdle
+import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
@@ -23,7 +31,10 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
+import org.junit.Rule
 import org.junit.Test
+import org.junit.rules.TemporaryFolder
+import java.io.File
 
 /**
  * What a half-answered setup flow actually sends.
@@ -73,7 +84,7 @@ class SetupViewModelTest {
     @Test
     fun `nothing is located until they say they are at the shop and agree`() = runTest {
         var asked = 0
-        val model = SetupViewModel(FakeProfiles()) { asked++; shopFix }
+        val model = SetupViewModel(FakeProfiles(), locate = { asked++; shopFix })
 
         model.locateShop()
         model.answerAtShop(true)
@@ -91,7 +102,7 @@ class SetupViewModelTest {
     @Test
     fun `a recorded shop point is sent once with the profile`() = runTest {
         val profiles = FakeProfiles()
-        val model = SetupViewModel(profiles) { shopFix }
+        val model = SetupViewModel(profiles, locate = { shopFix })
         model.answerAtShop(true)
         model.answerConsent(true)
         model.locateShop()
@@ -108,7 +119,7 @@ class SetupViewModelTest {
     @Test
     fun `saying no afterwards forgets the point`() = runTest {
         val profiles = FakeProfiles()
-        val model = SetupViewModel(profiles) { shopFix }
+        val model = SetupViewModel(profiles, locate = { shopFix })
         model.answerAtShop(true)
         model.answerConsent(true)
         model.locateShop()
@@ -124,7 +135,7 @@ class SetupViewModelTest {
 
     @Test
     fun `a refused permission or no fix says why`() = runTest {
-        val model = SetupViewModel(FakeProfiles()) { null }
+        val model = SetupViewModel(FakeProfiles(), locate = { null })
         model.answerAtShop(true)
         model.answerConsent(true)
 
@@ -141,7 +152,7 @@ class SetupViewModelTest {
         val profiles = FakeProfiles()
         val model = SetupViewModel(profiles)
 
-        model.setTool(ToolKind.CHISELS, ToolOwnership.OWNED)
+        model.setTool(ToolKind.CHISELS, ToolOwnership.WORKER)
         model.setTool(ToolKind.CLAMPS, ToolOwnership.NONE)
         model.save()
         advanceUntilIdle()
@@ -163,13 +174,13 @@ class SetupViewModelTest {
         val profiles = FakeProfiles()
         val model = SetupViewModel(profiles)
 
-        model.setTool(ToolKind.PLANE_NO4, ToolOwnership.BORROWED)
-        model.setTool(ToolKind.PLANE_NO4, ToolOwnership.OWNED)
+        model.setTool(ToolKind.PLANE_NO4, ToolOwnership.RENTAL)
+        model.setTool(ToolKind.PLANE_NO4, ToolOwnership.WORKER)
         model.save()
         advanceUntilIdle()
 
         assertEquals(1, profiles.sent!!.tools.size)
-        assertEquals(ToolOwnership.OWNED, profiles.sent!!.tools.single().ownership)
+        assertEquals(ToolOwnership.WORKER, profiles.sent!!.tools.single().ownership)
     }
 
     @Test
@@ -191,7 +202,7 @@ class SetupViewModelTest {
         val profiles = FakeProfiles()
         val model = SetupViewModel(profiles)
 
-        model.setTool(ToolKind.HAND_SAW, ToolOwnership.OWNED)
+        model.setTool(ToolKind.HAND_SAW, ToolOwnership.WORKER)
         model.save()
         advanceUntilIdle()
 
@@ -206,7 +217,7 @@ class SetupViewModelTest {
     fun `existing answers are loaded before editing`() = runTest {
         val stored = FundiProfile(
             workshop = Workshop(makes = "stools"),
-            tools = listOf(OwnedTool(ToolKind.CHISELS, ToolOwnership.OWNED)),
+            tools = listOf(OwnedTool(ToolKind.CHISELS, ToolOwnership.WORKER)),
             goals = setOf(FundiGoal.MORE_ORDERS),
         )
         val profiles = FakeProfiles(existing = ProfileOutcome.Loaded(stored))
@@ -266,13 +277,122 @@ class SetupViewModelTest {
         assertEquals(1, profiles.saves)
     }
 
+    // ------------------------------------------------- the bench photo (v0.6.0, row 5)
+
+    @get:Rule
+    val folder = TemporaryFolder()
+
+    private fun benchPhoto(): File = folder.newFile().apply { writeBytes(byteArrayOf(1, 2, 3)) }
+
+    private fun benchModel(profiles: FakeProfiles, outcome: BenchOutcome, calls: MutableList<String> = mutableListOf()) =
+        SetupViewModel(
+            profiles,
+            bench = BenchApi { photoId, _, _ -> calls += photoId; outcome },
+            io = dispatcher,
+        )
+
+    private val drafted = BenchOutcome.Drafted(
+        BenchDraft(listOf(BenchTool("clamps", "on the right"), BenchTool("chisels"), BenchTool("drill"))),
+    )
+
+    // The draft is Claude's guess from one photo. Only a tool the fundi confirms, and says
+    // who owns, is set; a "no" leaves it unasked, not "do not have".
+    @Test
+    fun `a drafted tool is set only once confirmed and its owner given`() = runTest {
+        val profiles = FakeProfiles()
+        val model = benchModel(profiles, drafted)
+
+        model.onBenchPhoto(benchPhoto())
+        advanceUntilIdle()
+        assertEquals(SetupViewModel.Bench.Confirm(drafted.draft.tools, 0, askingOwner = false), model.benchStep.value)
+
+        model.confirmTool(true)                                   // clamps: yes ...
+        model.chooseOwner(ToolOwnership.STUDIO)                   // ... the studio's
+        model.confirmTool(false)                                  // chisels: no
+        model.confirmTool(true)                                   // drill: yes, then nobody says whose
+        model.skipBench()
+        assertEquals(SetupViewModel.Bench.Done, model.benchStep.value)
+
+        model.save()
+        advanceUntilIdle()
+        assertEquals(listOf(OwnedTool(ToolKind.CLAMPS, ToolOwnership.STUDIO)), profiles.sent!!.tools)
+    }
+
+    @Test
+    fun `an owner that is not to hand is not an answer to who owns it`() = runTest {
+        val model = benchModel(FakeProfiles(), drafted)
+        model.onBenchPhoto(benchPhoto())
+        advanceUntilIdle()
+        model.confirmTool(true)
+        model.chooseOwner(ToolOwnership.NONE)
+        assertEquals(SetupViewModel.Bench.Confirm(drafted.draft.tools, 0, askingOwner = true), model.benchStep.value)
+    }
+
+    @Test
+    fun `the sixth photo of the day says so, and a retry is the same photo`() = runTest {
+        val calls = mutableListOf<String>()
+        val model = benchModel(FakeProfiles(), BenchOutcome.LimitReached, calls)
+        model.onBenchPhoto(benchPhoto())
+        advanceUntilIdle()
+        assertEquals(SetupViewModel.Bench.Failed(SetupViewModel.Bench.Reason.LIMIT), model.benchStep.value)
+
+        model.retryBench()
+        advanceUntilIdle()
+        assertEquals(2, calls.size)
+        assertEquals("a retry is counted once on the server", 1, calls.toSet().size)
+    }
+
+    // A fundi under a tin roof, with location allowed: the fix never comes. The photo goes
+    // without a point after the short wait, rather than after a minute and a half.
+    @Test
+    fun `a slow GPS fix does not hold the bench photo`() = runTest {
+        val sent = mutableListOf<LocationFix?>()
+        val never = object : LocationSource {
+            override val isAvailable = true
+            override suspend fun capture(): LocationFix? = awaitCancellation()
+        }
+        val model = SetupViewModel(
+            FakeProfiles(),
+            bench = BenchApi { _, _, location -> sent += location; drafted },
+            benchLocation = never,
+            io = dispatcher,
+        )
+        model.onBenchPhoto(benchPhoto())
+        advanceTimeBy(SetupViewModel.BENCH_FIX_WAIT_MILLIS + 1)
+        runCurrent()
+        assertEquals(listOf<LocationFix?>(null), sent)
+        assertTrue(model.benchStep.value is SetupViewModel.Bench.Confirm)
+    }
+
+    @Test
+    fun `a second tap while sending sends once`() = runTest {
+        val calls = mutableListOf<String>()
+        val model = benchModel(FakeProfiles(), BenchOutcome.Unavailable, calls)
+        model.onBenchPhoto(benchPhoto())
+        model.retryBench()
+        advanceUntilIdle()
+        assertEquals(1, calls.size)
+    }
+
+    @Test
+    fun `skipping the bench photo sets nothing and asks nothing`() = runTest {
+        val calls = mutableListOf<String>()
+        val profiles = FakeProfiles()
+        val model = benchModel(profiles, drafted, calls)
+        model.skipBench()
+        model.save()
+        advanceUntilIdle()
+        assertTrue(calls.isEmpty())
+        assertTrue(profiles.sent!!.tools.isEmpty())
+    }
+
     @Test
     fun `nothing is sent before Finish`() = runTest {
         val profiles = FakeProfiles()
         val model = SetupViewModel(profiles)
 
         model.updateWorkshop { it.copy(makes = "stools") }
-        model.setTool(ToolKind.DRILL, ToolOwnership.OWNED)
+        model.setTool(ToolKind.DRILL, ToolOwnership.WORKER)
         advanceUntilIdle()
 
         assertNull("the profile is sent whole, at the end", profiles.sent)
