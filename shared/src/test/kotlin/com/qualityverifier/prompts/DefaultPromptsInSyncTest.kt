@@ -6,6 +6,7 @@ import com.qualityverifier.domain.SkillDimension
 import com.qualityverifier.domain.ToolKind
 import com.qualityverifier.domain.ItemType
 import com.qualityverifier.domain.TestDiagram
+import com.qualityverifier.text.FundiLabels
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -220,6 +221,47 @@ class DefaultPromptsInSyncTest {
             "buying a tool may now be the whole of the fix",
             fundi.contains("Never make buying a tool the whole of the fix"),
         )
+    }
+
+    // Arm 1 (release scope row 34, Nathan, 17 November 2026): the full analysis stays, its
+    // detail is written briefly, and each finding gains short fields for a later layout to
+    // show. Phones before that layout ignore the new fields, so nothing on screen fails if
+    // a rewrite drops them; these assertions are what notice.
+    @Test
+    fun `the fundi master writes short fields after the full analysis`() {
+        val fundi = DefaultPrompts.FUNDI_MASTER
+        assertTrue("the analysis no longer comes first", fundi.contains("Analyse first and decide what to show second"))
+        assertTrue("the detail limits are gone", fundi.contains("what_happened in at most five short sentences"))
+        assertTrue("the habit is no longer an instruction", fundi.contains("Write root_habit as the habit to build"))
+        listOf("\"fix_line\"", "\"customer_line\"", "\"tool_line\"").forEach { field ->
+            assertTrue("the diagnosis example no longer shows $field", fundi.contains(field))
+        }
+        assertTrue("the title is no longer the action", fundi.contains("the action that improves the finding, in five to eight words"))
+        assertTrue("fix_line has lost its length limit", fundi.contains("at most 20 words in all"))
+        assertTrue(
+            "customer_line is no longer gain framing",
+            fundi.contains("what the customer will notice once the improvement is made"),
+        )
+        assertTrue("tool_line is no longer optional", fundi.contains("tool_line: optional"))
+        // The verdict level is for the record and research; the maker never reads its word.
+        assertTrue("the rating word may reach the maker", fundi.contains("Never put the verdict level's word"))
+        assertFalse("general praise is back in the verdict example", fundi.contains("Good work overall"))
+    }
+
+    // tool_line may only name a tool the maker has. The opening message lists those under
+    // the heading FundiLabels writes, so the prompt has to use the same words for it.
+    @Test
+    fun `tool_line names only a tool from the list the opening message carries`() {
+        val fundi = DefaultPrompts.FUNDI_MASTER
+        val labels = FundiLabels.ENGLISH
+        listOf(labels.contextToolsHave, labels.contextToolsNone, labels.contextToolsUnknown).forEach { heading ->
+            assertTrue("the prompt does not name the heading $heading", fundi.contains("\"${heading.removeSuffix(":")}\""))
+        }
+        assertTrue(
+            "a rented tool is no longer recognised by its marker",
+            fundi.contains("A tool marked borrowed there is one they rented: say they could rent it again"),
+        )
+        assertTrue(labels.borrowed("sander").contains("borrowed"))
     }
 
     @Test

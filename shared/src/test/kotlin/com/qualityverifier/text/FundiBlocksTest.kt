@@ -112,6 +112,36 @@ class FundiBlocksTest {
     }
 
     @Test
+    fun `the arm 1 short fields change nothing a phone or the server reads`() {
+        // Release scope row 34 adds fix_line, customer_line and tool_line to each finding
+        // before any build shows them. Today's phones and the server decode with
+        // ignoreUnknownKeys, so a reply carrying them must read exactly as one without.
+        val without = """
+            ```fb-diagnosis
+            {"language":"en","findings":[
+              {"title":"Open, fill and reglue the back left joint","area":"structural","severity":"moderate","dimension":"joint_fit","measured_value":3,"measured_unit":"mm","what_happened":"A gap of about 3mm.","manufacturing_cause":"Cut at an angle.","root_habit":"Draw the line on all four sides.","what_i_see":"A gap.","what_it_means":"It may work loose.","what_to_do":"Fill and reglue it.","where":{"photo":3,"x":0.42,"y":0.31}},
+              {"title":"Sand and refinish the front of the apron","area":"surface","severity":"cosmetic","dimension":"finishing","what_i_see":"Two saw marks."}]}
+            ```
+        """.trimIndent()
+        val with = """
+            ```fb-diagnosis
+            {"language":"en","findings":[
+              {"title":"Open, fill and reglue the back left joint","area":"structural","severity":"moderate","dimension":"joint_fit","measured_value":3,"measured_unit":"mm","what_happened":"A gap of about 3mm.","manufacturing_cause":"Cut at an angle.","root_habit":"Draw the line on all four sides.","what_i_see":"A gap.","what_it_means":"It may work loose.","what_to_do":"Fill and reglue it.","fix_line":"Take the joint apart and fill the gap. Glue it tight.","customer_line":"A tight joint keeps the chair steady for years.","where":{"photo":3,"x":0.42,"y":0.31}},
+              {"title":"Sand and refinish the front of the apron","area":"surface","severity":"cosmetic","dimension":"finishing","what_i_see":"Two saw marks.","fix_line":"Sand the marks off. Finish it again.","customer_line":"A smooth apron looks well made.","tool_line":"Your sander does this much faster than sanding by hand."}]}
+            ```
+        """.trimIndent()
+
+        val plain = parseAssistantContent(without)
+        val extended = parseAssistantContent(with)
+
+        assertNotNull(extended.diagnosis)
+        assertFalse(extended.diagnosisUnreadable)
+        assertEquals(plain.diagnosis, extended.diagnosis)
+        assertEquals(plain.prose, extended.prose)
+        assertEquals(problemsOf(null, plain.diagnosis), problemsOf(null, extended.diagnosis))
+    }
+
+    @Test
     fun `every finding can carry its own cause and habit`() {
         val turn = """
             ```fb-diagnosis
