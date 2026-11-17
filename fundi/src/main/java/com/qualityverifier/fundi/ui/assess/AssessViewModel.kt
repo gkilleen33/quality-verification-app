@@ -35,6 +35,7 @@ import com.qualityverifier.domain.Worker
 import com.qualityverifier.domain.WorkerDetails
 import com.qualityverifier.domain.WorkerSlot
 import com.qualityverifier.images.UNREADABLE_PHOTO
+import com.qualityverifier.text.DetailKind
 import com.qualityverifier.text.FundiLabels
 import com.qualityverifier.text.ReportLabels
 import com.qualityverifier.text.buildFundiOpeningMessage
@@ -495,6 +496,28 @@ class AssessViewModel(
             _error.value = null
             try {
                 sessions.appendUserMessage(sessionId, text.trim(), emptyList())
+                deliver()
+            } finally {
+                _sending.value = false
+            }
+        }
+    }
+
+    /**
+     * A detail button under a finding (release scope row 37): asks Claude for one detail of
+     * the finding titled [title]. The turn is written by the app, so it is composed; the
+     * screen shows the answer under the finding rather than as a turn. A detail already
+     * asked for is not asked again, since the stored answer is shown instead.
+     */
+    fun requestDetail(kind: DetailKind, title: String) {
+        if (title.isBlank() || _sending.value) return
+        val text = kind.request(title)
+        if (messages.value.any { it.role == Role.USER && it.text == text }) return
+        _sending.value = true
+        viewModelScope.launch {
+            _error.value = null
+            try {
+                sessions.appendUserMessage(sessionId, text, emptyList(), composed = true)
                 deliver()
             } finally {
                 _sending.value = false

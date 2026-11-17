@@ -109,6 +109,17 @@ data class FundiLabels(
     val whatHappenedHeading: String,
     val whereItWentWrongHeading: String,
     val habitToChangeHeading: String,
+    /**
+     * The three buttons under each finding (release scope row 37, Nathan's wording), in
+     * [com.qualityverifier.text.DetailKind] order. Each opens what Claude wrote, or asks for it.
+     */
+    val detailWhatWeFound: String,
+    val detailCause: String,
+    val detailNextTime: String,
+    /** Under a button while Claude writes its answer. */
+    val detailWriting: String,
+    /** Before a finding's tool_line: a tool from the maker's own list that does the job faster. */
+    val toolLineLabel: String,
     val oneCheckHeading: String,
     val nothingFound: String,
     val horizonNames: Map<FixHorizon, String>,
@@ -532,6 +543,11 @@ data class FundiLabels(
             // "Habit", never the person. The prompt forbids calling a maker careless,
             // and this heading is where that would otherwise creep back in.
             habitToChangeHeading = "THE HABIT TO CHANGE",
+            detailWhatWeFound = "More on what we found",
+            detailCause = "More on what's causing this",
+            detailNextTime = "How to upgrade next time",
+            detailWriting = "Writing…",
+            toolLineLabel = "TOOL",
             oneCheckHeading = "ONE THING TO CHECK",
             nothingFound = "Nothing to put right on this one.",
             horizonNames = mapOf(

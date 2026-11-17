@@ -88,7 +88,9 @@ fun priorIssues(assistantTurnsNewestFirst: List<String>): List<PriorIssue> {
     for (text in assistantTurnsNewestFirst) {
         val content = parseAssistantContent(text)
         val found = content.diagnosis?.findings.orEmpty().map {
-            PriorIssue(it.title.trim(), it.whatHappened.trim())
+            // From row 37 a diagnosis writes what happened only when the maker asks for it,
+            // so what anybody can see stands in.
+            PriorIssue(it.title.trim(), it.whatHappened.ifBlank { it.whatISee }.trim())
         } + content.verdict?.defects.orEmpty().map {
             PriorIssue(it.title.trim(), it.whatISee.trim())
         }
@@ -133,7 +135,8 @@ fun previousRecord(assistantTurnsNewestFirst: List<String>, labels: FundiLabels)
         lines += "${labels.previousDiagnosis}:"
         d.findings.filter { it.title.isNotBlank() }.forEach { f ->
             val parts = listOfNotNull(
-                f.whatHappened.takeIf { it.isNotBlank() },
+                // Row 37: what anybody can see, when the reply left what happened to a button.
+                f.whatHappened.ifBlank { f.whatISee }.takeIf { it.isNotBlank() },
                 f.manufacturingCause.takeIf { it.isNotBlank() }?.let { "${labels.previousCause}: $it" },
                 f.rootHabit.takeIf { it.isNotBlank() }?.let { "${labels.previousHabit}: $it" },
             )

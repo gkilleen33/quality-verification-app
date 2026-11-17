@@ -112,10 +112,10 @@ class FundiBlocksTest {
     }
 
     @Test
-    fun `the arm 1 short fields change nothing a phone or the server reads`() {
-        // Release scope row 34 adds fix_line, customer_line and tool_line to each finding
-        // before any build shows them. Today's phones and the server decode with
-        // ignoreUnknownKeys, so a reply carrying them must read exactly as one without.
+    fun `the arm 1 short fields change no problem the server or a report reads`() {
+        // Release scope row 34 adds fix_line, customer_line and tool_line to each finding.
+        // Phones from row 37 draw them; everything else must read a reply carrying them
+        // exactly as one without: the problems, their count and the prose.
         val without = """
             ```fb-diagnosis
             {"language":"en","findings":[
@@ -136,9 +136,19 @@ class FundiBlocksTest {
 
         assertNotNull(extended.diagnosis)
         assertFalse(extended.diagnosisUnreadable)
-        assertEquals(plain.diagnosis, extended.diagnosis)
+        val stripped = extended.diagnosis!!.copy(
+            findings = extended.diagnosis!!.findings.map { it.copy(fixLine = "", customerLine = "", toolLine = "") },
+        )
+        assertEquals(plain.diagnosis, stripped)
         assertEquals(plain.prose, extended.prose)
         assertEquals(problemsOf(null, plain.diagnosis), problemsOf(null, extended.diagnosis))
+
+        // And the phone reads them.
+        val first = extended.diagnosis!!.findings[0]
+        assertEquals("Take the joint apart and fill the gap. Glue it tight.", first.fixLine)
+        assertEquals("A tight joint keeps the chair steady for years.", first.customerLine)
+        assertEquals("", first.toolLine)
+        assertEquals("Your sander does this much faster than sanding by hand.", extended.diagnosis!!.findings[1].toolLine)
     }
 
     @Test

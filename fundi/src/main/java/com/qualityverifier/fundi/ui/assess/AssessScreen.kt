@@ -55,9 +55,12 @@ import com.qualityverifier.fundi.ui.coach.FixPlanCard
 import com.qualityverifier.fundi.ui.coach.VerdictCard
 import com.qualityverifier.fundi.ui.coach.verdictCardProblems
 import com.qualityverifier.fundi.ui.fundiContainer
+import com.qualityverifier.text.DetailAnswers
+import com.qualityverifier.text.DetailKind
 import com.qualityverifier.text.FundiLabels
 import com.qualityverifier.text.ReportLabels
 import com.qualityverifier.text.RetryLabels
+import com.qualityverifier.text.detailAnswersOf
 import com.qualityverifier.text.markdownToPlainText
 import com.qualityverifier.text.parseAssistantContent
 import com.qualityverifier.ui.capture.CaptureScreen
@@ -324,6 +327,7 @@ fun AssessScreen(
                 labels = labels,
                 reportLabels = reportLabels,
                 onSend = viewModel::send,
+                onRequestDetail = viewModel::requestDetail,
                 onRetry = viewModel::retry,
                 onDismissError = viewModel::dismissError,
                 onStartCamera = { stage = Stage.SHOOTING },
@@ -366,6 +370,8 @@ private fun Conversation(
     labels: FundiLabels,
     reportLabels: ReportLabels,
     onSend: (String) -> Unit,
+    /** A detail button under a finding (row 37): which detail, of the finding with this title. */
+    onRequestDetail: (DetailKind, String) -> Unit,
     onRetry: () -> Unit,
     onDismissError: () -> Unit,
     onStartCamera: () -> Unit,
@@ -384,8 +390,15 @@ private fun Conversation(
     reviewHelpful: Boolean?,
     onAnswerHelpful: (Boolean) -> Unit,
 ) {
+    // A detail button's request and its answer show under the finding, not as turns (row 37).
+    val details = remember(messages) { detailAnswersOf(messages) }
+    val turns = remember(messages, details) { messages.filterNot { it.id in details.hidden } }
+    // Only while nothing else is in flight or waiting: one turn at a time goes on the wire.
+    val requestDetail = onRequestDetail.takeIf { !sending && !unanswered && run == null }
     val firstUserId = messages.firstOrNull { it.role == Role.USER }?.id
-    val lastAssistant = messages.lastOrNull { it.role == Role.ASSISTANT }
+    // The chips come from the last turn the maker can see, so an answer under a finding
+    // does not take away the replies the diagnosis offered.
+    val lastAssistant = turns.lastOrNull { it.role == Role.ASSISTANT }
     val awaitingFirstReply = messages.none { it.role == Role.ASSISTANT }
     // A finding's button opens the photo Claude named, if this phone holds it.
     val showOnPhoto: (Finding) -> (() -> Unit)? = { finding ->
@@ -402,9 +415,10 @@ private fun Conversation(
             Modifier.weight(1f).padding(horizontal = 16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            itemsIndexed(messages, key = { _, m -> m.id }) { _, message ->
+            itemsIndexed(turns, key = { _, m -> m.id }) { _, message ->
                 when {
-                    message.role == Role.ASSISTANT -> AssistantTurn(message, labels, reportLabels, showOnPhoto)
+                    message.role == Role.ASSISTANT ->
+                        AssistantTurn(message, labels, reportLabels, showOnPhoto, details, requestDetail)
                     // Written by the app on the maker's behalf. The model reads every
                     // word; the maker sees what they did — which purpose, which photos —
                     // rather than the app printing its own prompt back at them.
@@ -509,6 +523,8 @@ private fun AssistantTurn(
     labels: FundiLabels,
     reportLabels: ReportLabels,
     showOnPhoto: (Finding) -> (() -> Unit)?,
+    details: DetailAnswers,
+    onRequestDetail: ((DetailKind, String) -> Unit)?,
 ) {
     val content = parseAssistantContent(message.text)
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -518,7 +534,14 @@ private fun AssistantTurn(
         // A verdict means a full assessment; drawn first because it is the answer the
         // maker came for.
         content.verdict?.let { VerdictCard(it, verdictCardProblems(content), reportLabels) }
-        content.diagnosis?.let { DiagnosisCard(it, labels, reportLabels, showOnPhoto = showOnPhoto) }
+        content.diagnosis?.let {
+            DiagnosisCard(
+                it, labels, reportLabels,
+                showOnPhoto = showOnPhoto,
+                details = details,
+                onRequestDetail = onRequestDetail,
+            )
+        }
         content.fixPlan?.let { FixPlanCard(it, labels) }
     }
 }
