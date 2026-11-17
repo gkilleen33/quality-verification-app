@@ -246,6 +246,13 @@ class DefaultPromptsInSyncTest {
             "customer_line is no longer gain framing",
             fundi.contains("what the customer will notice once the improvement is made"),
         )
+        // Nathan, 17 November 2026: a second sentence ties the finding to the price the
+        // customer may offer, hedged with "may" and never with a figure.
+        assertTrue(
+            "customer_line has lost its price sentence",
+            fundi.contains("may lead the customer to do about the price: offer less, bargain harder, or buy elsewhere"),
+        )
+        assertTrue("customer_line may give a figure", fundi.contains("Never give a figure"))
         assertTrue("tool_line is no longer optional", fundi.contains("tool_line: optional"))
         assertTrue("the numbers rule is gone", fundi.contains("spell out numbers from one to nine"))
         // The verdict level is for the record and research; the maker never reads its word.
