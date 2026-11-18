@@ -112,6 +112,15 @@ data class Finding(
     @SerialName("what_it_means") val whatItMeans: String = "",
     @SerialName("what_to_do") val whatToDo: String = "",
     /**
+     * The short fields the maker reads first (arm 1, release scope row 34): the job in one
+     * or two instructions; what the customer gains once it is done and what they may offer
+     * if it is not; and, optionally, a tool from the maker's own list that does it faster.
+     * Blank on every reply written before arm 1, which then render as they did.
+     */
+    @SerialName("fix_line") val fixLine: String = "",
+    @SerialName("customer_line") val customerLine: String = "",
+    @SerialName("tool_line") val toolLine: String = "",
+    /**
      * Where the defect shows (v0.6.0, release scope row 19): the photo, by the number the
      * server and the notes use, and a point on it. Kept as raw JSON and read through [mark],
      * so a position the model writes badly costs the mark, never the whole diagnosis.

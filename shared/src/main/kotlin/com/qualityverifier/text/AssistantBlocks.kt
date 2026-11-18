@@ -85,7 +85,12 @@ data class AssistantContent(
             //
             // Same reasoning as the plan: the cards are drawn immediately below, so
             // anything past the opening acknowledgement is the plan a second time.
-            plan != null || fixPlan != null -> prose.substringBefore("\n\n").trim()
+            //
+            // A diagnosis too, now that it comes without a fix plan (prompt E, Nathan,
+            // 18 November 2026): only the two-sentence opening sits above the improvements
+            // card. Before, the fix plan alone trimmed it, and a diagnosis sent without one
+            // showed every paragraph, the one question included, which the card already asks.
+            plan != null || fixPlan != null || diagnosis != null -> prose.substringBefore("\n\n").trim()
             else -> prose
         }
 }

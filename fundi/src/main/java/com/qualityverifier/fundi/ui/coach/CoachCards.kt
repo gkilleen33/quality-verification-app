@@ -13,9 +13,14 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -29,6 +34,9 @@ import com.qualityverifier.domain.Severity
 import com.qualityverifier.domain.ToolSuggestion
 import com.qualityverifier.domain.Verdict
 import com.qualityverifier.text.AssistantContent
+import com.qualityverifier.text.DetailAnswers
+import com.qualityverifier.text.DetailKey
+import com.qualityverifier.text.DetailKind
 import com.qualityverifier.text.FundiLabels
 import com.qualityverifier.text.ReportLabels
 import com.qualityverifier.text.problemsOf
@@ -65,6 +73,10 @@ fun DiagnosisCard(
      * finding with no mark, or whose photo is not on this phone: it then has no button.
      */
     showOnPhoto: (Finding) -> (() -> Unit)? = { null },
+    /** The details Claude wrote on request, and those still being written (row 37). */
+    details: DetailAnswers = DetailAnswers.NONE,
+    /** Asks Claude for one detail of one finding; null where nothing can be sent, such as a past turn. */
+    onRequestDetail: ((DetailKind, String) -> Unit)? = null,
 ) {
     Card(
         modifier = modifier.fillMaxWidth(),
@@ -90,7 +102,7 @@ fun DiagnosisCard(
             // chooses what to work on; the fix plan below is for the first.
             diagnosis.findings.filter { it.title.isNotBlank() }.forEachIndexed { index, finding ->
                 if (index > 0) HorizontalDivider(Modifier.padding(vertical = 4.dp))
-                FindingDetail(finding, labels, reportLabels, showOnPhoto(finding))
+                FindingDetail(finding, labels, reportLabels, showOnPhoto(finding), details, onRequestDetail)
             }
 
             if (diagnosis.awaitingCheck) {
@@ -108,6 +120,8 @@ private fun FindingDetail(
     reportLabels: ReportLabels,
     /** Opens the finding's photo at its mark; null draws no button. */
     onShowOnPhoto: (() -> Unit)?,
+    details: DetailAnswers,
+    onRequestDetail: ((DetailKind, String) -> Unit)?,
 ) {
     Row(
         // The whole title is a way in too: a maker reading "Gap at the back left joint"
@@ -128,12 +142,33 @@ private fun FindingDetail(
         }
     }
 
-    // The chain the whole card exists for: observation, then the step in the making, then
-    // what will repeat it. Each is skipped when blank rather than drawn as an empty
-    // heading — a model that returns two of the three still reads as a diagnosis.
-    Field(labels.whatHappenedHeading, finding.whatHappened)
-    Field(labels.whereItWentWrongHeading, finding.manufacturingCause)
-    Field(labels.habitToChangeHeading, finding.rootHabit)
+    // Arm 1 (rows 34 and 37): the job, what the customer gains or may offer, and a tool the
+    // maker has. A reply from before arm 1 has none of these and is drawn as it always was.
+    val armOne = finding.fixLine.isNotBlank()
+    if (armOne) {
+        Text(finding.fixLine, style = MaterialTheme.typography.bodyLarge)
+        if (finding.customerLine.isNotBlank()) {
+            Text(
+                finding.customerLine,
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        if (finding.toolLine.isNotBlank()) {
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Label(labels.toolLineLabel)
+                Text(finding.toolLine, style = MaterialTheme.typography.bodyMedium)
+            }
+        }
+        DetailButtons(finding, labels, details, onRequestDetail)
+    } else {
+        // The chain the whole card exists for: observation, then the step in the making,
+        // then what will repeat it. Each is skipped when blank rather than drawn as an
+        // empty heading — a model that returns two of the three still reads as a diagnosis.
+        Field(labels.whatHappenedHeading, finding.whatHappened)
+        Field(labels.whereItWentWrongHeading, finding.manufacturingCause)
+        Field(labels.habitToChangeHeading, finding.rootHabit)
+    }
 
     // Only with its unit. A gap of "3" means nothing and looks precise, which is the
     // same false-precision rule the observations table enforces with a CHECK.
@@ -154,9 +189,62 @@ private fun FindingDetail(
     // The consequence, for replies that write each problem once: the finding carries it,
     // where it used to be repeated in a verdict defect the phone only ever drew the title
     // of. Blank on every finding in the older shape, so those render exactly as they did.
-    Field(reportLabels.whatISeeHeading, finding.whatISee)
-    Field(reportLabels.whatItMeansHeading, finding.whatItMeans)
-    Field(reportLabels.whatToDoHeading, finding.whatToDo)
+    // Arm 1 leaves these to the customer report: the maker reads fix_line instead.
+    if (!armOne) {
+        Field(reportLabels.whatISeeHeading, finding.whatISee)
+        Field(reportLabels.whatItMeansHeading, finding.whatItMeans)
+        Field(reportLabels.whatToDoHeading, finding.whatToDo)
+    }
+}
+
+/**
+ * The three buttons under an arm 1 finding (row 37). A tap opens the detail when the reply
+ * or an earlier tap already holds it, and otherwise asks Claude for it; a second tap closes
+ * it. The detail shows under the buttons, in the finding it belongs to.
+ */
+@Composable
+private fun DetailButtons(
+    finding: Finding,
+    labels: FundiLabels,
+    details: DetailAnswers,
+    onRequestDetail: ((DetailKind, String) -> Unit)?,
+) {
+    // Saved across rotation and scrolling, per finding and button.
+    var open by rememberSaveable(finding.title) { mutableStateOf(emptySet<String>()) }
+    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        DetailKind.entries.forEach { kind ->
+            val key = DetailKey(kind, finding.title.trim())
+            val text = kind.storedIn(finding).ifBlank { details.answers[key].orEmpty() }
+            val writing = key in details.pending
+            val isOpen = kind.name in open
+            OutlinedButton(
+                onClick = {
+                    open = if (isOpen) open - kind.name else open + kind.name
+                    if (!isOpen && text.isBlank() && !writing) onRequestDetail?.invoke(kind, finding.title.trim())
+                },
+                enabled = text.isNotBlank() || writing || onRequestDetail != null,
+                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
+            ) {
+                Text(labels.detailLabel(kind), style = MaterialTheme.typography.labelLarge)
+            }
+            if (isOpen) {
+                when {
+                    text.isNotBlank() -> Text(text, style = MaterialTheme.typography.bodyLarge)
+                    writing -> Text(
+                        labels.detailWriting,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+        }
+    }
+}
+
+private fun FundiLabels.detailLabel(kind: DetailKind): String = when (kind) {
+    DetailKind.WHAT_WE_FOUND -> detailWhatWeFound
+    DetailKind.CAUSE -> detailCause
+    DetailKind.NEXT_TIME -> detailNextTime
 }
 
 /**

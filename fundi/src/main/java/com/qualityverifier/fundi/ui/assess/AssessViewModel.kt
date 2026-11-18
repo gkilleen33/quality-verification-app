@@ -35,7 +35,10 @@ import com.qualityverifier.domain.Worker
 import com.qualityverifier.domain.WorkerDetails
 import com.qualityverifier.domain.WorkerSlot
 import com.qualityverifier.images.UNREADABLE_PHOTO
+import com.qualityverifier.text.DetailKey
+import com.qualityverifier.text.DetailKind
 import com.qualityverifier.text.FundiLabels
+import com.qualityverifier.text.detailAnswersOf
 import com.qualityverifier.text.ReportLabels
 import com.qualityverifier.text.buildFundiOpeningMessage
 import com.qualityverifier.text.buildSubmissionText
@@ -495,6 +498,33 @@ class AssessViewModel(
             _error.value = null
             try {
                 sessions.appendUserMessage(sessionId, text.trim(), emptyList())
+                deliver()
+            } finally {
+                _sending.value = false
+            }
+        }
+    }
+
+    /**
+     * A detail button under a finding (release scope row 37): asks Claude for one detail of
+     * the finding titled [title]. The turn is written by the app, so it is composed; the
+     * screen shows the answer under the finding rather than as a turn. A detail already
+     * asked for is not asked again, since the stored answer is shown instead.
+     */
+    fun requestDetail(kind: DetailKind, title: String) {
+        if (title.isBlank() || _sending.value) return
+        val text = kind.request(title)
+        // Skipped only while this detail is on its way or already answered. Matching the
+        // text of any earlier turn instead blocked a button for good once its request had
+        // been answered with a corrected diagnosis, which leaves no answer to show.
+        val key = DetailKey(kind, title.trim())
+        val details = detailAnswersOf(messages.value)
+        if (key in details.pending || key in details.answers) return
+        _sending.value = true
+        viewModelScope.launch {
+            _error.value = null
+            try {
+                sessions.appendUserMessage(sessionId, text, emptyList(), composed = true)
                 deliver()
             } finally {
                 _sending.value = false

@@ -83,6 +83,43 @@ class DefectListTest {
     }
 
     @Test
+    fun `the arm 1 short fields leave the problems and the count unchanged`() {
+        // Release scope row 34: each finding gains fix_line, customer_line and an optional
+        // tool_line before any build shows them. The data API and the rates must read a
+        // reply carrying them exactly as they read one without.
+        fun reply(extra: String, extraSecond: String) = """
+            ```fb-diagnosis
+            {"findings":[
+              {"title":"Open, fill and reglue the back left joint","area":"structural","severity":"moderate","dimension":"joint_fit","what_i_see":"A gap.","what_it_means":"It may work loose.","what_to_do":"Fill and reglue it."$extra},
+              {"title":"Sand and refinish the front of the apron","area":"surface","severity":"cosmetic","dimension":"finishing","what_i_see":"Two saw marks."$extraSecond}]}
+            ```
+
+            ```qv-verdict
+            {"verdict":"fair","headline":"Fix the back left joint before you sell"}
+            ```
+        """.trimIndent()
+        val without = reply("", "")
+        val with = reply(
+            ",\"fix_line\":\"Take the joint apart and fill the gap. Glue it tight.\"," +
+                "\"customer_line\":\"A tight joint keeps the chair steady for years.\"",
+            ",\"fix_line\":\"Sand the marks off. Finish it again.\"," +
+                "\"customer_line\":\"A smooth apron looks well made.\"," +
+                "\"tool_line\":\"Your sander does this much faster than sanding by hand.\"",
+        )
+
+        val plain = DefectList.fromTexts(listOf(without))
+        val extended = DefectList.fromTexts(listOf(with))
+
+        assertFalse(extended.unknown)
+        assertEquals(2, extended.problems.size)
+        assertEquals(plain, extended)
+        assertEquals(
+            fundiDefectCount(listOf(parseAssistantContent(without))),
+            fundiDefectCount(listOf(parseAssistantContent(with))),
+        )
+    }
+
+    @Test
     fun `a sound verdict lists the cosmetic finding beside it, as the count counts it`() {
         // Cosmetic findings count against first time clean (Nathan, 11 November 2026).
         val reply = """
