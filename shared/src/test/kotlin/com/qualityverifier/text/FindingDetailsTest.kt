@@ -75,6 +75,9 @@ class FindingDetailsTest {
         val details = detailAnswersOf(listOf(diagnosis, request("u1", DetailKind.WHAT_WE_FOUND), corrected))
         assertTrue(details.answers.isEmpty())
         assertEquals(setOf("u1"), details.hidden)
+        // Neither answered nor waiting, so the button on the corrected card may ask again.
+        // AssessViewModel.requestDetail skips a request only when its key is in one of these.
+        assertTrue(details.pending.isEmpty())
     }
 
     @Test

@@ -75,7 +75,11 @@ fun FlowContent.assistantBody(text: String) {
     // and the block it was parsed from, and "what did the model actually send" is a fair
     // question to ask of a turn you are grading. Only offered when something was in fact
     // held back, so an ordinary prose turn does not grow a control that reveals itself.
-    if (verdict != null || content.plan != null || content.options.isNotEmpty()) {
+    // A diagnosis or a fix plan holds prose back too: displayProse keeps only the opening
+    // paragraph above them (prompt E, 18 November 2026), and this page draws neither card.
+    if (verdict != null || content.plan != null || content.options.isNotEmpty() ||
+        content.sentDiagnosis || content.fixPlan != null
+    ) {
         details("raw") {
             summary { +"What the model sent" }
             div("text") { +text }

@@ -399,6 +399,11 @@ private fun Conversation(
     // The chips come from the last turn the maker can see, so an answer under a finding
     // does not take away the replies the diagnosis offered.
     val lastAssistant = turns.lastOrNull { it.role == Role.ASSISTANT }
+    // Only the newest diagnosis asks for detail. An older card a correction replaced keeps
+    // the answers it already has, but a tap there would ask about a finding that is gone.
+    val latestDiagnosisId = remember(turns) {
+        turns.lastOrNull { it.role == Role.ASSISTANT && parseAssistantContent(it.text).sentDiagnosis }?.id
+    }
     val awaitingFirstReply = messages.none { it.role == Role.ASSISTANT }
     // A finding's button opens the photo Claude named, if this phone holds it.
     val showOnPhoto: (Finding) -> (() -> Unit)? = { finding ->
@@ -418,7 +423,10 @@ private fun Conversation(
             itemsIndexed(turns, key = { _, m -> m.id }) { _, message ->
                 when {
                     message.role == Role.ASSISTANT ->
-                        AssistantTurn(message, labels, reportLabels, showOnPhoto, details, requestDetail)
+                        AssistantTurn(
+                            message, labels, reportLabels, showOnPhoto, details,
+                            requestDetail.takeIf { message.id == latestDiagnosisId },
+                        )
                     // Written by the app on the maker's behalf. The model reads every
                     // word; the maker sees what they did — which purpose, which photos —
                     // rather than the app printing its own prompt back at them.

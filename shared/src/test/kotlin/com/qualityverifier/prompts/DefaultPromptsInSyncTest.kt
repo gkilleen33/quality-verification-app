@@ -273,6 +273,12 @@ class DefaultPromptsInSyncTest {
             "the opening has lost its length",
             fundi.contains("Write that paragraph as two sentences, each at most 20 words"),
         )
+        // The phone shows only a diagnosis reply's first paragraph, so a correction has to
+        // say what changed there, or the maker sees a new card with no reason for it.
+        assertTrue(
+            "a corrected diagnosis no longer opens with what changed",
+            fundi.contains("opens instead with the one sentence that says what changed"),
+        )
         // The button message is English whatever the maker's language.
         assertTrue(
             "a detail answer may follow the English button message",
