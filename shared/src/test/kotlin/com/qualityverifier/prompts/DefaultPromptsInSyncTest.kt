@@ -91,10 +91,13 @@ class DefaultPromptsInSyncTest {
         // Renaming a fence tag in the prompt without renaming it in AssistantBlocks
         // silently stops the cards from ever appearing, with no error anywhere.
         val fundi = DefaultPrompts.FUNDI_MASTER
-        listOf("qv-options", "qv-plan", "fb-diagnosis", "fb-fixplan", "qv-verdict")
+        listOf("qv-options", "qv-plan", "fb-diagnosis", "qv-verdict")
             .forEach { tag ->
                 assertTrue("$tag is undocumented in the fundi master", fundi.contains(tag))
             }
+        // No fix plan since prompt E (Nathan, 18 November 2026): the fix line and the three
+        // detail buttons replace it. The app still parses fb-fixplan, for older replies.
+        assertFalse("the fundi master asks for a fix plan again", fundi.contains("fb-fixplan"))
     }
 
     @Test
@@ -129,7 +132,7 @@ class DefaultPromptsInSyncTest {
         )
         assertTrue(
             "the findings no longer carry the three consequence fields",
-            fundi.contains("and what_i_see, what_it_means and what_to_do, as well as a title"),
+            fundi.contains("carries what_i_see, what_it_means and what_to_do, as well as a title"),
         )
         // The phone and the admin portal read a reply's problems from that reply alone, so
         // a verdict sent without its diagnosis would show a grade with no problems under it.
@@ -171,23 +174,25 @@ class DefaultPromptsInSyncTest {
     }
 
     @Test
-    fun `every finding carries its cause, and only the worst gets a fix plan`() {
+    fun `every finding has its cause worked out, and a fix is asked for one at a time`() {
         // Issue #41: causes were once given for the worst finding only. That decided for
         // the maker what to work on; they can choose to take one at a time themselves.
+        // Since prompt E the three answers are worked out for every finding and given on
+        // request, through the detail buttons.
         val fundi = DefaultPrompts.FUNDI_MASTER
         assertTrue(
             "the prompt no longer distinguishes a cause from a grade",
             fundi.contains("THE DIAGNOSIS IS A CAUSE, NOT A GRADE"),
         )
         assertTrue(
-            "every finding must carry all three",
-            fundi.contains("give every one of them all three"),
+            "every finding must have all three worked out",
+            fundi.contains("work out all three for every one of them"),
         )
         assertFalse("the old one-cause rule is back", fundi.contains("coach only the first one"))
         assertFalse(fundi.contains("Only the first carries what_happened"))
         assertTrue(
-            "the fix plan is still for one finding at a time",
-            fundi.contains("The fix plan is for the first finding only"),
+            "how to fix an improvement is no longer answered in steps",
+            fundi.contains("When they ask how to fix an improvement, answer in short numbered steps"),
         )
         assertTrue(
             "the one-question limit is gone",
@@ -240,19 +245,39 @@ class DefaultPromptsInSyncTest {
         listOf("\"fix_line\"", "\"customer_line\"", "\"tool_line\"").forEach { field ->
             assertTrue("the diagnosis example no longer shows $field", fundi.contains(field))
         }
-        assertTrue("the title is no longer the action", fundi.contains("the action that improves the finding, in five to eight words"))
+        assertTrue("the title is no longer the action", fundi.contains("the action that improves the finding, in at most ten words"))
+        // Prompt C (Nathan, 18 November 2026): "fix the arm firmly" said nothing about what to.
+        assertTrue(
+            "titles may again leave out what a part is fixed to",
+            fundi.contains("When a part is to be fixed to another, name the other part"),
+        )
         assertTrue("fix_line has lost its length limit", fundi.contains("at most 20 words in all"))
         assertTrue(
             "customer_line is no longer gain framing",
-            fundi.contains("what the customer will notice once the improvement is made"),
+            fundi.contains("names the quality the customer gets once the improvement is made"),
         )
-        // Nathan, 17 November 2026: a second sentence ties the finding to the price the
-        // customer may offer, hedged with "may" and never with a figure.
+        // Prompts D and E (Nathan, 18 November 2026): the second sentence goes from the
+        // defect, to what the customer thinks of the quality, to what they do; and it stays
+        // in one moment, because a defect found after the sale cannot lower the price paid.
         assertTrue(
-            "customer_line has lost its price sentence",
-            fundi.contains("may lead the customer to do about the price: offer less, bargain harder, or buy elsewhere"),
+            "customer_line no longer keeps to one moment",
+            fundi.contains("follows the customer through one moment and stays in it"),
+        )
+        assertTrue(
+            "customer_line may again lower a price already paid",
+            fundi.contains("They have already paid, so never say they offer less"),
         )
         assertTrue("customer_line may give a figure", fundi.contains("Never give a figure"))
+        // Prompt C: the opening above the cards is two short sentences.
+        assertTrue(
+            "the opening has lost its length",
+            fundi.contains("Write that paragraph as two sentences, each at most 20 words"),
+        )
+        // The button message is English whatever the maker's language.
+        assertTrue(
+            "a detail answer may follow the English button message",
+            fundi.contains("Write it in the language of the assessment"),
+        )
         assertTrue("tool_line is no longer optional", fundi.contains("tool_line: optional"))
         assertTrue("the numbers rule is gone", fundi.contains("spell out numbers from one to nine"))
         // The verdict level is for the record and research; the maker never reads its word.
@@ -298,8 +323,13 @@ class DefaultPromptsInSyncTest {
         MeasurementUnit.entries.forEach {
             assertTrue("unit ${it.id} is not offered to the prompt", fundi.contains(it.id))
         }
-        ToolKind.entries.forEach {
-            assertTrue("tool ${it.id} is not offered to the prompt", fundi.contains(it.id))
+        // The tool kinds were offered for the fix plan's tool_to_buy, which went with the fix
+        // plan in prompt E (Nathan, 18 November 2026). A kind the prompt names must still be
+        // one the schema accepts, so tool_to_buy coming back brings this check back with it.
+        if (fundi.contains("tool_to_buy")) {
+            ToolKind.entries.forEach {
+                assertTrue("tool ${it.id} is not offered to the prompt", fundi.contains(it.id))
+            }
         }
         listOf("serious", "moderate", "minor", "cosmetic").forEach {
             assertTrue("severity $it is undocumented", fundi.contains(it))
@@ -660,7 +690,7 @@ class DefaultPromptsInSyncTest {
     @Test
     fun `the fundi master defines every block it asks for, itself`() {
         val fundi = DefaultPrompts.FUNDI_MASTER
-        listOf("qv-plan", "fb-diagnosis", "fb-fixplan", "qv-verdict", "qv-options").forEach { tag ->
+        listOf("qv-plan", "fb-diagnosis", "qv-verdict", "qv-options").forEach { tag ->
             assertTrue("no fenced example of $tag", fundi.contains("```$tag"))
         }
         // The fields whose absence produced the reported symptoms.

@@ -258,6 +258,32 @@ class FundiBlocksTest {
     }
 
     @Test
+    fun `a diagnosis without a fix plan shows only the opening paragraph`() {
+        // Prompt E (Nathan, 18 November 2026) sends no fix plan, which was what trimmed the
+        // prose to its opening. Without this the one question showed twice: as a paragraph
+        // here and under "One thing to check" on the card.
+        val turn = """
+            This is the right time to check it. Everything below is easy to reach now.
+
+            Is the arm box nailed or screwed to the seat frame?
+
+            ```fb-diagnosis
+            {"language": "en", "one_check": "Is the arm box nailed or screwed to the seat frame?",
+             "findings": [{"title": "Glue and screw the arm box to the seat frame", "severity": "moderate"}]}
+            ```
+        """.trimIndent()
+
+        val content = parseAssistantContent(turn)
+
+        assertNotNull(content.diagnosis)
+        assertNull(content.fixPlan)
+        assertEquals(
+            "This is the right time to check it. Everything below is easy to reach now.",
+            content.displayProse,
+        )
+    }
+
+    @Test
     fun `no parsed block leaves a turn with nothing at all to render`() {
         // The general shape of the bug above: for every block, a caller that cannot draw
         // it must still be able to show the reader something. The verdict is the sole
