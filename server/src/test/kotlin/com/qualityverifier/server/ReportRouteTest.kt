@@ -476,6 +476,51 @@ class ReportRouteTest {
         assertFalse(text, text.contains("Report made by"))
     }
 
+    // Row 51 (Nathan, 23 November 2026): a piece labelled for a studio with no linked manager,
+    // such as a workshop whose owner does not use Fundi Bora. Its maker makes the final
+    // assessment and sends the customer report, and the piece keeps its studio label.
+
+    /** The maker's piece labelled for a studio entry no account has linked to. */
+    private val unlinkedPiece = ReportFixtures.piece.copy(studioEntryId = STUDIO_ENTRY, managerId = null)
+
+    /** The maker's own final assessment of that piece. */
+    private val makersFinal = session("f1", DAY_ONE + 2 * A_DAY, listOf(ReportFixtures.ALL_FIXED), userId = MAKER, isFinal = true)
+
+    @Test
+    fun `row 51 - a maker with an unlinked studio is asked for the final assessment, not refused`() = testApplication {
+        // The code the phone acts on by offering the final assessment, not "the studio's".
+        val app = withReports(FakeReportStore(piece = unlinkedPiece, sessions = listOf(table)))
+        val waiting = app.post("/v1/fundi/pieces/$PIECE_ID/reports") {
+            auth(MAKER); contentType(ContentType.Application.Json); setBody("""{"kind":"customer"}""")
+        }
+        assertEquals(HttpStatusCode.Conflict, waiting.status)
+        assertTrue(waiting.bodyAsText().contains("final_assessment_required"))
+    }
+
+    @Test
+    fun `row 51 - a maker with an unlinked studio may send the customer report after their final assessment`() = testApplication {
+        val store = FakeReportStore(piece = unlinkedPiece, sessions = listOf(table, makersFinal))
+        val app = withReports(store)
+        val sent = app.post("/v1/fundi/pieces/$PIECE_ID/reports") {
+            auth(MAKER); contentType(ContentType.Application.Json); setBody("""{"kind":"customer"}""")
+        }
+        assertEquals(HttpStatusCode.Created, sent.status)
+        assertEquals(listOf("s1", "f1"), store.rows.single().sessionIds)
+        assertEquals("the piece keeps its studio label", STUDIO_ENTRY, store.piece.studioEntryId)
+    }
+
+    @Test
+    fun `row 51 - a maker whose studio manager is linked still may not send the customer report`() = testApplication {
+        val store = FakeReportStore(piece = labelledPiece, sessions = listOf(table, makersFinal))
+        val app = withReports(store)
+        val refused = app.post("/v1/fundi/pieces/$PIECE_ID/reports") {
+            auth(MAKER); contentType(ContentType.Application.Json); setBody("""{"kind":"customer"}""")
+        }
+        assertEquals(HttpStatusCode.Forbidden, refused.status)
+        assertTrue(refused.bodyAsText().contains("customer_report_is_the_studios"))
+        assertTrue(store.rows.isEmpty())
+    }
+
     @Test
     fun `a manager reports on a linked worker's labelled piece, and the worker never reads the manager's assessment`() = testApplication {
         val store = FakeReportStore(piece = labelledPiece, sessions = listOf(table, managersFinal))

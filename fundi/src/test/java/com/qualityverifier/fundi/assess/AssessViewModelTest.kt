@@ -32,6 +32,7 @@ import com.qualityverifier.domain.ItemType
 import com.qualityverifier.domain.LocationFix
 import com.qualityverifier.domain.OwnedTool
 import com.qualityverifier.domain.Role
+import com.qualityverifier.domain.Studio
 import com.qualityverifier.domain.ToolKind
 import com.qualityverifier.domain.ToolOwnership
 import com.qualityverifier.domain.WorkPart
@@ -325,6 +326,40 @@ class AssessViewModelTest {
         val model = model(sessions = sessions, pieceId = "p1", returning = true)
         advanceUntilIdle()
         assertFalse(model.askFinished.value)
+    }
+
+    // Row 51 (Nathan, 23 November 2026): a studio with no linked manager leaves the final
+    // assessment to the maker, so the maker is asked; a linked one keeps it, as before.
+    private fun labelledModel(linked: Boolean) = AssessViewModel(
+        sessionId = "s1", itemType = ItemType.WOODEN_TABLE, pieceId = "p1", returning = true,
+        sessions = FakeSessions().apply { forStudio = true; studioId = "entry-1" },
+        chat = FakeChat(), images = FakeImages(), profiles = FakeProfiles(), workers = FakeWorkers(),
+        io = dispatcher,
+        studioList = OneStudio(Studio("entry-1", "Mama Njeri's", "+254711000223", archived = false, linked = linked)),
+    )
+
+    @Test
+    fun `row 51 - the maker of a piece for a studio with no linked manager is asked whether it is finished`() = runTest {
+        val model = labelledModel(linked = false)
+        advanceUntilIdle()
+        assertTrue(model.askFinished.value)
+    }
+
+    @Test
+    fun `row 51 - the maker of a piece for a studio with a linked manager is still not asked`() = runTest {
+        val model = labelledModel(linked = true)
+        advanceUntilIdle()
+        assertFalse(model.askFinished.value)
+    }
+
+    private class OneStudio(private val studio: Studio) : com.qualityverifier.data.workers.StudioRepository {
+        override fun observeStudios() = kotlinx.coroutines.flow.flowOf(listOf(studio))
+        override suspend fun add(details: com.qualityverifier.domain.StudioDetails) = studio
+        override suspend fun edit(studioId: String, details: com.qualityverifier.domain.StudioDetails) = Unit
+        override suspend fun archive(studioId: String) = Unit
+        override suspend fun unsynced() = emptyList<com.qualityverifier.data.workers.StudioChange>()
+        override suspend fun markSynced(change: com.qualityverifier.data.workers.StudioChange) = Unit
+        override suspend fun mergeFromServer(studios: List<com.qualityverifier.data.workers.ServerStudio>) = Unit
     }
 
     @Test
@@ -1114,6 +1149,9 @@ class AssessViewModelTest {
         /** Whether this account's piece is labelled for a studio (V34). */
         var forStudio = false
         override suspend fun pieceIsForStudio(pieceId: String) = forStudio
+        /** The studio entry the piece is labelled for (row 51); null leaves [forStudio] to decide. */
+        var studioId: String? = null
+        override suspend fun pieceStudioId(pieceId: String) = studioId
 
         /** The name this piece already has, for the prefilled intake. */
         var existingLabel: String? = null

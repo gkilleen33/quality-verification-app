@@ -8,6 +8,7 @@ import com.qualityverifier.domain.WorkerPiece
 import com.qualityverifier.domain.WorkerPieceAssessment
 import com.qualityverifier.domain.WorkerPieceProblem
 import com.qualityverifier.domain.WorkerPieces
+import com.qualityverifier.server.db.FinalAssessment
 import com.qualityverifier.server.db.ReportPiece
 import com.qualityverifier.server.db.ReportRow
 import com.qualityverifier.server.db.ReportSession
@@ -269,11 +270,12 @@ class ReportService(
         }
         val assessments = readable(userId, piece, store.sessionsOf(pieceId)).map(ReportAssessment::of)
         // A customer report is the studio's: the account that runs the studio the piece is
-        // labelled for, or the maker of a piece that is not labelled for one. It needs that
-        // account's final assessment of the finished piece first (row 27); a problem the
+        // labelled for, or the maker of a piece that is not labelled for one, or since v0.7.0
+        // the maker of a piece labelled for a studio with no linked manager (row 51). It needs
+        // that account's final assessment of the finished piece first (row 27); a problem the
         // final assessment finds does not block it, and the report lists the problem.
         if (kind == ReportKind.CUSTOMER) {
-            val studio = if (piece.studioEntryId == null) piece.userId else piece.managerId
+            val studio = FinalAssessment.customerReportAccount(piece.userId, piece.studioEntryId, piece.managerId)
             if (studio != userId) return Prepared.NotLinked("customer_report_is_the_studios")
             val finished = assessments.any { it.listed && it.isFinal && it.userId == studio && it.verdict != null }
             if (!finished) return Prepared.FinalRequired

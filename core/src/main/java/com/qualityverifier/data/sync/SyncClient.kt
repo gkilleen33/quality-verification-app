@@ -482,14 +482,20 @@ class SyncClient(
         }
 
     /** Whether this account is one of our evaluators. Null when the server was unreachable. */
-    suspend fun isTester(): Boolean? = withContext(io) {
+    suspend fun isTester(): Boolean? = me()?.isTester
+
+    /**
+     * This account as the server describes it: the tester flag, and the account's own number
+     * the studio form refuses (row 52). Null when the server was unreachable.
+     */
+    suspend fun me(): MeFacts? = withContext(io) {
         authenticated { token ->
             Request.Builder().url(baseUrl + "v1/me")
                 .addHeader("Authorization", "Bearer $token").get().build()
         }?.use { response ->
             if (!response.isSuccessful) return@use null
             val text = response.body?.string() ?: return@use null
-            runCatching { json.decodeFromString<MeBody>(text).isTester }.getOrNull()
+            runCatching { json.decodeFromString<MeBody>(text).let { MeFacts(it.isTester, it.phone) } }.getOrNull()
         }
     }
 
@@ -594,4 +600,9 @@ private data class TesterFeedbackBody(
 @Serializable
 private data class MeBody(
     @SerialName("is_tester") val isTester: Boolean = false,
+    /** Absent from a server before v0.7.0. */
+    val phone: String? = null,
 )
+
+/** What a sync keeps of /v1/me: the tester flag and, from a v0.7.0 server, the account's own number. */
+data class MeFacts(val isTester: Boolean, val phone: String?)

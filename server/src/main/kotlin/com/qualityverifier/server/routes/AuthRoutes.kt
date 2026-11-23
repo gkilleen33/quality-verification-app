@@ -212,6 +212,7 @@ fun Route.authRoutes(store: AuthStore, accessTokens: AccessTokens, terms: Terms?
                     transferAgreed = status?.transferAgreed == true,
                     mpesaReadAgreed = fundiAgreed(ConsentKind.MPESA_READ),
                     mpesaSendAgreed = fundiAgreed(ConsentKind.MPESA_SEND),
+                    phone = user.phone,
                 )
             )
         }

@@ -165,7 +165,8 @@ interface ChatStore {
         /**
          * The final assessment of the finished piece (row 27). Kept only for the account
          * that runs the piece's studio, or the maker of a piece that is not labelled for a
-         * studio; anyone else's flag is dropped and logged, and the assessment goes ahead.
+         * studio or whose studio has no linked manager (row 51, [FinalAssessment]); anyone
+         * else's flag is dropped and logged, and the assessment goes ahead.
          */
         isFinal: Boolean = false,
         /**
@@ -524,8 +525,12 @@ class PostgresChatStore(private val dataSource: DataSource) : ChatStore {
      *
      * The maker always may. The account that runs the studio the piece is labelled for may
      * while the two-sided match holds (V34's piece_managers), and its assessment stays its
-     * own: its allowance, its deletion. A final assessment (row 27) is the studio's to make,
-     * so the maker may make one only on a piece that is not labelled for a studio.
+     * own: its allowance, its deletion. A final assessment (row 27) is the studio's to make
+     * when the studio has a linked manager. Otherwise the maker makes it: on a piece not
+     * labelled for a studio, and since v0.7.0 on one labelled for a studio with no linked
+     * manager (row 51; Nathan, 23 November 2026), such as a workshop whose owner does not
+     * use Fundi Bora. The piece keeps its studio label either way, and `assessed_as` still
+     * says "maker", so research can tell the two cases apart.
      */
     private fun pieceFooting(connection: Connection, userId: String, pieceId: String): PieceFooting? =
         connection.prepareStatement(
@@ -534,7 +539,8 @@ class PostgresChatStore(private val dataSource: DataSource) : ChatStore {
                    exists (
                        select 1 from piece_managers pm
                         where pm.piece_id = p.id and pm.manager_user_id = ?::uuid
-                   )
+                   ),
+                   exists (select 1 from piece_managers pm where pm.piece_id = p.id)
               from pieces p where p.id = ?::uuid
             """.trimIndent()
         ).use { statement ->
@@ -545,8 +551,12 @@ class PostgresChatStore(private val dataSource: DataSource) : ChatStore {
                 val maker = rows.getString(1)
                 val unlabelled = rows.getBoolean(2)
                 val manages = rows.getBoolean(3)
+                val hasManager = rows.getBoolean(4)
                 when {
-                    maker == userId -> PieceFooting("maker", mayMakeFinal = unlabelled)
+                    maker == userId -> PieceFooting(
+                        "maker",
+                        mayMakeFinal = FinalAssessment.makerMayMakeFinal(unlabelled, hasManager),
+                    )
                     manages -> PieceFooting("manager", mayMakeFinal = true)
                     else -> null
                 }
