@@ -94,26 +94,41 @@ class DetailPrefetchTest {
     )
 
     @Test
-    fun `row 38 - a diagnosis starts six detail calls in parallel, for the first two improvements, and no more`() = runBlocking {
+    fun `row 38 - a diagnosis starts eight detail calls in parallel, for the first two improvements, and no more`() = runBlocking {
         val gate = CompletableDeferred<Unit>()
         val claude = RecordingClaude(gate = gate)
         val details = FakeDetails()
         prefetcher(claude, details).schedule(diagnosis())
 
-        // All six are waiting on Claude at once: none waited for another to finish.
-        withTimeout(10_000) { while (claude.inFlight.get() < 6) delay(10) }
+        // All eight are waiting on Claude at once: none waited for another to finish.
+        withTimeout(10_000) { while (claude.inFlight.get() < 8) delay(10) }
         delay(100)
-        assertEquals(6, claude.inFlight.get())
+        assertEquals(8, claude.inFlight.get())
         gate.complete(Unit)
-        withTimeout(10_000) { while (details.saved.size < 6) delay(10) }
+        withTimeout(10_000) { while (details.saved.size < 8) delay(10) }
 
-        assertEquals(6, claude.requests.size)
+        assertEquals(8, claude.requests.size)
         val asked = claude.requests.map { it.history.last().text }.toSet()
         val expected = titles.take(2).flatMap { title -> DetailKind.entries.map { it.request(title) } }.toSet()
         assertEquals(expected, asked)
         assertFalse("the third improvement is answered on tap", asked.any { it.endsWith(titles[2]) })
-        assertEquals(listOf(0, 0, 0, 1, 1, 1), details.saved.map { it.findingIndex }.sortedBy { it })
+        assertEquals(listOf(0, 0, 0, 0, 1, 1, 1, 1), details.saved.map { it.findingIndex }.sortedBy { it })
         assertTrue(details.saved.all { it.source == "prefetch" && it.sourceMessageId == "reply-1" && it.openedMessageId == null })
+    }
+
+    @Test
+    fun `row 49 - the tool button is prefetched for the first two improvements, as the other three are`() = runBlocking {
+        val claude = RecordingClaude()
+        val details = FakeDetails()
+        prefetcher(claude, details).schedule(diagnosis())
+        withTimeout(10_000) { while (details.saved.size < 8) delay(10) }
+
+        val tools = details.saved.filter { it.kind == DetailKind.TOOL }
+        assertEquals(listOf(0, 1), tools.map { it.findingIndex }.sortedBy { it })
+        assertEquals(
+            setOf("A tool to buy or rent: ${titles[0]}", "A tool to buy or rent: ${titles[1]}"),
+            claude.requests.map { it.history.last().text }.filter { it.startsWith(DetailKind.TOOL.requestPrefix) }.toSet(),
+        )
     }
 
     @Test
@@ -121,7 +136,7 @@ class DetailPrefetchTest {
         val claude = RecordingClaude()
         val details = FakeDetails()
         prefetcher(claude, details).schedule(diagnosis())
-        withTimeout(10_000) { while (details.saved.size < 6) delay(10) }
+        withTimeout(10_000) { while (details.saved.size < 8) delay(10) }
 
         // Assembled as AnthropicClient assembles them, with the same serialiser.
         fun json(history: List<ChatMessage>, effort: String?) = AnthropicRequest.json.encodeToString(
@@ -145,7 +160,7 @@ class DetailPrefetchTest {
             assertEquals(2, Regex("cache_control").findAll(sent).count())
             assertTrue("the effort is part of the request", sent.endsWith("\"output_config\":{\"effort\":\"medium\"}}"))
         }
-        // And the six differ only in their last turn.
+        // And the eight differ only in their last turn.
         assertEquals(1, claude.requests.map { it.history.dropLast(1) }.toSet().size)
     }
 
@@ -155,7 +170,7 @@ class DetailPrefetchTest {
         val details = FakeDetails()
         val shelf = PhotoShelf(listOf(Attachment("p1", "/blobs/abc.jpg")))
         prefetcher(claude, details).schedule(diagnosis().copy(photos = shelf))
-        withTimeout(10_000) { while (details.saved.size < 6) delay(10) }
+        withTimeout(10_000) { while (details.saved.size < 8) delay(10) }
         // Tools render ahead of the system prompt, so a prefetch without the shelf would
         // miss the whole cached prefix.
         assertTrue(claude.requests.all { it.photos === shelf })
@@ -169,15 +184,15 @@ class DetailPrefetchTest {
             store = UsageStore(), details = details, claude = claude,
             blobs = BlobStore(folder.newFolder()),
             scope = CoroutineScope(SupervisorJob() + Dispatchers.Default),
-            perSession = 6,
+            perSession = 8,
         )
         prefetcher.schedule(diagnosis())
-        withTimeout(10_000) { while (details.saved.size < 6) delay(10) }
+        withTimeout(10_000) { while (details.saved.size < 8) delay(10) }
 
         // A corrected diagnosis with new improvements, past the cap.
         prefetcher.schedule(diagnosis().copy(replyMessageId = "reply-2", findingTitles = listOf("Re-cut the left leg", "Oil the top")))
         delay(300)
-        assertEquals(6, claude.requests.size)
+        assertEquals(8, claude.requests.size)
         assertNull(prefetcher.answerFor("session-1", DetailKind.CAUSE, "Re-cut the left leg"))
     }
 
@@ -186,7 +201,7 @@ class DetailPrefetchTest {
         val claude = RecordingClaude()
         val details = FakeDetails()
         prefetcher(claude, details).schedule(diagnosis(effort = "medium"))
-        withTimeout(10_000) { while (details.saved.size < 6) delay(10) }
+        withTimeout(10_000) { while (details.saved.size < 8) delay(10) }
         assertEquals(setOf("medium"), claude.requests.map { it.effort }.toSet())
         assertTrue(details.saved.all { it.effort == "medium" })
     }
@@ -197,12 +212,12 @@ class DetailPrefetchTest {
         val details = FakeDetails()
         val prefetcher = prefetcher(claude, details)
         prefetcher.schedule(diagnosis())
-        withTimeout(10_000) { while (details.saved.size < 6) delay(10) }
+        withTimeout(10_000) { while (details.saved.size < 8) delay(10) }
 
         prefetcher.schedule(diagnosis().copy(replyMessageId = "reply-2"))
         delay(300)
-        assertEquals(6, claude.requests.size)
-        assertEquals(6, details.saved.size)
+        assertEquals(8, claude.requests.size)
+        assertEquals(8, details.saved.size)
     }
 
     @Test
@@ -211,11 +226,11 @@ class DetailPrefetchTest {
         val details = FakeDetails()
         val prefetcher = prefetcher(claude, details)
         prefetcher.schedule(diagnosis())
-        withTimeout(10_000) { while (details.saved.size < 6) delay(10) }
+        withTimeout(10_000) { while (details.saved.size < 8) delay(10) }
 
         val stored = prefetcher.answerFor("session-1", DetailKind.CAUSE, "  ${titles[0]} ")
         assertEquals("answer to ${DetailKind.CAUSE.request(titles[0])}", stored?.text)
-        assertEquals("no call beyond the six", 6, claude.requests.size)
+        assertEquals("no call beyond the eight", 8, claude.requests.size)
     }
 
     @Test
@@ -225,7 +240,7 @@ class DetailPrefetchTest {
         val details = FakeDetails()
         val prefetcher = prefetcher(claude, details)
         prefetcher.schedule(diagnosis())
-        withTimeout(10_000) { while (claude.inFlight.get() < 6) delay(10) }
+        withTimeout(10_000) { while (claude.inFlight.get() < 8) delay(10) }
 
         val tap = async(Dispatchers.Default) { prefetcher.answerFor("session-1", DetailKind.NEXT_TIME, titles[1]) }
         delay(200)
@@ -233,7 +248,7 @@ class DetailPrefetchTest {
         gate.complete(Unit)
 
         assertEquals("answer to ${DetailKind.NEXT_TIME.request(titles[1])}", withTimeout(10_000) { tap.await() }?.text)
-        assertEquals(6, claude.requests.size)
+        assertEquals(8, claude.requests.size)
     }
 
     @Test
@@ -243,10 +258,10 @@ class DetailPrefetchTest {
         val usage = UsageStore()
         val prefetcher = prefetcher(claude, details, usage)
         prefetcher.schedule(diagnosis())
-        withTimeout(10_000) { while (usage.rows.size < 6) delay(10) }
+        withTimeout(10_000) { while (usage.rows.size < 8) delay(10) }
         delay(200)
 
-        assertEquals(6, claude.requests.size)
+        assertEquals(8, claude.requests.size)
         assertTrue(details.saved.isEmpty())
         assertTrue(usage.rows.all { it == "detail_prefetch" to Audience.FUNDI })
         assertNull("nothing stored, so the route asks Claude", prefetcher.answerFor("session-1", DetailKind.CAUSE, titles[0]))
@@ -258,8 +273,8 @@ class DetailPrefetchTest {
         val details = FakeDetails()
         val usage = UsageStore()
         prefetcher(claude, details, usage).schedule(diagnosis())
-        withTimeout(10_000) { while (details.saved.size < 6) delay(10) }
-        assertEquals(List(6) { "detail_prefetch" to Audience.FUNDI }, usage.rows.toList())
+        withTimeout(10_000) { while (details.saved.size < 8) delay(10) }
+        assertEquals(List(8) { "detail_prefetch" to Audience.FUNDI }, usage.rows.toList())
         assertTrue(details.saved.all { it.usageEventId != null })
     }
 

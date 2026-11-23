@@ -9,7 +9,7 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
-/** The three detail buttons under a finding (release scope row 37). */
+/** The detail buttons on an improvement: the three of release scope row 37, and row 49's tool. */
 class FindingDetailsTest {
 
     private val diagnosis = ChatMessage(
@@ -94,6 +94,29 @@ class FindingDetailsTest {
         assertEquals("A gap.", DetailKind.WHAT_WE_FOUND.storedIn(finding))
         assertEquals("Cut at an angle.", DetailKind.CAUSE.storedIn(finding))
         assertEquals("Mark all four sides.", DetailKind.NEXT_TIME.storedIn(finding))
+        // No reply field ever held the tool answer: tool_line names a tool the maker has.
+        assertEquals("", DetailKind.TOOL.storedIn(finding.copy(toolLine = "Your sander does this faster.")))
+    }
+
+    @Test
+    fun `row 49 - the tool button sends its own words, under the id the server's CHECK allows`() {
+        assertEquals("A tool to buy or rent: ", DetailKind.TOOL.requestPrefix)
+        assertEquals("tool", DetailKind.TOOL.id)
+        assertEquals("the fourth button, after the three of row 37", DetailKind.entries.last(), DetailKind.TOOL)
+        assertEquals(DetailKind.TOOL to "Oil the top", DetailKind.parse("A tool to buy or rent: Oil the top"))
+        // Every button now has an id the server stores, and every id a button.
+        assertEquals(DetailKind.SERVER_IDS, DetailKind.entries.map { it.id }.toSet())
+        assertEquals("A tool to buy or rent", FundiLabels.ENGLISH.detailTool)
+    }
+
+    @Test
+    fun `row 49 - the prompt answers the tool button, names no price, and prefers a rental`() {
+        val rule = DefaultPrompts.FUNDI_MASTER.lineSequence().single { it.startsWith("- \"A tool to buy or rent: <title>\".") }
+        assertTrue(rule.contains("name one tool they do not have, to buy or rent, whose lack caused or worsened this defect"))
+        assertTrue(rule.contains("Prefer one they could rent nearby"))
+        assertTrue(rule.contains("If no tool would help, say so in one sentence"))
+        assertTrue(rule.contains("Never give a price"))
+        assertTrue(DefaultPrompts.FUNDI_MASTER.contains("Under each improvement the app shows four buttons"))
     }
 
     @Test

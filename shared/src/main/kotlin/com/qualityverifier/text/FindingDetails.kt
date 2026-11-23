@@ -5,13 +5,14 @@ import com.qualityverifier.domain.Finding
 import com.qualityverifier.domain.Role
 
 /**
- * The three buttons under a Fundi Bora finding, and the message each one sends.
+ * The four buttons on a Fundi Bora improvement, and the message each one sends.
  *
  * Release scope row 37 (Nathan, 17 November 2026): the first reply no longer writes what
  * happened, the cause and the habit for every finding, so it arrives sooner. The maker asks
  * for each one with a button, and Claude answers that one only. The request is an ordinary
  * turn the app writes (composed), so the server, the history and the cache treat it as any
- * other turn; nothing new goes on the wire.
+ * other turn; nothing new goes on the wire. Row 49 (Nathan, 23 November 2026) adds the fourth,
+ * a tool to buy or rent, in place of the fix plan's `tool_to_buy` card that prompt E dropped.
  *
  * The prefixes are the protocol between the app and `prompts/fundi-master.txt` ("Detail on
  * request"), which names them word for word. They stay in English in a Kiswahili
@@ -34,20 +35,28 @@ enum class DetailKind(
 
     /** root_habit: the habit to build. */
     NEXT_TIME("How to upgrade next time: ", "next_time"),
+
+    /** A tool the maker does not have, to buy or rent, whose lack caused or worsened this (row 49). */
+    TOOL("A tool to buy or rent: ", "tool"),
     ;
 
     /** The turn the app sends for the finding titled [title]. */
     fun request(title: String): String = requestPrefix + title.trim()
 
-    /** The same detail when the reply already carries it: older replies write all three. */
+    /**
+     * The same detail when the reply already carries it: older replies write the first three.
+     * No reply field ever held the tool answer (a finding's tool_line names a tool the maker
+     * already has), so it is always asked for.
+     */
     fun storedIn(finding: Finding): String = when (this) {
         WHAT_WE_FOUND -> finding.whatHappened
         CAUSE -> finding.manufacturingCause
         NEXT_TIME -> finding.rootHabit
+        TOOL -> ""
     }
 
     companion object {
-        /** Every id the server's CHECK allows, including those of buttons not built yet. */
+        /** Every id the server's CHECK allows (V37); since row 49, one per button. */
         val SERVER_IDS = setOf("what_we_found", "cause", "next_time", "tool")
 
         /** The kind and finding title a turn asks about, or null for any other turn. */

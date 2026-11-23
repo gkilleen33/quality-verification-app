@@ -559,6 +559,42 @@ class ServerChatServiceTest {
         assertFalse(body, body.contains("photo_meta"))
     }
 
+    // Row 43. The phone stores a page question with its improvement named, and sends the
+    // number and the maker's words; the server names the improvement from its own copy.
+    @Test
+    fun `row 43 - a page question sends its improvement number and the maker's words`() = runTest {
+        server.enqueue(json("""{"message_id":"m1","text":"ok"}"""))
+        val stored = com.qualityverifier.text.ImprovementQuestion.of(2, "Sand the top's front edge smooth", "Can I use a scraper?")
+
+        service(chatPath = "v1/fundi/chat").send(
+            "s1", ItemType.WOODEN_TABLE,
+            listOf(ChatMessage("a1", Role.ASSISTANT, "diagnosis"), ChatMessage("q1", Role.USER, stored.text)),
+        )
+
+        val body = server.takeRequest().body.readUtf8()
+        assertTrue(body, body.contains("\"text\":\"Can I use a scraper?\""))
+        assertTrue(body, body.contains("\"improvement\":2"))
+        assertTrue(body, body.contains("\"message_id\":\"q1\""))
+    }
+
+    // An old server refuses keys it does not know, so every other turn sends none; and Kagua
+    // sends a customer's words as typed, whatever they are.
+    @Test
+    fun `row 43 - no other turn, and nothing on Kagua's endpoint, sends an improvement`() = runTest {
+        server.enqueue(json("""{"message_id":"m1","text":"ok"}"""))
+        server.enqueue(json("""{"message_id":"m2","text":"ok"}"""))
+        val pageWords = com.qualityverifier.text.ImprovementQuestion.of(1, "Oil the top", "How much?").text
+
+        service(chatPath = "v1/fundi/chat").send("s1", ItemType.WOODEN_TABLE, history())
+        service().send("s1", ItemType.WOODEN_TABLE, listOf(ChatMessage("q1", Role.USER, pageWords)))
+
+        val fundi = server.takeRequest().body.readUtf8()
+        assertFalse(fundi, fundi.contains("improvement"))
+        val kagua = server.takeRequest().body.readUtf8()
+        assertFalse(kagua, kagua.contains("\"improvement\""))
+        assertTrue(kagua, kagua.contains("About improvement 1"))
+    }
+
     @Test
     fun `no system prompt is ever sent`() = runTest {
         // The server assembles it. A field here would be a way for a client to spend our

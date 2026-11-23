@@ -7,11 +7,20 @@ import androidx.compose.material3.TextButton
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
+import androidx.compose.material.icons.filled.Brush
+import androidx.compose.material.icons.filled.Error
+import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
@@ -21,6 +30,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -38,7 +48,9 @@ import com.qualityverifier.text.DetailAnswers
 import com.qualityverifier.text.DetailKey
 import com.qualityverifier.text.DetailKind
 import com.qualityverifier.text.FundiLabels
+import com.qualityverifier.text.ImprovementRow
 import com.qualityverifier.text.ReportLabels
+import com.qualityverifier.text.customersNoticeFirst
 import com.qualityverifier.text.problemsOf
 import com.qualityverifier.ui.theme.verdictColors
 
@@ -196,7 +208,9 @@ private fun FindingDetail(
 }
 
 /**
- * The three buttons under an arm 1 finding (row 37). A tap opens the detail when the reply
+ * The detail buttons under an arm 1 finding on the card (row 37). Since v0.7.0 AssessScreen draws
+ * an arm 1 reply as the list (ImprovementList), whose pages have their own (ImprovementPage), so
+ * this path is kept for the card alone. A tap opens the detail when the reply
  * or an earlier tap already holds it, and otherwise asks Claude for it; a second tap closes
  * it. The detail shows under the buttons, in the finding it belongs to.
  */
@@ -239,10 +253,128 @@ private fun DetailButtons(
     }
 }
 
-private fun FundiLabels.detailLabel(kind: DetailKind): String = when (kind) {
+internal fun FundiLabels.detailLabel(kind: DetailKind): String = when (kind) {
     DetailKind.WHAT_WE_FOUND -> detailWhatWeFound
     DetailKind.CAUSE -> detailCause
     DetailKind.NEXT_TIME -> detailNextTime
+    DetailKind.TOOL -> detailTool
+}
+
+/**
+ * The reply's improvements as a list (v0.7.0, release scope row 43; mockup v2): the callout
+ * "What customers will notice first" with the first improvement's customer_line, then one
+ * tappable row per improvement in one white block, a thin line between rows, then "One thing
+ * to check". A row opens that improvement's page; everything else about it lives there.
+ *
+ * Every row has the same shape, the first included, though its line repeats the callout's
+ * point: a list whose first row differs reads as two kinds of thing.
+ */
+@Composable
+fun ImprovementList(
+    diagnosis: Diagnosis,
+    rows: List<ImprovementRow>,
+    labels: FundiLabels,
+    /** The severity words, from Kagua's labels in the assessment's language, as the card uses. */
+    reportLabels: ReportLabels,
+    /** Opens the page of the row at this position in [rows]. */
+    onOpen: (Int) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Column(modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        val callout = customersNoticeFirst(rows)
+        if (callout.isNotBlank()) {
+            Surface(
+                color = MaterialTheme.colorScheme.primaryContainer,
+                contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
+                shape = RoundedCornerShape(12.dp),
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text(labels.customersNoticeFirst, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+                    Text(callout, style = MaterialTheme.typography.bodyLarge)
+                }
+            }
+        }
+
+        if (rows.isNotEmpty()) {
+            Card(
+                Modifier.fillMaxWidth(),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+            ) {
+                rows.forEachIndexed { position, row ->
+                    if (position > 0) HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                    ImprovementRowItem(row, labels, reportLabels, onClick = { onOpen(position) })
+                }
+            }
+        }
+
+        if (diagnosis.awaitingCheck) {
+            Label(labels.oneCheckHeading)
+            Text(diagnosis.oneCheck, style = MaterialTheme.typography.bodyLarge)
+        }
+    }
+}
+
+@Composable
+private fun ImprovementRowItem(row: ImprovementRow, labels: FundiLabels, reportLabels: ReportLabels, onClick: () -> Unit) {
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .heightIn(min = 48.dp)
+            .clickable(onClickLabel = labels.openImprovement, onClick = onClick)
+            .padding(horizontal = 16.dp, vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            SeverityBadge(row.finding.severity, reportLabels)
+            Text(row.finding.title, style = MaterialTheme.typography.titleMedium)
+            if (row.finding.rowLine.isNotBlank()) {
+                Text(
+                    row.finding.rowLine,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            if (row.questions > 0) {
+                Text(
+                    labels.questions(row.questions),
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
+        // Decorative: the row's click label says what a tap does.
+        Icon(
+            Icons.AutoMirrored.Filled.KeyboardArrowRight,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
+}
+
+/**
+ * The severity as an icon and a word (P11: never by colour alone). The word is Kagua's, in the
+ * assessment's language, so a defect has one name across both apps. Nothing for a severity the
+ * model left out.
+ */
+@Composable
+internal fun SeverityBadge(severity: Severity, reportLabels: ReportLabels) {
+    val name = reportLabels.severity(severity)
+    if (name.isBlank()) return
+    val icon = when (severity) {
+        Severity.SERIOUS -> Icons.Filled.Error
+        Severity.MODERATE -> Icons.Filled.Warning
+        Severity.MINOR -> Icons.Filled.Info
+        Severity.COSMETIC -> Icons.Filled.Brush
+        Severity.UNKNOWN -> return
+    }
+    val tint = if (severity == Severity.SERIOUS) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant
+    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+        // The word beside it is what a screen reader reads.
+        Icon(icon, contentDescription = null, tint = tint, modifier = Modifier.size(18.dp))
+        Text(name, style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    }
 }
 
 /**
@@ -409,7 +541,7 @@ private fun ToolCard(tool: ToolSuggestion, labels: FundiLabels) {
 // ------------------------------------------------------------------ small pieces
 
 @Composable
-private fun Label(text: String) {
+internal fun Label(text: String) {
     Text(
         text,
         style = MaterialTheme.typography.labelSmall,

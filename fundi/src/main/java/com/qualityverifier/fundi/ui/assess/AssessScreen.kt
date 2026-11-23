@@ -29,6 +29,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -53,15 +54,21 @@ import com.qualityverifier.domain.TestNavigation
 import com.qualityverifier.domain.WorkerSlot
 import com.qualityverifier.fundi.ui.coach.DiagnosisCard
 import com.qualityverifier.fundi.ui.coach.FixPlanCard
+import com.qualityverifier.fundi.ui.coach.ImprovementList
+import com.qualityverifier.fundi.ui.coach.ImprovementPage
 import com.qualityverifier.fundi.ui.coach.VerdictCard
 import com.qualityverifier.fundi.ui.coach.verdictCardProblems
 import com.qualityverifier.fundi.ui.fundiContainer
 import com.qualityverifier.text.DetailAnswers
 import com.qualityverifier.text.DetailKind
 import com.qualityverifier.text.FundiLabels
+import com.qualityverifier.text.PageQuestions
 import com.qualityverifier.text.ReportLabels
 import com.qualityverifier.text.RetryLabels
 import com.qualityverifier.text.detailAnswersOf
+import com.qualityverifier.text.improvementRows
+import com.qualityverifier.text.isImprovementList
+import com.qualityverifier.text.pageQuestionsOf
 import com.qualityverifier.text.markdownToPlainText
 import com.qualityverifier.text.parseAssistantContent
 import com.qualityverifier.ui.capture.CaptureScreen
@@ -186,6 +193,11 @@ fun AssessScreen(
         assessmentPhotos(messages, run, purpose, labels, reportLabels)
             .map { if (mark != null && it.path == viewing) it.copy(mark = mark) else it }
     }
+    // The improvement page open over the conversation (row 43): the reply whose list it came
+    // from, by message id, and the row's place in that list. Saved across a rotation, as the
+    // viewer is.
+    var pageReply by rememberSaveable { mutableStateOf<String?>(null) }
+    var pagePosition by rememberSaveable { mutableIntStateOf(0) }
     val viewingIndex = photos.indexOfFirst { it.path == viewing }
     // A photograph deleted while open — a shot retaken from the plan card cannot be,
     // but a list that no longer holds the path must close rather than show nothing.
@@ -342,6 +354,10 @@ fun AssessScreen(
                 reportLabels = reportLabels,
                 onSend = viewModel::send,
                 onRequestDetail = viewModel::requestDetail,
+                onAskAboutImprovement = viewModel::askAboutImprovement,
+                openPage = pageReply?.let { it to pagePosition },
+                onOpenPage = { reply, position -> pageReply = reply; pagePosition = position },
+                onClosePage = { pageReply = null },
                 onRetry = viewModel::retry,
                 onDismissError = viewModel::dismissError,
                 onStartCamera = { stage = Stage.SHOOTING },
@@ -386,6 +402,12 @@ private fun Conversation(
     onSend: (String) -> Unit,
     /** A detail button under a finding (row 37): which detail, of the finding with this title. */
     onRequestDetail: (DetailKind, String) -> Unit,
+    /** A question on an improvement's page (row 43): its number, its title, the maker's words. */
+    onAskAboutImprovement: (Int, String, String) -> Unit,
+    /** The improvement page open: the reply's message id and the row's place in its list. */
+    openPage: Pair<String, Int>?,
+    onOpenPage: (String, Int) -> Unit,
+    onClosePage: () -> Unit,
     onRetry: () -> Unit,
     onDismissError: () -> Unit,
     onStartCamera: () -> Unit,
@@ -404,11 +426,16 @@ private fun Conversation(
     reviewHelpful: Boolean?,
     onAnswerHelpful: (Boolean) -> Unit,
 ) {
-    // A detail button's request and its answer show under the finding, not as turns (row 37).
+    // A detail button's request and its answer show under the finding, not as turns (row 37),
+    // and a page's question and its answer on that page (row 43).
     val details = remember(messages) { detailAnswersOf(messages) }
-    val turns = remember(messages, details) { messages.filterNot { it.id in details.hidden } }
+    val pages = remember(messages) { pageQuestionsOf(messages) }
+    val turns = remember(messages, details, pages) {
+        messages.filterNot { it.id in details.hidden || it.id in pages.hidden }
+    }
     // Only while nothing else is in flight or waiting: one turn at a time goes on the wire.
-    val requestDetail = onRequestDetail.takeIf { !sending && !unanswered && run == null }
+    val canSend = !sending && !unanswered && run == null
+    val requestDetail = onRequestDetail.takeIf { canSend }
     val firstUserId = messages.firstOrNull { it.role == Role.USER }?.id
     // The chips come from the last turn the maker can see, so an answer under a finding
     // does not take away the replies the diagnosis offered.
@@ -428,6 +455,24 @@ private fun Conversation(
     val hasVerdict = remember(messages) {
         messages.any { it.role == Role.ASSISTANT && parseAssistantContent(it.text).verdict != null }
     }
+    // Once the newest diagnosis is a list, the box under the conversation is for the whole
+    // piece, and says so (row 43): each improvement has its own on its page.
+    val listShown = remember(turns, latestDiagnosisId) {
+        turns.firstOrNull { it.id == latestDiagnosisId }
+            ?.let { parseAssistantContent(it.text).diagnosis?.isImprovementList } == true
+    }
+    // The page's reply and its list, read from the stored conversation, so it opens offline.
+    val pageRows = remember(messages, pages, openPage?.first) {
+        openPage?.first?.let { id -> messages.firstOrNull { it.id == id } }
+            ?.let { parseAssistantContent(it.text).diagnosis }
+            ?.let { improvementRows(it, pages) }
+    }
+    // A page whose reply or row is gone (a list that changed under it) closes rather than
+    // showing nothing.
+    LaunchedEffect(openPage, pageRows) {
+        val position = openPage?.second ?: return@LaunchedEffect
+        if (pageRows == null || position !in pageRows.indices) onClosePage()
+    }
 
     Column(Modifier.fillMaxSize().systemBarsPadding().imePadding()) {
         LazyColumn(
@@ -440,6 +485,8 @@ private fun Conversation(
                         AssistantTurn(
                             message, labels, reportLabels, showOnPhoto, details,
                             requestDetail.takeIf { message.id == latestDiagnosisId },
+                            pages = pages,
+                            onOpenImprovement = { position -> onOpenPage(message.id, position) },
                         )
                     // Written by the app on the maker's behalf. The model reads every
                     // word; the maker sees what they did — which purpose, which photos —
@@ -476,22 +523,7 @@ private fun Conversation(
             }
         }
 
-        // Below the conversation and above whatever answers it, as in Kagua. Retry only for
-        // a turn that failed on its way to the model; a photograph that would not process,
-        // or a sign-in failure, is not fixed by sending again.
-        error?.let {
-            FailedTurnRow(
-                message = it.message,
-                labels = RetryLabels.ENGLISH,
-                onRetry = if (it.retryable) onRetry else null,
-                onDismiss = onDismissError,
-            )
-        }
-        // Only when there is no live error: a turn that just failed already has a row with
-        // a Retry on it, and two prompts to do the same thing is worse than one.
-        if (error == null && unanswered) {
-            UnansweredTurnRow(RetryLabels.ENGLISH, onSend = onRetry)
-        }
+        TurnStatusRows(error, unanswered, onRetry, onDismissError)
 
         when {
             sending -> Column(
@@ -534,8 +566,65 @@ private fun Conversation(
                 options = lastAssistant?.let { parseAssistantContent(it.text).options }.orEmpty(),
                 labels = labels,
                 onSend = onSend,
+                hint = if (listShown) labels.askWholePiece else labels.replyHint,
             )
         }
+    }
+
+    // Drawn after the column, into the Box AssessScreen draws the stage in, so the page covers
+    // the conversation as the photo viewer does, and closing it finds the list where it was.
+    val rows = pageRows
+    val page = openPage
+    if (page != null && rows != null && page.second in rows.indices) {
+        val (replyId, position) = page
+        val row = rows[position]
+        // Only the newest diagnosis asks anything, as on the list: an older one's improvements
+        // may be gone.
+        val current = replyId == latestDiagnosisId
+        ImprovementPage(
+            rows = rows,
+            position = position,
+            labels = labels,
+            reportLabels = reportLabels,
+            photoOf = { finding ->
+                finding.mark?.let { mark -> photoNumbered(messages, mark.photo, photoNumbers)?.let { it to mark } }
+            },
+            onOpenMark = onOpenMark,
+            details = details,
+            onRequestDetail = requestDetail.takeIf { current },
+            exchanges = pages.byImprovement[row.key].orEmpty(),
+            onAsk = if (current && canSend) {
+                { question -> onAskAboutImprovement(row.number, row.finding.title, question) }
+            } else {
+                null
+            },
+            sending = sending,
+            onGoTo = { onOpenPage(replyId, it) },
+            onClose = onClosePage,
+            statusRows = { TurnStatusRows(error, unanswered, onRetry, onDismissError) },
+        )
+    }
+}
+
+/**
+ * Below the conversation and above whatever answers it, as in Kagua, and at the foot of an
+ * improvement's page. Retry only for a turn that failed on its way to the model; a photograph
+ * that would not process, or a sign-in failure, is not fixed by sending again.
+ */
+@Composable
+private fun TurnStatusRows(error: AssessError?, unanswered: Boolean, onRetry: () -> Unit, onDismissError: () -> Unit) {
+    error?.let {
+        FailedTurnRow(
+            message = it.message,
+            labels = RetryLabels.ENGLISH,
+            onRetry = if (it.retryable) onRetry else null,
+            onDismiss = onDismissError,
+        )
+    }
+    // Only when there is no live error: a turn that just failed already has a row with
+    // a Retry on it, and two prompts to do the same thing is worse than one.
+    if (error == null && unanswered) {
+        UnansweredTurnRow(RetryLabels.ENGLISH, onSend = onRetry)
     }
 }
 
@@ -547,22 +636,39 @@ private fun AssistantTurn(
     showOnPhoto: (Finding) -> (() -> Unit)?,
     details: DetailAnswers,
     onRequestDetail: ((DetailKind, String) -> Unit)?,
+    /** The improvement pages' questions, for each row's count (row 43). */
+    pages: PageQuestions,
+    /** Opens the page of the row at this position in the reply's list (row 43). */
+    onOpenImprovement: (Int) -> Unit,
 ) {
     val content = parseAssistantContent(message.text)
+    val list = content.diagnosis?.takeIf { it.isImprovementList }
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        if (content.displayProse.isNotBlank()) {
-            Text(markdownToPlainText(content.displayProse), style = MaterialTheme.typography.bodyLarge)
+        // The list (row 43, mockup v2): the app's heading, then the opening Claude wrote, as
+        // the overview. Shown beside a verdict too: in this layout the opening is the overview
+        // the mockup puts on top, where displayProse leaves it out of every verdict reply.
+        val prose = if (list != null) content.prose.substringBefore("\n\n").trim() else content.displayProse
+        if (list != null) {
+            Text(labels.replyHeading, style = MaterialTheme.typography.titleLarge)
+        }
+        if (prose.isNotBlank()) {
+            Text(markdownToPlainText(prose), style = MaterialTheme.typography.bodyLarge)
         }
         // A verdict means a full assessment; drawn first because it is the answer the
-        // maker came for.
+        // maker came for. Above the list, as the mockup has it.
         content.verdict?.let { VerdictCard(it, verdictCardProblems(content), reportLabels) }
-        content.diagnosis?.let {
-            DiagnosisCard(
-                it, labels, reportLabels,
-                showOnPhoto = showOnPhoto,
-                details = details,
-                onRequestDetail = onRequestDetail,
-            )
+        if (list != null) {
+            ImprovementList(list, improvementRows(list, pages), labels, reportLabels, onOpen = onOpenImprovement)
+        } else {
+            // A reply from before arm 1, with no fix_line, keeps the card it was drawn with.
+            content.diagnosis?.let {
+                DiagnosisCard(
+                    it, labels, reportLabels,
+                    showOnPhoto = showOnPhoto,
+                    details = details,
+                    onRequestDetail = onRequestDetail,
+                )
+            }
         }
         content.fixPlan?.let { FixPlanCard(it, labels) }
     }
@@ -648,7 +754,13 @@ private fun Thumbnails(message: ChatMessage, onOpenPhoto: (String) -> Unit) {
  * `qv-options`; the field is for anything else.
  */
 @Composable
-private fun ReplyBar(options: List<String>, labels: FundiLabels, onSend: (String) -> Unit) {
+private fun ReplyBar(
+    options: List<String>,
+    labels: FundiLabels,
+    onSend: (String) -> Unit,
+    /** "Ask about the whole piece" once the reply is a list of improvements (row 43). */
+    hint: String = labels.replyHint,
+) {
     var text by remember { mutableStateOf("") }
     Column(Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         if (options.isNotEmpty()) {
@@ -662,7 +774,7 @@ private fun ReplyBar(options: List<String>, labels: FundiLabels, onSend: (String
             OutlinedTextField(
                 value = text,
                 onValueChange = { text = it },
-                placeholder = { Text(labels.replyHint) },
+                placeholder = { Text(hint) },
                 modifier = Modifier.weight(1f),
             )
             Button(

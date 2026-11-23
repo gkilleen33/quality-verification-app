@@ -121,6 +121,13 @@ data class Finding(
     @SerialName("customer_line") val customerLine: String = "",
     @SerialName("tool_line") val toolLine: String = "",
     /**
+     * The line under the title in the list of improvements (v0.7.0, release scope row 43): one
+     * sentence of at most 15 words, cut from [customerLine]. Blank on every reply written
+     * before that prompt, whose rows then show the title alone. A v0.6.1 phone has no such
+     * field, and its parser ignores the key.
+     */
+    @SerialName("row_line") val rowLine: String = "",
+    /**
      * Where the defect shows (v0.6.0, release scope row 19): the photo, by the number the
      * server and the notes use, and a point on it. Kept as raw JSON and read through [mark],
      * so a position the model writes badly costs the mark, never the whole diagnosis.

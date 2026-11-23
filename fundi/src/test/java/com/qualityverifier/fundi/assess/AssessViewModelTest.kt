@@ -1054,6 +1054,57 @@ class AssessViewModelTest {
         assertEquals("a1", model.run.value?.sourceMessageId)
     }
 
+    // Row 43: a question typed on an improvement's page is stored naming that improvement, so
+    // the page finds it and the prompt answers about it only. Typed, so not composed.
+    @Test
+    fun `row 43 - a question from a page carries its improvement and is stored on that page`() = runTest {
+        val sessions = FakeSessions()
+        val chat = FakeChat(ChatResult.Success("Yes, a card scraper works."))
+        val model = model(chat = chat, sessions = sessions)
+
+        model.askAboutImprovement(2, " Sand the top's front edge smooth ", " Can I use a scraper? ")
+        advanceUntilIdle()
+
+        val turn = sessions.userTurns.single()
+        assertEquals("About improvement 2, 'Sand the top's front edge smooth': Can I use a scraper?", turn.text)
+        assertFalse(turn.composed)
+        assertEquals(turn.text, chat.sent.single().text)
+        val pages = com.qualityverifier.text.pageQuestionsOf(sessions.messagesOnce("s1"))
+        val key = com.qualityverifier.text.ImprovementKey(2, "Sand the top's front edge smooth")
+        assertEquals("Yes, a card scraper works.", pages.byImprovement[key]?.single()?.answer)
+        assertEquals("both stay off the conversation", 2, pages.hidden.size)
+    }
+
+    @Test
+    fun `row 43 - an empty page question, or one with no improvement, sends nothing`() = runTest {
+        val sessions = FakeSessions()
+        val chat = FakeChat()
+        val model = model(chat = chat, sessions = sessions)
+
+        model.askAboutImprovement(1, "Oil the top", "   ")
+        model.askAboutImprovement(0, "Oil the top", "How much?")
+        model.askAboutImprovement(1, " ", "How much?")
+        advanceUntilIdle()
+
+        assertTrue(sessions.userTurns.isEmpty())
+        assertTrue(chat.sent.isEmpty())
+    }
+
+    // Row 49: the fourth button asks like the other three.
+    @Test
+    fun `row 49 - the tool button sends its composed request`() = runTest {
+        val sessions = FakeSessions()
+        val chat = FakeChat()
+        val model = model(chat = chat, sessions = sessions)
+
+        model.requestDetail(com.qualityverifier.text.DetailKind.TOOL, "Oil the top")
+        advanceUntilIdle()
+
+        val turn = sessions.userTurns.single()
+        assertEquals("A tool to buy or rent: Oil the top", turn.text)
+        assertTrue(turn.composed)
+    }
+
     // Sending the same turn again cannot fix a sign-in, so the row offers no Retry.
     @Test
     fun `a sign-in failure is not offered for Retry`() = runTest {
