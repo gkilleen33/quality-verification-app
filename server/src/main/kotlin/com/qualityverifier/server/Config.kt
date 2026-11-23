@@ -67,8 +67,23 @@ data class Config(
      * stop the server starting.
      */
     val mpesaHmacKey: String? = null,
+    /**
+     * The thinking effort for every Fundi Bora call that shares an assessment's conversation:
+     * its turns, the notes written after a diagnosis, and the detail answers, tapped or
+     * prefetched (row 50; Nathan, 23 November 2026). `fundi_effort`, from
+     * KAGUA_FUNDI_EFFORT, so it can be changed by a restart rather than a release. Medium by
+     * default: in the timing tests of 18 November 2026 high thinking, the API's default, hit
+     * the 16,000-token limit three times and medium never did. Kagua sends none.
+     */
+    val fundiEffort: String = DEFAULT_FUNDI_EFFORT,
 ) {
     companion object {
+        /** See [fundiEffort]. */
+        const val DEFAULT_FUNDI_EFFORT = "medium"
+
+        /** The values the API accepts for `output_config.effort`. */
+        val EFFORTS = setOf("low", "medium", "high", "xhigh", "max")
+
         /**
          * Twenty. Comfortable for a full day of fieldwork in a workshop, while bounding
          * what a runaway client can spend before somebody notices.
@@ -129,6 +144,11 @@ data class Config(
                 adminSessionKey = env("KAGUA_ADMIN_SESSION_KEY")?.takeIf { it.isNotBlank() },
                 appVersions = AppVersions.fromEnvironment(env),
                 mpesaHmacKey = env("KAGUA_MPESA_HMAC_KEY")?.trim()?.takeIf { it.isNotEmpty() },
+                // A value the API would refuse reads as the default, never as no effort: a
+                // typo must not quietly put every fundi back on high thinking, or fail every
+                // assessment with a 400.
+                fundiEffort = env("KAGUA_FUNDI_EFFORT")?.trim()?.lowercase()
+                    ?.takeIf { it in EFFORTS } ?: DEFAULT_FUNDI_EFFORT,
             )
         }
     }

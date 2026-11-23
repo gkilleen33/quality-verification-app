@@ -42,6 +42,7 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Rule
@@ -857,6 +858,145 @@ class ChatRouteTest {
         ```
     """.trimIndent()
 
+    // ---- Rows 38 and 50: detail answers prefetched and stored, and medium thinking.
+
+    /** A detail answer store in memory, with one answer already written if [stored] is given. */
+    private class MemoryDetails(stored: com.qualityverifier.server.db.NewDetailAnswer? = null) :
+        com.qualityverifier.server.db.DetailAnswerStore {
+        val saved = java.util.concurrent.CopyOnWriteArrayList<com.qualityverifier.server.db.NewDetailAnswer>()
+            .apply { stored?.let(::add) }
+        val opened = java.util.concurrent.CopyOnWriteArrayList<Pair<String, String>>()
+
+        override suspend fun save(answer: com.qualityverifier.server.db.NewDetailAnswer): String {
+            saved += answer
+            return "detail-${saved.size}"
+        }
+
+        override suspend fun find(sessionId: String, kind: com.qualityverifier.text.DetailKind, title: String) =
+            saved.lastOrNull { it.sessionId == sessionId && it.kind == kind && it.findingTitle == title.trim() }
+                ?.let { com.qualityverifier.server.db.StoredDetail("detail-${saved.indexOf(it) + 1}", it.text) }
+
+        override suspend fun markOpened(answerId: String, messageId: String) {
+            opened += answerId to messageId
+        }
+    }
+
+    private fun prefetched(sessionId: String, text: String) = com.qualityverifier.server.db.NewDetailAnswer(
+        sessionId = sessionId, sourceMessageId = "reply-1", findingIndex = 0,
+        findingTitle = "Gap at the back joint", kind = com.qualityverifier.text.DetailKind.CAUSE,
+        source = "prefetch", text = text, model = "claude-sonnet-5-5", effort = "medium",
+        promptSha = "sha", usageEventId = 7,
+    )
+
+    @Test
+    fun `row 38 - a tap on a stored answer is stored as the reply, opened, with no Claude call`() = testApplication {
+        val sessionId = UUID.randomUUID().toString()
+        val details = MemoryDetails(prefetched(sessionId, "The glue was spread too thin before clamping."))
+        val store = FakeChatStore()
+        val claude = FakeClaude(ClaudeResult.Success("should not be asked", TokenUsage(), null))
+        val app = withChat(store, claude, accountAudience = Audience.FUNDI, details = details)
+
+        val tap = ChatRequest(
+            sessionId = sessionId, itemTypeId = "wooden-table", messageId = UUID.randomUUID().toString(),
+            text = com.qualityverifier.text.DetailKind.CAUSE.request("Gap at the back joint"), composed = true,
+        )
+        val response = app.post("/v1/fundi/chat") { auth(); contentType(ContentType.Application.Json); setBody(tap) }
+
+        assertEquals(HttpStatusCode.OK, response.status)
+        assertTrue(response.bodyAsText().contains("The glue was spread too thin before clamping."))
+        assertEquals("no Claude call", 0, claude.calls)
+        // The conversation gets what a tap always got: the composed turn, then the answer.
+        assertEquals(true, store.sawComposed)
+        assertEquals("The glue was spread too thin before clamping.", store.lastAssistantText)
+        assertEquals("its first opening is recorded", listOf("detail-1" to "assistant-1"), details.opened.toList())
+        assertEquals("no second usage row: the prefetch has one", 0, store.usageRows)
+    }
+
+    @Test
+    fun `row 38 - a tap with nothing stored asks Claude as before, and the answer is kept, opened`() = testApplication {
+        val details = MemoryDetails()
+        val store = FakeChatStore(storedHistory = listOf(
+            ChatMessage("u1", Role.USER, "Evaluate this table."),
+            ChatMessage("a1", Role.ASSISTANT, oneFindingDiagnosis),
+        ))
+        val claude = FakeClaude(ClaudeResult.Success("Clamp it for an hour.", TokenUsage(), "claude-sonnet-5-5"))
+        val app = withChat(store, claude, accountAudience = Audience.FUNDI, details = details)
+
+        val tap = ChatRequest(
+            sessionId = UUID.randomUUID().toString(), itemTypeId = "wooden-table", messageId = UUID.randomUUID().toString(),
+            text = com.qualityverifier.text.DetailKind.NEXT_TIME.request("Gap at the back joint"), composed = true,
+        )
+        app.post("/v1/fundi/chat") { auth(); contentType(ContentType.Application.Json); setBody(tap) }
+
+        assertEquals(1, claude.calls)
+        val kept = details.saved.single()
+        assertEquals("tap", kept.source)
+        assertEquals("a1", kept.sourceMessageId)
+        assertEquals(0, kept.findingIndex)
+        assertEquals("assistant-1", kept.openedMessageId)
+        assertEquals("medium", kept.effort)
+    }
+
+    @Test
+    fun `row 38 - an unopened answer never reaches the next turn's history`() = testApplication {
+        val sessionId = UUID.randomUUID().toString()
+        val details = MemoryDetails(prefetched(sessionId, "UNOPENED ANSWER TEXT"))
+        val store = FakeChatStore()
+        val claude = FakeClaude(ClaudeResult.Success("Yes, it is strong.", TokenUsage(), null))
+        val app = withChat(store, claude, accountAudience = Audience.FUNDI, details = details)
+
+        val question = ChatRequest(
+            sessionId = sessionId, itemTypeId = "wooden-table", messageId = UUID.randomUUID().toString(),
+            text = "Is the frame strong enough?",
+        )
+        app.post("/v1/fundi/chat") { auth(); contentType(ContentType.Application.Json); setBody(question) }
+
+        assertEquals(1, claude.calls)
+        assertFalse(claude.lastHistoryText.contains("UNOPENED ANSWER TEXT"))
+        assertFalse(claude.lastRequestJson.contains("UNOPENED ANSWER TEXT"))
+        assertTrue(details.opened.isEmpty())
+    }
+
+    @Test
+    fun `row 38 - a diagnosis starts the prefetches, which leave the daily allowance unchanged`() = testApplication {
+        val details = MemoryDetails()
+        val store = FakeChatStore()
+        val claude = FakeClaude(ClaudeResult.Success(todayShape, TokenUsage(), "claude-sonnet-5-5"))
+        val app = withChat(store, claude, accountAudience = Audience.FUNDI, details = details)
+
+        app.post("/v1/fundi/chat") { auth(); contentType(ContentType.Application.Json); setBody(request()) }
+
+        // The six answers for the first two of three improvements, written in the background.
+        val deadline = System.currentTimeMillis() + 5_000
+        while (details.saved.size < 6 && System.currentTimeMillis() < deadline) Thread.sleep(20)
+        assertEquals(6, details.saved.size)
+        assertEquals(setOf("Gap at the back joint", "Saw marks on the top"), details.saved.map { it.findingTitle }.toSet())
+        assertEquals("the turn alone reached the allowance check", 1, store.ensuredSessions)
+        assertEquals(6, store.usageAudiences.count { it.first == "detail_prefetch" && it.second == Audience.FUNDI })
+    }
+
+    @Test
+    fun `row 50 - fundi_effort defaults to medium, and Kagua's calls are unchanged`() = testApplication {
+        val fundiStore = FakeChatStore()
+        val fundiClaude = FakeClaude(ClaudeResult.Success("Noted.", TokenUsage(), null))
+        val app = withChat(fundiStore, fundiClaude, accountAudience = Audience.FUNDI)
+        app.post("/v1/fundi/chat") { auth(); contentType(ContentType.Application.Json); setBody(request()) }
+        assertEquals(listOf<String?>("medium"), fundiClaude.efforts.toList())
+        assertTrue(fundiClaude.lastRequestJson.endsWith("\"output_config\":{\"effort\":\"medium\"}}"))
+        assertEquals("medium", Config.fromEnvironment { null }.fundiEffort)
+        assertEquals("a value the API would refuse reads as medium", "medium", Config.fromEnvironment { if (it == "KAGUA_FUNDI_EFFORT") "medium-high" else null }.fundiEffort)
+        assertEquals("high", Config.fromEnvironment { if (it == "KAGUA_FUNDI_EFFORT") " HIGH " else null }.fundiEffort)
+    }
+
+    @Test
+    fun `row 50 - Kagua's requests send no effort, byte for byte as before`() = testApplication {
+        val claude = FakeClaude(ClaudeResult.Success("Noted.", TokenUsage(), null))
+        val app = withChat(FakeChatStore(), claude)
+        app.post("/v1/chat") { auth(); contentType(ContentType.Application.Json); setBody(request()) }
+        assertEquals(listOf<String?>(null), claude.efforts.toList())
+        assertFalse(claude.lastRequestJson.contains("output_config"))
+    }
+
     @Test
     fun `a verdict starts the notes, and the next turn carries them instead of the photos`() = testApplication {
         val store = FakeChatStore(
@@ -1552,6 +1692,9 @@ class ChatRouteTest {
         accountAudience: Audience = Audience.BUYER,
         appVersions: AppVersions = AppVersions.UNCONFIGURED,
         blobs: BlobStore = BlobStore(folder.newFolder()),
+        /** Fundi Bora's detail answers (V37); null keeps a tap as it was before v0.7.0. */
+        details: com.qualityverifier.server.db.DetailAnswerStore? = null,
+        fundiEffort: String = Config.DEFAULT_FUNDI_EFFORT,
     ) = run {
         application {
             module(
@@ -1563,6 +1706,8 @@ class ChatRouteTest {
                     dailyAssessmentLimit = dailyLimit,
                     testerDailyAssessmentLimit = testerLimit,
                     fundiDailyAssessmentLimit = fundiLimit,
+                    fundiEffort = fundiEffort,
+                    details = details,
                 ),
                 appVersions = appVersions,
             )
@@ -1619,13 +1764,25 @@ class ChatRouteTest {
         var lastRequestJson: String = ""
             private set
 
+        /** The thinking effort of every call, in order (row 50). Null is the API's default. */
+        val efforts = java.util.concurrent.CopyOnWriteArrayList<String?>()
+
         override suspend fun send(
             systemPrompt: String,
             history: List<ChatMessage>,
             imageBytes: (Attachment) -> ByteArray?,
             photos: com.qualityverifier.server.chat.PhotoShelf?,
+        ): ClaudeResult = send(systemPrompt, history, imageBytes, photos, null)
+
+        override suspend fun send(
+            systemPrompt: String,
+            history: List<ChatMessage>,
+            imageBytes: (Attachment) -> ByteArray?,
+            photos: com.qualityverifier.server.chat.PhotoShelf?,
+            effort: String?,
         ): ClaudeResult {
             calls++
+            efforts += effort
             lastSystemPrompt = systemPrompt
             lastHistoryText = history.joinToString("\n") { it.text }
             lastPhotos = photos
@@ -1635,6 +1792,7 @@ class ChatRouteTest {
                     history = history,
                     imageBytes = imageBytes,
                     encodeBase64 = { bytes -> "base64:${bytes.size}:${bytes.contentHashCode()}" },
+                    effort = effort,
                 ),
             )
             return result
@@ -1673,6 +1831,9 @@ class ChatRouteTest {
         val locations = mutableListOf<SessionLocation>()
 
         var assistantTurns = 0
+            private set
+        /** The text of the last assistant turn stored. */
+        var lastAssistantText: String? = null
             private set
         var usageRows = 0
             private set
@@ -1794,6 +1955,7 @@ class ChatRouteTest {
             defectCount: ((List<String>) -> Int?)?,
         ): String {
             assistantTurns++
+            lastAssistantText = text
             lastPreview = preview
             lastVerdictLevel = verdictLevelId
             lastVerdictLanguage = verdictLanguage

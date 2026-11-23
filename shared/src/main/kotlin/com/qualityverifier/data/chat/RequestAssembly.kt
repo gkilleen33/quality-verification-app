@@ -5,6 +5,7 @@ import com.qualityverifier.data.chat.dto.CacheControl
 import com.qualityverifier.data.chat.dto.ContentBlock
 import com.qualityverifier.data.chat.dto.ImageSource
 import com.qualityverifier.data.chat.dto.MessagesRequest
+import com.qualityverifier.data.chat.dto.OutputConfig
 import com.qualityverifier.data.chat.dto.SystemBlock
 import com.qualityverifier.data.chat.dto.ToolDefinition
 import com.qualityverifier.domain.Attachment
@@ -92,10 +93,17 @@ object AnthropicRequest {
          * history, and the rolling breakpoint moves onto the last of them.
          */
         trailing: List<ApiMessage> = emptyList(),
+        /**
+         * The thinking effort, `output_config.effort`, or null for the API's default (high on
+         * this model). Null leaves the field out of the JSON, so a request that never sets one
+         * keeps its bytes, and its cache, exactly as before. Fundi Bora sets "medium" (row 50).
+         */
+        effort: String? = null,
     ): MessagesRequest = MessagesRequest(
         model = model,
         maxTokens = maxTokens,
         tools = tools,
+        outputConfig = effort?.let(::OutputConfig),
         // Two breakpoints, well inside the limit of four. The system prompt is identical
         // for every conversation about this item type; the message prefix grows by one
         // exchange per turn, and a walkthrough is a dozen turns carrying several photos,

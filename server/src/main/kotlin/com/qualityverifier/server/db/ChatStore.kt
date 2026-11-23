@@ -265,9 +265,29 @@ interface ChatStore {
          * to Kagua without an error anywhere.
          */
         audience: Audience,
-        /** "turn" or "digest" — see V19. */
+        /** "turn", "digest" (V19), "bench" (V35) or "detail_prefetch" (V37). */
         callKind: String = "turn",
     )
+
+    /**
+     * As [recordUsage], returning the new row's id, which a detail answer points at (V37).
+     * The default records and returns null: a store that keeps no ids, such as a test fake,
+     * still records the call.
+     */
+    suspend fun recordUsageReturningId(
+        userId: String,
+        sessionId: String?,
+        model: String?,
+        usage: TokenUsage?,
+        httpStatus: Int?,
+        latencyMillis: Long,
+        errorKind: String?,
+        audience: Audience,
+        callKind: String = "turn",
+    ): Long? {
+        recordUsage(userId, sessionId, model, usage, httpStatus, latencyMillis, errorKind, audience, callKind)
+        return null
+    }
 
     suspend fun saveDigest(sessionId: String, digest: Digest)
 
@@ -935,7 +955,21 @@ class PostgresChatStore(private val dataSource: DataSource) : ChatStore {
         errorKind: String?,
         audience: Audience,
         callKind: String,
-    ) = withContext(Dispatchers.IO) {
+    ) {
+        recordUsageReturningId(userId, sessionId, model, usage, httpStatus, latencyMillis, errorKind, audience, callKind)
+    }
+
+    override suspend fun recordUsageReturningId(
+        userId: String,
+        sessionId: String?,
+        model: String?,
+        usage: TokenUsage?,
+        httpStatus: Int?,
+        latencyMillis: Long,
+        errorKind: String?,
+        audience: Audience,
+        callKind: String,
+    ): Long? = withContext(Dispatchers.IO) {
         dataSource.connection.use { connection ->
             connection.prepareStatement(
                 """
@@ -944,6 +978,7 @@ class PostgresChatStore(private val dataSource: DataSource) : ChatStore {
                     cache_read_tokens, cache_creation_tokens, http_status, latency_ms, error_kind,
                     call_kind, audience
                 ) values (?::uuid, ?::uuid, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                returning id
                 """.trimIndent()
             ).use { statement ->
                 statement.setString(1, userId)
@@ -959,9 +994,8 @@ class PostgresChatStore(private val dataSource: DataSource) : ChatStore {
                 statement.setString(10, errorKind)
                 statement.setString(11, callKind)
                 statement.setString(12, audience.id)
-                statement.executeUpdate()
+                statement.executeQuery().use { rows -> if (rows.next()) rows.getLong(1) else null }
             }
-            Unit
         }
     }
 

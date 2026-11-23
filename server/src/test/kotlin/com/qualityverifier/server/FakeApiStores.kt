@@ -159,6 +159,14 @@ class FakeApiStore(
         return emptyList()
     }
 
+    /** What `/detail-answers` returns (V37). */
+    var detailAnswers: List<com.qualityverifier.server.api.ApiDetailAnswer> = emptyList()
+
+    override suspend fun detailAnswers(limit: Int, offset: Int): List<com.qualityverifier.server.api.ApiDetailAnswer> {
+        lastLimit = limit
+        return detailAnswers
+    }
+
     override suspend fun benchPhotos(limit: Int, offset: Int): List<com.qualityverifier.server.api.ApiBenchPhoto> {
         lastLimit = limit
         return emptyList()

@@ -18,15 +18,22 @@ import com.qualityverifier.domain.Role
  * assessment; the prompt says to answer in the assessment's language. Change one side and
  * the other in the same PR.
  */
-enum class DetailKind(val requestPrefix: String) {
+enum class DetailKind(
+    val requestPrefix: String,
+    /**
+     * How the server's `fundi_detail_answers.detail_kind` names it (V37). A closed vocabulary
+     * mirrored by the table's CHECK, which already allows "tool" for the button row 49 adds.
+     */
+    val id: String,
+) {
     /** what_happened: what the photographs and checks show. */
-    WHAT_WE_FOUND("More on what we found: "),
+    WHAT_WE_FOUND("More on what we found: ", "what_we_found"),
 
     /** manufacturing_cause: the step in the making where it went wrong. */
-    CAUSE("More on what's causing this: "),
+    CAUSE("More on what's causing this: ", "cause"),
 
     /** root_habit: the habit to build. */
-    NEXT_TIME("How to upgrade next time: "),
+    NEXT_TIME("How to upgrade next time: ", "next_time"),
     ;
 
     /** The turn the app sends for the finding titled [title]. */
@@ -40,6 +47,9 @@ enum class DetailKind(val requestPrefix: String) {
     }
 
     companion object {
+        /** Every id the server's CHECK allows, including those of buttons not built yet. */
+        val SERVER_IDS = setOf("what_we_found", "cause", "next_time", "tool")
+
         /** The kind and finding title a turn asks about, or null for any other turn. */
         fun parse(text: String): Pair<DetailKind, String>? =
             entries.firstNotNullOfOrNull { kind ->

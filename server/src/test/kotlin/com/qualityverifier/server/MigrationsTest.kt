@@ -119,6 +119,9 @@ class MigrationsTest {
         "bench_photos" to "location",
         "bench_photos" to "location_accuracy_m",
         "bench_photos" to "location_at",
+        // V37: Claude's detail answers about the fundi's pieces, and the improvement's title.
+        "fundi_detail_answers" to "finding_title",
+        "fundi_detail_answers" to "answer_text",
     )
 
     /**

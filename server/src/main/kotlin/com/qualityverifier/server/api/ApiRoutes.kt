@@ -188,6 +188,16 @@ fun Route.apiRoutes(
             call.respond(ApiPage(rows.take(limit), rows.size > limit, limit, offset))
         }
 
+        // Fundi Bora's detail answers (V37, row 38): every answer to a detail button,
+        // prefetched or tapped, with when the fundi first opened it.
+        get("/detail-answers") {
+            requireKey() ?: return@get
+            val limit = call.limit()
+            val offset = call.offset()
+            val rows = store.detailAnswers(limit + 1, offset)
+            call.respond(ApiPage(rows.take(limit), rows.size > limit, limit, offset))
+        }
+
         // Bench photos at setup (V35), each with the draft Claude made, for the accuracy
         // check against the tools the fundi then confirmed.
         get("/bench-photos") {

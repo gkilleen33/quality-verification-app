@@ -64,6 +64,8 @@ import com.qualityverifier.server.db.PostgresBenchStore
 import com.qualityverifier.server.routes.benchRoutes
 import com.qualityverifier.server.db.HelpfulStore
 import com.qualityverifier.server.db.PostgresHelpfulStore
+import com.qualityverifier.server.db.DetailAnswerStore
+import com.qualityverifier.server.db.PostgresDetailAnswerStore
 import com.qualityverifier.server.routes.helpfulRoutes
 import com.qualityverifier.server.db.PostgresAuthStore
 import com.qualityverifier.domain.Audience
@@ -156,6 +158,8 @@ fun main() {
             fundiDailyAssessmentLimit = config.fundiDailyAssessmentLimit,
             bench = PostgresBenchStore(database.source),
             helpful = PostgresHelpfulStore(database.source),
+            fundiEffort = config.fundiEffort,
+            details = PostgresDetailAnswerStore(database.source),
         )
     } else {
         log.warn("Chat is disabled: needs a database and KAGUA_ANTHROPIC_API_KEY.")
@@ -420,6 +424,10 @@ class Chat(
      * [feedback], Kagua's critique, which it does not replace. Null mounts no route.
      */
     val helpful: HelpfulStore? = null,
+    /** Fundi Bora's thinking effort (row 50), `Config.fundiEffort`. */
+    val fundiEffort: String = Config.DEFAULT_FUNDI_EFFORT,
+    /** Fundi Bora's detail answers (V37, row 38). Null leaves a tap as it was. */
+    val details: DetailAnswerStore? = null,
 )
 
 @Serializable
@@ -570,6 +578,8 @@ fun Application.module(
                 it.store, auth.store, it.blobs, it.claude, it.prompts,
                 it.dailyAssessmentLimit, it.testerDailyAssessmentLimit,
                 it.fundiDailyAssessmentLimit,
+                fundiEffort = it.fundiEffort,
+                details = it.details,
             )
             // Reading assessments back, plus the two account actions. Needs both halves:
             // the chat store for sessions and the auth store for credentials.
