@@ -117,7 +117,12 @@ fun Route.authRoutes(store: AuthStore, accessTokens: AccessTokens, terms: Terms?
                 audience != null -> accounts.firstOrNull { it.audience == audience }
                 // A phone that does not say which app it is, as before V38: the number's
                 // one account, whichever app it is for.
-                accounts.size <= 1 -> accounts.firstOrNull()
+                // It costs two password checks whatever the number holds, as the two-account
+                // case below does, so the time taken never says whether there are two.
+                accounts.size <= 1 -> {
+                    Passwords.burnEquivalentWork(request.password)
+                    accounts.firstOrNull()
+                }
                 else -> {
                     call.refuseUnnamedAppWithTwoAccounts(store, accounts, request.password)
                     return@post
@@ -260,8 +265,8 @@ internal const val UPDATE_TO_SIGN_IN =
  * A sign-in that does not name its app, for a number with a Kagua and a Fundi Bora account.
  *
  * Neither account is chosen: a guess would sign somebody in to the other app's account. The
- * password is checked first, so only somebody who knows one of the two passwords learns that
- * the number holds two accounts. A wrong password is answered and counted as on any account,
+ * password is checked first, and the work is padded to two checks on every unnamed sign-in, so
+ * only somebody who knows one of the two passwords learns that the number holds two accounts. A wrong password is answered and counted as on any account,
  * against each account it was tried on, and a locked account is not tried at all, as the
  * single-account path does.
  */
@@ -280,8 +285,11 @@ private suspend fun ApplicationCall.refuseUnnamedAppWithTwoAccounts(
         )
         return
     }
-    if (unlocked.isEmpty()) Passwords.burnEquivalentWork(password)
-    if (unlocked.any { Passwords.verify(password, it.passwordHash!!) }) {
+    // Exactly two password checks' work, every account tried with no short cut, so a number
+    // with two accounts takes as long as one with a single account (see the caller).
+    val matched = unlocked.map { Passwords.verify(password, it.passwordHash!!) }.any { it }
+    repeat(2 - unlocked.size) { Passwords.burnEquivalentWork(password) }
+    if (matched) {
         log.info("Sign-in with no app named for a number with two accounts; asked to update")
         respond(HttpStatusCode.BadRequest, ErrorResponse("invalid_request", UPDATE_TO_SIGN_IN))
         return

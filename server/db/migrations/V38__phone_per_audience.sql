@@ -133,8 +133,15 @@ BEGIN
         -- number: exactly one link, between the two fundi accounts.
         INSERT INTO workers (id, user_id, name, phone) VALUES (roster, studio, 'Kamau', '+999000000082');
         INSERT INTO worker_studios (id, user_id, name, phone) VALUES (listing, worker, 'Mama Njeri''s workshop', '+999000000081');
-        IF (SELECT count(*) FROM worker_links) <> 1 THEN
-            RAISE EXCEPTION 'V38 self-test: worker_links holds % rows, not 1', (SELECT count(*) FROM worker_links);
+        -- Counted over this test's four accounts only: the rehearsal runs against the live
+        -- database, which already holds links of its own.
+        IF (SELECT count(*) FROM worker_links
+            WHERE worker_user_id IN (worker, worker_kagua, studio, studio_kagua)
+               OR studio_user_id IN (worker, worker_kagua, studio, studio_kagua)) <> 1 THEN
+            RAISE EXCEPTION 'V38 self-test: worker_links holds % rows for the test accounts, not 1',
+                (SELECT count(*) FROM worker_links
+                 WHERE worker_user_id IN (worker, worker_kagua, studio, studio_kagua)
+                    OR studio_user_id IN (worker, worker_kagua, studio, studio_kagua));
         END IF;
         IF NOT EXISTS (SELECT 1 FROM worker_links WHERE worker_user_id = worker AND studio_user_id = studio) THEN
             RAISE EXCEPTION 'V38 self-test: the link is not between the two Fundi Bora accounts';
@@ -159,9 +166,18 @@ BEGIN
             RAISE EXCEPTION 'V38 self-test: the piece''s manager is not the studio''s Fundi Bora account';
         END IF;
 
-        -- The link record follows the view: one linked event, for the fundi pair.
-        IF sync_worker_link_events() <> 1 THEN
-            RAISE EXCEPTION 'V38 self-test: the sync did not record exactly one link';
+        -- The link record follows the view: one linked event, for the fundi pair. The sync's
+        -- own count is not used, since on the live database it may also record a link that
+        -- was waiting there; only this test's accounts are counted.
+        PERFORM sync_worker_link_events();
+        IF (SELECT count(*) FROM worker_link_events
+            WHERE worker_user_id IN (worker, worker_kagua, studio, studio_kagua)
+               OR studio_user_id IN (worker, worker_kagua, studio, studio_kagua)) <> 1 THEN
+            RAISE EXCEPTION 'V38 self-test: the sync did not record exactly one link for the test accounts';
+        END IF;
+        IF NOT EXISTS (SELECT 1 FROM worker_link_events
+                       WHERE worker_user_id = worker AND studio_user_id = studio AND event = 'linked') THEN
+            RAISE EXCEPTION 'V38 self-test: the recorded link is not between the two Fundi Bora accounts';
         END IF;
 
         RAISE EXCEPTION 'V38 self-test passed' USING ERRCODE = 'P0V38';

@@ -61,9 +61,10 @@ data class Credentials(
     val disabled: Boolean,
     /**
      * Which app the account is for. A number may hold one account of each (V38), and
-     * sign-in uses this to pick the one the signing-in app is for.
+     * sign-in uses this to pick the one the signing-in app is for. No default, as audience is
+     * never defaulted: a store that forgot to read it would sign everyone in to Kagua.
      */
-    val audience: Audience = Audience.BUYER,
+    val audience: Audience,
 )
 
 data class StoredRefresh(
