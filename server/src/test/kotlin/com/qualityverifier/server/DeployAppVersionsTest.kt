@@ -137,6 +137,64 @@ class DeployAppVersionsTest {
     }
 
     @Test
+    fun `a minimum written without quotes or with spaces is still kept`() {
+        val repo = repoTagged(kagua = 8, fundi = 8, tracker = 2)
+        val installed = temp.newFile("hand-edited.conf").apply {
+            writeText(
+                """
+                [Service]
+                Environment=KAGUA_APP_MINIMUM_KAGUA=5
+                Environment="KAGUA_APP_MINIMUM_FUNDI= 6 "
+                """.trimIndent() + "\n"
+            )
+        }
+
+        val values = settings(appVersions(repo, "v9.9.9", installed).stdout)
+
+        assertEquals("5", values["KAGUA_APP_MINIMUM_KAGUA"])
+        assertEquals("6", values["KAGUA_APP_MINIMUM_FUNDI"])
+    }
+
+    @Test
+    fun `a minimum it cannot read stops it rather than fall back to 1`() {
+        val repo = repoTagged(kagua = 8, fundi = 8, tracker = 2)
+        val installed = temp.newFile("two-on-a-line.conf").apply {
+            writeText(
+                "[Service]\n" +
+                    "Environment=\"KAGUA_APP_LATEST_KAGUA=7\" \"KAGUA_APP_MINIMUM_KAGUA=5\"\n"
+            )
+        }
+
+        val result = appVersions(repo, "v9.9.9", installed)
+
+        assertEquals(1, result.exit)
+        assertEquals("", result.stdout)
+        assertTrue(result.stderr, result.stderr.contains("KAGUA_APP_MINIMUM_KAGUA"))
+    }
+
+    @Test
+    fun `a release without PesaLog keeps the latest the server has for it`() {
+        val repo = temp.newFolder("before-pesalog")
+        git(repo, "init", "-q")
+        File(repo, "app").mkdirs()
+        File(repo, "app/build.gradle.kts").writeText(buildFile(5))
+        File(repo, "fundi").mkdirs()
+        File(repo, "fundi/build.gradle.kts").writeText(buildFile(5))
+        git(repo, "add", "-A")
+        git(repo, "commit", "-q", "-m", "v0.5.0")
+        val installed = temp.newFile("installed.conf").apply {
+            writeText("[Service]\nEnvironment=\"KAGUA_APP_LATEST_TRACKER=1\"\n")
+        }
+
+        val result = appVersions(repo, "HEAD", installed)
+
+        assertEquals(result.stderr, 0, result.exit)
+        val values = settings(result.stdout)
+        assertEquals("5", values["KAGUA_APP_LATEST_KAGUA"])
+        assertEquals("1", values["KAGUA_APP_LATEST_TRACKER"])
+    }
+
+    @Test
     fun `a build file without one versionCode line stops it, printing nothing`() {
         val repo = temp.newFolder("broken")
         git(repo, "init", "-q")
