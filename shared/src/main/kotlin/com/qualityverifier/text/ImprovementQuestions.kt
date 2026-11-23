@@ -35,11 +35,20 @@ data class ImprovementQuestion(val number: Int, val title: String, val question:
 
         /** The question about improvement [number], titled [title], with both trimmed. */
         fun of(number: Int, title: String, question: String) =
-            ImprovementQuestion(number, title.trim(), question.trim())
+            ImprovementQuestion(number, titleOf(title), question.trim())
 
-        // Non-greedy on the title: a title is the model's ten-word action and carries no
-        // "': ", while the maker's question may. Dot matches newlines, since a typed question can
-        // hold them.
+        /**
+         * [title] as the turn and the page key carry it: trimmed, and with any "': " inside it
+         * written with a typographic apostrophe. "': " ends the title in [text], so a title
+         * Claude happened to write with one would otherwise end early and file the question
+         * under no page.
+         */
+        fun titleOf(title: String): String = title.trim().replace(DELIMITER, "’: ")
+
+        private const val DELIMITER = "': "
+
+        // Non-greedy on the title: [titleOf] keeps "': " out of it, while the maker's question
+        // may hold one. Dot matches newlines, since a typed question can hold them.
         private val PATTERN = Regex("""^About improvement (\d+), '(.*?)': (.*)$""", RegexOption.DOT_MATCHES_ALL)
 
         /** The question [text] holds, or null for any other turn. */

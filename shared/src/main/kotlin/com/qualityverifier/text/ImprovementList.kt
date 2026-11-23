@@ -31,7 +31,7 @@ data class ImprovementRow(
     val questions: Int = 0,
 ) {
     /** The improvement as its page and its page questions name it. */
-    val key: ImprovementKey get() = ImprovementKey(number, finding.title.trim())
+    val key: ImprovementKey get() = ImprovementKey(number, ImprovementQuestion.titleOf(finding.title))
 }
 
 /**

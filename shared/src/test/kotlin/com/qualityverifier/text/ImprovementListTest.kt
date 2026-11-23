@@ -97,6 +97,16 @@ class ImprovementListTest {
     }
 
     @Test
+    fun `row 43 - a title holding the delimiter still files its question under its own page`() {
+        val title = "Re-glue the 'back': rail"
+        val asked = ImprovementQuestion.of(1, title, "How long to clamp?")
+        val read = ImprovementQuestion.parse(asked.text)
+        assertEquals("How long to clamp?", read?.question)
+        val row = ImprovementRow(1, diagnosis.findings[0].copy(title = title))
+        assertEquals(row.key, read?.key)
+    }
+
+    @Test
     fun `row 43 - the server names the improvement from the diagnosis, and refuses a number it lacks`() {
         assertEquals(
             "About improvement 1, 'Glue and screw the back rail to the posts': Which screws?",
