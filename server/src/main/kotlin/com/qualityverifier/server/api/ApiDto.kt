@@ -38,6 +38,9 @@ data class ApiUser(
      * output and a buyer checking one table are different populations, and a figure
      * averaged over both describes neither. Do not confuse it with `account_type`, which
      * says whether a business lets walk-in customers use its handset.
+     *
+     * Read beside [phone]: from V38 one number may hold one account of each audience, so a
+     * number can appear on two users.
      */
     val audience: String,
     @SerialName("business_name") val businessName: String?,
@@ -266,7 +269,8 @@ data class ApiWorkerLink(
 /**
  * One roster entry (V23, V30), for the report that sets out each worker's work. The
  * manager is `user_id`; the worker has no account here, and [phone] is what links one
- * once both sides have listed each other (V31, `/api/v1/worker-links`).
+ * once both sides have listed each other (V31, `/api/v1/worker-links`). It links only to the
+ * Fundi Bora account on that number, never to a Kagua account on the same number (V38).
  */
 @Serializable
 data class ApiWorker(

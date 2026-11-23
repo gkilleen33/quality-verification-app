@@ -548,9 +548,10 @@ fun HTML.conversationPage(
     turns: List<AdminMessageRow>,
     critique: TesterFeedback? = null,
 ) = page("Assessment", session, "assessments") {
+    // The app beside the number: one number may hold a Kagua and a Fundi Bora account (V38).
     subtitle(
-        "${header.itemTypeId} · ${header.userPhone ?: "unknown account"} · " +
-            header.createdAt.readable(),
+        "${header.itemTypeId} · ${header.userPhone ?: "unknown account"} " +
+            "(${appName(header.audience)}) · " + header.createdAt.readable(),
     )
     if (header.clientDeleted) {
         warning(

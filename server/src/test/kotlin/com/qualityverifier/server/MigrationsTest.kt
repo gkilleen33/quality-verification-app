@@ -357,6 +357,60 @@ class MigrationsTest {
         }
     }
 
+    /** A migration's text with comments out and whitespace collapsed. */
+    private fun sqlOf(file: File): String =
+        file.readText().lines().joinToString(" ") { it.substringBefore("--") }
+            .replace(Regex("""\s+"""), " ")
+
+    /**
+     * One number holds at most one account per app (row 30, V38): the unique index on users is
+     * on (phone, audience), V5's index on phone alone is gone, and the store recognises the
+     * new index's name when it turns a unique violation into phone_taken. The local PostgreSQL
+     * run and V38's self-test prove the index refuses; this holds the names together.
+     */
+    @Test
+    fun `row 30 -one number holds one Kagua and one Fundi Bora account`() {
+        val text = sqlOf(files.first { it.name == "V38__phone_per_audience.sql" })
+        assertTrue(
+            "V38 does not create the unique index on (phone, audience)",
+            Regex("""(?i)CREATE UNIQUE INDEX users_phone_audience_key ON users \(phone, audience\) WHERE phone IS NOT NULL;""")
+                .containsMatchIn(text),
+        )
+        assertTrue("V38 does not drop users_phone_key", Regex("""(?i)DROP INDEX users_phone_key;""").containsMatchIn(text))
+        val later = files.filter { versionOf(it) > 38 }
+            .filter { Regex("""(?i)INDEX \w+ ON users \(phone""").containsMatchIn(sqlOf(it)) }
+        assertTrue("a migration after V38 changes the phone index: ${later.map { it.name }}", later.isEmpty())
+        assertEquals(
+            "PostgresAuthStore names the index V38 creates first",
+            "users_phone_audience_key",
+            com.qualityverifier.server.db.PostgresAuthStore.PHONE_INDEXES.first(),
+        )
+    }
+
+    /**
+     * The two-sided match (V31) and the manager of a piece (V34) join users on phone. A number
+     * may hold a Kagua account beside its Fundi Bora account (V38), so the newest definition of
+     * each view joins Fundi Bora accounts only: every `JOIN users` in it names the audience.
+     */
+    @Test
+    fun `row 30 -the worker match and piece managers join Fundi Bora accounts only`() {
+        listOf("worker_links", "piece_managers").forEach { view ->
+            val definition = Regex("""(?i)VIEW $view AS (.*?);""")
+            val latest = files.last { definition.containsMatchIn(sqlOf(it)) }
+            val body = definition.find(sqlOf(latest))!!.groupValues[1]
+            val joins = Regex("""(?i)JOIN users (\w+) ON (.*?)(?=\bJOIN\b|\bWHERE\b|\bORDER\b|$)""")
+                .findAll(body).toList()
+            assertTrue("${latest.name}'s $view joins no users", joins.isNotEmpty())
+            joins.forEach { join ->
+                val (alias, condition) = join.destructured
+                assertTrue(
+                    "${latest.name}'s $view joins users $alias without naming its audience: $condition",
+                    Regex("""\b$alias\.audience = 'fundi'""").containsMatchIn(condition),
+                )
+            }
+        }
+    }
+
     @Test
     fun `versions are sequential with no gaps or repeats`() {
         // A gap usually means a file was renamed and the old version is still recorded in

@@ -1,5 +1,7 @@
 package com.qualityverifier.server
 
+import com.qualityverifier.domain.AppVersionHeaders
+import com.qualityverifier.domain.Audience
 import com.qualityverifier.server.auth.AccessTokens
 import com.qualityverifier.server.auth.Tokens
 import com.qualityverifier.server.auth.Passwords
@@ -12,7 +14,9 @@ import com.qualityverifier.server.db.StoredRefresh
 import com.qualityverifier.server.db.UserRow
 import com.qualityverifier.server.routes.RegisterRequest
 import com.qualityverifier.server.routes.SignInRequest
+import com.qualityverifier.server.routes.UPDATE_TO_SIGN_IN
 import com.qualityverifier.server.routes.normalisePhone
+import com.qualityverifier.server.routes.signInAudience
 import com.qualityverifier.server.routes.validate
 import com.qualityverifier.server.routes.validatePhone
 import io.ktor.client.request.get
@@ -492,6 +496,141 @@ class AuthTest {
         )
     }
 
+    // ------------------------------------------- one number, one account per app (row 30)
+
+    @Test
+    fun `row 30 -each app names the account it signs in to`() {
+        assertEquals(Audience.BUYER, signInAudience("kagua"))
+        assertEquals(Audience.FUNDI, signInAudience("fundi"))
+        // PesaLog signs in with the Fundi Bora account (V33).
+        assertEquals(Audience.FUNDI, signInAudience("tracker"))
+        assertNull(signInAudience(null))
+        assertNull(signInAudience("something-else"))
+    }
+
+    @Test
+    fun `row 30 -Kagua signs in to the number's Kagua account`() = testApplication {
+        val app = withAuth(shopOwner())
+
+        val response = app.signIn(app = "kagua", password = KAGUA_PASSWORD)
+
+        assertEquals(HttpStatusCode.OK, response.status)
+        assertTrue(response.bodyAsText().contains(KAGUA_USER))
+    }
+
+    @Test
+    fun `row 30 -Fundi Bora signs in to the number's Fundi Bora account`() = testApplication {
+        val app = withAuth(shopOwner())
+
+        val response = app.signIn(app = "fundi", password = FUNDI_PASSWORD)
+
+        assertEquals(HttpStatusCode.OK, response.status)
+        assertTrue(response.bodyAsText().contains(FUNDI_USER))
+    }
+
+    @Test
+    fun `row 30 -PesaLog signs in to the number's Fundi Bora account`() = testApplication {
+        val app = withAuth(shopOwner())
+
+        val response = app.signIn(app = "tracker", password = FUNDI_PASSWORD)
+
+        assertEquals(HttpStatusCode.OK, response.status)
+        assertTrue(response.bodyAsText().contains(FUNDI_USER))
+    }
+
+    @Test
+    fun `row 30 -the other app's password does not open this app's account`() = testApplication {
+        // The Fundi Bora password typed into Kagua is checked against the Kagua account only,
+        // and counts as a failure there.
+        val store = shopOwner()
+        val app = withAuth(store)
+
+        val response = app.signIn(app = "kagua", password = FUNDI_PASSWORD)
+
+        assertEquals(HttpStatusCode.Unauthorized, response.status)
+        assertTrue(response.bodyAsText().contains("invalid_credentials"))
+        assertEquals(listOf(KAGUA_USER), store.failures)
+    }
+
+    @Test
+    fun `row 30 -an app is never signed in to the other app's account`() = testApplication {
+        // A number with only a Fundi Bora account, signing in to Kagua with that account's
+        // own password: refused as an unknown number is, rather than opening a Fundi Bora
+        // account in Kagua as the server did before V38.
+        val store = FakeAuthStore().apply {
+            seedAccount(SHOP_NUMBER, FUNDI_PASSWORD, audience = Audience.FUNDI, userId = FUNDI_USER)
+        }
+        val app = withAuth(store)
+
+        val response = app.signIn(app = "kagua", password = FUNDI_PASSWORD)
+
+        assertEquals(HttpStatusCode.Unauthorized, response.status)
+        assertTrue(response.bodyAsText().contains("invalid_credentials"))
+        assertTrue(store.cleared.isEmpty())
+    }
+
+    @Test
+    fun `row 30 -an old phone with no app named signs in to the number's one account`() =
+        testApplication {
+            val store = FakeAuthStore().apply {
+                seedAccount(SHOP_NUMBER, FUNDI_PASSWORD, audience = Audience.FUNDI, userId = FUNDI_USER)
+            }
+            val app = withAuth(store)
+
+            val response = app.signIn(app = null, password = FUNDI_PASSWORD)
+
+            assertEquals(HttpStatusCode.OK, response.status)
+            assertTrue(response.bodyAsText().contains(FUNDI_USER))
+        }
+
+    @Test
+    fun `row 30 -an old phone with no app named is asked to update when the number has two accounts`() =
+        testApplication {
+            val store = shopOwner()
+            val app = withAuth(store)
+
+            val response = app.signIn(app = null, password = KAGUA_PASSWORD)
+
+            assertEquals(HttpStatusCode.BadRequest, response.status)
+            val body = response.bodyAsText()
+            // invalid_request, whose detail every release from v0.1.0 shows as it is.
+            assertTrue(body.contains("invalid_request"))
+            assertTrue(body.contains(UPDATE_TO_SIGN_IN))
+            assertTrue(!body.contains("access_token"))
+            // Neither account signed in to, and the right password counted against neither.
+            assertTrue(store.cleared.isEmpty())
+            assertTrue(store.failures.isEmpty())
+        }
+
+    @Test
+    fun `row 30 -an old phone with a wrong password learns nothing about the second account`() =
+        testApplication {
+            val store = shopOwner()
+            val app = withAuth(store)
+
+            val response = app.signIn(app = null, password = "wrong password")
+
+            assertEquals(HttpStatusCode.Unauthorized, response.status)
+            val body = response.bodyAsText()
+            assertTrue(body.contains("invalid_credentials"))
+            assertTrue(!body.contains(UPDATE_TO_SIGN_IN))
+            // Counted on both, so guessing without naming an app is locked out as fast.
+            assertEquals(setOf(KAGUA_USER, FUNDI_USER), store.failures.toSet())
+        }
+
+    /** A shop owner with a Kagua account and a Fundi Bora account on one number. */
+    private fun shopOwner() = FakeAuthStore().apply {
+        seedAccount(SHOP_NUMBER, KAGUA_PASSWORD, audience = Audience.BUYER, userId = KAGUA_USER)
+        seedAccount(SHOP_NUMBER, FUNDI_PASSWORD, audience = Audience.FUNDI, userId = FUNDI_USER)
+    }
+
+    private suspend fun io.ktor.client.HttpClient.signIn(app: String?, password: String) =
+        post("/v1/auth/sign-in") {
+            contentType(ContentType.Application.Json)
+            if (app != null) header(AppVersionHeaders.APP, app)
+            setBody(SignInRequest(phone = SHOP_NUMBER, password = password))
+        }
+
     // ---------------------------------------------------------------- harness
 
     private fun ApplicationTestBuilder.withAuth(store: FakeAuthStore) = run {
@@ -511,7 +650,8 @@ class AuthTest {
         private val phoneTaken: Boolean = false,
     ) : AuthStore {
         private val refreshes = mutableMapOf<String, StoredRefresh>()
-        private val credentials = mutableMapOf<String, Credentials>()
+        /** By number: one account, or one per app (V38). */
+        private val credentials = mutableMapOf<String, MutableList<Credentials>>()
         val spent = mutableListOf<String>()
         val revoked = mutableListOf<String>()
         val cleared = mutableListOf<String>()
@@ -524,13 +664,16 @@ class AuthTest {
             phone: String,
             password: String,
             lockedUntil: Instant? = null,
+            audience: Audience = Audience.BUYER,
+            userId: String = "user-1",
         ) {
-            credentials[phone] = Credentials(
-                userId = "user-1",
+            credentials.getOrPut(phone) { mutableListOf() } += Credentials(
+                userId = userId,
                 passwordHash = Passwords.hash(password),
                 lockedUntil = lockedUntil,
                 failedAttempts = 0,
                 disabled = userDisabled,
+                audience = audience,
             )
         }
 
@@ -559,7 +702,8 @@ class AuthTest {
             }
         }
 
-        override suspend fun credentialsForPhone(phone: String) = credentials[phone]
+        override suspend fun credentialsForPhone(phone: String): List<Credentials> =
+            credentials[phone].orEmpty()
 
         override suspend fun recordFailedSignIn(
             userId: String,
@@ -575,7 +719,7 @@ class AuthTest {
         }
 
         override suspend fun passwordHashFor(userId: String) =
-            credentials.values.firstOrNull { it.userId == userId }?.passwordHash
+            credentials.values.flatten().firstOrNull { it.userId == userId }?.passwordHash
 
         override suspend fun setPasswordHash(userId: String, passwordHash: String) {
             passwordChanges += userId
@@ -623,6 +767,13 @@ class AuthTest {
     private companion object {
         const val SIGNING_KEY = "a-signing-key-long-enough-to-be-real"
         const val PASSWORD = "correct horse battery"
+
+        /** Row 30's shop owner: one number, a Kagua account and a Fundi Bora account. */
+        const val SHOP_NUMBER = "+254712000111"
+        const val KAGUA_USER = "kagua-account"
+        const val FUNDI_USER = "fundi-account"
+        const val KAGUA_PASSWORD = "the shop tablet password"
+        const val FUNDI_PASSWORD = "the workshop password"
 
         /** Valid in every field, so a test changes only the one it is about. */
         fun valid(accountType: String = "individual") = RegisterRequest(

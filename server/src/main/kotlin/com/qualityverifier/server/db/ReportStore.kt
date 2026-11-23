@@ -315,11 +315,12 @@ class PostgresReportStore(private val dataSource: DataSource) : ReportStore {
 
     override suspend fun linkedWorker(userId: String, workerId: String): LinkedWorker? = read { connection ->
         // Linked by the pair, as FundiStore.listWorkers reads it: the match holds for this
-        // roster's account and the account the entry's number belongs to.
+        // roster's account and the Fundi Bora account the entry's number belongs to. The same
+        // number may also hold a Kagua account (V38), which is never a worker.
         connection.prepareStatement(
             """
             select w.name, u.id::text from workers w
-              join users u on u.phone = w.phone
+              join users u on u.phone = w.phone and u.audience = 'fundi'
               join worker_links l on l.worker_user_id = u.id and l.studio_user_id = w.user_id
              where w.id = ?::uuid and w.user_id = ?::uuid
                and w.archived_at is null and w.phone is not null and w.name is not null

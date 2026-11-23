@@ -846,7 +846,9 @@ class PostgresAdminStore(private val dataSource: DataSource) : AdminStore {
                    (select count(*)::int from messages m where m.session_id = s.id),
                    s.verdict_level_id, 0, (s.client_deleted_at is not null),
                    ST_Y(s.location::geometry), ST_X(s.location::geometry),
-                   s.location_accuracy_m
+                   s.location_accuracy_m,
+                   -- Shown beside the number: one number may hold an account in each app (V38).
+                   s.audience
             from sessions s left join users u on u.id = s.user_id
             where s.id = ?::uuid
             """.trimIndent()
@@ -869,6 +871,7 @@ class PostgresAdminStore(private val dataSource: DataSource) : AdminStore {
                     latitude = rows.getDouble(11).takeUnless { rows.wasNull() },
                     longitude = rows.getDouble(12).takeUnless { rows.wasNull() },
                     locationAccuracyM = rows.getDouble(13).takeUnless { rows.wasNull() },
+                    audience = Audience.fromId(rows.getString(14).orEmpty()) ?: Audience.BUYER,
                 )
             }
         }

@@ -975,7 +975,7 @@ class FundiRouteTest {
 
         override suspend fun findRefresh(token: String): StoredRefresh? = null
         override suspend fun revokeChain(userId: String) = 0
-        override suspend fun credentialsForPhone(phone: String): Credentials? = null
+        override suspend fun credentialsForPhone(phone: String): List<Credentials> = emptyList()
         override suspend fun recordFailedSignIn(userId: String, lockFor: Duration, threshold: Int) = 0
         override suspend fun clearFailedSignIns(userId: String) = Unit
         override suspend fun passwordHashFor(userId: String): String? = null
