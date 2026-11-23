@@ -86,6 +86,70 @@ class PlanRunTest {
         assertFalse(shotsOnly.isComplete)
     }
 
+    // ---- Row 40: Back on a physical test opens the test before, with its answer selected.
+    // The screens keep the test they went back to (revisiting) and ask the run what to show.
+    // Indexes are from 0, so "test 5" on the screen is index 4.
+
+    /** Five tests, the first four answered: the screen shows test 5. */
+    private fun onTestFive() = run(
+        photos = 0,
+        tests = 6,
+        answers = mapOf(0 to "Solid", 1 to "Wobbles", 2 to null, 3 to "Gap at the joint"),
+    )
+
+    @Test
+    fun `row 40 - from test 5, Back shows test 4 with its stored answer`() {
+        val run = onTestFive()
+        val shown = run.testShown(revisiting = null)
+        assertEquals(4, shown)
+
+        val back = run.testBefore(shown!!)
+        assertEquals(3, back)
+        assertEquals(3, run.testShown(revisiting = back))
+        assertEquals("Gap at the joint", run.answerShown(3))
+    }
+
+    @Test
+    fun `row 40 - going back deletes no answer`() {
+        val run = onTestFive()
+        run.testBefore(4)
+        run.testShown(revisiting = 3)
+
+        assertEquals(4, run.answers.size)
+        assertEquals("Gap at the joint", run.answers[3])
+        assertEquals(4, run.nextTest)
+    }
+
+    @Test
+    fun `row 40 - a new answer to test 4 replaces the old one and moves on to the first test with no answer`() {
+        // What the screens do on an answer: record it over the old one, then drop revisiting.
+        val changed = onTestFive().let { it.copy(answers = it.answers + (3 to "Tight")) }
+
+        assertEquals("Tight", changed.answerShown(3))
+        assertEquals(4, changed.answers.size)
+        assertEquals("on to test 5, the first with no answer", 4, changed.testShown(revisiting = null))
+    }
+
+    @Test
+    fun `row 40 - Back on test 1 leaves the tests`() {
+        val run = run(photos = 0, tests = 3)
+        assertEquals(0, run.testShown(revisiting = null))
+        assertNull(run.testBefore(0))
+    }
+
+    @Test
+    fun `row 40 - going back to a skipped test shows no answer selected`() {
+        val run = onTestFive()
+        assertEquals(2, run.testShown(revisiting = 2))
+        assertNull(run.answerShown(2))
+        assertTrue("still counts as dealt with", 2 in run.answers)
+    }
+
+    @Test
+    fun `row 40 - a revisited index the plan does not have falls back to the next test`() {
+        assertEquals(4, onTestFive().testShown(revisiting = 9))
+    }
+
     @Test
     fun `a plan that asks for nothing is already complete`() {
         // A follow-up plan often asks for one test and no photos, or the reverse.

@@ -32,4 +32,24 @@ data class PlanRun(
 
     /** Paths in plan order, which is the order the assistant expects to see them. */
     val takenPaths: List<String> get() = plan.photos.indices.mapNotNull { shots[it] }
+
+    /**
+     * The physical test on screen: [revisiting], when the maker has gone Back to an earlier
+     * test, or else the first test with no answer (row 40).
+     *
+     * Held by the screen apart from [nextTest] so that going back deletes nothing: the
+     * earlier answer stays recorded, and shows as selected, until the maker chooses another.
+     * Choosing one replaces it; the screen then drops [revisiting] and the run carries on
+     * from the first test still unanswered.
+     */
+    fun testShown(revisiting: Int?): Int? = revisiting?.takeIf { it in plan.tests.indices } ?: nextTest
+
+    /** Where Back from test [shown] goes: the test before it, or null to leave the tests. */
+    fun testBefore(shown: Int): Int? = (shown - 1).takeIf { it >= 0 && it < plan.tests.size }
+
+    /**
+     * The answer to show as selected on test [index]: what the maker chose, or null for a
+     * test not yet answered or skipped. A skip is a null answer, so it selects nothing.
+     */
+    fun answerShown(index: Int): String? = answers[index]
 }

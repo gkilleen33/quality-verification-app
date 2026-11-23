@@ -85,12 +85,10 @@ fun DiagnosisCard(
         ),
     ) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            Label(labels.diagnosisHeading)
-            Text(
-                labels.diagnosisSubhead,
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
+            // A card title at the size of the others (row 41; Nathan, 20 November 2026), not
+            // the small all-caps label it was, which was too small to read; the subhead under
+            // it, "Not a grade — a cause", went with it.
+            Text(labels.diagnosisHeading, style = MaterialTheme.typography.titleMedium)
 
             if (diagnosis.findings.isEmpty()) {
                 // A clean piece is an outcome, not an empty state. Saying nothing here

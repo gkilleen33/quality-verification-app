@@ -144,6 +144,9 @@ fun ChatScreen(
     // Which part of a collection run is on screen. Kept here rather than in the view
     // model because it is navigation, not state worth surviving a process death.
     var runMode by remember { mutableStateOf(RunMode.NONE) }
+    // The earlier physical test the customer went Back to, or null for the first one still
+    // unanswered (row 40). Apart from the run's own progress so going back deletes nothing.
+    var revisitingTest by rememberSaveable { mutableStateOf<Int?>(null) }
     val listState = rememberLazyListState()
 
     // Parsing is keyed on the message list so it happens once per new turn rather than
@@ -269,8 +272,9 @@ fun ChatScreen(
 
     val active = run
     if (active != null && runMode == RunMode.TESTS) {
-        val testIndex = active.nextTest
+        val testIndex = active.testShown(revisitingTest)
         if (testIndex == null) {
+            revisitingTest = null
             runMode = RunMode.NONE
         } else {
             PhysicalTestsScreen(
@@ -278,9 +282,17 @@ fun ChatScreen(
                 index = testIndex,
                 total = active.plan.tests.size,
                 labels = runLabels,
-                onAnswer = { answer -> viewModel.answerTest(testIndex, answer) },
-                onSkip = { viewModel.skipTest(testIndex) },
-                onBack = { runMode = RunMode.NONE },
+                // Replaces any earlier answer, then on to the first test with none.
+                onAnswer = { answer -> viewModel.answerTest(testIndex, answer); revisitingTest = null },
+                onSkip = { viewModel.skipTest(testIndex); revisitingTest = null },
+                // Back opens the test before, its answer kept and selected (row 40, the
+                // same as Fundi Bora's); on the first test it leaves the tests as before.
+                onBack = {
+                    val before = active.testBefore(testIndex)
+                    revisitingTest = before
+                    if (before == null) runMode = RunMode.NONE
+                },
+                selected = active.answerShown(testIndex),
             )
             return
         }
@@ -507,7 +519,7 @@ fun ChatScreen(
                             requestCameraPermission.launch(Manifest.permission.CAMERA)
                         }
                     },
-                    onStartTests = { runMode = RunMode.TESTS },
+                    onStartTests = { revisitingTest = null; runMode = RunMode.TESTS },
                     onSubmit = { viewModel.submitRun(runLabels) },
                 )
             }

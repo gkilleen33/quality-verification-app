@@ -103,9 +103,8 @@ data class FundiLabels(
     /** REVIEW CRITICAL: the irreversible confirmation. */
     val settingsDeleteAccountConfirmBody: String,
     // ---- the two cards. The mockup's own words where it has them.
+    /** The diagnosis card's title, in sentence case at card-title size (row 41). */
     val diagnosisHeading: String,
-    /** "Not a grade — a cause". The one line that says what this screen is for. */
-    val diagnosisSubhead: String,
     val whatHappenedHeading: String,
     val whereItWentWrongHeading: String,
     val habitToChangeHeading: String,
@@ -544,8 +543,7 @@ data class FundiLabels(
             settingsDeleteAccountConfirmBody = "Your name, phone number, locations, and the " +
                 "names of your pieces and workers are removed now. The assessments stay, " +
                 "under a random number. You cannot sign in again and this cannot be undone.",
-            diagnosisHeading = "DIAGNOSIS",
-            diagnosisSubhead = "Not a grade — a cause",
+            diagnosisHeading = "Diagnosis",
             whatHappenedHeading = "WHAT HAPPENED",
             whereItWentWrongHeading = "WHERE IT WENT WRONG",
             // "Habit", never the person. The prompt forbids calling a maker careless,

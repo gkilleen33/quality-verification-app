@@ -44,4 +44,12 @@ class CaptureInstructionTest {
     fun `text that flattens to nothing means no instruction`() {
         assertNull(captureInstruction("---"))
     }
+
+    // The box itself is drawn by Compose and has no unit test; its size is in the PR's
+    // emulator screenshots. What a test can hold is the number of lines either way.
+    @Test
+    fun `row 39 - the photo instruction shows two lines until tapped, then up to twelve`() {
+        assertEquals(2, instructionMaxLines(expanded = false))
+        assertEquals(12, instructionMaxLines(expanded = true))
+    }
 }
