@@ -52,6 +52,8 @@ dependencies {
     testImplementation(libs.ktor.server.test.host)
     testImplementation(libs.ktor.client.content.negotiation)
     testImplementation(libs.kotlinx.coroutines.test)
+    // PromptCacheClearedTest stands in for GitHub with it, as the shared prompt tests do.
+    testImplementation(libs.okhttp.mockwebserver)
 }
 
 // The terms texts live at the repository root, one copy shared with the Fundi Bora build.

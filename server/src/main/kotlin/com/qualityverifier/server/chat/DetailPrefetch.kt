@@ -15,12 +15,15 @@ import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withTimeoutOrNull
 import org.slf4j.LoggerFactory
 import java.io.File
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicInteger
 import kotlin.time.Duration
-import kotlin.time.Duration.Companion.minutes
+import kotlin.time.Duration.Companion.seconds
 
 /**
  * Writes the detail answers for the first improvements of a Fundi Bora diagnosis before
@@ -62,13 +65,28 @@ class DetailPrefetcher(
     private val claude: ClaudeClient,
     private val blobs: BlobStore,
     private val scope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.IO),
-    /** How long a tap waits for an answer still being written before asking Claude itself. */
-    private val wait: Duration = 3.minutes,
+    /**
+     * How long a tap waits for an answer still being written before asking Claude itself.
+     * Well under nginx's 180 seconds in front of the server, so a tap that gives up still has
+     * time for its own call: a prefetch can itself take minutes (a retry on an overloaded
+     * API, a look at the photographs).
+     */
+    private val wait: Duration = 60.seconds,
     /** The buttons prefetched, in the order the phone shows them. */
     private val kinds: List<DetailKind> = DetailKind.entries,
+    /**
+     * Prefetch calls in flight at once, across every assessment. Each holds a blocking IO
+     * thread for the length of a Claude call, and the database shares those threads, so a
+     * testing day with many diagnoses at once must not take them all.
+     */
+    parallelism: Int = MAX_IN_FLIGHT,
+    /** Prefetch calls one assessment may start, across all its diagnoses. See [MAX_PER_SESSION]. */
+    private val perSession: Int = MAX_PER_SESSION,
 ) {
     private val log = LoggerFactory.getLogger(DetailPrefetcher::class.java)
     private val pending = ConcurrentHashMap<String, Deferred<Unit>>()
+    private val inFlight = Semaphore(parallelism)
+    private val started = ConcurrentHashMap<String, AtomicInteger>()
 
     /** What the diagnosis turn sent Claude, and what came back, for [schedule]. */
     data class Diagnosis(
@@ -104,6 +122,13 @@ class DetailPrefetcher(
                     // A title already being written for this session (a diagnosis sent again
                     // with the same improvement) is not paid for twice.
                     if (pending[key]?.isActive == true) return@forEach
+                    // Every reply with a diagnosis prefetches, and the allowance counts
+                    // assessments, not turns, so an assessment is capped here instead.
+                    val count = started.getOrPut(diagnosis.sessionId) { AtomicInteger() }
+                    if (count.incrementAndGet() > perSession) {
+                        log.info("Session {} reached {} prefetches; the rest are answered on tap", diagnosis.sessionId, perSession)
+                        return@forEach
+                    }
                     val job = scope.async {
                         runCatching { prefetch(diagnosis, prefix, index, title, kind) }
                             .onFailure { log.warn("Could not prefetch {} for session {}", kind.id, diagnosis.sessionId, it) }
@@ -121,7 +146,9 @@ class DetailPrefetcher(
      */
     suspend fun answerFor(sessionId: String, kind: DetailKind, title: String): StoredDetail? {
         pending[keyOf(sessionId, kind, title.trim())]?.let { job ->
-            if (withTimeoutOrNull(wait) { job.await() } == null) {
+            // join, not await: a job cancelled at shutdown ends the wait instead of throwing
+            // into the tap, which then reads whatever is stored.
+            if (withTimeoutOrNull(wait) { job.join() } == null) {
                 log.warn("A prefetched {} for session {} took longer than {}; asking on the tap", kind.id, sessionId, wait)
                 return null
             }
@@ -141,9 +168,11 @@ class DetailPrefetcher(
         if (details.find(diagnosis.sessionId, kind, title) != null) return
         val turn = ChatMessage(id = "detail-prefetch", role = Role.USER, text = kind.request(title), composed = true)
 
-        val startedAt = System.currentTimeMillis()
-        val result = claude.send(diagnosis.systemPrompt, prefix + turn, ::readBlob, diagnosis.photos, diagnosis.effort)
-        val elapsed = System.currentTimeMillis() - startedAt
+        val (result, elapsed) = inFlight.withPermit {
+            val startedAt = System.currentTimeMillis()
+            claude.send(diagnosis.systemPrompt, prefix + turn, ::readBlob, diagnosis.photos, diagnosis.effort) to
+                (System.currentTimeMillis() - startedAt)
+        }
 
         when (result) {
             is ClaudeResult.Success -> {
@@ -185,6 +214,15 @@ class DetailPrefetcher(
     companion object {
         /** The improvements prefetched: the first two the reply lists (Nathan, 23 November 2026). */
         const val IMPROVEMENTS = 2
+
+        /** Prefetch calls in flight at once, server-wide: two diagnoses' worth and some. */
+        const val MAX_IN_FLIGHT = 16
+
+        /**
+         * Prefetch calls one assessment may start: three diagnoses' worth with four buttons
+         * (a first diagnosis and two corrections). Beyond it, taps ask Claude as before.
+         */
+        const val MAX_PER_SESSION = 24
 
         /** `usage_events.call_kind` for a prefetch (V37). A tap's call stays "turn". */
         const val CALL_KIND = "detail_prefetch"

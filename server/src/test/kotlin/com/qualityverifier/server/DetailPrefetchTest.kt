@@ -150,6 +150,38 @@ class DetailPrefetchTest {
     }
 
     @Test
+    fun `row 38 - a compacted diagnosis's photo shelf, and so its tool, goes with every prefetch`() = runBlocking {
+        val claude = RecordingClaude()
+        val details = FakeDetails()
+        val shelf = PhotoShelf(listOf(Attachment("p1", "/blobs/abc.jpg")))
+        prefetcher(claude, details).schedule(diagnosis().copy(photos = shelf))
+        withTimeout(10_000) { while (details.saved.size < 6) delay(10) }
+        // Tools render ahead of the system prompt, so a prefetch without the shelf would
+        // miss the whole cached prefix.
+        assertTrue(claude.requests.all { it.photos === shelf })
+    }
+
+    @Test
+    fun `row 38 - an assessment's prefetches stop at its cap, and later taps ask Claude`() = runBlocking {
+        val claude = RecordingClaude()
+        val details = FakeDetails()
+        val prefetcher = DetailPrefetcher(
+            store = UsageStore(), details = details, claude = claude,
+            blobs = BlobStore(folder.newFolder()),
+            scope = CoroutineScope(SupervisorJob() + Dispatchers.Default),
+            perSession = 6,
+        )
+        prefetcher.schedule(diagnosis())
+        withTimeout(10_000) { while (details.saved.size < 6) delay(10) }
+
+        // A corrected diagnosis with new improvements, past the cap.
+        prefetcher.schedule(diagnosis().copy(replyMessageId = "reply-2", findingTitles = listOf("Re-cut the left leg", "Oil the top")))
+        delay(300)
+        assertEquals(6, claude.requests.size)
+        assertNull(prefetcher.answerFor("session-1", DetailKind.CAUSE, "Re-cut the left leg"))
+    }
+
+    @Test
     fun `row 50 - the prefetches ask for the fundi effort`() = runBlocking {
         val claude = RecordingClaude()
         val details = FakeDetails()

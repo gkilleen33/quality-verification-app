@@ -976,7 +976,7 @@ class ChatRouteTest {
     }
 
     @Test
-    fun `row 50 - fundi_effort defaults to medium, and Kagua's calls are unchanged`() = testApplication {
+    fun `row 50 - fundi_effort defaults to medium, and a value the API would refuse reads as medium`() = testApplication {
         val fundiStore = FakeChatStore()
         val fundiClaude = FakeClaude(ClaudeResult.Success("Noted.", TokenUsage(), null))
         val app = withChat(fundiStore, fundiClaude, accountAudience = Audience.FUNDI)
@@ -995,6 +995,26 @@ class ChatRouteTest {
         app.post("/v1/chat") { auth(); contentType(ContentType.Application.Json); setBody(request()) }
         assertEquals(listOf<String?>(null), claude.efforts.toList())
         assertFalse(claude.lastRequestJson.contains("output_config"))
+    }
+
+    @Test
+    fun `row 50 - Fundi Bora's notes ask for the same effort as its turns`() = testApplication {
+        val store = FakeChatStore(
+            storedHistory = listOf(
+                ChatMessage("u1", Role.USER, "I have finished this table.", listOf(Attachment("p1", "/blobs/abc.jpg"))),
+                ChatMessage("assistant-1", Role.ASSISTANT, oneFindingDiagnosis),
+                ChatMessage("u2", Role.USER, "What should I fix first?"),
+            ),
+        )
+        val claude = FakeClaude(ClaudeResult.Success(oneFindingDiagnosis, TokenUsage(), null))
+        val app = withChat(store, claude, accountAudience = Audience.FUNDI)
+
+        app.post("/v1/fundi/chat") { auth(); contentType(ContentType.Application.Json); setBody(request()) }
+        val deadline = System.currentTimeMillis() + 5_000
+        while (store.savedDigests.isEmpty() && System.currentTimeMillis() < deadline) Thread.sleep(20)
+
+        assertEquals(1, store.digestUsageRows)
+        assertEquals("the turn and its notes, both medium", listOf<String?>("medium", "medium"), claude.efforts.toList())
     }
 
     @Test
@@ -1026,6 +1046,8 @@ class ChatRouteTest {
 
         assertTrue(claude.lastHistoryText.startsWith(com.qualityverifier.server.chat.Compaction.NOTES_HEADER))
         assertTrue("the photographs are offered as a tool", claude.lastPhotos?.size == 1)
+        // Row 50: Kagua's turns and notes ask for no effort, as before.
+        assertTrue(claude.efforts.toList().toString(), claude.efforts.all { it == null })
     }
 
     @Test
