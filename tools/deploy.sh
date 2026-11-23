@@ -2,8 +2,15 @@
 # Deploys a release to the server in one command: finds the migrations the server has not
 # applied, uploads them and the release's jar, rehearses the migrations against the live
 # database in a transaction that rolls back, asks, snapshots the database and the running
-# jar, applies the migrations, installs the jar it uploaded, and checks the result. It ends
-# with a read-only package security check, which reports and changes nothing.
+# jar, applies the migrations, sets each app's latest version and clears the prompt cache,
+# installs the jar it uploaded, and checks the result. It ends with a read-only package
+# security check, which reports and changes nothing.
+#
+# The latest versions come from the release's build.gradle.kts files (tools/app-versions.sh),
+# so phones on an older release are told to update without anyone editing the server by
+# hand; the minimums stay as the server has them. The prompt cache is cleared because the
+# server keeps each prompt on disk for 24 hours and a restart does not refresh it, so a
+# prompt merged just after a fetch would otherwise reach phones a day after the deploy.
 #
 #   tools/deploy.sh            # the nightly release (main at its last merge)
 #   tools/deploy.sh v0.2.0     # a tagged release; prefer these once they exist
@@ -30,6 +37,11 @@ REPO=gkilleen33/quality-verification-app
 RUN_ID=$(date +%Y%m%d-%H%M%S)
 STAGE=/tmp/kagua-deploy-$RUN_ID
 BACKUPS=/var/backups/kagua
+# Where systemd reads each app's latest and minimum versionCode (the drop-in in
+# server/deploy/systemd/kagua.service.d/), and where the server keeps the prompts it fetched
+# (Application.kt: KAGUA_DATA_DIR, /var/lib/kagua, plus "prompts").
+APP_VERSIONS_CONF=/etc/systemd/system/kagua.service.d/app-versions.conf
+PROMPT_CACHE=/var/lib/kagua/prompts
 ROOT=$(git -C "$(dirname "$0")" rev-parse --show-toplevel)
 LOCAL_TMP=$(mktemp -d)
 DONE="nothing on the server"
@@ -48,7 +60,8 @@ finish() {
         *"migrations applied"*)
             echo "  The new schema is live and the old jar may still be running." >&2
             echo "  Re-run the install:   tools/deploy.sh $RELEASE   (nothing pending, so it goes straight to the jar)" >&2
-            echo "  Or go back:           restore $BACKUPS/pre-deploy-$RUN_ID.dump and $BACKUPS/kagua-pre-deploy-$RUN_ID.jar" >&2 ;;
+            echo "  Or go back:           restore $BACKUPS/pre-deploy-$RUN_ID.dump and $BACKUPS/kagua-pre-deploy-$RUN_ID.jar" >&2
+            echo "                        (and $BACKUPS/app-versions-pre-deploy-$RUN_ID.conf, if the versions were set)" >&2 ;;
         *"snapshot taken"*)
             echo "  Nothing was applied. The snapshot is $BACKUPS/pre-deploy-$RUN_ID.dump." >&2 ;;
     esac
@@ -137,6 +150,29 @@ for v in $APPLIED; do
 done
 echo "pending migrations:${PENDING:- none}"
 
+# The app versions the release sets. The installed file is read, not changed, here: its
+# minimums and download links are carried over, and only the latest versions move.
+remote "read app versions" > "$LOCAL_TMP/installed-app-versions.conf" <<SH
+cat $APP_VERSIONS_CONF 2>/dev/null || true
+SH
+bash "$ROOT/tools/app-versions.sh" "$ROOT" "$SHA" "$LOCAL_TMP/installed-app-versions.conf" \
+    > "$LOCAL_TMP/app-versions.conf"
+# The value of one setting in the new file, and what the server will report for it: the
+# server raises latest to the minimum when the minimum is higher (AppVersions.kt).
+new_setting() { sed -n "s/^Environment=\"$1=\\(.*\\)\"\$/\\1/p" "$LOCAL_TMP/app-versions.conf" | tail -n 1; }
+reported_latest() {
+    local latest minimum
+    latest=$(new_setting "KAGUA_APP_LATEST_$1")
+    minimum=$(new_setting "KAGUA_APP_MINIMUM_$1")
+    [ "$minimum" -gt "$latest" ] && echo "$minimum" || echo "$latest"
+}
+LATEST_KAGUA=$(reported_latest KAGUA)
+LATEST_FUNDI=$(reported_latest FUNDI)
+LATEST_TRACKER=$(reported_latest TRACKER)
+echo "app versions: latest Kagua $LATEST_KAGUA, Fundi Bora $LATEST_FUNDI, PesaLog $LATEST_TRACKER;" \
+    "minimum Kagua $(new_setting KAGUA_APP_MINIMUM_KAGUA), Fundi Bora $(new_setting KAGUA_APP_MINIMUM_FUNDI)," \
+    "PesaLog $(new_setting KAGUA_APP_MINIMUM_TRACKER) (kept as installed)"
+
 # The rehearsal strips each file's own BEGIN; and COMMIT; to run them all in one
 # transaction. A transaction line written any other way would survive the strip and
 # commit for real before the prompt, so each file must have exactly one of each, and no
@@ -167,16 +203,23 @@ for f in $PENDING; do
     echo "set -e; mkdir -p $STAGE; echo '$B64' | base64 -d > $STAGE/$f" | remote "upload $f" >/dev/null
     echo "sent $f"
 done
+VERSIONS_B64=$(base64 < "$LOCAL_TMP/app-versions.conf" | tr -d '\n')
 {
     echo "set -e; mkdir -p $STAGE"
+    echo "echo '$VERSIONS_B64' | base64 -d > $STAGE/app-versions.conf"
     echo "curl -fsSL --retry 3 -o $STAGE/kagua.jar '$JAR_URL'"
-    echo "cd $STAGE && sha256sum kagua.jar$PENDING"
+    echo "cd $STAGE && sha256sum kagua.jar app-versions.conf$PENDING"
     # Anything in the migrations folder that is neither applied nor pending would be
     # applied by apply.sh too.
     echo "ls /opt/kagua/db/migrations | sed 's/^/present: /'"
 } | remote "upload" > "$LOCAL_TMP/upload.txt"
 grep -q "^$JAR_SUM  kagua.jar$" "$LOCAL_TMP/upload.txt" || {
     echo "deploy: the jar the server downloaded differs from the release's (was it rebuilt?); stopping" >&2
+    exit 1
+}
+want=$(shasum -a 256 < "$LOCAL_TMP/app-versions.conf" | cut -d' ' -f1)
+grep -q "^$want  app-versions.conf$" "$LOCAL_TMP/upload.txt" || {
+    echo "deploy: app-versions.conf arrived with a different checksum; stopping" >&2
     exit 1
 }
 for f in $PENDING; do
@@ -216,6 +259,8 @@ echo
 echo "Ready to change the server:"
 echo "  - snapshot the database and the running jar to $BACKUPS/"
 [ -n "$PENDING" ] && echo "  - apply:$PENDING"
+echo "  - set the latest versions in $APP_VERSIONS_CONF: Kagua $LATEST_KAGUA, Fundi Bora $LATEST_FUNDI, PesaLog $LATEST_TRACKER (minimums unchanged)"
+echo "  - clear the prompt cache ($PROMPT_CACHE), so the next assessment fetches the prompts on main"
 echo "  - install $RELEASE (${SHA:0:7}) and restart the service"
 read -r -p "Go ahead? [y/N] " answer </dev/tty
 [ "$answer" = y ] || { echo "Nothing changed on the server."; exit 0; }
@@ -228,6 +273,8 @@ df -h $BACKUPS | tail -1
 sudo -u postgres pg_dump -Fc -f $BACKUPS/pre-deploy-$RUN_ID.dump kagua
 cp /opt/kagua/kagua.jar $BACKUPS/kagua-pre-deploy-$RUN_ID.jar
 ls -lh $BACKUPS/pre-deploy-$RUN_ID.dump $BACKUPS/kagua-pre-deploy-$RUN_ID.jar
+# The app versions this deploy replaces, if the server has any yet.
+if [ -f $APP_VERSIONS_CONF ]; then cp $APP_VERSIONS_CONF $BACKUPS/app-versions-pre-deploy-$RUN_ID.conf; fi
 SH
 DONE="snapshot taken"
 
@@ -243,9 +290,17 @@ fi
 
 echo "== install $RELEASE"
 # What kagua-deploy does, but from the jar uploaded and checked above rather than a fresh
-# download, and with the commit in VERSION so the health check reports it.
+# download, and with the commit in VERSION so the health check reports it. Before the
+# restart, so the new jar starts with the new latest versions and an empty prompt cache:
+# systemd reads the versions only after daemon-reload, and the server fetches a prompt
+# again only when its cached copy is missing or a day old.
 remote "install jar" <<SH
 set -e
+install -D -m 0644 $STAGE/app-versions.conf $APP_VERSIONS_CONF
+systemctl daemon-reload
+echo "app versions set: latest Kagua $LATEST_KAGUA, Fundi Bora $LATEST_FUNDI, PesaLog $LATEST_TRACKER"
+rm -rf $PROMPT_CACHE
+echo "prompt cache cleared"
 install -o kagua -g kagua -m 0640 $STAGE/kagua.jar /opt/kagua/kagua.jar
 echo "$RELEASE@${SHA:0:7}" > /opt/kagua/VERSION
 chown kagua:kagua /opt/kagua/VERSION
@@ -263,7 +318,7 @@ until curl -fsS --max-time 5 http://127.0.0.1:8080/healthz >/dev/null 2>&1; do
 done
 echo "kagua is up"
 SH
-DONE="$DONE, jar installed"
+DONE="$DONE, app versions set, prompt cache cleared, jar installed"
 
 echo "== check"
 remote "check" <<SH
@@ -273,6 +328,14 @@ echo "\$deep"
 echo "\$deep" | grep -q "$RELEASE@${SHA:0:7}" || { echo "healthz/deep does not report $RELEASE@${SHA:0:7}"; exit 1; }
 for f in $PENDING; do
     echo "\$deep" | grep -q "\${f%.sql}" || { echo "healthz/deep does not list \$f"; exit 1; }
+done
+# What a phone reads to decide whether to show "A new version is available".
+for pair in kagua:$LATEST_KAGUA fundi:$LATEST_FUNDI tracker:$LATEST_TRACKER; do
+    app=\${pair%%:*}
+    want=\${pair#*:}
+    config=\$(curl -fsS "http://127.0.0.1:8080/v1/auth/config?app=\$app")
+    echo "config \$app: \$config"
+    echo "\$config" | grep -q "\"latest\":\$want[,}]" || { echo "/v1/auth/config reports a latest other than \$want for \$app"; exit 1; }
 done
 echo "errors logged since the restart:"
 journalctl -u kagua --since '3 min ago' -p err --no-pager | tail -20

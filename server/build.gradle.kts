@@ -52,6 +52,8 @@ dependencies {
     testImplementation(libs.ktor.server.test.host)
     testImplementation(libs.ktor.client.content.negotiation)
     testImplementation(libs.kotlinx.coroutines.test)
+    // PromptCacheClearedTest stands in for GitHub with it, as the shared prompt tests do.
+    testImplementation(libs.okhttp.mockwebserver)
 }
 
 // The terms texts live at the repository root, one copy shared with the Fundi Bora build.
@@ -76,4 +78,14 @@ tasks.withType<Test>().configureEach {
     inputs.dir(layout.projectDirectory.dir("db/migrations"))
         .withPropertyName("migrations")
         .withPathSensitivity(PathSensitivity.RELATIVE)
+    // DeployAppVersionsTest runs tools/app-versions.sh against the three apps' build files,
+    // so a change to either has to re-run it.
+    inputs.dir(rootProject.layout.projectDirectory.dir("tools"))
+        .withPropertyName("tools")
+        .withPathSensitivity(PathSensitivity.RELATIVE)
+    inputs.files(
+        rootProject.layout.projectDirectory.file("app/build.gradle.kts"),
+        rootProject.layout.projectDirectory.file("fundi/build.gradle.kts"),
+        rootProject.layout.projectDirectory.file("tracker/build.gradle.kts"),
+    ).withPropertyName("appBuildFiles").withPathSensitivity(PathSensitivity.RELATIVE)
 }
