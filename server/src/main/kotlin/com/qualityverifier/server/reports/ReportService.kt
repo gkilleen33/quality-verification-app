@@ -274,8 +274,9 @@ class ReportService(
         // the maker of a piece labelled for a studio with no linked manager (row 51). It needs
         // that account's final assessment of the finished piece first (row 27); a problem the
         // final assessment finds does not block it, and the report lists the problem.
+        val customerAccount = FinalAssessment.customerReportAccount(piece.userId, piece.studioEntryId, piece.managerId)
         if (kind == ReportKind.CUSTOMER) {
-            val studio = FinalAssessment.customerReportAccount(piece.userId, piece.studioEntryId, piece.managerId)
+            val studio = customerAccount
             if (studio != userId) return Prepared.NotLinked("customer_report_is_the_studios")
             val finished = assessments.any { it.listed && it.isFinal && it.userId == studio && it.verdict != null }
             if (!finished) return Prepared.FinalRequired
@@ -313,6 +314,7 @@ class ReportService(
                 chosen = chosen,
                 previous = previous,
                 parts = parts,
+                finalBy = customerAccount.takeIf { kind == ReportKind.CUSTOMER },
             ),
         )
         return Prepared.Ready(content)

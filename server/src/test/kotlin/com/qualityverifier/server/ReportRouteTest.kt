@@ -510,6 +510,19 @@ class ReportRouteTest {
     }
 
     @Test
+    fun `row 51 - once the studio is linked, only the manager's final assessment is headed Final check`() = testApplication {
+        // The maker's final was made while the studio had no linked manager; the link formed later.
+        val store = FakeReportStore(piece = labelledPiece, sessions = listOf(table, makersFinal, managersFinal))
+        val app = withReports(store)
+        val response = app.post("/v1/fundi/pieces/$PIECE_ID/reports") {
+            auth(MANAGER); contentType(ContentType.Application.Json); setBody("""{"kind":"customer"}""")
+        }
+        assertEquals(HttpStatusCode.Created, response.status)
+        val text = ReportFixtures.text(response.bodyAsBytes())
+        assertEquals(text, 1, Regex("Final check of the finished piece").findAll(text).count())
+    }
+
+    @Test
     fun `row 51 - a maker whose studio manager is linked still may not send the customer report`() = testApplication {
         val store = FakeReportStore(piece = labelledPiece, sessions = listOf(table, makersFinal))
         val app = withReports(store)
