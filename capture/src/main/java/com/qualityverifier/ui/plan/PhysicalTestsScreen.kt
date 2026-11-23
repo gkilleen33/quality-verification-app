@@ -35,6 +35,8 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.semantics.selected
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -156,7 +158,8 @@ fun PhysicalTestsScreen(
                     // colour alone, since the maker reads it outdoors at arm's length.
                     OutlinedButton(
                         onClick = { onAnswer(option.label) },
-                        modifier = Modifier.fillMaxWidth(),
+                        // Announced as selected by a screen reader, which sees no tick.
+                        modifier = Modifier.fillMaxWidth().semantics { this.selected = chosen },
                         colors = if (chosen) {
                             ButtonDefaults.outlinedButtonColors(
                                 containerColor = MaterialTheme.colorScheme.secondaryContainer,
@@ -206,11 +209,12 @@ fun PhysicalTestsScreen(
             // whatever the model emitted. Neither is a failure: the prompt is told to put
             // both in the verdict's unverified list, because a wobble test nobody could
             // perform is not a wobbly stool.
+            val notSureChosen = selected == labels.notSure
             TextButton(
                 onClick = { onAnswer(labels.notSure) },
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier.fillMaxWidth().semantics { this.selected = notSureChosen },
             ) {
-                if (selected == labels.notSure) {
+                if (notSureChosen) {
                     Icon(Icons.Filled.Check, contentDescription = null, modifier = Modifier.size(20.dp))
                     Spacer(Modifier.width(8.dp))
                     Text(labels.notSure, fontWeight = FontWeight.Bold)

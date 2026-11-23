@@ -66,6 +66,7 @@ import com.qualityverifier.domain.AssessmentContext
 import com.qualityverifier.domain.ChatMessage
 import com.qualityverifier.domain.ItemType
 import com.qualityverifier.domain.Role
+import com.qualityverifier.domain.TestNavigation
 import com.qualityverifier.text.AssistantContent
 import com.qualityverifier.ui.capture.CaptureScreen
 import com.qualityverifier.ui.photo.PhotoViewer
@@ -144,9 +145,11 @@ fun ChatScreen(
     // Which part of a collection run is on screen. Kept here rather than in the view
     // model because it is navigation, not state worth surviving a process death.
     var runMode by remember { mutableStateOf(RunMode.NONE) }
-    // The earlier physical test the customer went Back to, or null for the first one still
-    // unanswered (row 40). Apart from the run's own progress so going back deletes nothing.
-    var revisitingTest by rememberSaveable { mutableStateOf<Int?>(null) }
+    // Where the physical tests are (row 40): the earlier test the customer went Back to, or
+    // the first one still unanswered. Apart from the run's own progress so going back deletes
+    // nothing. Remembered as runMode is, not saved: a rotation leaves the tests, and a saved
+    // position would reopen the wrong test on the next way in.
+    var tests by remember { mutableStateOf(TestNavigation.START) }
     val listState = rememberLazyListState()
 
     // Parsing is keyed on the message list so it happens once per new turn rather than
@@ -272,9 +275,9 @@ fun ChatScreen(
 
     val active = run
     if (active != null && runMode == RunMode.TESTS) {
-        val testIndex = active.testShown(revisitingTest)
+        val testIndex = tests.shown(active)
         if (testIndex == null) {
-            revisitingTest = null
+            tests = TestNavigation.START
             runMode = RunMode.NONE
         } else {
             PhysicalTestsScreen(
@@ -283,13 +286,13 @@ fun ChatScreen(
                 total = active.plan.tests.size,
                 labels = runLabels,
                 // Replaces any earlier answer, then on to the first test with none.
-                onAnswer = { answer -> viewModel.answerTest(testIndex, answer); revisitingTest = null },
-                onSkip = { viewModel.skipTest(testIndex); revisitingTest = null },
+                onAnswer = { answer -> viewModel.answerTest(testIndex, answer); tests = tests.afterAnswer() },
+                onSkip = { viewModel.skipTest(testIndex); tests = tests.afterAnswer() },
                 // Back opens the test before, its answer kept and selected (row 40, the
                 // same as Fundi Bora's); on the first test it leaves the tests as before.
                 onBack = {
-                    val before = active.testBefore(testIndex)
-                    revisitingTest = before
+                    val before = tests.back(active)
+                    tests = before ?: TestNavigation.START
                     if (before == null) runMode = RunMode.NONE
                 },
                 selected = active.answerShown(testIndex),
@@ -303,6 +306,7 @@ fun ChatScreen(
         if (shotIndex == null) {
             // Straight into the tests when the shots are done, as the mockup does. The
             // plan card is the review step afterwards.
+            tests = TestNavigation.START
             runMode = if (active.nextTest != null) RunMode.TESTS else RunMode.NONE
         } else {
             val shot = active.plan.photos[shotIndex]
@@ -519,7 +523,7 @@ fun ChatScreen(
                             requestCameraPermission.launch(Manifest.permission.CAMERA)
                         }
                     },
-                    onStartTests = { revisitingTest = null; runMode = RunMode.TESTS },
+                    onStartTests = { tests = TestNavigation.START; runMode = RunMode.TESTS },
                     onSubmit = { viewModel.submitRun(runLabels) },
                 )
             }

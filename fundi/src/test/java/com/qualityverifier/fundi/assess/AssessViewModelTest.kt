@@ -451,6 +451,32 @@ class AssessViewModelTest {
         assertEquals("a1", model.run.value?.sourceMessageId)
     }
 
+    // Row 40: Back on a test shows the earlier answer, and a new answer replaces it in the
+    // run the view model holds; nothing else in the run changes.
+    @Test
+    fun `row 40 - a new answer to an earlier test replaces the stored one in the run`() = runTest {
+        val model = model()
+        model.offerPlanFrom(
+            ChatMessage(
+                "a1", Role.ASSISTANT,
+                """
+                ```qv-plan
+                {"summary":"Two tests","photos":[],
+                 "tests":[{"title":"Rock it"},{"title":"Press the seat"}]}
+                ```
+                """.trimIndent(),
+            ),
+        )
+        model.answerTest(0, "Solid")
+        model.answerTest(1, "Firm")
+
+        model.answerTest(0, "Rocks a little")
+
+        val run = model.run.value!!
+        assertEquals(mapOf(0 to "Rocks a little", 1 to "Firm"), run.answers)
+        assertNull("every test still answered", run.nextTest)
+    }
+
     @Test
     fun `the maker's own turn is never a plan`() = runTest {
         val model = model()

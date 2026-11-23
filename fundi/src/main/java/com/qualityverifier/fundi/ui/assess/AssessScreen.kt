@@ -49,6 +49,7 @@ import com.qualityverifier.domain.FundiPurpose
 import com.qualityverifier.domain.ItemType
 import com.qualityverifier.domain.PlanRun
 import com.qualityverifier.domain.Role
+import com.qualityverifier.domain.TestNavigation
 import com.qualityverifier.domain.WorkerSlot
 import com.qualityverifier.fundi.ui.coach.DiagnosisCard
 import com.qualityverifier.fundi.ui.coach.FixPlanCard
@@ -302,7 +303,8 @@ fun AssessScreen(
 
             Stage.TESTING -> {
                 val current = run
-                val index = current?.testShown(revisitingTest)
+                val tests = TestNavigation(revisitingTest)
+                val index = current?.let(tests::shown)
                 if (current == null || index == null) {
                     revisitingTest = null
                     stage = Stage.TALKING
@@ -313,13 +315,13 @@ fun AssessScreen(
                         total = current.plan.tests.size,
                         labels = reportLabels,
                         // Replaces any earlier answer, then on to the first test with none.
-                        onAnswer = { viewModel.answerTest(index, it); revisitingTest = null },
-                        onSkip = { viewModel.skipTest(index); revisitingTest = null },
+                        onAnswer = { viewModel.answerTest(index, it); revisitingTest = tests.afterAnswer().revisiting },
+                        onSkip = { viewModel.skipTest(index); revisitingTest = tests.afterAnswer().revisiting },
                         // Back opens the test before, its answer kept and selected (row 40);
                         // on the first test it leaves the tests as before.
                         onBack = {
-                            val before = current.testBefore(index)
-                            revisitingTest = before
+                            val before = tests.back(current)
+                            revisitingTest = before?.revisiting
                             if (before == null) stage = Stage.TALKING
                         },
                         selected = current.answerShown(index),

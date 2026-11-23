@@ -90,7 +90,7 @@ class PlanRunTest {
     // The screens keep the test they went back to (revisiting) and ask the run what to show.
     // Indexes are from 0, so "test 5" on the screen is index 4.
 
-    /** Five tests, the first four answered: the screen shows test 5. */
+    /** Six tests, the first four answered (the third skipped): the screen shows test 5. */
     private fun onTestFive() = run(
         photos = 0,
         tests = 6,
@@ -148,6 +148,51 @@ class PlanRunTest {
     @Test
     fun `row 40 - a revisited index the plan does not have falls back to the next test`() {
         assertEquals(4, onTestFive().testShown(revisiting = 9))
+    }
+
+    // The same steps through TestNavigation, which both screens hold: Back, then an answer
+    // recorded the way both view models record one (answers + index to answer).
+
+    /** What AssessViewModel.answerTest and Kagua's ChatViewModel.answerTest do to the run. */
+    private fun PlanRun.answered(index: Int, answer: String?) = copy(answers = answers + (index to answer))
+
+    @Test
+    fun `row 40 - Back from test 5, a new answer to test 4, and on to test 5 with nothing selected`() {
+        var run = onTestFive()
+        var tests = TestNavigation.START
+        assertEquals(4, tests.shown(run))
+
+        tests = tests.back(run)!!
+        assertEquals("test 4", 3, tests.shown(run))
+        assertEquals("its answer selected", "Gap at the joint", run.answerShown(3))
+
+        run = run.answered(3, "Tight")
+        tests = tests.afterAnswer()
+        assertEquals("on to test 5", 4, tests.shown(run))
+        assertNull("nothing selected on test 5", run.answerShown(4))
+        assertEquals("the old answer replaced, none added", "Tight", run.answers[3])
+        assertEquals(4, run.answers.size)
+    }
+
+    @Test
+    fun `row 40 - Back to test 1, then Back again leaves the tests with every answer kept`() {
+        val run = onTestFive()
+        var tests = TestNavigation.START
+        repeat(4) { tests = tests.back(run)!! }
+        assertEquals("test 1", 0, tests.shown(run))
+        assertNull("Back on test 1 leaves", tests.back(run))
+        assertEquals(onTestFive().answers, run.answers)
+    }
+
+    @Test
+    fun `row 40 - a skip on a revisited test records the skip and moves on`() {
+        var run = onTestFive()
+        var tests = TestNavigation(revisiting = 1)
+        run = run.answered(1, null)
+        tests = tests.afterAnswer()
+        assertTrue(1 in run.answers)
+        assertNull(run.answers[1])
+        assertEquals(4, tests.shown(run))
     }
 
     @Test
