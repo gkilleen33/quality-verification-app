@@ -57,19 +57,27 @@ data class WhatNext(
     val delete: Boolean,
 ) {
     companion object {
+        /**
+         * [afterVerdict]: a verdict is on screen and nothing is under way. [hasVerdict]: there
+         * is a verdict, whatever is under way; Share needs one. [hasConversation]: anything was
+         * sent; Delete needs only that, so a check never finished can be deleted too, now that
+         * its row in My reports has no delete of its own.
+         */
         fun of(
             shopMode: Boolean,
             afterVerdict: Boolean,
             startedFromAnother: Boolean,
             previousHasVerdict: Boolean,
             comparisonRequested: Boolean,
+            hasVerdict: Boolean = afterVerdict,
+            hasConversation: Boolean = hasVerdict,
         ): WhatNext {
-            val personal = afterVerdict && !shopMode
+            val next = afterVerdict && !shopMode
             return WhatNext(
-                checkAnother = personal,
-                compare = personal && startedFromAnother && previousHasVerdict && !comparisonRequested,
-                share = personal,
-                delete = personal,
+                checkAnother = next,
+                compare = next && startedFromAnother && previousHasVerdict && !comparisonRequested,
+                share = hasVerdict && !shopMode,
+                delete = hasConversation && !shopMode,
             )
         }
     }

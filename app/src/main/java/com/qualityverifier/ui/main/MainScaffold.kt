@@ -8,6 +8,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.List
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.NavigationBarItemDefaults
@@ -50,7 +51,8 @@ fun MainScaffold(
 ) {
     val words = rememberKaguaLabels()
     Scaffold(
-        containerColor = Parts.Page,
+        // A shop's tablet keeps v0.7.0's colours (row 12).
+        containerColor = if (showTabs) Parts.Page else MaterialTheme.colorScheme.background,
         bottomBar = {
             if (showTabs) NavigationBar(containerColor = Parts.Page) {
                 // Centred as a pair rather than spread across the bar.

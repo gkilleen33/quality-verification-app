@@ -63,6 +63,31 @@ class KaguaScreensTest {
     }
 
     @Test
+    fun `row 57 - a check never finished can still be deleted from its page`() {
+        // My reports' rows have no delete now, so the page must offer it before a verdict.
+        val unfinished = WhatNext.of(
+            shopMode = false, afterVerdict = false, startedFromAnother = false, previousHasVerdict = false,
+            comparisonRequested = false, hasVerdict = false, hasConversation = true,
+        )
+        assertTrue(unfinished.delete)
+        assertFalse("nothing to share yet", unfinished.share)
+        assertFalse(unfinished.checkAnother)
+        // Share stays while a follow-up question is on its way.
+        val sending = WhatNext.of(
+            shopMode = false, afterVerdict = false, startedFromAnother = false, previousHasVerdict = false,
+            comparisonRequested = false, hasVerdict = true, hasConversation = true,
+        )
+        assertTrue(sending.share)
+        // Never on a shop's tablet.
+        assertFalse(
+            WhatNext.of(
+                shopMode = true, afterVerdict = false, startedFromAnother = false, previousHasVerdict = false,
+                comparisonRequested = false, hasVerdict = true, hasConversation = true,
+            ).delete,
+        )
+    }
+
+    @Test
     fun `row 57 - the report has one row per problem, each opening its page`() {
         val verdict = Verdict(
             levelId = "fair",

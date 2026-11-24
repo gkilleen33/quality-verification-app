@@ -62,8 +62,9 @@ import com.qualityverifier.ui.update.UpdateBanner
  * No "My reports" card: the tab at the bottom opens it (P25). When the server cannot be reached,
  * a red box says so and stays until it can (P19).
  *
- * A shop's tablet (row 12) keeps what it had: no tabs, no gear, no red box, and a "Shop owner"
- * row behind the account's password, which opens the owner's controls.
+ * A shop's tablet (row 12) does not use this screen: it keeps v0.7.0's grid ([ShopHomeScreen]).
+ * [shopMode] still holds this screen to the tablet's rules (no gear, no sync, the owner's row)
+ * should anything draw it there.
  */
 @Composable
 fun HomeScreen(

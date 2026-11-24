@@ -541,8 +541,10 @@ fun ChatScreen(
                             startedFromAnother = viewModel.startedFromAnother,
                             previousHasVerdict = previousVerdict != null,
                             comparisonRequested = comparisonRequested,
+                            hasVerdict = shareable != null,
+                            hasConversation = messages.isNotEmpty(),
                         )
-                        if (whatNext.checkAnother || whatNext.share) {
+                        if (whatNext.checkAnother || whatNext.share || whatNext.delete) {
                             item(key = "next-steps") {
                                 Spacer(Modifier.height(6.dp))
                                 ReportActions(

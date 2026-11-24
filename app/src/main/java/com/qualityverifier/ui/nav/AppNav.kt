@@ -29,6 +29,7 @@ import com.qualityverifier.ui.update.UpdateRequiredScreen
 import com.qualityverifier.ui.chat.ChatScreen
 import com.qualityverifier.ui.home.HomeChrome
 import com.qualityverifier.ui.home.HomeScreen
+import com.qualityverifier.ui.home.ShopHomeScreen
 import com.qualityverifier.ui.main.MainScaffold
 import com.qualityverifier.ui.main.MainTab
 import com.qualityverifier.ui.profile.ProfileScreen
@@ -225,6 +226,17 @@ fun AppNav() {
             val shopActive = shop.active
             SecureWindow(shopActive)
             MainScaffold(MainTab.HOME, navController.tabSelector(), showTabs = HomeChrome.of(shopActive).tabs) { padding ->
+                // A shop's tablet keeps v0.7.0's start screen (row 12).
+                if (shopActive) {
+                    ShopHomeScreen(
+                        contentPadding = padding,
+                        onItemChosen = { itemType ->
+                            navController.navigate(Routes.chat(UUID.randomUUID().toString(), itemType.id))
+                        },
+                        onOwnerUnlocked = { navController.navigate(Routes.PROFILE) { launchSingleTop = true } },
+                    )
+                    return@MainScaffold
+                }
                 HomeScreen(
                     contentPadding = padding,
                     onItemChosen = { itemType ->

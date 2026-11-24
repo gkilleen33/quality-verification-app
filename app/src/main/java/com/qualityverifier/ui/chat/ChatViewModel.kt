@@ -42,6 +42,8 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import java.io.File
 import java.util.UUID
@@ -209,6 +211,9 @@ class ChatViewModel(
     /** Plans already collected against, so a run is never offered twice. */
     private val fulfilled = mutableSetOf<String>()
 
+    /** Orders the kept run's saves and clears (row 57). */
+    private val progressLock = Mutex()
+
     /**
      * True when this conversation has not started yet, so the app should ask its own
      * questions before sending anything.
@@ -313,16 +318,23 @@ class ChatViewModel(
                 // Carries on where the customer stopped (row 57): the photos already taken for
                 // this plan, and the answers already given, kept from before they left.
                 val fresh = PlanRun(plan, last.id)
-                val saved = withContext(io) { progress.load(sessionId) }
-                if (_run.value?.sourceMessageId == last.id) return@collect
-                _run.value = saved?.restore(fresh) ?: fresh
+                val restored = withContext(io) { progress.load(sessionId)?.restore(fresh) }
+                if (_run.value?.sourceMessageId == last.id || last.id in fulfilled) return@collect
+                _run.value = restored ?: fresh
             }
         }
         // Every change to the run is kept as it happens, so leaving at any moment loses
-        // nothing. A run that ends (sent or abandoned) clears it where it ends.
+        // nothing. A run that ends (sent or abandoned) clears it where it ends. Saves and
+        // clears take one lock, and a save checks the run is still the one on screen, so a
+        // save that was under way when the run ended can never write it back.
         viewModelScope.launch {
             _run.collect { run ->
-                if (run != null) withContext(io) { progress.save(sessionId, RunProgress.of(run)) }
+                if (run == null) return@collect
+                withContext(io) {
+                    progressLock.withLock {
+                        if (_run.value?.sourceMessageId == run.sourceMessageId) progress.save(sessionId, RunProgress.of(run))
+                    }
+                }
             }
         }
     }
@@ -528,7 +540,7 @@ class ChatViewModel(
                 // not re-offer a plan whose photos are already attached to a sent turn.
                 fulfilled += current.sourceMessageId
                 _run.value = null
-                withContext(io) { progress.clear(sessionId) }
+                withContext(io) { progressLock.withLock { progress.clear(sessionId) } }
                 deliver(type)
             } finally {
                 _sending.value = false
@@ -546,7 +558,7 @@ class ChatViewModel(
         val paths = current.takenPaths
         viewModelScope.launch {
             withContext(io) {
-                progress.clear(sessionId)
+                progressLock.withLock { progress.clear(sessionId) }
                 paths.forEach { images.delete(File(it)) }
             }
         }

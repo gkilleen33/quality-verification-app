@@ -51,7 +51,8 @@ class HomeViewModel(
         viewModelScope.launch {
             syncing.value = true
             try {
-                sync.run()
+                // Home is the start screen: an unexpected failure is the red box, never a crash.
+                runCatching { sync.run() }
             } finally {
                 syncing.value = false
             }
