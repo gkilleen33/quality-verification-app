@@ -131,6 +131,34 @@ class TrackerIntakeTest {
         )
     }
 
+    /**
+     * Row 32: PesaLog keeps the masked number M-Pesa prints on money received, so the server can
+     * code it, and keeps the name beside the full number on money sent.
+     */
+    @Test
+    fun `row 32 - a receipt keeps the masked number as printed, and a send its name and full number`() {
+        val receipt = (
+            read(mpesa("UINRL7DIVX Confirmed.You have received Ksh200.00 from JANE DOE 0720***123 on 23/9/26 at 9:30 AM New M-PESA balance is Ksh210.00."))
+                as TrackerReading.Read
+            ).record.record
+        assertEquals("JANE DOE", receipt.counterpartyName)
+        assertEquals("0720***123", receipt.counterpartyMasked)
+        assertEquals(null, receipt.counterpartyPhone)
+
+        val send = (
+            read(mpesa("SFA1B2C3D5 Confirmed. Ksh500.00 sent to JANE DOE 0720456123 on 9/9/26 at 10:15 AM. New M-PESA balance is Ksh10.00. Transaction cost, Ksh7.00."))
+                as TrackerReading.Read
+            ).record.record
+        assertEquals("JANE DOE", send.counterpartyName)
+        assertEquals("254720456123", send.counterpartyPhone)
+        assertEquals(null, send.counterpartyMasked)
+        // The parser's own rule cuts both to one key, which is what the server codes.
+        assertEquals(
+            MobileMoneyParser.maskedKey(send.counterpartyPhone, null),
+            MobileMoneyParser.maskedKey(null, receipt.counterpartyMasked),
+        )
+    }
+
     @Test
     fun `the same message read twice gives the same code`() {
         val text = "UIGRL6LYLB Confirmed. You have received Ksh450.00 from IM BANK LIMITED- APP on 16/9/26 at 8:29 PM. New M-PESA balance is Ksh450.00. Buy goods with M-PESA."
@@ -164,6 +192,7 @@ class TrackerIntakeTest {
                 assertEquals(where, expected.direction, got.direction)
                 assertEquals(where, expected.counterpartyName, got.counterpartyName)
                 assertEquals(where, expected.counterpartyPhone, got.counterpartyPhone)
+                assertEquals(where, expected.counterpartyMasked, got.counterpartyMasked)
                 assertTrue(where, got.feeKes == null || got.feeKes == expected.feeKes)
                 assertTrue(where, got.balanceAfterKes == null || got.balanceAfterKes == expected.balanceAfterKes)
             }

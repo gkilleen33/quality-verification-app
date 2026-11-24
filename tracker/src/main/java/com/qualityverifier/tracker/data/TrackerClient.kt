@@ -325,7 +325,15 @@ private suspend fun status(http: AuthenticatedHttp, baseUrl: String, json: Json)
         }
     }
 
-/** The number when the message printed one, otherwise the name, never both, as Fundi Bora sends them. */
+/**
+ * The name, the number and the masked number, each when the message printed it (0.2.0, row 32).
+ * 0.1.0 sent the number or else the name, never both, so the server could make only one code;
+ * from V42 it makes a name code and a masked-number code too, and a send carries both the name
+ * and the full number while a receipt carries the name and the masked one. The server's
+ * existing code is still made from the number when there is one, so it does not change.
+ * A field that is null is left out (explicitNulls = false), so a row with nothing masked is
+ * the same body 0.1.0 sent, plus the name.
+ */
 private fun TransactionEntity.toBody() = TransactionBody(
     network = network,
     code = code,
@@ -336,7 +344,8 @@ private fun TransactionEntity.toBody() = TransactionBody(
     balanceAfterKes = balanceAfterKes,
     occurredAt = occurredAt,
     counterpartyPhone = counterpartyPhone,
-    counterpartyName = counterpartyName.takeIf { counterpartyPhone == null },
+    counterpartyName = counterpartyName,
+    counterpartyMasked = counterpartyMasked,
     parserVersion = parserVersion,
 )
 
@@ -358,6 +367,11 @@ private data class TransactionBody(
     @SerialName("occurred_at") val occurredAt: Long,
     @SerialName("counterparty_phone") val counterpartyPhone: String? = null,
     @SerialName("counterparty_name") val counterpartyName: String? = null,
+    /**
+     * New in 0.2.0 (V42). A server from before V42 refuses a body that holds it: its reader
+     * refuses unknown keys. Such a batch is answered 400 and kept for the next push (Later).
+     */
+    @SerialName("counterparty_masked") val counterpartyMasked: String? = null,
     @SerialName("parser_version") val parserVersion: Int,
 )
 

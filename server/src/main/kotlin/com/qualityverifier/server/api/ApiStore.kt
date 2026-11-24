@@ -643,7 +643,8 @@ class PostgresApiStore(private val dataSource: DataSource) : ApiStore {
                        t.counterparty_code, t.counterparty_basis, t.parser_version, t.app_version,
                        (extract(epoch from t.received_at) * 1000)::bigint,
                        t.category, t.comment,
-                       (extract(epoch from t.annotated_at) * 1000)::bigint
+                       (extract(epoch from t.annotated_at) * 1000)::bigint,
+                       t.counterparty_name_code, t.counterparty_masked_code
                   from tracker_transactions t
                  order by t.id
                  limit ? offset ?
@@ -666,6 +667,8 @@ class PostgresApiStore(private val dataSource: DataSource) : ApiStore {
                         occurredAt = rows.getLong(10),
                         counterpartyCode = rows.getString(11),
                         counterpartyBasis = rows.getString(12),
+                        counterpartyNameCode = rows.getString(19),
+                        counterpartyMaskedCode = rows.getString(20),
                         parserVersion = rows.getInt(13),
                         appVersion = rows.getInt(14),
                         receivedAt = rows.getLong(15),

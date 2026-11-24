@@ -28,8 +28,8 @@ data class TrackerUploadRequest(val transactions: List<TrackerTransactionDto> = 
 
 /**
  * One transaction as the phone parsed it from a notification. Times in epoch millis, amounts
- * in shillings. As [MpesaTransactionDto], the counterparty leaves this object only as a code,
- * and [toString] leaves it out.
+ * in shillings. As [MpesaTransactionDto], the counterparty leaves this object only as codes,
+ * and [toString] leaves out its name, number and masked number.
  */
 @Serializable
 data class TrackerTransactionDto(
@@ -44,6 +44,11 @@ data class TrackerTransactionDto(
     @SerialName("occurred_at") val occurredAt: Long,
     @SerialName("counterparty_phone") val counterpartyPhone: String? = null,
     @SerialName("counterparty_name") val counterpartyName: String? = null,
+    /**
+     * The masked number exactly as M-Pesa printed it on money received ("0720***123"), from
+     * PesaLog 0.2.0 (V42, row 32). Optional: PesaLog 0.1.0 never sends it.
+     */
+    @SerialName("counterparty_masked") val counterpartyMasked: String? = null,
     @SerialName("parser_version") val parserVersion: Int,
 ) {
     override fun toString(): String =

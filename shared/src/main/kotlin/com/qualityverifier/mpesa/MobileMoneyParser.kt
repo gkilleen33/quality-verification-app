@@ -70,6 +70,12 @@ data class Transaction(
      */
     val counterpartyLinkHash: String? = null,
     /**
+     * The masked number exactly as the text printed it on money received ("0720***123"), the
+     * input to [counterpartyLinkHash] when there is no full number. PesaLog sends it so that the
+     * server can make its own masked-number code under the study-wide key (V42, row 32).
+     */
+    val counterpartyMasked: String? = null,
+    /**
      * The wallet balance the text prints after the transaction (1.34+): "New M-PESA balance is
      * Ksh1,234.56", Airtel's "Bal: Ksh 94.0". Stored on the phone for every text; uploaded only
      * for an enrolment that consented to balances (the 1.34+ wizard) or where the desk set
@@ -711,6 +717,7 @@ object MobileMoneyParser {
             occurredAt = ts, messageHash = hash, parseStatus = rule.status,
             sender = sender, body = text, fulizaCleared = cleared, fulizaOutstanding = outstanding,
             counterpartyLinkHash = counterpartyLink(phone, maskedNumber, salt),
+            counterpartyMasked = maskedNumber,
             balanceAfter = balanceAfter(text, network),
         )
     }

@@ -25,9 +25,14 @@ data class MpesaTransactionDto(
     @SerialName("fee_kes") val feeKes: Double? = null,
     @SerialName("balance_after_kes") val balanceAfterKes: Double? = null,
     @SerialName("occurred_at") val occurredAt: Long,
-    /** Sent instead of [counterpartyName] whenever the message prints a number. */
+    /** Sent instead of [counterpartyName] whenever the message prints a number, by v0.5.0. */
     @SerialName("counterparty_phone") val counterpartyPhone: String? = null,
     @SerialName("counterparty_name") val counterpartyName: String? = null,
+    /**
+     * The masked number as M-Pesa printed it on money received (V42), as PesaLog sends it.
+     * No Fundi Bora build sends it yet (its SMS reading is off); accepted so that one can.
+     */
+    @SerialName("counterparty_masked") val counterpartyMasked: String? = null,
     @SerialName("parser_version") val parserVersion: Int,
 ) {
     override fun toString(): String = "MpesaTransactionDto(code=$code, direction=$direction, type=$type)"

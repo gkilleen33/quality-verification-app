@@ -197,6 +197,10 @@ private fun MpesaTransactionDto.toRow(appVersion: Int, coder: CounterpartyCoder)
     // Bounded so a phone with a broken clock or a units bug gets its row refused alone,
     // rather than PostgreSQL refusing the whole batch for a time it cannot store.
     if (occurredAt !in EARLIEST_MILLIS..LATEST_MILLIS || parserVersion <= 0) return null
+    // V42: a v0.5.0 phone sends the number on money sent and the name on money received,
+    // never both and never the masked number, so each of its rows gets the codes that one
+    // value makes.
+    val codes = coder.codes(counterpartyPhone, counterpartyName, counterpartyMasked)
     return MpesaTransactionRow(
         code = mpesaCode,
         direction = knownDirection,
@@ -205,7 +209,9 @@ private fun MpesaTransactionDto.toRow(appVersion: Int, coder: CounterpartyCoder)
         feeKes = fee,
         balanceAfterKes = balance,
         occurredAtMillis = occurredAt,
-        counterparty = coder.code(counterpartyPhone, counterpartyName),
+        counterparty = codes.code,
+        counterpartyNameCode = codes.nameCode,
+        counterpartyMaskedCode = codes.maskedCode,
         parserVersion = parserVersion,
         appVersion = appVersion,
     )

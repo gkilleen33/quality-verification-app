@@ -48,8 +48,8 @@ android {
         targetSdk = 36
         // Its own numbers, from 1: the server keeps a latest and a minimum per app id
         // (X-App-Id: tracker), so they never need to match Kagua's or Fundi Bora's.
-        versionCode = 1
-        versionName = "0.1.0"
+        versionCode = 2
+        versionName = "0.2.0"
 
         buildConfigField("String", "SERVER_BASE_URL", "\"https://kagua.gradykilleen.me/\"")
         buildConfigField("String", "DISPLAY_NAME", "\"$displayName\"")
