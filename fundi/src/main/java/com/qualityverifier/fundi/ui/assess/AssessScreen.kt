@@ -49,6 +49,7 @@ import com.qualityverifier.domain.FundiPurpose
 import com.qualityverifier.domain.ItemType
 import com.qualityverifier.domain.PlanRun
 import com.qualityverifier.domain.Role
+import com.qualityverifier.domain.TestNavigation
 import com.qualityverifier.domain.WorkerSlot
 import com.qualityverifier.fundi.ui.coach.DiagnosisCard
 import com.qualityverifier.fundi.ui.coach.FixPlanCard
@@ -131,6 +132,9 @@ fun AssessScreen(
     val reportLabels = ReportLabels.forLanguage(language.code)
 
     var stage by remember { mutableStateOf(Stage.LOADING) }
+    // The earlier physical test the maker went Back to, or null for the first one still
+    // unanswered (row 40). Apart from the run's own progress so going back deletes nothing.
+    var revisitingTest by rememberSaveable { mutableStateOf<Int?>(null) }
     var intake by remember { mutableStateOf<FundiIntake?>(null) }
     var name by remember { mutableStateOf<String?>(null) }
     var workedOn by remember { mutableStateOf<List<WorkerSlot>>(emptyList()) }
@@ -299,8 +303,10 @@ fun AssessScreen(
 
             Stage.TESTING -> {
                 val current = run
-                val index = current?.nextTest
+                val tests = TestNavigation(revisitingTest)
+                val index = current?.let(tests::shown)
                 if (current == null || index == null) {
+                    revisitingTest = null
                     stage = Stage.TALKING
                 } else {
                     PhysicalTestsScreen(
@@ -308,9 +314,17 @@ fun AssessScreen(
                         index = index,
                         total = current.plan.tests.size,
                         labels = reportLabels,
-                        onAnswer = { viewModel.answerTest(index, it) },
-                        onSkip = { viewModel.skipTest(index) },
-                        onBack = { stage = Stage.TALKING },
+                        // Replaces any earlier answer, then on to the first test with none.
+                        onAnswer = { viewModel.answerTest(index, it); revisitingTest = tests.afterAnswer().revisiting },
+                        onSkip = { viewModel.skipTest(index); revisitingTest = tests.afterAnswer().revisiting },
+                        // Back opens the test before, its answer kept and selected (row 40);
+                        // on the first test it leaves the tests as before.
+                        onBack = {
+                            val before = tests.back(current)
+                            revisitingTest = before?.revisiting
+                            if (before == null) stage = Stage.TALKING
+                        },
+                        selected = current.answerShown(index),
                     )
                 }
             }
@@ -331,10 +345,13 @@ fun AssessScreen(
                 onRetry = viewModel::retry,
                 onDismissError = viewModel::dismissError,
                 onStartCamera = { stage = Stage.SHOOTING },
-                onStartTests = { stage = Stage.TESTING },
+                onStartTests = { revisitingTest = null; stage = Stage.TESTING },
                 onSubmit = viewModel::submitRun,
                 onRetakeShot = { viewModel.retakeShot(it); stage = Stage.SHOOTING },
-                onChangeAnswer = { viewModel.answerTest(it, ""); stage = Stage.TESTING },
+                // Opens that test with its answer selected, as Back does (row 40). Storing ""
+                // here, as before, left the run with no unanswered test, so the tests screen
+                // closed at once and the answer stayed blank.
+                onChangeAnswer = { revisitingTest = it; stage = Stage.TESTING },
                 onOpenPhoto = { viewing = it; marked = null },
                 onOpenMark = { path, mark ->
                     viewing = path

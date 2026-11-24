@@ -1,5 +1,6 @@
 package com.qualityverifier.ui.plan
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
@@ -7,10 +8,14 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Check
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -30,6 +35,8 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.semantics.selected
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -54,6 +61,11 @@ fun PhysicalTestsScreen(
     onAnswer: (String) -> Unit,
     onSkip: () -> Unit,
     onBack: () -> Unit,
+    /**
+     * The answer already recorded for this test, shown as selected, when the maker has gone
+     * Back to it to change it (row 40). Null for a test not yet answered, or skipped.
+     */
+    selected: String? = null,
 ) {
     Scaffold(
         topBar = {
@@ -123,7 +135,10 @@ fun PhysicalTestsScreen(
                 // which is exactly what a maker hit when a plan arrived without them. Words
                 // are slower than a button, but they are an answer.
                 if (test.options.isEmpty()) {
-                    var typed by rememberSaveable(test) { mutableStateOf("") }
+                    // A typed answer the maker came back to change starts as they left it.
+                    var typed by rememberSaveable(test, selected) {
+                        mutableStateOf(selected?.takeIf { it != labels.notSure }.orEmpty())
+                    }
                     OutlinedTextField(
                         value = typed,
                         onValueChange = { typed = it },
@@ -138,10 +153,31 @@ fun PhysicalTestsScreen(
                     ) { Text(labels.sendAnswer) }
                 }
                 test.options.forEach { option ->
+                    val chosen = option.label == selected
+                    // The earlier answer by a tick and a filled, bordered button: never by
+                    // colour alone, since the maker reads it outdoors at arm's length.
                     OutlinedButton(
                         onClick = { onAnswer(option.label) },
-                        modifier = Modifier.fillMaxWidth(),
+                        // Announced as selected by a screen reader, which sees no tick.
+                        modifier = Modifier.fillMaxWidth().semantics { this.selected = chosen },
+                        colors = if (chosen) {
+                            ButtonDefaults.outlinedButtonColors(
+                                containerColor = MaterialTheme.colorScheme.secondaryContainer,
+                                contentColor = MaterialTheme.colorScheme.onSecondaryContainer,
+                            )
+                        } else {
+                            ButtonDefaults.outlinedButtonColors()
+                        },
+                        border = if (chosen) {
+                            BorderStroke(2.dp, MaterialTheme.colorScheme.onSecondaryContainer)
+                        } else {
+                            ButtonDefaults.outlinedButtonBorder(enabled = true)
+                        },
                     ) {
+                        if (chosen) {
+                            Icon(Icons.Filled.Check, contentDescription = null, modifier = Modifier.size(20.dp))
+                            Spacer(Modifier.width(8.dp))
+                        }
                         Column(
                             Modifier.padding(vertical = 10.dp),
                         ) {
@@ -173,10 +209,19 @@ fun PhysicalTestsScreen(
             // whatever the model emitted. Neither is a failure: the prompt is told to put
             // both in the verdict's unverified list, because a wobble test nobody could
             // perform is not a wobbly stool.
+            val notSureChosen = selected == labels.notSure
             TextButton(
                 onClick = { onAnswer(labels.notSure) },
-                modifier = Modifier.fillMaxWidth(),
-            ) { Text(labels.notSure) }
+                modifier = Modifier.fillMaxWidth().semantics { this.selected = notSureChosen },
+            ) {
+                if (notSureChosen) {
+                    Icon(Icons.Filled.Check, contentDescription = null, modifier = Modifier.size(20.dp))
+                    Spacer(Modifier.width(8.dp))
+                    Text(labels.notSure, fontWeight = FontWeight.Bold)
+                } else {
+                    Text(labels.notSure)
+                }
+            }
             TextButton(onClick = onSkip, modifier = Modifier.fillMaxWidth()) {
                 Text(labels.cannotDoThis)
             }

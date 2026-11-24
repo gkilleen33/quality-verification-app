@@ -32,4 +32,51 @@ data class PlanRun(
 
     /** Paths in plan order, which is the order the assistant expects to see them. */
     val takenPaths: List<String> get() = plan.photos.indices.mapNotNull { shots[it] }
+
+    /**
+     * The physical test on screen: [revisiting], when the maker has gone Back to an earlier
+     * test, or else the first test with no answer (row 40).
+     *
+     * Held by the screen apart from [nextTest] so that going back deletes nothing: the
+     * earlier answer stays recorded, and shows as selected, until the maker chooses another.
+     * Choosing one replaces it; the screen then drops [revisiting] and the run carries on
+     * from the first test still unanswered.
+     */
+    fun testShown(revisiting: Int?): Int? = revisiting?.takeIf { it in plan.tests.indices } ?: nextTest
+
+    /** Where Back from test [shown] goes: the test before it, or null to leave the tests. */
+    fun testBefore(shown: Int): Int? = (shown - 1).takeIf { it >= 0 && it < plan.tests.size }
+
+    /**
+     * The answer to show as selected on test [index]: what the maker chose, or null for a
+     * test not yet answered or skipped. A skip is a null answer, so it selects nothing.
+     */
+    fun answerShown(index: Int): String? = answers[index]
+}
+
+/**
+ * Where the physical tests screen is (row 40), for Kagua's and Fundi Bora's screens alike.
+ *
+ * [revisiting] is the earlier test the person went Back to, or null for the first test with
+ * no answer. The screens hold one of these and ask it what to show and where Back and an
+ * answer go, so the two apps cannot drift apart and the steps can be tested without Compose.
+ */
+data class TestNavigation(val revisiting: Int? = null) {
+
+    /** The test on screen for [run], or null when every test is answered. */
+    fun shown(run: PlanRun): Int? = run.testShown(revisiting)
+
+    /** After Back on the test on screen: the test before it, or null to leave the tests. */
+    fun back(run: PlanRun): TestNavigation? = shown(run)?.let(run::testBefore)?.let(::TestNavigation)
+
+    /**
+     * After an answer or a skip on the test on screen. The run has recorded it (replacing any
+     * earlier answer); the screen goes on to the first test with no answer.
+     */
+    fun afterAnswer(): TestNavigation = START
+
+    companion object {
+        /** On the first test with no answer: where every way into the tests begins. */
+        val START = TestNavigation()
+    }
 }

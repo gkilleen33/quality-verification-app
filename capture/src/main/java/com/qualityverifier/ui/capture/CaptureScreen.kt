@@ -338,22 +338,24 @@ private fun TopBar(
                 shape = RoundedCornerShape(12.dp),
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 12.dp)
+                    .padding(horizontal = 8.dp)
                     .clickable { expanded = !expanded },
             ) {
-                Column(Modifier.padding(14.dp)) {
+                // Tighter than the 14 dp it had (row 39): the box sits over the viewfinder,
+                // and every row of padding is a row of the piece the maker cannot see.
+                Column(Modifier.padding(horizontal = 12.dp, vertical = 8.dp)) {
                     // Clipped by whole lines, not by height. A fixed-height scrolling box
                     // sliced the last line through the middle of the glyphs, which reads
                     // as a broken screen rather than as more text below.
                     Text(
                         text = text,
                         style = MaterialTheme.typography.bodyLarge,
-                        maxLines = if (expanded) EXPANDED_LINES else COLLAPSED_LINES,
+                        maxLines = instructionMaxLines(expanded),
                         overflow = TextOverflow.Ellipsis,
                         onTextLayout = { result -> truncated = result.hasVisualOverflow },
                     )
                     if (truncated || expanded) {
-                        Spacer(Modifier.height(6.dp))
+                        Spacer(Modifier.height(2.dp))
                         Text(
                             text = if (expanded) "Tap to shorten" else "Tap to read it all",
                             style = MaterialTheme.typography.labelSmall,
@@ -428,9 +430,16 @@ private fun Notice(message: String, modifier: Modifier = Modifier) {
     }
 }
 
-/** Four lines leaves most of the viewfinder visible; twelve fits any single shot direction. */
-private const val COLLAPSED_LINES = 4
+/**
+ * Two lines leaves the viewfinder clear (row 39; Nathan, 20 November 2026: four covered too
+ * much of the piece); twelve fits any single shot direction. The prompt writes each photo
+ * instruction so where to stand and what to frame fit in those two lines (row 42).
+ */
+private const val COLLAPSED_LINES = 2
 private const val EXPANDED_LINES = 12
+
+/** How many lines of the instruction show, tapped open or not. */
+internal fun instructionMaxLines(expanded: Boolean): Int = if (expanded) EXPANDED_LINES else COLLAPSED_LINES
 
 /**
  * The instruction to show over the preview: the assistant's own words, flattened,
