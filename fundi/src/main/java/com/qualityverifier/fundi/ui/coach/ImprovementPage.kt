@@ -92,6 +92,8 @@ fun ImprovementPage(
     sending: Boolean,
     /** Opens the page at this position. */
     onGoTo: (Int) -> Unit,
+    /** "Done" on the last page: opens the closing screen (row 56). */
+    onFinish: () -> Unit,
     onClose: () -> Unit,
     /** The failed-turn and unanswered-turn rows, as the conversation draws them. */
     statusRows: @Composable () -> Unit,
@@ -180,17 +182,23 @@ fun ImprovementPage(
 
                 Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                     val previous = ImprovementPaging.previous(position)
-                    val next = ImprovementPaging.next(position, rows.size)
+                    val forward = ImprovementPaging.forward(position, rows.size)
                     OutlinedButton(
                         onClick = { previous?.let(onGoTo) },
                         enabled = previous != null,
                         modifier = Modifier.weight(1f).heightIn(min = 48.dp),
                     ) { Text(labels.previousImprovement, textAlign = TextAlign.Center) }
-                    OutlinedButton(
-                        onClick = { next?.let(onGoTo) },
-                        enabled = next != null,
-                        modifier = Modifier.weight(1f).heightIn(min = 48.dp),
-                    ) { Text(labels.nextImprovement, textAlign = TextAlign.Center) }
+                    // The last page ends on a designed screen, not a greyed-out Next (row 56, P17).
+                    when (forward) {
+                        is ImprovementPaging.Forward.Page -> OutlinedButton(
+                            onClick = { onGoTo(forward.position) },
+                            modifier = Modifier.weight(1f).heightIn(min = 48.dp),
+                        ) { Text(labels.forwardLabel(forward), textAlign = TextAlign.Center) }
+                        ImprovementPaging.Forward.Closing -> Button(
+                            onClick = onFinish,
+                            modifier = Modifier.weight(1f).heightIn(min = 48.dp),
+                        ) { Text(labels.forwardLabel(forward), textAlign = TextAlign.Center) }
+                    }
                 }
                 Spacer(Modifier.height(8.dp))
             }

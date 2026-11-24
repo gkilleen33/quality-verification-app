@@ -51,7 +51,7 @@ import com.qualityverifier.text.FundiLabels
 import com.qualityverifier.text.ImprovementRow
 import com.qualityverifier.text.ReportLabels
 import com.qualityverifier.text.customersNoticeFirst
-import com.qualityverifier.text.isImprovementList
+import com.qualityverifier.text.improvementList
 import com.qualityverifier.text.problemsOf
 import com.qualityverifier.ui.theme.verdictColors
 
@@ -457,12 +457,12 @@ fun VerdictCard(
  * reading only the defects would show a verdict with nothing wrong. Older replies list the
  * defects, which is what this returns for them. Untitled ones have nothing to show.
  *
- * None when the same reply is drawn as the improvement list (row 43): the list right below
- * the card already names every improvement, and the card's titles repeated each one
- * (Nathan, 24 November 2026).
+ * None when the same reply is drawn as the improvement list (row 43), an older reply drawn
+ * as one included (row 54): the list right below the card already names every improvement,
+ * and the card's titles repeated each one (Nathan, 24 November 2026).
  */
 internal fun verdictCardProblems(content: AssistantContent): List<Problem> =
-    if (content.diagnosis?.isImprovementList == true) {
+    if (content.improvementList() != null) {
         emptyList()
     } else {
         problemsOf(content).filter { it.title.isNotBlank() }

@@ -145,6 +145,11 @@ data class FundiLabels(
     val askWholePiece: String,
     val previousImprovement: String,
     val nextImprovement: String,
+    /**
+     * The last page's "Done" and the closing screen after it (v0.7.1, row 56). One parameter
+     * for all of them: this class's constructor is near the JVM's limit of 255 arguments.
+     */
+    val ending: ImprovementEndLabels,
     /** Before a finding's tool_line: a tool from the maker's own list that does the job faster. */
     val toolLineLabel: String,
     val oneCheckHeading: String,
@@ -389,6 +394,24 @@ data class FundiLabels(
     fun improvementOf(n: Int, total: Int) =
         improvementOfFormat.replace("{n}", n.toString()).replace("{total}", total.toString())
 
+    /** The page's forward button: "Next improvement", or "Done" on the last page (row 56). */
+    fun forwardLabel(forward: ImprovementPaging.Forward): String = when (forward) {
+        is ImprovementPaging.Forward.Page -> nextImprovement
+        ImprovementPaging.Forward.Closing -> ending.done
+    }
+
+    /** The closing screen's title (row 56). */
+    fun thatsAll(n: Int) = if (n == 1) ending.thatsTheOne else ending.thatsAllFormat.replace("{n}", n.toString())
+
+    /** The line under it, naming the piece as [backToPiece] does. */
+    fun fixThenReassess(n: Int, piece: String) =
+        (if (n == 1) ending.fixItFormat else ending.fixThemFormat).replace("{piece}", piece)
+
+    fun backToPiece(piece: String) = ending.backToPieceFormat.replace("{piece}", piece)
+
+    /** The closing screen's second button, to Send report for this piece. */
+    val sendReport: String get() = ending.sendReport
+
     fun benchIsThere(tool: String) = benchIsThereFormat.replace("{tool}", tool)
 
     fun benchWhoOwns(tool: String) = benchWhoOwnsFormat.replace("{tool}", tool)
@@ -613,6 +636,15 @@ data class FundiLabels(
             askWholePiece = "Ask about the whole piece",
             previousImprovement = "Previous improvement",
             nextImprovement = "Next improvement",
+            ending = ImprovementEndLabels(
+                done = "Done",
+                thatsAllFormat = "That's all {n} improvements",
+                thatsTheOne = "That's the one improvement",
+                fixThemFormat = "Fix them, then re-assess the {piece} to see what changed.",
+                fixItFormat = "Fix it, then re-assess the {piece} to see what changed.",
+                backToPieceFormat = "Back to the {piece}",
+                sendReport = "Send report",
+            ),
             toolLineLabel = "TOOL",
             oneCheckHeading = "ONE THING TO CHECK",
             nothingFound = "Nothing to put right on this one.",
@@ -905,6 +937,16 @@ data class FundiLabels(
             askWholePiece = "Uliza kuhusu kipande kizima",
             previousImprovement = "Uboreshaji uliopita",
             nextImprovement = "Uboreshaji unaofuata",
+            // v0.7.1 (row 56): not yet reviewed by a Kiswahili speaker.
+            ending = ImprovementEndLabels(
+                done = "Nimemaliza",
+                thatsAllFormat = "Hayo ndiyo maboresho yote {n}",
+                thatsTheOne = "Huo ndio uboreshaji pekee",
+                fixThemFormat = "Yarekebishe, kisha kagua {piece} upya uone kilichobadilika.",
+                fixItFormat = "Urekebishe, kisha kagua {piece} upya uone kilichobadilika.",
+                backToPieceFormat = "Rudi kwenye {piece}",
+                sendReport = "Tuma ripoti",
+            ),
             toolLineLabel = "KIFAA",
             oneCheckHeading = "JAMBO MOJA LA KUANGALIA",
             nothingFound = "Hakuna cha kurekebisha kwenye kipande hiki.",
@@ -963,3 +1005,18 @@ data class FundiLabels(
             if (code?.trim()?.lowercase()?.startsWith("sw") == true) SWAHILI else ENGLISH
     }
 }
+
+/**
+ * The words of the end of the improvement list (v0.7.1, row 56): the last page's "Done", and
+ * the closing screen it opens. Read through [FundiLabels]'s functions, which fill in the count
+ * and the piece.
+ */
+data class ImprovementEndLabels(
+    val done: String,
+    val thatsAllFormat: String,
+    val thatsTheOne: String,
+    val fixThemFormat: String,
+    val fixItFormat: String,
+    val backToPieceFormat: String,
+    val sendReport: String,
+)

@@ -22,10 +22,31 @@ class VerdictCardProblemsTest {
     }
 
     @Test
-    fun `the one-list shape lists every finding once`() {
-        val problems = verdictCardProblems(parseAssistantContent(ONE_LIST_SHAPE))
+    fun `the one-list shape with nothing to fix lists every finding once`() {
+        // No what_to_do on any finding: the reply keeps the old card, which lists them.
+        val reply = parseAssistantContent(
+            """
+            ```fb-diagnosis
+            {"findings":[
+              {"title":"Gap at the back joint","severity":"moderate","dimension":"joint_fit","what_i_see":"A gap.","what_it_means":"It will loosen."},
+              {"title":"Saw marks on the top","severity":"cosmetic","dimension":"finishing","what_i_see":"Lines."}]}
+            ```
+
+            ```qv-verdict
+            {"verdict":"fair","headline":"One joint to close"}
+            ```
+            """.trimIndent(),
+        )
+        val problems = verdictCardProblems(reply)
         assertEquals(listOf("Gap at the back joint", "Saw marks on the top"), problems.map { it.title })
         assertEquals("A gap.", problems.first().whatISee)
+    }
+
+    @Test
+    fun `row 54 - an older reply drawn as the improvement list puts no titles on the verdict card`() {
+        // The one-list shape from before prompt E, with what to do on its findings, is drawn
+        // as the list now; the card would repeat each title.
+        assertTrue(verdictCardProblems(parseAssistantContent(ONE_LIST_SHAPE)).isEmpty())
     }
 
     @Test
