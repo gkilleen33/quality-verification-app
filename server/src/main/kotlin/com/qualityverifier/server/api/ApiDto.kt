@@ -438,6 +438,28 @@ data class ApiDetailAnswer(
 )
 
 /**
+ * One translation of a Fundi Bora reply (V41, row 29), written when the fundi first switched the
+ * assessment to the other language. [sourceSha256] is the SHA-256 of the original reply's text,
+ * and [messageId] the first stored reply with that text. [translatedText] is null once the
+ * account is deleted. A row records the first switch only, not each later one.
+ */
+@Serializable
+data class ApiTranslation(
+    val id: String,
+    @SerialName("session_id") val sessionId: String,
+    @SerialName("message_id") val messageId: String?,
+    @SerialName("source_sha256") val sourceSha256: String,
+    /** "en" or "sw": the language translated into. */
+    val language: String,
+    @SerialName("translated_text") val translatedText: String?,
+    val model: String?,
+    /** SHA-256 of the translation prompt that wrote it. */
+    @SerialName("prompt_sha") val promptSha: String?,
+    @SerialName("usage_event_id") val usageEventId: Long?,
+    @SerialName("created_at") val createdAt: Long,
+)
+
+/**
  * A tester's answer to "Was this review helpful?" after a Fundi Bora verdict (V36, row 7):
  * one per assessment, the first answer sent. [userId] is null once the tester's account is
  * deleted; the answer stays.

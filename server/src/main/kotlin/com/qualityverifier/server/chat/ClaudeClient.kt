@@ -104,6 +104,18 @@ interface ClaudeClient {
         photos: PhotoShelf?,
         effort: String?,
     ): ClaudeResult = send(systemPrompt, history, imageBytes, photos)
+
+    /**
+     * As [send] at [effort], with no photos and no prompt-cache breakpoint: for a request
+     * that is never sent twice, a reply's translation (row 29), where a one-hour breakpoint
+     * would pay the cache-write premium for an entry nothing reads. Every other call keeps
+     * its breakpoints and its bytes. Defaults to [send] for a test double.
+     */
+    suspend fun sendUncached(
+        systemPrompt: String,
+        history: List<ChatMessage>,
+        effort: String?,
+    ): ClaudeResult = send(systemPrompt, history, { null }, null, effort)
 }
 
 class AnthropicClient(
@@ -128,6 +140,21 @@ class AnthropicClient(
         imageBytes: (Attachment) -> ByteArray?,
         photos: PhotoShelf?,
         effort: String?,
+    ): ClaudeResult = call(systemPrompt, history, imageBytes, photos, effort, cache = true)
+
+    override suspend fun sendUncached(
+        systemPrompt: String,
+        history: List<ChatMessage>,
+        effort: String?,
+    ): ClaudeResult = call(systemPrompt, history, { null }, null, effort, cache = false)
+
+    private suspend fun call(
+        systemPrompt: String,
+        history: List<ChatMessage>,
+        imageBytes: (Attachment) -> ByteArray?,
+        photos: PhotoShelf?,
+        effort: String?,
+        cache: Boolean,
     ): ClaudeResult = withContext(Dispatchers.IO) {
         val key = apiKey()
         if (key.isNullOrBlank()) {
@@ -154,6 +181,7 @@ class AnthropicClient(
                 tools = photos?.let { listOf(PhotoShelf.TOOL) },
                 trailing = trailing,
                 effort = effort,
+                cache = cache,
             )
             val step = sendWithRetry(key, AnthropicRequest.json.encodeToString(payload))
             val response = when (step) {

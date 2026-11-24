@@ -42,6 +42,7 @@ import com.qualityverifier.domain.WorkerSlot
 import com.qualityverifier.domain.Workshop
 import com.qualityverifier.fundi.ui.assess.AssessViewModel
 import com.qualityverifier.fundi.ui.assess.PhotoTarget
+import com.qualityverifier.fundi.ui.assess.TranslationState
 import com.qualityverifier.images.ImageQuality
 import com.qualityverifier.images.UNREADABLE_PHOTO
 import kotlinx.coroutines.CompletableDeferred
@@ -101,6 +102,7 @@ class AssessViewModelTest {
         workers: FakeWorkers = FakeWorkers(),
         location: LocationSource = LocationSource.None,
         images: FakeImages = FakeImages(),
+        translations: com.qualityverifier.data.fundi.TranslationApi? = null,
     ) = AssessViewModel(
         sessionId = "s1",
         itemType = ItemType.WOODEN_TABLE,
@@ -113,7 +115,267 @@ class AssessViewModelTest {
         workers = workers,
         location = location,
         io = dispatcher,
+        translations = translations,
     )
+
+    // ------------------------------------------------------------------ English and Kiswahili (row 29)
+
+    /**
+     * Translates each reply it knows, by the hash of its text, counting each ask. With [present],
+     * only the replies on the server when the ask arrived, as the server answers; with [gate],
+     * the answer waits until the test opens it.
+     */
+    private class FakeTranslations(
+        var known: Map<String, String>,
+        var available: Boolean = true,
+        private val gate: CompletableDeferred<Unit>? = null,
+        private val present: (suspend () -> List<String>)? = null,
+    ) : com.qualityverifier.data.fundi.TranslationApi {
+        val asked = mutableListOf<AssessmentLanguage>()
+        override suspend fun translate(sessionId: String, language: AssessmentLanguage): com.qualityverifier.data.fundi.TranslationOutcome {
+            asked += language
+            val replies = present?.invoke()
+            gate?.await()
+            return if (!available) {
+                com.qualityverifier.data.fundi.TranslationOutcome.Unavailable
+            } else {
+                com.qualityverifier.data.fundi.TranslationOutcome.Translated(
+                    known.filterKeys { replies == null || it in replies }
+                        .mapKeys { com.qualityverifier.text.ReplyTranslation.keyOf(it.key) },
+                    failed = 0,
+                )
+            }
+        }
+    }
+
+    @Test
+    fun `row 29 - a reply that arrives while a translation request is open is asked for once it ends`() = runTest {
+        val sessions = FakeSessions().apply {
+            exists = true
+            seed(ChatMessage("a0", Role.ASSISTANT, "The top is level."))
+        }
+        val gate = CompletableDeferred<Unit>()
+        val api = FakeTranslations(
+            mapOf("The top is level." to "Juu iko sawa.", "The leg is loose." to "Mguu umelegea."),
+            gate = gate,
+            present = { sessions.messagesOnce("s1").map { it.text } },
+        )
+        val model = model(sessions = sessions, translations = api)
+        backgroundScope.launch { model.shownTranslations.collect {} }
+        advanceUntilIdle()
+
+        model.showLanguage(AssessmentLanguage.SWAHILI)
+        advanceUntilIdle()
+        assertEquals(TranslationState.WORKING, model.translationState.value)
+        // A reply lands while the request is open: it was not in that request.
+        sessions.appendAssistantMessage("s1", "The leg is loose.")
+        advanceUntilIdle()
+        gate.complete(Unit)
+        advanceUntilIdle()
+
+        assertEquals(listOf(AssessmentLanguage.SWAHILI, AssessmentLanguage.SWAHILI), api.asked)
+        assertEquals(mapOf("a0" to "Juu iko sawa.", "a1" to "Mguu umelegea."), model.shownTranslations.value)
+        assertEquals(TranslationState.IDLE, model.translationState.value)
+    }
+
+    @Test
+    fun `row 29 - a request that ends after the maker switched back shows nothing over the original`() = runTest {
+        val sessions = FakeSessions().apply {
+            exists = true
+            seed(ChatMessage("a0", Role.ASSISTANT, "The top is level."))
+        }
+        val gate = CompletableDeferred<Unit>()
+        val api = FakeTranslations(mapOf("The top is level." to "Juu iko sawa."), available = false, gate = gate)
+        val model = model(sessions = sessions, translations = api)
+        backgroundScope.launch { model.shownTranslations.collect {} }
+        advanceUntilIdle()
+
+        model.showLanguage(AssessmentLanguage.SWAHILI)
+        advanceUntilIdle()
+        assertEquals(TranslationState.WORKING, model.translationState.value)
+        model.showLanguage(AssessmentLanguage.ENGLISH)
+        advanceUntilIdle()
+        assertEquals(TranslationState.IDLE, model.translationState.value)
+
+        // The request fails after the maker went back to English: no "could not be translated".
+        gate.complete(Unit)
+        advanceUntilIdle()
+        assertEquals(TranslationState.IDLE, model.translationState.value)
+        assertTrue(model.shownTranslations.value.isEmpty())
+        assertEquals(1, api.asked.size)
+    }
+
+    @Test
+    fun `row 29 - a switch back while a request is open, then forward again, says it is still working`() = runTest {
+        val sessions = FakeSessions().apply {
+            exists = true
+            seed(ChatMessage("a0", Role.ASSISTANT, "The top is level."))
+        }
+        val gate = CompletableDeferred<Unit>()
+        val api = FakeTranslations(mapOf("The top is level." to "Juu iko sawa."), gate = gate)
+        val model = model(sessions = sessions, translations = api)
+        backgroundScope.launch { model.shownTranslations.collect {} }
+        advanceUntilIdle()
+
+        model.showLanguage(AssessmentLanguage.SWAHILI)
+        model.showLanguage(AssessmentLanguage.ENGLISH)
+        model.showLanguage(AssessmentLanguage.SWAHILI)
+        advanceUntilIdle()
+        assertEquals(TranslationState.WORKING, model.translationState.value)
+        gate.complete(Unit)
+        advanceUntilIdle()
+        assertEquals(TranslationState.IDLE, model.translationState.value)
+        assertEquals(mapOf("a0" to "Juu iko sawa."), model.shownTranslations.value)
+        assertEquals(1, api.asked.size)
+    }
+
+    @Test
+    fun `row 29 - a plan answer tapped in Kiswahili is recorded and sent as the option Claude wrote`() = runTest {
+        val plan = """
+            Two things to collect.
+            ```qv-plan
+            {"summary":"One photo and one test.","language":"en",
+             "photos":[{"title":"Leg joint, close","note":"","instruction":"Hold the phone 20 cm from the joint."}],
+             "tests":[{"title":"Wobble test","instruction":"Push the top corner.",
+                       "options":[{"label":"Solid","detail":""},{"label":"Moves a little","detail":""}]}]}
+            ```
+        """.trimIndent()
+        val planSw = """
+            Mambo mawili ya kukusanya.
+            ```qv-plan
+            {"summary":"Picha moja na jaribio moja.","language":"en",
+             "photos":[{"title":"Kiungo cha mguu, karibu","note":"","instruction":"Shika simu sm 20 kutoka kwenye kiungo."}],
+             "tests":[{"title":"Jaribio la kutikisa","instruction":"Sukuma kona ya juu.",
+                       "options":[{"label":"Imara","detail":""},{"label":"Inasogea kidogo","detail":""}]}]}
+            ```
+        """.trimIndent()
+        val sessions = FakeSessions().apply {
+            exists = true
+            seed(ChatMessage("u0", Role.USER, "I have finished this table.", composed = true), ChatMessage("a1", Role.ASSISTANT, plan))
+        }
+        val chat = FakeChat()
+        val model = model(sessions = sessions, chat = chat, translations = FakeTranslations(mapOf(plan to planSw)))
+        backgroundScope.launch { model.shownTranslations.collect {} }
+        advanceUntilIdle()
+        model.showLanguage(AssessmentLanguage.SWAHILI)
+        advanceUntilIdle()
+        model.offerPlanFromLatest(sessions.messagesOnce("s1"))
+
+        // What the test screen draws (AssessScreen's translatedRun of this run).
+        val en = com.qualityverifier.text.ReportLabels.forLanguage("en")
+        val sw = com.qualityverifier.text.ReportLabels.forLanguage("sw")
+        val run = model.run.value!!
+        val shown = com.qualityverifier.text.translatedRun(run, model.shownTranslations.value[run.sourceMessageId], en.notSure, sw.notSure)
+        assertEquals("Shika simu sm 20 kutoka kwenye kiungo.", shown.plan.photos[0].instruction)
+        assertEquals("Inasogea kidogo", shown.plan.tests[0].options[1].label)
+
+        // The maker taps the second button, "Inasogea kidogo".
+        model.skipShot(0)
+        model.answerTestOption(0, 1)
+        assertEquals("Moves a little", model.run.value!!.answers[0])
+        model.submitRun()
+        advanceUntilIdle()
+
+        val turn = sessions.userTurns.last().text
+        assertTrue(turn, turn.contains("- Wobble test: Moves a little"))
+        assertFalse(turn, turn.contains("Inasogea") || turn.contains("Jaribio"))
+        assertEquals(turn, chat.sent.last().text)
+    }
+
+    @Test
+    fun `row 29 - Not sure tapped in Kiswahili is recorded in the intake's language`() = runTest {
+        val plan = """
+            ```qv-plan
+            {"tests":[{"title":"Wobble test","options":[{"label":"Solid"}]}]}
+            ```
+        """.trimIndent()
+        val sessions = FakeSessions().apply {
+            exists = true
+            seed(ChatMessage("u0", Role.USER, "Check it.", composed = true), ChatMessage("a1", Role.ASSISTANT, plan))
+        }
+        val model = model(sessions = sessions)
+        advanceUntilIdle()
+        model.offerPlanFromLatest(sessions.messagesOnce("s1"))
+        model.answerTestNotSure(0)
+        assertEquals(com.qualityverifier.text.ReportLabels.forLanguage("en").notSure, model.run.value!!.answers[0])
+    }
+
+    @Test
+    fun `row 29 - an assessment opens as written, and the other language shows each reply's stored translation`() = runTest {
+        val sessions = FakeSessions().apply {
+            exists = true
+            seed(ChatMessage("u1", Role.USER, "I have finished this table.", composed = true), ChatMessage("a1", Role.ASSISTANT, "The top is level."))
+        }
+        val api = FakeTranslations(mapOf("The top is level." to "Juu iko sawa."))
+        val model = model(sessions = sessions, translations = api)
+        backgroundScope.launch { model.shownTranslations.collect {} }
+        advanceUntilIdle()
+        assertEquals(AssessmentLanguage.ENGLISH, model.shownLanguage.value)
+        assertTrue(model.shownTranslations.value.isEmpty())
+        assertTrue("nothing is translated in advance", api.asked.isEmpty())
+
+        model.showLanguage(AssessmentLanguage.SWAHILI)
+        advanceUntilIdle()
+        assertEquals(mapOf("a1" to "Juu iko sawa."), model.shownTranslations.value)
+        assertEquals(TranslationState.IDLE, model.translationState.value)
+
+        // Back, and over again: no second ask, since this screen holds it.
+        model.showLanguage(AssessmentLanguage.ENGLISH)
+        advanceUntilIdle()
+        assertTrue(model.shownTranslations.value.isEmpty())
+        model.showLanguage(AssessmentLanguage.SWAHILI)
+        advanceUntilIdle()
+        assertEquals(listOf(AssessmentLanguage.SWAHILI), api.asked)
+        // The stored conversation is untouched.
+        assertEquals("The top is level.", sessions.messagesOnce("s1")[1].text)
+    }
+
+    @Test
+    fun `row 29 - a reply that arrives while Kiswahili is shown is asked for in Kiswahili, and the turn went as typed`() = runTest {
+        val sessions = FakeSessions().apply {
+            exists = true
+            seed(ChatMessage("a0", Role.ASSISTANT, "The top is level."))
+        }
+        val api = FakeTranslations(mapOf("The top is level." to "Juu iko sawa."))
+        val chat = FakeChat()
+        val model = model(sessions = sessions, chat = chat, translations = api)
+        backgroundScope.launch { model.shownTranslations.collect {} }
+        advanceUntilIdle()
+        model.showLanguage(AssessmentLanguage.SWAHILI)
+        advanceUntilIdle()
+        assertEquals(1, api.asked.size)
+        // The server translates the next reply when asked about it.
+        api.known = api.known + ("ok" to "sawa")
+
+        model.send("Why is the leg loose?")
+        advanceUntilIdle()
+        assertEquals("Why is the leg loose?", chat.sent.single().text)
+        assertEquals(2, api.asked.size)
+        assertEquals("sawa", model.shownTranslations.value.values.last())
+    }
+
+    @Test
+    fun `row 29 - a translation that does not arrive keeps the original and says so, and Try again asks again`() = runTest {
+        val sessions = FakeSessions().apply {
+            exists = true
+            seed(ChatMessage("a0", Role.ASSISTANT, "The top is level."))
+        }
+        val api = FakeTranslations(mapOf("The top is level." to "Juu iko sawa."), available = false)
+        val model = model(sessions = sessions, translations = api)
+        backgroundScope.launch { model.shownTranslations.collect {} }
+        advanceUntilIdle()
+
+        model.showLanguage(AssessmentLanguage.SWAHILI)
+        advanceUntilIdle()
+        assertEquals(TranslationState.FAILED, model.translationState.value)
+        assertTrue(model.shownTranslations.value.isEmpty())
+
+        api.available = true
+        model.retryTranslation()
+        advanceUntilIdle()
+        assertEquals(TranslationState.IDLE, model.translationState.value)
+        assertEquals(mapOf("a0" to "Juu iko sawa."), model.shownTranslations.value)
+    }
 
     // ------------------------------------------------------------------ the location point
 

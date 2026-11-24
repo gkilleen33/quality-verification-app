@@ -198,6 +198,16 @@ fun Route.apiRoutes(
             call.respond(ApiPage(rows.take(limit), rows.size > limit, limit, offset))
         }
 
+        // Translations of Fundi Bora replies (V41, row 29): what a fundi read after switching
+        // an assessment to the other language, made when they first switched.
+        get("/translations") {
+            requireKey() ?: return@get
+            val limit = call.limit()
+            val offset = call.offset()
+            val rows = store.translations(limit + 1, offset)
+            call.respond(ApiPage(rows.take(limit), rows.size > limit, limit, offset))
+        }
+
         // Bench photos at setup (V35), each with the draft Claude made, for the accuracy
         // check against the tools the fundi then confirmed.
         get("/bench-photos") {

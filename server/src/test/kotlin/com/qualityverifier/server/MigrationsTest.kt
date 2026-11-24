@@ -122,6 +122,8 @@ class MigrationsTest {
         // V37: Claude's detail answers about the fundi's pieces, and the improvement's title.
         "fundi_detail_answers" to "finding_title",
         "fundi_detail_answers" to "answer_text",
+        // V41: a reply's translation into the other language (row 29).
+        "message_translations" to "translated_text",
     )
 
     /**

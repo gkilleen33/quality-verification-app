@@ -60,6 +60,9 @@ interface ApiStore {
     /** Every Fundi Bora detail answer (V37), prefetched or tapped, oldest first. */
     suspend fun detailAnswers(limit: Int, offset: Int): List<ApiDetailAnswer>
 
+    /** Every translation of a Fundi Bora reply (V41), oldest first. */
+    suspend fun translations(limit: Int, offset: Int): List<ApiTranslation>
+
     /** Every bench photo (V35), oldest first, with its point and the draft Claude made. */
     suspend fun benchPhotos(limit: Int, offset: Int): List<ApiBenchPhoto>
 
@@ -546,6 +549,38 @@ class PostgresApiStore(private val dataSource: DataSource) : ApiStore {
                     createdAt = rows.getLong(13),
                     openedAt = rows.getLong(14).takeUnless { rows.wasNull() },
                     openedMessageId = rows.getString(15),
+                )
+                out
+            }
+        }
+    }
+
+    override suspend fun translations(limit: Int, offset: Int): List<ApiTranslation> = query { connection ->
+        connection.prepareStatement(
+            """
+            select t.id::text, t.session_id::text, t.message_id::text, t.source_sha256, t.language,
+                   t.translated_text, t.model, t.prompt_sha, t.usage_event_id,
+                   (extract(epoch from t.created_at) * 1000)::bigint
+              from message_translations t
+             order by t.created_at, t.id
+             limit ? offset ?
+            """.trimIndent()
+        ).use { statement ->
+            statement.setInt(1, limit)
+            statement.setInt(2, offset)
+            statement.executeQuery().use { rows ->
+                val out = mutableListOf<ApiTranslation>()
+                while (rows.next()) out += ApiTranslation(
+                    id = rows.getString(1),
+                    sessionId = rows.getString(2),
+                    messageId = rows.getString(3),
+                    sourceSha256 = rows.getString(4).trim(),
+                    language = rows.getString(5),
+                    translatedText = rows.getString(6),
+                    model = rows.getString(7),
+                    promptSha = rows.getString(8),
+                    usageEventId = rows.getLong(9).takeUnless { rows.wasNull() },
+                    createdAt = rows.getLong(10),
                 )
                 out
             }

@@ -267,7 +267,7 @@ interface ChatStore {
          * to Kagua without an error anywhere.
          */
         audience: Audience,
-        /** "turn", "digest" (V19), "bench" (V35) or "detail_prefetch" (V37). */
+        /** "turn", "digest" (V19), "bench" (V35), "detail_prefetch" (V37) or "translation" (V41). */
         callKind: String = "turn",
     )
 

@@ -42,6 +42,7 @@ master = read(PROMPTS / "master.txt")
 fundi_master = read(PROMPTS / "fundi-master.txt")
 compact = read(PROMPTS / "compact.txt")
 bench = read(PROMPTS / "fundi-bench.txt")
+translate = read(PROMPTS / "fundi-translate.txt")
 
 items = []
 for path in sorted((PROMPTS / "items").glob("*.txt")):
@@ -105,6 +106,16 @@ object DefaultPrompts {{
 {bench}
 """.trimIndent()
 
+    /**
+     * Fundi Bora's English and Kiswahili switch (v0.7.0, release scope row 29): translates one
+     * reply of an assessment into the other language when the maker first switches. Its own
+     * call and its own prompt, outside the assessment's conversation. The "Words" section is
+     * where a Nairobi register and a trade glossary go when Nathan decides them (row 16).
+     */
+    val FUNDI_TRANSLATE: String = """
+{translate}
+""".trimIndent()
+
     /** Keyed by [ItemType.id]. Items with an empty prompt file are simply absent. */
     private val ITEMS: Map<String, String> = mapOf(
 {entries}
@@ -115,6 +126,6 @@ object DefaultPrompts {{
 ''')
 print(
     f"wrote {OUT.relative_to(ROOT)}: master={len(master)} chars, "
-    f"fundi={len(fundi_master)} chars, compact={len(compact)} chars, bench={len(bench)} chars, "
+    f"fundi={len(fundi_master)} chars, compact={len(compact)} chars, bench={len(bench)} chars, translate={len(translate)} chars, "
     f"items={[s for s, _ in items]}"
 )

@@ -57,6 +57,10 @@ class GitHubPromptRepository(
         load(BENCH_PATH, blankIsValid = false) { DefaultPrompts.FUNDI_BENCH }
     }
 
+    override suspend fun translationPrompt(): String = withContext(io) {
+        load(TRANSLATE_PATH, blankIsValid = false) { DefaultPrompts.FUNDI_TRANSLATE }
+    }
+
     override suspend fun clearCache() = withContext(io) { cache.clear() }
 
     private fun load(
@@ -102,6 +106,7 @@ class GitHubPromptRepository(
         const val FUNDI_MASTER_PATH = "fundi-master.txt"
         const val COMPACT_PATH = "compact.txt"
         const val BENCH_PATH = "fundi-bench.txt"
+        const val TRANSLATE_PATH = "fundi-translate.txt"
 
         fun masterPathFor(audience: Audience): String = when (audience) {
             Audience.BUYER -> MASTER_PATH

@@ -88,8 +88,12 @@ fun DiagnosisCard(
     showOnPhoto: (Finding) -> (() -> Unit)? = { null },
     /** The details Claude wrote on request, and those still being written (row 37). */
     details: DetailAnswers = DetailAnswers.NONE,
-    /** Asks Claude for one detail of one finding; null where nothing can be sent, such as a past turn. */
-    onRequestDetail: ((DetailKind, String) -> Unit)? = null,
+    /**
+     * Asks Claude for one detail of one finding, named by its place in [diagnosis] (from 1,
+     * counting every finding), so the caller finds the title Claude wrote even when this card
+     * shows a translation (row 29). Null where nothing can be sent, such as a past turn.
+     */
+    onRequestDetail: ((DetailKind, Int) -> Unit)? = null,
 ) {
     Card(
         modifier = modifier.fillMaxWidth(),
@@ -111,9 +115,10 @@ fun DiagnosisCard(
 
             // Every finding with its whole chain, worst first (issue #41). The maker
             // chooses what to work on; the fix plan below is for the first.
-            diagnosis.findings.filter { it.title.isNotBlank() }.forEachIndexed { index, finding ->
-                if (index > 0) HorizontalDivider(Modifier.padding(vertical = 4.dp))
-                FindingDetail(finding, labels, reportLabels, showOnPhoto(finding), details, onRequestDetail)
+            diagnosis.findings.withIndex().filter { it.value.title.isNotBlank() }.forEachIndexed { shown, (index, finding) ->
+                if (shown > 0) HorizontalDivider(Modifier.padding(vertical = 4.dp))
+                val request = onRequestDetail?.let { send -> { kind: DetailKind -> send(kind, index + 1) } }
+                FindingDetail(finding, labels, reportLabels, showOnPhoto(finding), details, request)
             }
 
             if (diagnosis.awaitingCheck) {
@@ -132,7 +137,7 @@ private fun FindingDetail(
     /** Opens the finding's photo at its mark; null draws no button. */
     onShowOnPhoto: (() -> Unit)?,
     details: DetailAnswers,
-    onRequestDetail: ((DetailKind, String) -> Unit)?,
+    onRequestDetail: ((DetailKind) -> Unit)?,
 ) {
     Row(
         // The whole title is a way in too: a maker reading "Gap at the back left joint"
@@ -220,7 +225,8 @@ private fun DetailButtons(
     finding: Finding,
     labels: FundiLabels,
     details: DetailAnswers,
-    onRequestDetail: ((DetailKind, String) -> Unit)?,
+    /** Asks Claude for one detail of this finding. */
+    onRequestDetail: ((DetailKind) -> Unit)?,
 ) {
     // Saved across rotation and scrolling, per finding and button.
     var open by rememberSaveable(finding.title) { mutableStateOf(emptySet<String>()) }
@@ -233,7 +239,7 @@ private fun DetailButtons(
             OutlinedButton(
                 onClick = {
                     open = if (isOpen) open - kind.name else open + kind.name
-                    if (!isOpen && text.isBlank() && !writing) onRequestDetail?.invoke(kind, finding.title.trim())
+                    if (!isOpen && text.isBlank() && !writing) onRequestDetail?.invoke(kind)
                 },
                 enabled = text.isNotBlank() || writing || onRequestDetail != null,
                 contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),

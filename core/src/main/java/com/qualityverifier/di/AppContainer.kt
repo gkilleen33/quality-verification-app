@@ -19,6 +19,8 @@ import com.qualityverifier.data.fundi.BenchApi
 import com.qualityverifier.data.fundi.BenchClient
 import com.qualityverifier.data.fundi.FundiProfileClient
 import com.qualityverifier.data.fundi.FundiProfiles
+import com.qualityverifier.data.fundi.TranslationApi
+import com.qualityverifier.data.fundi.TranslationClient
 import com.qualityverifier.data.location.LocationCapture
 import com.qualityverifier.data.location.LocationPreference
 import com.qualityverifier.data.mpesa.MpesaClient
@@ -392,6 +394,18 @@ class AppContainer(
         client = httpClient,
         tokens = tokenProvider,
         images = images,
+        baseUrl = baseUrl,
+        json = json,
+    )
+
+    /**
+     * Fundi Bora's English and Kiswahili switch (v0.7.0, row 29). Kagua links it and never
+     * calls it. On the shared client: its 200-second read timeout outlasts the server's
+     * 150-second wait for a first translation.
+     */
+    val translations: TranslationApi = TranslationClient(
+        client = httpClient,
+        tokens = tokenProvider,
         baseUrl = baseUrl,
         json = json,
     )

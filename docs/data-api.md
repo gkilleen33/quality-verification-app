@@ -51,6 +51,7 @@ milliseconds throughout.
 | `GET /piece-studio-changes` | each change of a piece's studio label after it was made (V34): `piece_id`, `user_id`, `kind` (`first_choice` or `correction`), `old_studio_entry_id`, `new_studio_entry_id`, `at` |
 | `GET /studio-days` | each answer to "Which studio are you at today?" (V34): `user_id`, `day` (Nairobi date), `studio_entry_id` (null for the fundi's own workshop), `answered_at` |
 | `GET /detail-answers` | every Fundi Bora detail answer (V37): the answer to one detail button ("More on what we found", "More on what's causing this", "How to upgrade next time", and from v0.7.0's improvement list "A tool to buy or rent") of one improvement. `id`, `session_id`, `source_message_id` (the diagnosis reply), `finding_index` (from 0) and `finding_title`, `detail_kind` (`what_we_found`, `cause`, `next_time`, `tool`), `source` (`prefetch` or `tap`), `answer_text`, `model`, `effort` (the thinking effort asked for; null is the API's default, high), `prompt_sha`, `usage_event_id`, `created_at`, and `opened_at` and `opened_message_id` (null for an answer the fundi never opened). See "Detail answers" below |
+| `GET /translations` | every translation of a Fundi Bora reply (V41), made when the fundi first switched the assessment between English and Kiswahili: `id`, `session_id`, `message_id` (the first stored reply with that text), `source_sha256` (SHA-256 of the original reply's text), `language` (`en` or `sw`, the language translated into), `translated_text`, `model`, `prompt_sha` (of `prompts/fundi-translate.txt`; part of the row's key, so a new prompt writes a new row), `usage_event_id`, `created_at`. See "Translations" below |
 | `GET /bench-photos` | each bench photo taken at Fundi Bora setup (V35): `id`, `user_id`, `sha256`, `latitude`, `longitude` and `location_accuracy_m` (null unless the fundi allowed location), `taken_at`, the `draft` tool list Claude made from it, `prompt_sha`, `model` |
 | `GET /reports` | every PDF report the server issued (V32): `piece_id` or `worker_id`, `kind`, `session_ids`, `parts`, `defect_refs`, `defect_snapshot`, `sha256`, `byte_size`, `issued_at` |
 | `GET /tracker-transactions` | every PesaLog transaction (V33), oldest first: `user_id`, `network`, `code`, `direction`, `type`, amounts, `occurred_at`, `counterparty_code` and `counterparty_basis`, `category`, `comment` |
@@ -277,6 +278,20 @@ From prompt E (#107, 18 November 2026) a Fundi Bora diagnosis no longer writes e
 - **Cost.** Each prefetch is a `usage_events` row with `call_kind` = `detail_prefetch`, joined by `usage_event_id`. A tap's call is billed as a `turn`, as before. Neither counts against the daily allowance, which counts assessments started.
 - **Thinking effort.** From v0.7.0, Fundi Bora's turns, notes and detail answers ask for medium thinking (`effort` = `medium`; the server setting `fundi_effort`), where before they used the API's default, high.
 - **Deletion.** When an account is deleted its rows stay, with `finding_title` and `answer_text` set to null.
+
+## Translations
+
+From v0.7.0 (V41) each Fundi Bora assessment has a switch between English and Kiswahili. An assessment opens in the language chosen at its intake. The first time the fundi switches, the server translates every reply of the assessment with one Claude call per reply (`prompts/fundi-translate.txt`) and keeps each translation in `GET /translations`; every later switch, on any phone, reads the stored one. The server refuses a request for the assessment's own language.
+
+- **Joining.** A translation names its reply by `source_sha256`, the SHA-256 of the reply's text as stored in `messages`; `message_id` is the first reply with that text.
+- **Prompt versions.** `prompt_sha` is part of a row's key. The server serves only rows written by the current translation prompt, so a new prompt (for example row 16's glossary) writes a new row for each reply on the next switch; the old rows stay. Filter on `prompt_sha` to compare the two.
+- **What the fundi saw.** A row means the fundi switched that assessment to `language` at least once while that prompt was current, at `created_at` or before. Later switches, and switching back, are not recorded.
+- **What Claude saw.** Nothing: a translation never enters the conversation, and every later turn is written from the original replies.
+- **What is translated.** Every reply, prose and blocks, including the plan's photo instructions, test questions and answer buttons and the reply chips. What the fundi taps on those is recorded and sent in Claude's original words, chosen by place, so the conversation is the same in either language.
+- **What is not translated.** The fundi's own words, and a prefetched detail answer the fundi never opened.
+- **Refused translations.** The server keeps a translation only if every block has the same shape, keys, numbers and fixed-list values as the original; the prose and every written value carry the same numbers; the prose has as many paragraphs; and the readable text is between 0.4 and 2.5 times the original's length (checked from 80 characters). A refused one leaves no row; its call is still in `usage_events`.
+- **Cost.** Each call is a `usage_events` row with `call_kind` = `translation`, joined by `usage_event_id`. It does not count against the daily allowance.
+- **Deletion.** When an account is deleted its rows stay, with `translated_text` set to null.
 
 ## Kagua on a shop's tablet
 

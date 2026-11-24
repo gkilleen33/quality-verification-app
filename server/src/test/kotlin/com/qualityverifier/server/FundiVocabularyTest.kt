@@ -148,6 +148,31 @@ class FundiVocabularyTest {
         )
     }
 
+    /** The translations (V41): their languages, and the translation's call kind. */
+    private val translations: String by lazy { read("V41__message_translations.sql") }
+
+    @Test
+    fun `row 29 - every language and the translation call kind are allowed, with every earlier call kind`() {
+        assertAllAllowed(
+            "language", com.qualityverifier.domain.AssessmentLanguage.entries.map { it.code },
+            sql = translations.substringAfter("message_translations_language_known\n        CHECK")
+                .substringBefore("\n"),
+            where = "V41's language CHECK",
+        )
+        assertAllAllowed(
+            "call kind",
+            listOf(
+                "turn", "digest", com.qualityverifier.server.routes.BENCH_CALL_KIND,
+                com.qualityverifier.server.chat.DetailPrefetcher.CALL_KIND,
+                com.qualityverifier.server.chat.ReplyTranslator.CALL_KIND,
+            ),
+            sql = translations.substringAfter("usage_events_call_kind_known\n    CHECK").substringBefore("\n"),
+            where = "V41's call_kind CHECK",
+        )
+        // The effort a translation asks for is one the API takes, as every other call's is.
+        assertTrue(com.qualityverifier.server.chat.ReplyTranslator.EFFORT in Config.EFFORTS)
+    }
+
     @Test
     fun `every work part is allowed by the constraint`() {
         assertAllAllowed(

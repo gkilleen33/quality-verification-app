@@ -66,6 +66,10 @@ import com.qualityverifier.server.db.HelpfulStore
 import com.qualityverifier.server.db.PostgresHelpfulStore
 import com.qualityverifier.server.db.DetailAnswerStore
 import com.qualityverifier.server.db.PostgresDetailAnswerStore
+import com.qualityverifier.server.db.PostgresTranslationStore
+import com.qualityverifier.server.db.TranslationStore
+import com.qualityverifier.server.chat.ReplyTranslator
+import com.qualityverifier.server.routes.translationRoutes
 import com.qualityverifier.server.routes.helpfulRoutes
 import com.qualityverifier.server.db.PostgresAuthStore
 import com.qualityverifier.domain.Audience
@@ -165,6 +169,7 @@ fun main() {
             helpful = PostgresHelpfulStore(database.source),
             fundiEffort = config.fundiEffort,
             details = PostgresDetailAnswerStore(database.source),
+            translations = PostgresTranslationStore(database.source),
         )
     } else {
         log.warn("Chat is disabled: needs a database and KAGUA_ANTHROPIC_API_KEY.")
@@ -458,6 +463,8 @@ class Chat(
     val fundiEffort: String = Config.DEFAULT_FUNDI_EFFORT,
     /** Fundi Bora's detail answers (V37, row 38). Null leaves a tap as it was. */
     val details: DetailAnswerStore? = null,
+    /** Fundi Bora's English and Kiswahili switch (V41, row 29). Null mounts no route. */
+    val translations: TranslationStore? = null,
 )
 
 @Serializable
@@ -621,6 +628,11 @@ fun Application.module(
             it.bench?.let { bench -> benchRoutes(bench, it.store, auth.store, it.blobs, it.claude, it.prompts) }
             // A tester's Yes or No after a Fundi Bora verdict (V36). Never read for a request.
             it.helpful?.let { helpful -> helpfulRoutes(helpful, auth.store) }
+            // The English and Kiswahili switch (V41, row 29): a Claude call per reply, outside
+            // the conversation, so it needs the same client and prompts as an assessment.
+            it.translations?.let { stored ->
+                translationRoutes(ReplyTranslator(it.store, stored, it.claude, it.prompts), auth.store)
+            }
         }
 
         // Also behind auth, but deliberately not inside the `chat` block: the setup

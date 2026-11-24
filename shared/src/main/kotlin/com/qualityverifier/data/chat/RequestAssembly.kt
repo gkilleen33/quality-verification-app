@@ -99,6 +99,12 @@ object AnthropicRequest {
          * keeps its bytes, and its cache, exactly as before. Fundi Bora sets "medium" (row 50).
          */
         effort: String? = null,
+        /**
+         * False for a request that is never sent twice, such as a reply's translation (row
+         * 29): no breakpoint at all, so it pays no one-hour cache-write premium for an entry
+         * nothing reads. True, the default, leaves every other request's bytes as they were.
+         */
+        cache: Boolean = true,
     ): MessagesRequest = MessagesRequest(
         model = model,
         maxTokens = maxTokens,
@@ -109,13 +115,13 @@ object AnthropicRequest {
         // exchange per turn, and a walkthrough is a dozen turns carrying several photos,
         // so re-processing it each time is the dominant cost.
         system = listOf(
-            SystemBlock(text = systemPrompt, cacheControl = CacheControl.ONE_HOUR)
+            SystemBlock(text = systemPrompt, cacheControl = CacheControl.ONE_HOUR.takeIf { cache })
         ),
         messages = history
             .toApiMessages(imageBytes, encodeBase64)
             .withOpeningTurn()
             .plus(trailing)
-            .withCacheBreakpointOnLastBlock(),
+            .let { if (cache) it.withCacheBreakpointOnLastBlock() else it },
     )
 
     /**
