@@ -118,6 +118,36 @@ class FundiVocabularyTest {
         assertAllAllowed("call kind", listOf(com.qualityverifier.server.routes.BENCH_CALL_KIND), sql = tools, where = "V35")
     }
 
+    /** The detail answers (V37): their buttons, sources and efforts, and the prefetch's call kind. */
+    private val detailAnswers: String by lazy { read("V37__fundi_detail_answers.sql") }
+
+    @Test
+    fun `row 38 - every detail button, source, effort and the prefetch call kind are allowed`() {
+        assertAllAllowed(
+            "detail kind", com.qualityverifier.text.DetailKind.entries.map { it.id },
+            sql = detailAnswers, where = "V37",
+        )
+        // The CHECK names the tool button before the phone has it (row 49, PR 8).
+        assertAllAllowed(
+            "detail kind", com.qualityverifier.text.DetailKind.SERVER_IDS.toList(),
+            sql = detailAnswers, where = "V37",
+        )
+        assertAllAllowed(
+            "source",
+            listOf(
+                com.qualityverifier.server.chat.DetailPrefetcher.SOURCE_PREFETCH,
+                com.qualityverifier.server.chat.DetailPrefetcher.SOURCE_TAP,
+            ),
+            sql = detailAnswers, where = "V37",
+        )
+        assertAllAllowed("effort", Config.EFFORTS.toList(), sql = detailAnswers, where = "V37")
+        assertAllAllowed(
+            "call kind",
+            listOf("turn", "digest", com.qualityverifier.server.routes.BENCH_CALL_KIND, com.qualityverifier.server.chat.DetailPrefetcher.CALL_KIND),
+            sql = detailAnswers.substringAfter("usage_events_call_kind_known\n    CHECK"), where = "V37's call_kind CHECK",
+        )
+    }
+
     @Test
     fun `every work part is allowed by the constraint`() {
         assertAllAllowed(

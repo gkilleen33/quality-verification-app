@@ -87,6 +87,23 @@ interface ClaudeClient {
         imageBytes: (Attachment) -> ByteArray?,
         photos: PhotoShelf? = null,
     ): ClaudeResult
+
+    /**
+     * As [send], at a thinking effort ("low" to "max"; `output_config.effort`). Null is the
+     * API's default, which is what [send] asks for, so Kagua's requests keep their bytes.
+     * Fundi Bora's calls pass the server's `fundi_effort` (row 50).
+     *
+     * The effort is part of what the prompt cache matches, so every call that shares a
+     * conversation's prefix must pass the same one. Defaults to [send] for a client that
+     * does not set one, which is every test fake that does not care.
+     */
+    suspend fun send(
+        systemPrompt: String,
+        history: List<ChatMessage>,
+        imageBytes: (Attachment) -> ByteArray?,
+        photos: PhotoShelf?,
+        effort: String?,
+    ): ClaudeResult = send(systemPrompt, history, imageBytes, photos)
 }
 
 class AnthropicClient(
@@ -103,6 +120,14 @@ class AnthropicClient(
         history: List<ChatMessage>,
         imageBytes: (Attachment) -> ByteArray?,
         photos: PhotoShelf?,
+    ): ClaudeResult = send(systemPrompt, history, imageBytes, photos, effort = null)
+
+    override suspend fun send(
+        systemPrompt: String,
+        history: List<ChatMessage>,
+        imageBytes: (Attachment) -> ByteArray?,
+        photos: PhotoShelf?,
+        effort: String?,
     ): ClaudeResult = withContext(Dispatchers.IO) {
         val key = apiKey()
         if (key.isNullOrBlank()) {
@@ -128,6 +153,7 @@ class AnthropicClient(
                 encodeBase64 = encode,
                 tools = photos?.let { listOf(PhotoShelf.TOOL) },
                 trailing = trailing,
+                effort = effort,
             )
             val step = sendWithRetry(key, AnthropicRequest.json.encodeToString(payload))
             val response = when (step) {

@@ -50,6 +50,7 @@ milliseconds throughout.
 | `GET /pieces` | every piece a Fundi Bora maker has assessed: `id`, `user_id`, `item_type_id`, `created_at`, and its studio label, `studio_entry_id` and `studio_chosen_at` (V34). No name (see below) |
 | `GET /piece-studio-changes` | each change of a piece's studio label after it was made (V34): `piece_id`, `user_id`, `kind` (`first_choice` or `correction`), `old_studio_entry_id`, `new_studio_entry_id`, `at` |
 | `GET /studio-days` | each answer to "Which studio are you at today?" (V34): `user_id`, `day` (Nairobi date), `studio_entry_id` (null for the fundi's own workshop), `answered_at` |
+| `GET /detail-answers` | every Fundi Bora detail answer (V37): the answer to one detail button ("More on what we found", "More on what's causing this", "How to upgrade next time", and from v0.7.0's improvement list "A tool to buy or rent") of one improvement. `id`, `session_id`, `source_message_id` (the diagnosis reply), `finding_index` (from 0) and `finding_title`, `detail_kind` (`what_we_found`, `cause`, `next_time`, `tool`), `source` (`prefetch` or `tap`), `answer_text`, `model`, `effort` (the thinking effort asked for; null is the API's default, high), `prompt_sha`, `usage_event_id`, `created_at`, and `opened_at` and `opened_message_id` (null for an answer the fundi never opened). See "Detail answers" below |
 | `GET /bench-photos` | each bench photo taken at Fundi Bora setup (V35): `id`, `user_id`, `sha256`, `latitude`, `longitude` and `location_accuracy_m` (null unless the fundi allowed location), `taken_at`, the `draft` tool list Claude made from it, `prompt_sha`, `model` |
 | `GET /reports` | every PDF report the server issued (V32): `piece_id` or `worker_id`, `kind`, `session_ids`, `parts`, `defect_refs`, `defect_snapshot`, `sha256`, `byte_size`, `issued_at` |
 | `GET /tracker-transactions` | every PesaLog transaction (V33), oldest first: `user_id`, `network`, `code`, `direction`, `type`, amounts, `occurred_at`, `counterparty_code` and `counterparty_basis`, `category`, `comment` |
@@ -266,6 +267,16 @@ both apps and across accounts; the number or name itself was never stored.
   unread counts then disappear from these routes, and `/tracker-deletions` gains a row
   saying when and how many.
 - Fundi Bora's own M-Pesa records (V29) have no data API route yet.
+
+## Detail answers
+
+From prompt E (#107, 18 November 2026) a Fundi Bora diagnosis no longer writes each finding's cause and habit; the fundi taps a button under an improvement and Claude answers that one detail. From v0.7.0 (V37) the server writes the answers to every button of the **first two improvements** of each diagnosis as soon as the diagnosis arrives (`source` = `prefetch`), and keeps every answer, prefetched or tapped, in `GET /detail-answers`. Improvements after the second are answered on tap (`source` = `tap`).
+
+- **What the fundi saw.** An answer reaches the fundi, and the conversation, only when they open it: `opened_at` is the first opening and `opened_message_id` the reply that showed it, which is also in `GET /assessments/{id}`'s messages. An answer with no `opened_at` was written and never seen. A tapped answer is opened as it is written.
+- **What Claude saw.** An unopened answer never enters the conversation, so no later turn's reply was written with it in view.
+- **Cost.** Each prefetch is a `usage_events` row with `call_kind` = `detail_prefetch`, joined by `usage_event_id`. A tap's call is billed as a `turn`, as before. Neither counts against the daily allowance, which counts assessments started.
+- **Thinking effort.** From v0.7.0, Fundi Bora's turns, notes and detail answers ask for medium thinking (`effort` = `medium`; the server setting `fundi_effort`), where before they used the API's default, high.
+- **Deletion.** When an account is deleted its rows stay, with `finding_title` and `answer_text` set to null.
 
 ## Three things that will bite an analysis if nobody mentions them
 

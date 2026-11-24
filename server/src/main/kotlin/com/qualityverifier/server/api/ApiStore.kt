@@ -57,6 +57,9 @@ interface ApiStore {
     /** Testers' answers to "Was this review helpful?" (V36), oldest first. */
     suspend fun reviewHelpful(limit: Int, offset: Int): List<ApiReviewHelpful>
 
+    /** Every Fundi Bora detail answer (V37), prefetched or tapped, oldest first. */
+    suspend fun detailAnswers(limit: Int, offset: Int): List<ApiDetailAnswer>
+
     /** Every bench photo (V35), oldest first, with its point and the draft Claude made. */
     suspend fun benchPhotos(limit: Int, offset: Int): List<ApiBenchPhoto>
 
@@ -474,6 +477,46 @@ class PostgresApiStore(private val dataSource: DataSource) : ApiStore {
                     userId = rows.getString(2),
                     helpful = rows.getBoolean(3),
                     answeredAt = rows.getLong(4),
+                )
+                out
+            }
+        }
+    }
+
+    override suspend fun detailAnswers(limit: Int, offset: Int): List<ApiDetailAnswer> = query { connection ->
+        connection.prepareStatement(
+            """
+            select d.id::text, d.session_id::text, d.source_message_id::text, d.finding_index,
+                   d.finding_title, d.detail_kind, d.source, d.answer_text, d.model, d.effort,
+                   d.prompt_sha, d.usage_event_id,
+                   (extract(epoch from d.created_at) * 1000)::bigint,
+                   (extract(epoch from d.opened_at) * 1000)::bigint,
+                   d.opened_message_id::text
+              from fundi_detail_answers d
+             order by d.created_at, d.id
+             limit ? offset ?
+            """.trimIndent()
+        ).use { statement ->
+            statement.setInt(1, limit)
+            statement.setInt(2, offset)
+            statement.executeQuery().use { rows ->
+                val out = mutableListOf<ApiDetailAnswer>()
+                while (rows.next()) out += ApiDetailAnswer(
+                    id = rows.getString(1),
+                    sessionId = rows.getString(2),
+                    sourceMessageId = rows.getString(3),
+                    findingIndex = rows.getInt(4).takeUnless { rows.wasNull() },
+                    findingTitle = rows.getString(5),
+                    detailKind = rows.getString(6),
+                    source = rows.getString(7),
+                    answerText = rows.getString(8),
+                    model = rows.getString(9),
+                    effort = rows.getString(10),
+                    promptSha = rows.getString(11),
+                    usageEventId = rows.getLong(12).takeUnless { rows.wasNull() },
+                    createdAt = rows.getLong(13),
+                    openedAt = rows.getLong(14).takeUnless { rows.wasNull() },
+                    openedMessageId = rows.getString(15),
                 )
                 out
             }

@@ -140,6 +140,12 @@ class Compactor(
     private val blobs: BlobStore,
     private val scope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.IO),
     private val wait: Duration = 90.seconds,
+    /**
+     * Fundi Bora's thinking effort (row 50). The notes request shares the assessment's
+     * cached prefix, and the effort is part of what the cache matches, so a Fundi Bora
+     * assessment's notes ask for the same effort its turns do. Kagua's ask for none.
+     */
+    private val fundiEffort: String? = null,
 ) {
     private val log = LoggerFactory.getLogger(Compactor::class.java)
     private val pending = ConcurrentHashMap<String, Deferred<Unit>>()
@@ -187,7 +193,8 @@ class Compactor(
         val request = Compaction.requestTurn(prompts.compactionPrompt(), covered, view)
 
         val startedAt = System.currentTimeMillis()
-        val result = claude.send(systemPrompt, view.messages + request, ::readBlob, view.photos)
+        val effort = if (audience == Audience.FUNDI) fundiEffort else null
+        val result = claude.send(systemPrompt, view.messages + request, ::readBlob, view.photos, effort)
         val elapsed = System.currentTimeMillis() - startedAt
 
         when (result) {

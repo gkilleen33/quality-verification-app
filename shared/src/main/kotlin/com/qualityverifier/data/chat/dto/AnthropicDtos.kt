@@ -22,7 +22,21 @@ data class MessagesRequest(
      * to a conversation that has been compacted, and then on every turn of it.
      */
     val tools: List<ToolDefinition>? = null,
+    /**
+     * Null, and therefore absent, on every request that does not set a thinking effort, so
+     * those requests are the same bytes as before the field existed. Last, so a request that
+     * does set one differs from one that does not only at the end of the object.
+     */
+    @SerialName("output_config") val outputConfig: OutputConfig? = null,
 )
+
+/**
+ * `output_config` (row 50). [effort] is "low", "medium", "high", "xhigh" or "max"; the API's
+ * default on claude-sonnet-5-5 is high. Changing it between requests of one conversation can
+ * invalidate its cached prefix, so a conversation keeps one effort throughout.
+ */
+@Serializable
+data class OutputConfig(val effort: String)
 
 @Serializable
 data class ToolDefinition(

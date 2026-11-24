@@ -4,8 +4,13 @@ import com.qualityverifier.data.prompts.PromptRepository
 import com.qualityverifier.domain.AppVersionHeaders
 import com.qualityverifier.domain.Audience
 import com.qualityverifier.domain.ItemType
+import com.qualityverifier.server.Config
 import com.qualityverifier.server.blobs.BlobStore
 import com.qualityverifier.server.chat.ClaudeClient
+import com.qualityverifier.server.chat.DetailPrefetcher
+import com.qualityverifier.server.db.DetailAnswerStore
+import com.qualityverifier.server.db.NewDetailAnswer
+import com.qualityverifier.text.DetailKind
 import com.qualityverifier.server.chat.ClaudeResult
 import com.qualityverifier.server.chat.Compaction
 import com.qualityverifier.server.chat.Compactor
@@ -67,8 +72,17 @@ fun Route.chatRoutes(
     testerDailyAssessmentLimit: Int,
     /** The higher allowance for a maker assessing their own work. */
     fundiDailyAssessmentLimit: Int,
+    /**
+     * The thinking effort of every Fundi Bora call that shares an assessment's conversation
+     * (row 50; `Config.fundiEffort`). Kagua's calls send none, as before.
+     */
+    fundiEffort: String? = Config.DEFAULT_FUNDI_EFFORT,
+    /** Fundi Bora's detail answers (V37, row 38). Null keeps a tap as it was before v0.7.0. */
+    details: DetailAnswerStore? = null,
     /** Writes each assessment's notes once it has been given. See [Compactor]. */
-    compactor: Compactor = Compactor(store, claude, prompts, blobs),
+    compactor: Compactor = Compactor(store, claude, prompts, blobs, fundiEffort = fundiEffort),
+    /** Prefetches the first improvements' detail answers. See [DetailPrefetcher]. */
+    prefetcher: DetailPrefetcher? = details?.let { DetailPrefetcher(store, it, claude, blobs) },
 ) {
     authenticate("jwt") {
 
@@ -117,6 +131,7 @@ fun Route.chatRoutes(
             assessmentTurn(
                 Audience.BUYER, store, auth, blobs, claude, prompts, compactor,
                 dailyAssessmentLimit, testerDailyAssessmentLimit,
+                effort = null, details = null, prefetcher = null,
             )
         }
 
@@ -126,6 +141,7 @@ fun Route.chatRoutes(
             assessmentTurn(
                 Audience.FUNDI, store, auth, blobs, claude, prompts, compactor,
                 fundiDailyAssessmentLimit, testerDailyAssessmentLimit,
+                effort = fundiEffort, details = details, prefetcher = prefetcher,
             )
         }
     }
@@ -154,6 +170,11 @@ private suspend fun RoutingContext.assessmentTurn(
      */
     dailyAssessmentLimit: Int,
     testerDailyAssessmentLimit: Int,
+    /** The thinking effort for this audience's calls; null for Kagua, the API's default. */
+    effort: String?,
+    /** Fundi Bora's detail answers (V37); null for Kagua. */
+    details: DetailAnswerStore?,
+    prefetcher: DetailPrefetcher?,
 ) {
             val userId = call.principal<JWTPrincipal>()?.subject
             if (userId == null) {
@@ -298,6 +319,41 @@ private suspend fun RoutingContext.assessmentTurn(
                 }
             }
 
+            // A tap on a detail button (row 37), which the phone sends as a composed turn. Its
+            // answer may already be written (row 38): prefetched when the diagnosis arrived,
+            // or being written now, in which case the tap waits for it rather than paying for
+            // a second call. Either way it is stored as the reply, exactly as Claude's reply
+            // to the tap would be, so the conversation, and every later request built from
+            // it, reads as it did before prefetching existed.
+            val detailAsked = if (audience == Audience.FUNDI && request.composed) DetailKind.parse(request.text) else null
+            if (detailAsked != null && prefetcher != null && details != null) {
+                val (kind, title) = detailAsked
+                val stored = prefetcher.answerFor(request.sessionId, kind, title)
+                if (stored != null) {
+                    val parsed = parseAssistantContent(stored.text)
+                    val messageId = store.appendAssistantTurn(
+                        sessionId = request.sessionId,
+                        text = stored.text,
+                        preview = parsed.verdict?.headline?.ifBlank { null }
+                            ?: markdownToPlainText(parsed.prose.ifBlank { stored.text }),
+                        verdictLevelId = parsed.verdict?.level?.id,
+                        verdictLanguage = parsed.verdict?.language,
+                        defectCount = fundiCounter(parsed),
+                    )
+                    details.markOpened(stored.id, messageId)
+                    log.info("Answered a {} tap on session {} from the stored answer", kind.id, request.sessionId)
+                    // No usage row: the call that wrote it has one (call_kind detail_prefetch).
+                    if (parsed.verdict != null || parsed.diagnosis != null) {
+                        val history = store.history(request.sessionId) { sha -> blobs.pathFor(sha).absolutePath }
+                        if (Compaction.worthCompacting(parsed.verdict != null, parsed.diagnosis != null, history)) {
+                            compactor.schedule(userId, request.sessionId, systemPrompt, messageId, audience)
+                        }
+                    }
+                    call.respond(ChatResponse(messageId, stored.text))
+                    return
+                }
+            }
+
             // Notes still being written for the last reply are worth waiting for: they are
             // what makes this turn short. Usually already done — they start the moment the
             // verdict is stored, and somebody has to read it before they can ask about it.
@@ -308,7 +364,7 @@ private suspend fun RoutingContext.assessmentTurn(
             val startedAt = System.currentTimeMillis()
             val result = claude.send(systemPrompt, view.messages, { attachment ->
                 blobs.read(java.io.File(attachment.path).nameWithoutExtension)
-            }, view.photos)
+            }, view.photos, effort)
             val elapsed = System.currentTimeMillis() - startedAt
 
             when (result) {
@@ -334,15 +390,57 @@ private suspend fun RoutingContext.assessmentTurn(
                     )
                     // The route's audience, so spend splits by app: the column defaults to
                     // buyer, and a Fundi Bora turn billed as Kagua's raises no error.
-                    store.recordUsage(
+                    val usageId = store.recordUsageReturningId(
                         userId, request.sessionId, result.model, result.usage,
                         httpStatus = 200, latencyMillis = elapsed, errorKind = null,
                         audience = audience,
                     )
+                    // A detail asked for on a tap is kept too (row 38), opened as it is shown.
+                    if (detailAsked != null && details != null) {
+                        val (kind, title) = detailAsked
+                        val source = findingNamed(history, title)
+                        runCatching {
+                            details.save(
+                                NewDetailAnswer(
+                                    sessionId = request.sessionId,
+                                    sourceMessageId = source?.first,
+                                    findingIndex = source?.second,
+                                    findingTitle = title.trim(),
+                                    kind = kind,
+                                    source = DetailPrefetcher.SOURCE_TAP,
+                                    text = result.text,
+                                    model = result.model,
+                                    effort = effort,
+                                    promptSha = sha256Of(systemPrompt),
+                                    usageEventId = usageId,
+                                    openedMessageId = messageId,
+                                ),
+                            )
+                        }.onFailure { log.warn("Could not keep a tapped {} for session {}", kind.id, request.sessionId, it) }
+                    }
                     // After the reply is stored and before it is returned, so the notes are
                     // already being written while the phone is still drawing the verdict.
                     if (Compaction.worthCompacting(parsed.verdict != null, parsed.diagnosis != null, history)) {
                         compactor.schedule(userId, request.sessionId, systemPrompt, messageId, audience)
+                    }
+                    // And the detail answers of its first improvements (row 38), from this very
+                    // request, so each reads the prefix it cached.
+                    val diagnosis = parsed.diagnosis
+                    if (audience == Audience.FUNDI && prefetcher != null && diagnosis != null) {
+                        prefetcher.schedule(
+                            DetailPrefetcher.Diagnosis(
+                                userId = userId,
+                                sessionId = request.sessionId,
+                                systemPrompt = systemPrompt,
+                                promptSha = sha256Of(systemPrompt),
+                                requestMessages = view.messages,
+                                photos = view.photos,
+                                replyMessageId = messageId,
+                                replyText = result.text,
+                                findingTitles = diagnosis.findings.map { it.title },
+                                effort = effort,
+                            ),
+                        )
                     }
                     call.respond(ChatResponse(messageId, result.text))
                 }
@@ -419,6 +517,21 @@ private fun fundiCounter(reply: AssistantContent): ((List<String>) -> Int?)? {
         fundiDefectCount(storedRepliesNewestFirst.map(::parseAssistantContent))
     }
 }
+
+/**
+ * The newest stored reply whose diagnosis has an improvement titled [title], with that
+ * improvement's place in it, or null. Read for a tapped detail's record (V37), which names the
+ * improvement as the phone names it, by title.
+ */
+private fun findingNamed(history: List<com.qualityverifier.domain.ChatMessage>, title: String): Pair<String, Int>? =
+    history.asReversed()
+        .filter { it.role == com.qualityverifier.domain.Role.ASSISTANT }
+        .firstNotNullOfOrNull { message ->
+            parseAssistantContent(message.text).diagnosis?.findings
+                ?.indexOfFirst { it.title.trim() == title.trim() }
+                ?.takeIf { it >= 0 }
+                ?.let { message.id to it }
+        }
 
 private fun sha256Of(value: String): String =
     MessageDigest.getInstance("SHA-256").digest(value.toByteArray(Charsets.UTF_8))

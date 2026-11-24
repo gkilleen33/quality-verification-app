@@ -354,6 +354,35 @@ data class ApiStudioDay(
 )
 
 /**
+ * One Fundi Bora detail answer (V37, row 38): the answer to one detail button of one
+ * improvement in a diagnosis, prefetched when the diagnosis arrived or asked for on a tap.
+ * [openedAt] is when the fundi first opened it, null for one never opened; only an opened
+ * answer is also in the assessment's messages, as [openedMessageId]. [findingTitle] and
+ * [answerText] are null once the account is deleted.
+ */
+@Serializable
+data class ApiDetailAnswer(
+    val id: String,
+    @SerialName("session_id") val sessionId: String,
+    @SerialName("source_message_id") val sourceMessageId: String?,
+    @SerialName("finding_index") val findingIndex: Int?,
+    @SerialName("finding_title") val findingTitle: String?,
+    /** "what_we_found", "cause", "next_time" or "tool". */
+    @SerialName("detail_kind") val detailKind: String,
+    /** "prefetch" or "tap". */
+    val source: String,
+    @SerialName("answer_text") val answerText: String?,
+    val model: String?,
+    /** The thinking effort asked for, or null for the API's default (high). */
+    val effort: String?,
+    @SerialName("prompt_sha") val promptSha: String?,
+    @SerialName("usage_event_id") val usageEventId: Long?,
+    @SerialName("created_at") val createdAt: Long,
+    @SerialName("opened_at") val openedAt: Long?,
+    @SerialName("opened_message_id") val openedMessageId: String?,
+)
+
+/**
  * A tester's answer to "Was this review helpful?" after a Fundi Bora verdict (V36, row 7):
  * one per assessment, the first answer sent. [userId] is null once the tester's account is
  * deleted; the answer stays.
