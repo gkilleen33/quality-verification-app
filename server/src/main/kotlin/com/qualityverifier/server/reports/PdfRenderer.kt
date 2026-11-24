@@ -20,6 +20,7 @@ import com.qualityverifier.domain.NamesBlock
 import com.qualityverifier.domain.NoteBlock
 import com.qualityverifier.domain.PhotosBlock
 import com.qualityverifier.domain.ProblemBlock
+import com.qualityverifier.domain.ReportBlock
 import com.qualityverifier.domain.TextBlock
 import com.qualityverifier.text.ReportLabels
 import org.slf4j.LoggerFactory
@@ -96,14 +97,28 @@ open class PdfRenderer(private val fonts: ReportFonts = ReportFonts.load()) {
         photos: PhotoSource,
         settings: PhotoSettings = FIRST,
         keep: List<String> = content.photos,
+    ): ByteArray = draw(content.blocks, content.labels, photos, settings, keep.toSet())
+
+    /**
+     * Kagua's PDF from a shop's tablet (row 31): the same drawing as every report, with no
+     * photos, so it needs no size cap and no photo store.
+     */
+    open fun renderKagua(content: KaguaReportContent): ByteArray =
+        draw(content.blocks, content.labels, PhotoSource { null }, FIRST, emptySet())
+
+    private fun draw(
+        blocks: List<ReportBlock>,
+        labels: ReportLabels,
+        photos: PhotoSource,
+        settings: PhotoSettings,
+        keepSet: Set<String>,
     ): ByteArray {
-        val keepSet = keep.toSet()
         val out = ByteArrayOutputStream()
         val document = Document(PageSize.A4, MARGIN, MARGIN, MARGIN, MARGIN)
         val writer = PdfWriter.getInstance(document, out)
         writer.pageEvent = Footer(fonts)
         document.open()
-        for (block in content.blocks) {
+        for (block in blocks) {
             when (block) {
                 // Level 1 the title, 2 an assessment, 3 a part, 4 a line within a part
                 // ("Found this time").
@@ -134,7 +149,7 @@ open class PdfRenderer(private val fonts: ReportFonts = ReportFonts.load()) {
                         spacingAfter = 4f
                     },
                 )
-                is ProblemBlock -> document.add(problem(block, content.labels))
+                is ProblemBlock -> document.add(problem(block, labels))
                 is PhotosBlock -> {
                     val shown = block.sha256.filter { it in keepSet }
                     if (shown.isNotEmpty()) document.add(photoTable(shown, photos, settings))

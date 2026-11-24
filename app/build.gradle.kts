@@ -125,6 +125,10 @@ dependencies {
     // Room, the encrypted prefs, EXIF and okhttp all went to :core; CameraX went to
     // :capture. What is left here is what this module's own code names directly.
     implementation(libs.coil.compose)
+    // The QR code a shop's tablet shows for the customer's PDF (row 31). ZXing core only, the
+    // same artifact and version the server's 2FA enrolment code uses (Apache 2.0): pure Java,
+    // no Android parts, about 550 KB in the APK (release builds are not minified).
+    implementation(libs.zxing)
 
     testImplementation(libs.junit)
     testImplementation(libs.kotlinx.coroutines.test)

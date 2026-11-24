@@ -147,6 +147,17 @@ data class ApiAssessment(
     @SerialName("tablet_ended") val tabletEnded: String? = null,
     /** When the server heard [tabletEnded], epoch millis; null when it is null. */
     @SerialName("tablet_ended_at") val tabletEndedAt: Long? = null,
+    /**
+     * How many report links the shop tablet showed as a QR code for this assessment (V40, row
+     * 31), used or not. Zero for every assessment not made on a tablet.
+     */
+    @SerialName("report_links") val reportLinks: Int = 0,
+    /**
+     * How many times a customer downloaded this assessment's PDF through those links, at most
+     * three a link. A download does not move `updated_at`, so `updated_since` does not pick
+     * up a new one; a full pull does.
+     */
+    @SerialName("report_downloads") val reportDownloads: Int = 0,
 )
 
 /**
@@ -222,6 +233,25 @@ data class ApiAssessmentDetail(
      * piece, and for one made before v0.6.0. Never shown to the fundi or sent to Claude.
      */
     val tools: List<ApiSessionTool> = emptyList(),
+    /**
+     * Each QR code the shop tablet showed for this assessment (V40, release scope row 31),
+     * oldest first: when it was made, when it stopped working, and each download through it.
+     * Empty for every assessment not made on a tablet. Only here; the list carries the counts.
+     */
+    @SerialName("report_link_times") val reportLinkTimes: List<ApiReportLinkTimes> = emptyList(),
+)
+
+/**
+ * One `shop_report_links` row's times (V40), epoch millis. The token and its hash stay on the
+ * server: the hash identifies a link nobody outside needs to name.
+ */
+@Serializable
+data class ApiReportLinkTimes(
+    @SerialName("created_at") val createdAt: Long,
+    /** Thirty minutes after [createdAt]; a link used up sooner stopped at its third download. */
+    @SerialName("expires_at") val expiresAt: Long,
+    /** Each download, oldest first; at most three. */
+    @SerialName("downloaded_at") val downloadedAt: List<Long>,
 )
 
 /** One `session_tools` row: a tool kind, whose list it came from (`maker`, `studio`), and its owner. */

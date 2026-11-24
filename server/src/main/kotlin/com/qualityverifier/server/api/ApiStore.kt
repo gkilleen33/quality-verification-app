@@ -251,7 +251,35 @@ class PostgresApiStore(private val dataSource: DataSource) : ApiStore {
             }
         }
 
-        ApiAssessmentDetail(assessment, messages, feedback, workers = workers, tools = tools)
+        // The shop tablet's QR codes (V40, row 31): the times the counts on the list come from.
+        val reportLinkTimes = connection.prepareStatement(
+            """
+            select (extract(epoch from created_at) * 1000)::bigint,
+                   (extract(epoch from expires_at) * 1000)::bigint,
+                   coalesce(
+                       (select array_agg((extract(epoch from d) * 1000)::bigint order by d)
+                          from unnest(downloaded_at) d),
+                       '{}'
+                   )
+              from shop_report_links where session_id = ?::uuid
+             order by created_at, token_sha256
+            """.trimIndent()
+        ).use { statement ->
+            statement.setString(1, id)
+            statement.executeQuery().use { rows ->
+                val out = mutableListOf<ApiReportLinkTimes>()
+                while (rows.next()) {
+                    @Suppress("UNCHECKED_CAST")
+                    val downloads = (rows.getArray(3).array as Array<Long>).toList()
+                    out += ApiReportLinkTimes(rows.getLong(1), rows.getLong(2), downloads)
+                }
+                out
+            }
+        }
+
+        ApiAssessmentDetail(
+            assessment, messages, feedback, workers = workers, tools = tools, reportLinkTimes = reportLinkTimes,
+        )
     }
 
     override suspend fun benchPhotos(limit: Int, offset: Int): List<ApiBenchPhoto> = query { connection ->
@@ -710,6 +738,8 @@ class PostgresApiStore(private val dataSource: DataSource) : ApiStore {
             shopTablet = getBoolean(19),
             tabletEnded = getString(20),
             tabletEndedAt = nullableLong(21),
+            reportLinks = getInt(22),
+            reportDownloads = getInt(23),
         )
     }
 
@@ -776,7 +806,10 @@ class PostgresApiStore(private val dataSource: DataSource) : ApiStore {
                    s.is_final,
                    s.shop_tablet,
                    s.tablet_ended,
-                   (extract(epoch from s.tablet_ended_at) * 1000)::bigint
+                   (extract(epoch from s.tablet_ended_at) * 1000)::bigint,
+                   (select count(*)::int from shop_report_links l where l.session_id = s.id),
+                   (select coalesce(sum(cardinality(l.downloaded_at)), 0)::int
+                      from shop_report_links l where l.session_id = s.id)
         """
     }
 }

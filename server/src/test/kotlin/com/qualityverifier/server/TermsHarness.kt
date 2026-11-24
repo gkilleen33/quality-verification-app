@@ -179,6 +179,13 @@ class TermsWorld {
                 terms = if (withTerms) terms else null,
                 mpesa = mpesa,
                 tracker = tracker,
+                // The shop tablet's report links (row 31), so the route walk classifies them.
+                shopReports = ShopReports(
+                    com.qualityverifier.server.reports.ShopReportService(
+                        FakeShopReportStore(),
+                        com.qualityverifier.server.reports.PdfRenderer(),
+                    ),
+                ),
             )
         }
         createClient { install(ClientContentNegotiation) { json() } }

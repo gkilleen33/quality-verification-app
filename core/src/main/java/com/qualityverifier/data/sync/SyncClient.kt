@@ -165,7 +165,7 @@ class SyncClient(
     private val baseUrl: String,
     private val json: Json,
     private val io: CoroutineDispatcher = Dispatchers.IO,
-) : TabletEndApi {
+) : TabletEndApi, ShopReportLinkApi {
 
     /** Null means the list could not be fetched — offline, or the server is unwell. */
     suspend fun sessions(): List<RemoteSession>? = withContext(io) {
@@ -532,6 +532,39 @@ class SyncClient(
     }
 
     /**
+     * Asks the server for a link to the customer's PDF of [sessionId], for the QR code on a
+     * shop's tablet (V40, row 31). The server answers with a path, and the link is this
+     * client's own base URL plus that path: the tablet already talks to the server's public
+     * address, so the code holds the same one, and the server needs no setting for it.
+     *
+     * Only a path under v1/r/ is taken, so a code can never point anywhere but at a report.
+     * The server's 429 means the assessment has had all the links it may have, which
+     * trying again will not change: [ReportLinkOutcome.NoMore]. Anything else, another
+     * refusal or no connection, is [ReportLinkOutcome.Failed]: the tablet says so and the
+     * customer can try again.
+     */
+    override suspend fun issueReportLink(sessionId: String): ReportLinkOutcome = withContext(io) {
+        authenticated { token ->
+            Request.Builder().url(baseUrl + "v1/sessions/" + sessionId + "/report-link")
+                .addHeader("Authorization", "Bearer $token")
+                .post("{}".toRequestBody(JSON)).build()
+        }?.use { response ->
+            if (response.code == 429) {
+                Log.w(TAG, "Server has made every report link this assessment may have")
+                return@use ReportLinkOutcome.NoMore
+            }
+            if (!response.isSuccessful) {
+                Log.w(TAG, "Server refused a report link (${response.code})")
+                return@use ReportLinkOutcome.Failed
+            }
+            val body = runCatching { json.decodeFromString<ReportLinkBody>(response.body?.string().orEmpty()) }
+                .getOrNull()
+            if (body == null || !REPORT_LINK_PATH.matches(body.path)) return@use ReportLinkOutcome.Failed
+            ReportLinkOutcome.Ready(url = baseUrl + body.path, expiresAt = body.expiresAt)
+        } ?: ReportLinkOutcome.Failed
+    }
+
+    /**
      * Checks the account's password for a phone already signed in: the shop tablet asks for
      * it before the owner's controls open (row 12). The server counts a wrong one as a failed
      * sign-in, with the same lockout.
@@ -631,7 +664,30 @@ class SyncClient(
          */
         const val UPGRADE_REQUIRED = 426
         val JSON = "application/json; charset=utf-8".toMediaType()
+
+        /** The server's public report route and a base64url token: the only thing a QR code may hold. */
+        val REPORT_LINK_PATH = Regex("^v1/r/[A-Za-z0-9_-]{22,}$")
     }
+}
+
+@Serializable
+private data class ReportLinkBody(
+    val path: String,
+    @SerialName("expires_at") val expiresAt: Long,
+)
+
+/** What the shop tablet's request for a report link came to (row 31). */
+sealed interface ReportLinkOutcome {
+    /** [url] is the whole link for the QR code; [expiresAt] is epoch millis, the server's clock. */
+    data class Ready(val url: String, val expiresAt: Long) : ReportLinkOutcome
+    data object Failed : ReportLinkOutcome
+    /** The server's cap of links for this assessment is reached (429 `too_many_links`). */
+    data object NoMore : ReportLinkOutcome
+}
+
+/** Where a shop tablet gets the link its QR code holds (row 31). */
+interface ShopReportLinkApi {
+    suspend fun issueReportLink(sessionId: String): ReportLinkOutcome
 }
 
 sealed interface PasswordOutcome {

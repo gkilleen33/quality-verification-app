@@ -67,6 +67,9 @@ class TermsGateTest {
         // has no use for either.
         HttpMethod.Put to "/v1/sessions/$uuid/tablet-end",
         HttpMethod.Post to "/v1/me/password-check",
+        // v0.7.0 (V40, row 31): the shop tablet's request for a report link. Kagua's, as the two
+        // above are; a Fundi Bora account is never a shop.
+        HttpMethod.Post to "/v1/sessions/$uuid/report-link",
     )
 
     /** The open list, called by path. */
@@ -84,6 +87,8 @@ class TermsGateTest {
         HttpMethod.Get to "/v1/fundi/profile",
         HttpMethod.Get to "/v1/fundi/workers",
         HttpMethod.Get to "/v1/fundi/studios",
+        // V40, row 31: the customer's report link, which takes no token at all.
+        HttpMethod.Get to "/v1/r/AAAAAAAAAAAAAAAAAAAAAA",
     )
 
     private suspend fun HttpClient.hit(method: HttpMethod, path: String, user: UserRow): HttpResponse =
@@ -303,6 +308,7 @@ class TermsGateTest {
             "POST" to "/v1/tester-feedback",
             "PUT" to "/v1/sessions/x/tablet-end",
             "POST" to "/v1/me/password-check",
+            "POST" to "/v1/sessions/x/report-link",
         )
         val unclassified = found.filterNot { (method, template) ->
             TermsGate.isOpen(HttpMethod.parse(method), sample(template)) ||

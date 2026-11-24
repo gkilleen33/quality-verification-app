@@ -34,6 +34,7 @@ import com.qualityverifier.data.shop.ShopTabletFlag
 import com.qualityverifier.data.shop.ShopTabletWipe
 import com.qualityverifier.data.sync.AccountActions
 import com.qualityverifier.data.sync.AssessmentSync
+import com.qualityverifier.data.sync.ShopReportLinkApi
 import com.qualityverifier.data.sync.SyncClient
 import com.qualityverifier.data.terms.TermsApi
 import com.qualityverifier.data.terms.TermsClient
@@ -343,6 +344,12 @@ class AppContainer(
         pending = PrefsTabletEndQueue(appContext),
         api = syncClient,
     )
+
+    /**
+     * The customer's PDF by QR code on a shop's tablet (server V40, row 31): the link the code
+     * holds. Kagua's shop mode asks for it; nothing else does.
+     */
+    val shopReportLinks: ShopReportLinkApi = syncClient
 
     /** This account's own number, E.164, from the cached profile; null until a v0.7.0 server answers. */
     val ownPhone: String? get() = tokenStore.ownPhone()

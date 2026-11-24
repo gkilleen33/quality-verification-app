@@ -177,7 +177,8 @@ class TermsGate(
          *
          * Reading one's own account and history, changing the password, deleting the
          * account, and the two terms routes. None collects new data, and the terms screen
-         * must not hide a person's own assessments from them.
+         * must not hide a person's own assessments from them. Also the shop customer's report
+         * link, which belongs to no account (see its line below).
          */
         val OPEN: List<Pair<HttpMethod, Regex>> = listOf(
             HttpMethod.Get to "/v1/me",
@@ -194,6 +195,12 @@ class TermsGate(
             HttpMethod.Get to "/v1/fundi/workers",
             // One's own studio list (V31), read on every sync as the roster is.
             HttpMethod.Get to "/v1/fundi/studios",
+            // A shop customer's report link (V40, row 31). Not an account's route: the customer
+            // has none, and the route takes no token, so the gate, which acts only on a signed-in
+            // request, never runs for it. Listed so this list names every route that answers a
+            // person who has not agreed to Fundi Bora's terms, and so a later change that put a
+            // token on it could not close it by accident. It collects nothing: it serves one PDF.
+            HttpMethod.Get to "/v1/r/{}",
         ).map { (method, template) ->
             method to Regex("^" + template.split("{}").joinToString("[^/]+") { Regex.escape(it) } + "$")
         }
