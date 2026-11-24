@@ -83,6 +83,62 @@ class ShopReportLinkTest {
     }
 
     @Test
+    fun `row 31 - the tablet can show a fresh code after the first`() = runTest(dispatcher) {
+        val first = "https://kagua.gradykilleen.me/v1/r/first"
+        val second = "https://kagua.gradykilleen.me/v1/r/second"
+        val api = Api(ReportLinkOutcome.Ready(first, expiresAt = 1L))
+        val model = ShopReportLinkViewModel(api, "session-1")
+        model.requestNew() // nothing to replace yet
+        advanceUntilIdle()
+        assertTrue(api.asked.isEmpty())
+
+        model.request()
+        advanceUntilIdle()
+        assertEquals(ReportLinkState.Shown(first), model.state.value)
+
+        // "Get a new code": the first stays on screen while the second is fetched.
+        api.outcome = ReportLinkOutcome.Ready(second, expiresAt = 2L)
+        api.gate = CompletableDeferred()
+        model.requestNew()
+        advanceUntilIdle()
+        assertEquals(ReportLinkState.Shown(first, NextCode.LOADING), model.state.value)
+        model.requestNew() // a second press while it loads asks nothing more
+        api.gate!!.complete(Unit)
+        api.gate = null
+        advanceUntilIdle()
+        assertEquals(ReportLinkState.Shown(second), model.state.value)
+
+        // A failure keeps the code there and offers the button again.
+        api.outcome = ReportLinkOutcome.Failed
+        model.requestNew()
+        advanceUntilIdle()
+        assertEquals(ReportLinkState.Shown(second, NextCode.FAILED), model.state.value)
+
+        // The server's cap: the code stays, the button goes, and no further press asks.
+        api.outcome = ReportLinkOutcome.NoMore
+        model.requestNew()
+        advanceUntilIdle()
+        assertEquals(ReportLinkState.Shown(second, NextCode.NO_MORE), model.state.value)
+        model.requestNew()
+        model.request()
+        advanceUntilIdle()
+        // The first code, the second, the failure, the refusal.
+        assertEquals(4, api.asked.size)
+    }
+
+    @Test
+    fun `row 31 - a tablet with no code left to make says so`() = runTest(dispatcher) {
+        val api = Api(ReportLinkOutcome.NoMore)
+        val model = ShopReportLinkViewModel(api, "session-1")
+        model.request()
+        advanceUntilIdle()
+        assertEquals(ReportLinkState.NoMore, model.state.value)
+        model.request() // trying again would only be refused again
+        advanceUntilIdle()
+        assertEquals(1, api.asked.size)
+    }
+
+    @Test
     fun `row 31 - a failed request says so and can be tried again`() = runTest(dispatcher) {
         val api = Api(ReportLinkOutcome.Failed)
         val model = ShopReportLinkViewModel(api, "session-1")

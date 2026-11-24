@@ -88,7 +88,7 @@ class ShopReportLinkClientTest {
     fun `row 31 - a refusal or no connection is a failure the customer can try again`() = runTest {
         server.enqueue(MockResponse().setResponseCode(404).setBody("""{"error":"no_such_session"}"""))
         assertEquals(ReportLinkOutcome.Failed, client.issueReportLink("s"))
-        server.enqueue(MockResponse().setResponseCode(429).setBody("""{"error":"too_many_links"}"""))
+        server.enqueue(MockResponse().setResponseCode(500))
         assertEquals(ReportLinkOutcome.Failed, client.issueReportLink("s"))
         // No server at all: a stand-in started and stopped, so its port refuses.
         val gone = MockWebServer().apply { start(); shutdown() }
@@ -99,5 +99,12 @@ class ShopReportLinkClientTest {
             json = Json { ignoreUnknownKeys = true },
         )
         assertEquals(ReportLinkOutcome.Failed, offline.issueReportLink("s"))
+    }
+
+    @Test
+    fun `row 31 - the server's cap of five links is told apart from a failure`() = runTest {
+        // Trying again will not help, so the tablet says so rather than offering a retry.
+        server.enqueue(MockResponse().setResponseCode(429).setBody("""{"error":"too_many_links"}"""))
+        assertEquals(ReportLinkOutcome.NoMore, client.issueReportLink("s"))
     }
 }

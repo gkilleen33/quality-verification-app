@@ -44,6 +44,7 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.qualityverifier.data.sync.PasswordCheck
+import com.qualityverifier.shop.NextCode
 import com.qualityverifier.shop.ReportLinkState
 import com.qualityverifier.shop.reportQr
 import com.qualityverifier.text.AuthLabels
@@ -109,9 +110,18 @@ fun ShopDoneButton(labels: ReportLabels, onDone: () -> Unit) {
  * "Send this report to my phone" on a shop's tablet (row 31), above Done. Pressed, it becomes
  * the QR code the customer scans with their own phone's camera, with what the code does and how
  * long it works. Outlined, not filled: Done stays the loudest thing on the screen (P8).
+ *
+ * Under the code, "Get a new code" replaces it with a fresh one, for a code that stopped
+ * working before the customer had the PDF; the old code stays on screen while the new one
+ * is fetched, and if it cannot be.
  */
 @Composable
-fun ShopSendReport(labels: ReportLabels, state: ReportLinkState, onRequest: () -> Unit) {
+fun ShopSendReport(
+    labels: ReportLabels,
+    state: ReportLinkState,
+    onRequest: () -> Unit,
+    onRequestNew: () -> Unit,
+) {
     Column(
         Modifier.fillMaxWidth(),
         verticalArrangement = Arrangement.spacedBy(10.dp),
@@ -127,6 +137,40 @@ fun ShopSendReport(labels: ReportLabels, state: ReportLinkState, onRequest: () -
             Text(
                 labels.shopLinkLimits,
                 style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                textAlign = TextAlign.Center,
+            )
+            when (state.next) {
+                NextCode.NO_MORE -> Text(
+                    labels.shopNoMoreCodes,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    textAlign = TextAlign.Center,
+                )
+                else -> {
+                    if (state.next == NextCode.FAILED) {
+                        Text(labels.shopLinkFailed, color = MaterialTheme.colorScheme.error, textAlign = TextAlign.Center)
+                    }
+                    val loading = state.next == NextCode.LOADING
+                    // Quieter than the first button: not full width, so the code and Done
+                    // stay what the eye goes to. 48 dp, Material's least touch target (P13).
+                    OutlinedButton(
+                        onClick = onRequestNew,
+                        enabled = !loading,
+                        modifier = Modifier.height(48.dp),
+                    ) {
+                        if (loading) {
+                            CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
+                        } else {
+                            Text(labels.shopNewCode)
+                        }
+                    }
+                }
+            }
+        } else if (state is ReportLinkState.NoMore) {
+            Text(
+                labels.shopNoMoreCodes,
+                style = MaterialTheme.typography.bodyLarge,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 textAlign = TextAlign.Center,
             )

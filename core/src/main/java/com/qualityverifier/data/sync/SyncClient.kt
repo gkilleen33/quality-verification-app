@@ -537,8 +537,10 @@ class SyncClient(
      * address, so the code holds the same one, and the server needs no setting for it.
      *
      * Only a path under v1/r/ is taken, so a code can never point anywhere but at a report.
-     * Anything else, a refusal or no connection, is [ReportLinkOutcome.Failed]: the tablet
-     * says so and the customer can try again.
+     * The server's 429 means the assessment has had all the links it may have, which
+     * trying again will not change: [ReportLinkOutcome.NoMore]. Anything else, another
+     * refusal or no connection, is [ReportLinkOutcome.Failed]: the tablet says so and the
+     * customer can try again.
      */
     override suspend fun issueReportLink(sessionId: String): ReportLinkOutcome = withContext(io) {
         authenticated { token ->
@@ -546,6 +548,10 @@ class SyncClient(
                 .addHeader("Authorization", "Bearer $token")
                 .post("{}".toRequestBody(JSON)).build()
         }?.use { response ->
+            if (response.code == 429) {
+                Log.w(TAG, "Server has made every report link this assessment may have")
+                return@use ReportLinkOutcome.NoMore
+            }
             if (!response.isSuccessful) {
                 Log.w(TAG, "Server refused a report link (${response.code})")
                 return@use ReportLinkOutcome.Failed
@@ -674,6 +680,8 @@ sealed interface ReportLinkOutcome {
     /** [url] is the whole link for the QR code; [expiresAt] is epoch millis, the server's clock. */
     data class Ready(val url: String, val expiresAt: Long) : ReportLinkOutcome
     data object Failed : ReportLinkOutcome
+    /** The server's cap of links for this assessment is reached (429 `too_many_links`). */
+    data object NoMore : ReportLinkOutcome
 }
 
 /** Where a shop tablet gets the link its QR code holds (row 31). */

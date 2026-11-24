@@ -529,6 +529,7 @@ fun ChatScreen(
                                         labels = shareLabels,
                                         state = reportLinkState,
                                         onRequest = reportLink::request,
+                                        onRequestNew = reportLink::requestNew,
                                     )
                                     Spacer(Modifier.height(16.dp))
                                 }
