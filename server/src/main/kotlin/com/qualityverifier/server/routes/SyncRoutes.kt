@@ -271,6 +271,17 @@ fun Route.syncRoutes(
                 return@post
             }
 
+            // A Fundi Bora account's shop (V43, row 53) signs in with the Fundi Bora password,
+            // which only Fundi Bora changes. 403 rather than 401, which the phone would take for
+            // a stale token or a wrong current password.
+            if (user.shopOfUserId != null) {
+                call.respond(
+                    HttpStatusCode.Forbidden,
+                    ErrorResponse("password_on_fundi_bora", PASSWORD_ON_FUNDI_BORA),
+                )
+                return@post
+            }
+
             // The current password is required even though the caller already holds a
             // valid token: a token can be lifted from an unlocked phone, and a password
             // change is what would lock the owner out of their own account.
@@ -285,6 +296,12 @@ fun Route.syncRoutes(
             // somebody else having had access.
             val revoked = auth.revokeChain(userId)
             log.info("Password changed for {}; revoked {} token(s)", userId, revoked)
+            // The same password opens a Fundi Bora account's Kagua shop (V43, row 53), so its
+            // tablets sign out too, and sign in again with the new one.
+            auth.linkedShopAccount(userId)?.let { shop ->
+                val shopRevoked = auth.revokeChain(shop)
+                log.info("Password changed for {}; revoked {} token(s) of its shop {}", userId, shopRevoked, shop)
+            }
             // The revocation also took the caller's own refresh token, so this phone gets
             // a fresh pair, issued after the revocation so it survives it. Without one the
             // phone's next refresh is refused and it is signed out with no explanation.
@@ -318,6 +335,14 @@ fun Route.syncRoutes(
         }
     }
 }
+
+/**
+ * Why a Fundi Bora account's Kagua shop (row 53) cannot change its password here. The phone
+ * shows its own wording for `password_on_fundi_bora` (SettingsViewModel); this detail is for
+ * anything else that reads the answer.
+ */
+internal const val PASSWORD_ON_FUNDI_BORA =
+    "This shop signs in with your Fundi Bora password. Change it in the Fundi Bora app."
 
 /**
  * Whether [userId] is a Kagua account on a shop's tablet (V39, row 12). Read on each request

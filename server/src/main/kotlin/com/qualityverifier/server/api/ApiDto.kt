@@ -71,6 +71,12 @@ data class ApiUser(
      * the field's arrival changes no caller.
      */
     @SerialName("shop_mode") val shopMode: Boolean = false,
+    /**
+     * For a Kagua shop account opened with Fundi Bora details (V43, row 53), the `id` of that
+     * Fundi Bora account; null for every other account. Such an account has no `phone`, name or
+     * business of its own. Kept after deletion: it joins two ids and names nobody.
+     */
+    @SerialName("shop_of_user_id") val shopOfUserId: String? = null,
 )
 
 @Serializable

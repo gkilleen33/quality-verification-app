@@ -16,6 +16,7 @@ import com.qualityverifier.server.routes.RegisterRequest
 import com.qualityverifier.server.routes.SignInRequest
 import com.qualityverifier.server.routes.UPDATE_TO_SIGN_IN
 import com.qualityverifier.server.routes.normalisePhone
+import com.qualityverifier.server.routes.opensFundiShop
 import com.qualityverifier.server.routes.signInAudience
 import com.qualityverifier.server.routes.validate
 import com.qualityverifier.server.routes.validatePhone
@@ -540,8 +541,9 @@ class AuthTest {
 
     @Test
     fun `row 30 -the other app's password does not open this app's account`() = testApplication {
-        // The Fundi Bora password typed into Kagua is checked against the Kagua account only,
-        // and counts as a failure there.
+        // The Fundi Bora password typed into a Kagua older than v0.7.0 (no version sent) is
+        // checked against the Kagua account only, and counts as a failure there. From v0.7.0
+        // it opens the Fundi Bora account's shop instead (row 53, below).
         val store = shopOwner()
         val app = withAuth(store)
 
@@ -554,9 +556,10 @@ class AuthTest {
 
     @Test
     fun `row 30 -an app is never signed in to the other app's account`() = testApplication {
-        // A number with only a Fundi Bora account, signing in to Kagua with that account's
-        // own password: refused as an unknown number is, rather than opening a Fundi Bora
-        // account in Kagua as the server did before V38.
+        // A number with only a Fundi Bora account, signing in to a Kagua older than v0.7.0 with
+        // that account's own password: refused as an unknown number is, rather than opening a
+        // Fundi Bora account in Kagua as the server did before V38. Kagua from v0.7.0 opens its
+        // shop account instead, never the Fundi Bora account itself (row 53, below).
         val store = FakeAuthStore().apply {
             seedAccount(SHOP_NUMBER, FUNDI_PASSWORD, audience = Audience.FUNDI, userId = FUNDI_USER)
         }
@@ -618,16 +621,260 @@ class AuthTest {
             assertEquals(setOf(KAGUA_USER, FUNDI_USER), store.failures.toSet())
         }
 
+    // ------------------------------- a fundi's Fundi Bora details open Kagua as a shop (row 53)
+
+    @Test
+    fun `row 53 - only Kagua builds that run shop mode may open a Fundi Bora shop`() {
+        assertTrue(opensFundiShop("kagua", "8"))
+        assertTrue(opensFundiShop("kagua", "12"))
+        assertTrue(!opensFundiShop("kagua", "7"))
+        // No version: a phone older than v0.4.0.
+        assertTrue(!opensFundiShop("kagua", null))
+        assertTrue(!opensFundiShop("fundi", "8"))
+        assertTrue(!opensFundiShop("tracker", "8"))
+        assertTrue(!opensFundiShop(null, "8"))
+    }
+
+    @Test
+    fun `row 53 - sign-in with Fundi Bora details creates then reuses the shop account`() =
+        testApplication {
+            val store = fundiOnly()
+            val app = withAuth(store)
+
+            val first = app.signIn(app = "kagua", password = FUNDI_PASSWORD, version = SHOP_KAGUA)
+            assertEquals(HttpStatusCode.OK, first.status)
+            val body = first.bodyAsText()
+            assertTrue(body, body.contains("\"user_id\":\"$FUNDI_SHOP\""))
+            // Kagua enters shop mode from the sign-in answer itself (row 12).
+            assertTrue(body, body.contains("\"shop_mode\":true"))
+            assertEquals(1, store.shopsMade)
+
+            val second = app.signIn(app = "kagua", password = FUNDI_PASSWORD, version = SHOP_KAGUA)
+            assertEquals(HttpStatusCode.OK, second.status)
+            assertTrue(second.bodyAsText().contains("\"user_id\":\"$FUNDI_SHOP\""))
+            assertEquals("the second sign-in reuses the shop account", 1, store.shopsMade)
+            // The account whose password matched has its failures cleared, not the shop's.
+            assertEquals(listOf(FUNDI_USER, FUNDI_USER), store.cleared)
+            assertTrue(store.failures.isEmpty())
+        }
+
+    @Test
+    fun `row 53 - a Kagua account's own password still wins`() = testApplication {
+        val store = shopOwner()
+        val app = withAuth(store)
+
+        val response = app.signIn(app = "kagua", password = KAGUA_PASSWORD, version = SHOP_KAGUA)
+
+        assertEquals(HttpStatusCode.OK, response.status)
+        assertTrue(response.bodyAsText().contains("\"user_id\":\"$KAGUA_USER\""))
+        assertEquals(0, store.shopsMade)
+        assertTrue(store.failures.isEmpty())
+
+        // The Fundi Bora password on the same number opens the shop instead.
+        val shop = app.signIn(app = "kagua", password = FUNDI_PASSWORD, version = SHOP_KAGUA)
+        assertTrue(shop.bodyAsText().contains("\"user_id\":\"$FUNDI_SHOP\""))
+    }
+
+    @Test
+    fun `row 53 - a Kagua account's own password wins when both accounts share it`() = testApplication {
+        val store = FakeAuthStore().apply {
+            seedAccount(SHOP_NUMBER, PASSWORD, audience = Audience.BUYER, userId = KAGUA_USER)
+            seedAccount(SHOP_NUMBER, PASSWORD, audience = Audience.FUNDI, userId = FUNDI_USER)
+        }
+        val app = withAuth(store)
+
+        val response = app.signIn(app = "kagua", password = PASSWORD, version = SHOP_KAGUA)
+
+        assertTrue(response.bodyAsText().contains("\"user_id\":\"$KAGUA_USER\""))
+        assertEquals(0, store.shopsMade)
+    }
+
+    @Test
+    fun `row 53 - a wrong password is refused and counted against each account tried`() =
+        testApplication {
+            val store = shopOwner()
+            val app = withAuth(store)
+
+            val response = app.signIn(app = "kagua", password = "wrong password", version = SHOP_KAGUA)
+
+            assertEquals(HttpStatusCode.Unauthorized, response.status)
+            assertTrue(response.bodyAsText().contains("invalid_credentials"))
+            assertEquals(setOf(KAGUA_USER, FUNDI_USER), store.failures.toSet())
+            assertEquals(2, store.failures.size)
+            assertEquals(0, store.shopsMade)
+        }
+
+    @Test
+    fun `row 53 - a wrong password on a Fundi Bora number is counted on the Fundi Bora account`() =
+        testApplication {
+            val store = fundiOnly()
+            val app = withAuth(store)
+
+            val response = app.signIn(app = "kagua", password = "wrong password", version = SHOP_KAGUA)
+
+            // The same answer as an unknown number.
+            assertEquals(HttpStatusCode.Unauthorized, response.status)
+            assertTrue(response.bodyAsText().contains("invalid_credentials"))
+            assertEquals(listOf(FUNDI_USER), store.failures)
+            assertEquals(0, store.shopsMade)
+        }
+
+    @Test
+    fun `row 53 - a locked Fundi Bora account is not tried, and the answer says to wait`() = testApplication {
+        val store = FakeAuthStore().apply {
+            seedAccount(SHOP_NUMBER, KAGUA_PASSWORD, audience = Audience.BUYER, userId = KAGUA_USER)
+            seedAccount(
+                SHOP_NUMBER, FUNDI_PASSWORD, audience = Audience.FUNDI, userId = FUNDI_USER,
+                lockedUntil = Instant.now().plusSeconds(600),
+            )
+        }
+        val app = withAuth(store)
+
+        val response = app.signIn(app = "kagua", password = FUNDI_PASSWORD, version = SHOP_KAGUA)
+
+        // The locked account's own password may have been typed: "wait", not "wrong password".
+        assertEquals(HttpStatusCode.TooManyRequests, response.status)
+        // Tried on the Kagua account only, and counted there.
+        assertEquals(listOf(KAGUA_USER), store.failures)
+        assertEquals(0, store.shopsMade)
+    }
+
+    @Test
+    fun `row 53 - a locked Kagua account says to wait and never opens the shop by mistake`() = testApplication {
+        val store = FakeAuthStore().apply {
+            seedAccount(
+                SHOP_NUMBER, KAGUA_PASSWORD, audience = Audience.BUYER, userId = KAGUA_USER,
+                lockedUntil = Instant.now().plusSeconds(600),
+            )
+            seedAccount(SHOP_NUMBER, FUNDI_PASSWORD, audience = Audience.FUNDI, userId = FUNDI_USER)
+        }
+        val app = withAuth(store)
+
+        val response = app.signIn(app = "kagua", password = KAGUA_PASSWORD, version = SHOP_KAGUA)
+
+        assertEquals(HttpStatusCode.TooManyRequests, response.status)
+        assertEquals(listOf(FUNDI_USER), store.failures)
+        assertEquals(0, store.shopsMade)
+    }
+
+    @Test
+    fun `row 53 - a failed Kagua password counts even when the Fundi Bora password opens the shop`() =
+        testApplication {
+            // Otherwise somebody who knows the Fundi Bora password could guess the Kagua password
+            // without limit, reading each answer from which account the tokens are for.
+            val store = shopOwner()
+            val app = withAuth(store)
+
+            val response = app.signIn(app = "kagua", password = FUNDI_PASSWORD, version = SHOP_KAGUA)
+
+            assertTrue(response.bodyAsText().contains("\"user_id\":\"$FUNDI_SHOP\""))
+            assertEquals(listOf(KAGUA_USER), store.failures)
+            assertEquals(listOf(FUNDI_USER), store.cleared)
+        }
+
+    @Test
+    fun `row 53 - a number whose accounts are all locked is told to wait`() = testApplication {
+        val store = FakeAuthStore().apply {
+            seedAccount(
+                SHOP_NUMBER, FUNDI_PASSWORD, audience = Audience.FUNDI, userId = FUNDI_USER,
+                lockedUntil = Instant.now().plusSeconds(600),
+            )
+        }
+        val app = withAuth(store)
+
+        val response = app.signIn(app = "kagua", password = FUNDI_PASSWORD, version = SHOP_KAGUA)
+
+        assertEquals(HttpStatusCode.TooManyRequests, response.status)
+        assertTrue(store.failures.isEmpty())
+        assertEquals(0, store.shopsMade)
+    }
+
+    @Test
+    fun `row 53 - an unknown number answers as a wrong password does`() = testApplication {
+        val store = FakeAuthStore()
+        val app = withAuth(store)
+
+        val response = app.signIn(app = "kagua", password = FUNDI_PASSWORD, version = SHOP_KAGUA)
+
+        assertEquals(HttpStatusCode.Unauthorized, response.status)
+        assertTrue(response.bodyAsText().contains("invalid_credentials"))
+    }
+
+    @Test
+    fun `row 53 - a disabled shop account is refused and nothing is counted`() = testApplication {
+        val store = fundiOnly().apply { shopDisabled = true }
+        val app = withAuth(store)
+
+        val response = app.signIn(app = "kagua", password = FUNDI_PASSWORD, version = SHOP_KAGUA)
+
+        assertEquals(HttpStatusCode.Unauthorized, response.status)
+        assertTrue(response.bodyAsText().contains("invalid_credentials"))
+        assertTrue(!response.bodyAsText().contains("access_token"))
+        assertTrue(store.failures.isEmpty())
+    }
+
+    @Test
+    fun `row 53 - an older Kagua build is refused as before`() = testApplication {
+        val store = fundiOnly()
+        val app = withAuth(store)
+
+        listOf("7", null).forEach { version ->
+            val response = app.signIn(app = "kagua", password = FUNDI_PASSWORD, version = version)
+            assertEquals("Kagua at versionCode $version", HttpStatusCode.Unauthorized, response.status)
+            assertTrue(response.bodyAsText().contains("invalid_credentials"))
+        }
+        assertEquals(0, store.shopsMade)
+        assertTrue(store.cleared.isEmpty())
+    }
+
+    @Test
+    fun `row 53 - a replayed Fundi Bora refresh token signs the shop's tablets out too`() = testApplication {
+        val store = fundiOnly()
+        val app = withAuth(store)
+        app.signIn(app = "kagua", password = FUNDI_PASSWORD, version = SHOP_KAGUA)
+        val replayed = store.seedRefresh(FUNDI_USER, spent = true)
+
+        val response = app.post("/v1/auth/refresh") {
+            contentType(ContentType.Application.Json)
+            setBody(mapOf("refresh_token" to replayed))
+        }
+
+        assertEquals(HttpStatusCode.Unauthorized, response.status)
+        assertEquals(listOf(FUNDI_USER, FUNDI_SHOP), store.revoked)
+    }
+
+    @Test
+    fun `row 53 - Fundi Bora and PesaLog still sign in to the Fundi Bora account`() = testApplication {
+        val store = fundiOnly()
+        val app = withAuth(store)
+
+        listOf("fundi", "tracker").forEach { id ->
+            val response = app.signIn(app = id, password = FUNDI_PASSWORD, version = SHOP_KAGUA)
+            assertTrue(id, response.bodyAsText().contains("\"user_id\":\"$FUNDI_USER\""))
+        }
+        assertEquals(0, store.shopsMade)
+    }
+
     /** A shop owner with a Kagua account and a Fundi Bora account on one number. */
     private fun shopOwner() = FakeAuthStore().apply {
         seedAccount(SHOP_NUMBER, KAGUA_PASSWORD, audience = Audience.BUYER, userId = KAGUA_USER)
         seedAccount(SHOP_NUMBER, FUNDI_PASSWORD, audience = Audience.FUNDI, userId = FUNDI_USER)
     }
 
-    private suspend fun io.ktor.client.HttpClient.signIn(app: String?, password: String) =
+    /** A fundi with a Fundi Bora account and no Kagua account. */
+    private fun fundiOnly() = FakeAuthStore().apply {
+        seedAccount(SHOP_NUMBER, FUNDI_PASSWORD, audience = Audience.FUNDI, userId = FUNDI_USER)
+    }
+
+    private suspend fun io.ktor.client.HttpClient.signIn(
+        app: String?,
+        password: String,
+        version: String? = null,
+    ) =
         post("/v1/auth/sign-in") {
             contentType(ContentType.Application.Json)
             if (app != null) header(AppVersionHeaders.APP, app)
+            if (version != null) header(AppVersionHeaders.VERSION, version)
             setBody(SignInRequest(phone = SHOP_NUMBER, password = password))
         }
 
@@ -729,13 +976,36 @@ class AuthTest {
             accountsDeleted += userId
         }
 
-        override suspend fun findUser(userId: String) = UserRow(
-            id = userId,
-            displayName = "Grady",
-            accountType = "business",
-            businessName = "Nakawa Furniture",
-            disabled = userDisabled,
-        )
+        /** Each Fundi Bora account's Kagua shop account (V43, row 53), as the store makes them. */
+        private val shops = mutableMapOf<String, String>()
+        var shopsMade = 0
+            private set
+
+        /** The shop account exists but is disabled, so shopAccountFor answers null. */
+        var shopDisabled = false
+
+        override suspend fun shopAccountFor(fundiUserId: String): String? {
+            if (shopDisabled) return null
+            return shops.getOrPut(fundiUserId) {
+                shopsMade++
+                "shop-of-$fundiUserId"
+            }
+        }
+
+        override suspend fun linkedShopAccount(fundiUserId: String): String? = shops[fundiUserId]
+
+        override suspend fun findUser(userId: String): UserRow {
+            val owner = shops.entries.firstOrNull { it.value == userId }?.key
+            return UserRow(
+                id = userId,
+                displayName = "Grady",
+                accountType = "business",
+                businessName = "Nakawa Furniture",
+                disabled = userDisabled,
+                shopMode = owner != null,
+                shopOfUserId = owner,
+            )
+        }
 
         override suspend fun issueRefresh(
             userId: String,
@@ -774,6 +1044,12 @@ class AuthTest {
         const val FUNDI_USER = "fundi-account"
         const val KAGUA_PASSWORD = "the shop tablet password"
         const val FUNDI_PASSWORD = "the workshop password"
+
+        /** Row 53: the shop account the fake store makes for FUNDI_USER. */
+        const val FUNDI_SHOP = "shop-of-$FUNDI_USER"
+
+        /** Kagua v0.7.0's versionCode, the first that runs shop mode. */
+        const val SHOP_KAGUA = "8"
 
         /** Valid in every field, so a test changes only the one it is about. */
         fun valid(accountType: String = "individual") = RegisterRequest(

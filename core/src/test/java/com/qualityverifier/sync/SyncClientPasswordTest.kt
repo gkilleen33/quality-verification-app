@@ -111,4 +111,26 @@ class SyncClientPasswordTest {
         assertEquals("refresh-before", store.refresh)
         assertEquals("u", store.user)
     }
+
+    @Test
+    fun `row 53 - a Fundi Bora shop's password change is refused as one to make in Fundi Bora`() = runTest {
+        val store = RecordingStore()
+        server.enqueue(
+            MockResponse().setResponseCode(403).setBody(
+                """{"error":"password_on_fundi_bora","detail":"Change it in the Fundi Bora app."}""",
+            ),
+        )
+
+        assertEquals(PasswordOutcome.OnFundiBora, client(store).changePassword("old-password", "new-password"))
+        // Signed in as before: nothing replaced, nothing cleared.
+        assertEquals("refresh-before", store.refresh)
+        assertEquals("u", store.user)
+    }
+
+    @Test
+    fun `row 53 - any other 403 is not taken for a Fundi Bora shop`() = runTest {
+        server.enqueue(MockResponse().setResponseCode(403).setBody("""{"error":"terms_required"}"""))
+
+        assertEquals(PasswordOutcome.Unavailable, client(RecordingStore()).changePassword("old-password", "new-password"))
+    }
 }

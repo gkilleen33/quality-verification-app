@@ -413,6 +413,64 @@ class MigrationsTest {
         }
     }
 
+    /**
+     * A fundi's Kagua shop (row 53, V43) is deleted with the Fundi Bora account: the newest
+     * anonymise_user anonymises every account linked to the one it deletes, and V43's own
+     * self-test, run in the deploy rehearsal, proves it on a database.
+     */
+    @Test
+    fun `row 53 - deleting a Fundi Bora account deletes its Kagua shop account`() {
+        val latest = files.last { it.readText().contains("FUNCTION anonymise_user") }
+        val body = sqlOf(latest).substringAfter("FUNCTION anonymise_user")
+        assertTrue(
+            "${latest.name} defines anonymise_user without deleting the account's linked shop account",
+            Regex("""(?i)PERFORM anonymise_user\(u\.id\) FROM users u WHERE u\.shop_of_user_id = target AND u\.anonymised_at IS NULL;""")
+                .containsMatchIn(body),
+        )
+        val v43 = sqlOf(files.first { it.name == "V43__fundi_shop_sign_in.sql" })
+        assertTrue(
+            "V43 has no self-test that deletes a Fundi Bora account and checks its shop account",
+            v43.contains("IF NOT anonymise_user(fundi) THEN") &&
+                v43.contains("deleting the Fundi Bora account left its shop account"),
+        )
+    }
+
+    /**
+     * A linked shop account has no number and no password of its own (row 53): the CHECK holds
+     * the row's shape, and a trigger holds that the account it names is a Fundi Bora account,
+     * which a CHECK cannot read. V43's self-test proves both refuse on a database.
+     */
+    @Test
+    fun `row 53 - a linked shop account has no number and no password of its own`() {
+        val text = sqlOf(files.first { it.name == "V43__fundi_shop_sign_in.sql" })
+        assertTrue(
+            "V43's CHECK does not hold a linked row to a Kagua shop account with no number or password",
+            Regex(
+                """(?i)CHECK \( shop_of_user_id IS NULL OR \(audience = 'buyer' AND shop_mode AND phone IS NULL AND password_hash IS NULL AND shop_of_user_id <> id\) \)"""
+            ).containsMatchIn(text),
+        )
+        assertTrue(
+            "V43 has no trigger checking the linked account is a Fundi Bora account",
+            Regex("""(?i)BEFORE INSERT OR UPDATE OF shop_of_user_id ON users FOR EACH ROW EXECUTE FUNCTION users_shop_of_user_is_fundi\(\)""")
+                .containsMatchIn(text) &&
+                Regex("""(?i)f\.id = NEW\.shop_of_user_id AND f\.audience = 'fundi'""").containsMatchIn(text),
+        )
+        assertTrue(
+            "V43 does not keep one live shop account per Fundi Bora account",
+            Regex("""(?i)CREATE UNIQUE INDEX users_shop_of_user_key ON users \(shop_of_user_id\) WHERE shop_of_user_id IS NOT NULL AND deleted_at IS NULL;""")
+                .containsMatchIn(text),
+        )
+    }
+
+    /** The store makes the shop account with the statement V43's self-test runs twice (row 53). */
+    @Test
+    fun `row 53 - the store makes the shop account by the statement V43 tests`() {
+        val text = sqlOf(files.first { it.name == "V43__fundi_shop_sign_in.sql" }).lowercase()
+        val store = com.qualityverifier.server.db.PostgresAuthStore.CREATE_SHOP_ACCOUNT
+            .replace("?::uuid", "fundi").replace(Regex("""\s+"""), " ").lowercase()
+        assertTrue("V43's self-test does not run the store's statement: $store", text.contains("$store;"))
+    }
+
     @Test
     fun `versions are sequential with no gaps or repeats`() {
         // A gap usually means a file was renamed and the old version is still recorded in

@@ -604,6 +604,9 @@ class SyncClient(
                 }
                 it.code == 401 -> PasswordOutcome.WrongPassword
                 it.code == 400 -> PasswordOutcome.TooShort
+                // A Fundi Bora account's Kagua shop (server V43, row 53).
+                it.code == 403 && it.peekBody(512).string().contains("password_on_fundi_bora") ->
+                    PasswordOutcome.OnFundiBora
                 else -> PasswordOutcome.Unavailable
             }
         }
@@ -694,6 +697,8 @@ sealed interface PasswordOutcome {
     data object Changed : PasswordOutcome
     data object WrongPassword : PasswordOutcome
     data object TooShort : PasswordOutcome
+    /** A shop signed in with Fundi Bora details (row 53): its password is changed in Fundi Bora. */
+    data object OnFundiBora : PasswordOutcome
     data object Unavailable : PasswordOutcome
 }
 

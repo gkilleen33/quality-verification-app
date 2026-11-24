@@ -34,10 +34,18 @@ data class UserRow(
     val shopMode: Boolean = false,
     /**
      * The account's own number, E.164 (V21). Null for an account deleted and anonymised
-     * (V11), whose number is cleared. Read by /v1/me and by the studio route, which refuses
-     * an entry on it (row 52).
+     * (V11), whose number is cleared, and for a Fundi Bora account's Kagua shop (V43), which
+     * has none. Read by /v1/me and by the studio route, which refuses an entry on it (row 52).
      */
     val phone: String? = null,
+    /**
+     * The Fundi Bora account this Kagua shop account belongs to (V43, row 53), or null. Such an
+     * account has no number and no password of its own: the Fundi Bora account's password
+     * opens it, at sign-in and at the shop owner's password check, and only Fundi Bora changes
+     * that password. It counts as [disabled] whenever the Fundi Bora account is disabled or
+     * deleted.
+     */
+    val shopOfUserId: String? = null,
 )
 
 /** What registration was given. Validated before it reaches here. */
@@ -121,6 +129,21 @@ interface AuthStore {
      * default says "not locked", which is what a store that keeps no lockout would say.
      */
     suspend fun lockedUntil(userId: String): Instant? = null
+
+    /**
+     * The Kagua shop account linked to the Fundi Bora account [fundiUserId] (V43, row 53),
+     * made on first use. Two sign-ins at once get the same account. Null when the linked account
+     * exists but is disabled, or when [fundiUserId] is not a live Fundi Bora account. The default
+     * says "no shop account", which is what a store with no linked accounts would say.
+     */
+    suspend fun shopAccountFor(fundiUserId: String): String? = null
+
+    /**
+     * The live Kagua shop account linked to [fundiUserId] (V43), without making one: null when
+     * there is none. Read when the Fundi Bora password changes, so the shop's tablets sign out
+     * with the Fundi Bora account's other devices.
+     */
+    suspend fun linkedShopAccount(fundiUserId: String): String? = null
 
     /** The stored hash, for verifying a current password by user rather than by phone. */
     suspend fun passwordHashFor(userId: String): String?
@@ -259,12 +282,16 @@ class PostgresAuthStore(private val dataSource: DataSource) : AuthStore {
 
     override suspend fun findUser(userId: String): UserRow? = withContext(Dispatchers.IO) {
         dataSource.connection.use { connection ->
+            // A linked shop account (V43) is gone when its Fundi Bora account is: that account's
+            // password is the only way in, so a refresh or a token must not outlive it.
             connection.prepareStatement(
                 """
-                select id::text, display_name, account_type, business_name,
-                       (disabled_at is not null or deleted_at is not null) as gone,
-                       is_tester, audience, shop_mode, phone
-                from users where id = ?::uuid
+                select u.id::text, u.display_name, u.account_type, u.business_name,
+                       (u.disabled_at is not null or u.deleted_at is not null
+                        or o.disabled_at is not null or o.deleted_at is not null) as gone,
+                       u.is_tester, u.audience, u.shop_mode, u.phone, u.shop_of_user_id::text
+                from users u left join users o on o.id = u.shop_of_user_id
+                where u.id = ?::uuid
                 """.trimIndent()
             ).use { statement ->
                 statement.setString(1, userId)
@@ -280,8 +307,39 @@ class PostgresAuthStore(private val dataSource: DataSource) : AuthStore {
                             ?: Audience.BUYER,
                         shopMode = rows.getBoolean(8),
                         phone = rows.getString(9),
+                        shopOfUserId = rows.getString(10),
                     )
                 }
+            }
+        }
+    }
+
+    /**
+     * Makes the linked shop account if there is none, then reads it, in one transaction.
+     *
+     * ON CONFLICT on users_shop_of_user_key (V43), so a second sign-in racing the first waits
+     * for it and inserts nothing, then reads the row the first one made: READ COMMITTED gives
+     * each statement a fresh snapshot. The insert names its audience, as every insert into
+     * users does, and copies nothing from the Fundi Bora account: no name, number or password.
+     */
+    override suspend fun shopAccountFor(fundiUserId: String): String? = tx { connection ->
+        connection.prepareStatement(CREATE_SHOP_ACCOUNT).use { statement ->
+            statement.setString(1, fundiUserId)
+            statement.executeUpdate()
+        }
+        connection.prepareStatement(LIVE_SHOP_ACCOUNT).use { statement ->
+            statement.setString(1, fundiUserId)
+            statement.executeQuery().use { rows ->
+                if (!rows.next() || rows.getBoolean(2)) null else rows.getString(1)
+            }
+        }
+    }
+
+    override suspend fun linkedShopAccount(fundiUserId: String): String? = withContext(Dispatchers.IO) {
+        dataSource.connection.use { connection ->
+            connection.prepareStatement(LIVE_SHOP_ACCOUNT).use { statement ->
+                statement.setString(1, fundiUserId)
+                statement.executeQuery().use { rows -> if (rows.next()) rows.getString(1) else null }
             }
         }
     }
@@ -511,5 +569,20 @@ class PostgresAuthStore(private val dataSource: DataSource) : AuthStore {
          * holds the first to the name V38 creates.
          */
         val PHONE_INDEXES = listOf("users_phone_audience_key", "users_phone_key")
+
+        /**
+         * The Kagua shop account of a Fundi Bora account (V43, row 53), made only for a live
+         * Fundi Bora account and only if it has none. V43's self-test runs the same statement;
+         * MigrationsTest holds the two together.
+         */
+        const val CREATE_SHOP_ACCOUNT =
+            "insert into users (audience, shop_mode, shop_of_user_id) " +
+                "select 'buyer', true, f.id from users f " +
+                "where f.id = ?::uuid and f.audience = 'fundi' and f.deleted_at is null and f.disabled_at is null " +
+                "on conflict (shop_of_user_id) where shop_of_user_id is not null and deleted_at is null do nothing"
+
+        /** The live shop account of a Fundi Bora account, and whether it is disabled. At most one row (V43's index). */
+        private const val LIVE_SHOP_ACCOUNT =
+            "select id::text, (disabled_at is not null) from users where shop_of_user_id = ?::uuid and deleted_at is null"
     }
 }

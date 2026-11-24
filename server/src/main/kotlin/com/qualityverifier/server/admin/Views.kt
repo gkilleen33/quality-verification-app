@@ -435,7 +435,14 @@ fun HTML.usersPage(
                             // and business — that is what anonymising is. The assessments
                             // stay, which is the point: the research record outlives the
                             // profile.
-                            +(user.phone ?: "—")
+                            if (user.shopOfUserId != null) {
+                                // A Fundi Bora account's Kagua shop (V43, row 53) has no
+                                // number: it signs in with the Fundi Bora account's.
+                                +(user.shopOfPhone ?: "—")
+                                span("muted") { +" (via Fundi Bora)" }
+                            } else {
+                                +(user.phone ?: "—")
+                            }
                             if (user.deleted) span("muted") { +" (deleted)" }
                         }
                         td {
@@ -443,6 +450,13 @@ fun HTML.usersPage(
                             if (user.shopMode) {
                                 +" "
                                 span("tag") { +"shop tablet" }
+                            }
+                            user.shopOfUserId?.let { owner ->
+                                +" "
+                                a(href = "/admin/assessments?user=$owner") {
+                                    attributes["title"] = "The Fundi Bora account this shop signs in with: $owner"
+                                    +"its Fundi Bora account's assessments"
+                                }
                             }
                         }
                         td { +(user.name ?: "—") }

@@ -204,9 +204,19 @@ Not a fork. One parameter, threaded through:
   they use for Fundi Bora. `/v1/auth/sign-in` reads the `X-App-Id` header every app has sent
   since v0.4.0 and checks the password against that app's account only: Kagua's `buyer`
   account, or the `fundi` account for Fundi Bora and PesaLog. A fundi typing their number
-  into Kagua with no Kagua account is answered as an unknown number. A request that names no
-  app (an app older than v0.4.0) signs in to the number's one account, as before, and is
-  asked to update the app when the number has two.
+  into a Kagua older than v0.7.0 with no Kagua account is answered as an unknown number. A
+  request that names no app (an app older than v0.4.0) signs in to the number's one account,
+  as before, and is asked to update the app when the number has two.
+
+  **From v0.7.0 a fundi's Fundi Bora details open Kagua as a shop (row 53, V43).** Kagua from
+  `versionCode` 8 tries the password against the number's Kagua account first, then against
+  its Fundi Bora account. The Fundi Bora password signs in to a Kagua shop account linked to
+  the Fundi Bora account (`users.shop_of_user_id`), made on first use, and Kagua opens in shop
+  mode (row 12). The shop's assessments are kept on that account, apart from Fundi Bora's
+  records. It has no number and no password of its own: its password check and lockout are the
+  Fundi Bora account's, and its password is changed only in Fundi Bora. Every sign-in from such
+  a Kagua costs two password checks' work, so the time taken does not say which accounts the
+  number holds. Deleting the Fundi Bora account deletes the shop account too.
 - **The daily limit is per-audience** — **five customer allowances**, so 100 against the
   current 20. A fundi works through everything that came off the bench that morning and
   re-assesses yesterday's pieces after repairing them; the assess / repair / re-assess
