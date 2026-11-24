@@ -2137,7 +2137,7 @@ private class AccountStore(
     ) = "unused"
     override suspend fun findRefresh(token: String) = null
     override suspend fun revokeChain(userId: String) = 0
-    override suspend fun credentialsForPhone(phone: String) = null
+    override suspend fun credentialsForPhone(phone: String) = emptyList<com.qualityverifier.server.db.Credentials>()
     override suspend fun recordFailedSignIn(userId: String, lockFor: java.time.Duration, threshold: Int) = 0
     override suspend fun clearFailedSignIns(userId: String) = Unit
     override suspend fun passwordHashFor(userId: String): String? = null

@@ -414,12 +414,14 @@ class PostgresFundiStore(private val dataSource: DataSource) : FundiStore {
                    (extract(epoch from w.archived_at) * 1000)::bigint,
                    w.phone, w.employment,
                    -- Linked when the match (worker_links, V31) holds a pair for this
-                   -- roster's account and the account the entry's number belongs to. By
+                   -- roster's account and the Fundi Bora account the entry's number
+                   -- belongs to (a Kagua account on the same number never is, V38). By
                    -- the pair rather than the entry id, so a second entry for one number
                    -- reads as linked too.
                    (w.archived_at is null and w.phone is not null and exists (
                        select 1 from worker_links l join users u on u.id = l.worker_user_id
                         where l.studio_user_id = w.user_id and u.phone = w.phone
+                          and u.audience = 'fundi'
                    ))
             from workers w where w.user_id = ?::uuid order by w.created_at, w.id
             """.trimIndent()
@@ -453,11 +455,13 @@ class PostgresFundiStore(private val dataSource: DataSource) : FundiStore {
                    (extract(epoch from ws.created_at) * 1000)::bigint,
                    (extract(epoch from ws.updated_at) * 1000)::bigint,
                    (extract(epoch from ws.archived_at) * 1000)::bigint,
-                   -- Linked when the match holds a pair for this account and the account
-                   -- the entry's number belongs to: the studio's roster names us too.
+                   -- Linked when the match holds a pair for this account and the Fundi
+                   -- Bora account the entry's number belongs to: the studio's roster names
+                   -- us too. A Kagua account on the same number never is (V38).
                    (ws.archived_at is null and ws.phone is not null and exists (
                        select 1 from worker_links l join users s on s.id = l.studio_user_id
                         where l.worker_user_id = ws.user_id and s.phone = ws.phone
+                          and s.audience = 'fundi'
                    ))
             from worker_studios ws where ws.user_id = ?::uuid order by ws.created_at, ws.id
             """.trimIndent()

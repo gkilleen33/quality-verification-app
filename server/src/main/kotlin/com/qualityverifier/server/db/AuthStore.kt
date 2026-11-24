@@ -52,9 +52,9 @@ sealed interface RegisterOutcome {
     data class Created(val userId: String) : RegisterOutcome
     /** Unknown, revoked, or already redeemed — one answer for all three, on purpose. */
     data object InviteUnusable : RegisterOutcome
-    /** That phone already has an account. Distinct from an unusable invite: the caller
-     *  needs to know to sign in instead, and it reveals nothing an attacker could not
-     *  learn by trying to sign in. */
+    /** That phone already has an account for the invite's app (V38: one per number per
+     *  app). Distinct from an unusable invite: the caller needs to know to sign in instead,
+     *  and it reveals nothing an attacker could not learn by trying to sign in. */
     data object PhoneTaken : RegisterOutcome
 }
 
@@ -65,6 +65,12 @@ data class Credentials(
     val lockedUntil: Instant?,
     val failedAttempts: Int,
     val disabled: Boolean,
+    /**
+     * Which app the account is for. A number may hold one account of each (V38), and
+     * sign-in uses this to pick the one the signing-in app is for. No default, as audience is
+     * never defaulted: a store that forgot to read it would sign everyone in to Kagua.
+     */
+    val audience: Audience,
 )
 
 data class StoredRefresh(
@@ -95,7 +101,11 @@ interface AuthStore {
     ): String
     suspend fun findRefresh(token: String): StoredRefresh?
     suspend fun revokeChain(userId: String): Int
-    suspend fun credentialsForPhone(phone: String): Credentials?
+    /**
+     * Every account on [phone]: none, one, or one per app (V38). The sign-in route chooses
+     * among them by the app that is signing in; nothing here picks one.
+     */
+    suspend fun credentialsForPhone(phone: String): List<Credentials>
     suspend fun recordFailedSignIn(userId: String, lockFor: java.time.Duration, threshold: Int): Int
     suspend fun clearFailedSignIns(userId: String)
 
@@ -210,12 +220,12 @@ class PostgresAuthStore(private val dataSource: DataSource) : AuthStore {
             }
         } catch (e: SQLException) {
             // 23505 = unique violation, and there are now two indexes it could be: the
-            // invite was already redeemed, or that phone already has an account. The
-            // constraint name is the only way to tell, and telling matters — one means
-            // "ask us for a code", the other means "sign in instead".
+            // invite was already redeemed, or that phone already has an account for the
+            // invite's app. The constraint name is the only way to tell, and telling
+            // matters — one means "ask us for a code", the other means "sign in instead".
             when {
                 e.sqlState != "23505" -> throw e
-                e.message?.contains("users_phone_key") == true -> RegisterOutcome.PhoneTaken
+                PHONE_INDEXES.any { e.message?.contains(it) == true } -> RegisterOutcome.PhoneTaken
                 else -> RegisterOutcome.InviteUnusable
             }
         }
@@ -312,25 +322,34 @@ class PostgresAuthStore(private val dataSource: DataSource) : AuthStore {
         }
     }
 
-    override suspend fun credentialsForPhone(phone: String): Credentials? =
+    override suspend fun credentialsForPhone(phone: String): List<Credentials> =
         withContext(Dispatchers.IO) {
             dataSource.connection.use { connection ->
+                // Every account on the number, at most one per audience
+                // (users_phone_audience_key, V38). Ordered so the list is the same on
+                // every read.
                 connection.prepareStatement(
                     """
                     select id::text, password_hash, locked_until, failed_sign_ins,
-                           (disabled_at is not null or deleted_at is not null)
+                           (disabled_at is not null or deleted_at is not null), audience
                     from users where phone = ?
+                    order by audience
                     """.trimIndent()
                 ).use { statement ->
                     statement.setString(1, phone)
                     statement.executeQuery().use { rows ->
-                        if (!rows.next()) null else Credentials(
+                        val out = mutableListOf<Credentials>()
+                        while (rows.next()) out += Credentials(
                             userId = rows.getString(1),
                             passwordHash = rows.getString(2),
                             lockedUntil = rows.getTimestamp(3)?.toInstant(),
                             failedAttempts = rows.getInt(4),
                             disabled = rows.getBoolean(5),
+                            // The CHECK on the column (V16) holds it to the two ids.
+                            audience = Audience.fromId(rows.getString(6).orEmpty())
+                                ?: Audience.BUYER,
                         )
+                        out
                     }
                 }
             }
@@ -451,5 +470,15 @@ class PostgresAuthStore(private val dataSource: DataSource) : AuthStore {
          */
         const val REDEEMABLE_INVITE =
             "select grants_tester, audience from invite_codes where code = ? and revoked_at is null for share"
+
+        /**
+         * The unique index that refuses a second account on one number for one app, by name,
+         * since a unique violation says only which index it hit. V38 replaced V5's
+         * users_phone_key (one per number) with users_phone_audience_key (one per number per
+         * app). Both are named so the jar installed straight after the migration, and a
+         * database the migration has not yet reached, answer phone_taken alike. MigrationsTest
+         * holds the first to the name V38 creates.
+         */
+        val PHONE_INDEXES = listOf("users_phone_audience_key", "users_phone_key")
     }
 }

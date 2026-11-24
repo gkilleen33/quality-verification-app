@@ -42,7 +42,7 @@ milliseconds throughout.
 
 | Endpoint | Returns |
 |---|---|
-| `GET /users` | accounts, with phone, name, business, latitude/longitude and accuracy |
+| `GET /users` | accounts, with phone, `audience`, name, business, latitude/longitude and accuracy. From V38 one number may be on two accounts, one per app (see below) |
 | `GET /assessments` | assessments, newest last, each with the `app_version_code` that started it, its `purpose`, `language`, `piece_id`, `prompt_sha`, `assessed_as` and `final` (V34). Filters: `user`, `item`, `testers=1`, `updated_since` |
 | `GET /assessments/{id}` | one assessment with its messages, photo hashes in order, each photo's camera metadata, its `problems`, the evaluator's critique if there is one, and its `tools` (V35, see below) |
 | `GET /tester-feedback` | every evaluator critique, keyed on `session_id` |
@@ -291,6 +291,13 @@ question entirely.
 The assessment's `audience` is the session's own rather than its account's. They cannot
 differ today — an account keeps one audience for life — but the assessment is the record,
 and reading it from the record beats joining to a profile to find out.
+
+From v0.7.0 (V38) **one phone number may appear on two users**: one Kagua account
+(`audience` = `buyer`) and one Fundi Bora account (`fundi`), never two of the same app. A shop
+owner who uses Fundi Bora registers Kagua on the shop's tablet with the same number. The two
+are separate accounts with separate ids, passwords and histories, so key on `id`, never on
+`phone`, and read `audience` beside the number. A roster's or a studio list's number (`GET
+/workers`, `/worker-links`) links only to the Fundi Bora account on that number.
 
 **Evaluator runs are in here.** `by_tester` marks an assessment done by one of our own
 evaluators rather than a customer. Including them in a pilot finding overstates how well the

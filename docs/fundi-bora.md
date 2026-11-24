@@ -199,11 +199,14 @@ Not a fork. One parameter, threaded through:
   account's today. It is kept because the session is the research record, and what an
   assessment was conducted as is a property of the assessment.
 
-  **Cross-app sign-in still succeeds**, because `/v1/auth/sign-in` does not ask which app
-  is asking. It no longer matters for the prompt: whichever app you sign in to, the only
-  assessment endpoint your account may use is its own. What it still costs is a confusing
-  session — a fundi signed into Kagua can read their reports and start nothing. Refusing
-  it outright belongs with the producer app's auth screen.
+  **Cross-app sign-in is refused from v0.7.0 (V38).** One number may hold one Kagua and one
+  Fundi Bora account, so a shop owner can register Kagua on a shop tablet with the number
+  they use for Fundi Bora. `/v1/auth/sign-in` reads the `X-App-Id` header every app has sent
+  since v0.4.0 and checks the password against that app's account only: Kagua's `buyer`
+  account, or the `fundi` account for Fundi Bora and PesaLog. A fundi typing their number
+  into Kagua with no Kagua account is answered as an unknown number. A request that names no
+  app (an app older than v0.4.0) signs in to the number's one account, as before, and is
+  asked to update the app when the number has two.
 - **The daily limit is per-audience** — **five customer allowances**, so 100 against the
   current 20. A fundi works through everything that came off the bench that morning and
   re-assesses yesterday's pieces after repairing them; the assess / repair / re-assess
@@ -384,8 +387,7 @@ Worth revisiting — it is a product decision, not a technical one, and the mock
   more than the buyer's app does, not less.
 - Certification is "3 of 10" in the mockup, with no definition of what qualifies. That is a
   research decision and it determines what `fundi_observations` has to record.
-- Cross-app sign-in still succeeds. It no longer affects which prompt anybody gets — see
-  the audience section — but it leaves a fundi able to sign into Kagua and find nothing
-  they can do.
+- ~~Cross-app sign-in still succeeds.~~ Refused from v0.7.0 (V38): each app signs in to its
+  own account on the number. See the audience section.
 - ~~The daily limit is not per-audience.~~ Settled 28 September 2026: five customer
   allowances. See the audience section.

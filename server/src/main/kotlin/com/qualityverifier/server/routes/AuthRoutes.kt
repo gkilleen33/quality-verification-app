@@ -1,15 +1,19 @@
 package com.qualityverifier.server.routes
 
+import com.qualityverifier.domain.AppId
+import com.qualityverifier.domain.AppVersionHeaders
 import com.qualityverifier.domain.Audience
 import com.qualityverifier.server.Terms
 import com.qualityverifier.server.auth.AccessTokens
 import com.qualityverifier.server.auth.Passwords
 import com.qualityverifier.server.auth.Tokens
 import com.qualityverifier.server.db.AuthStore
+import com.qualityverifier.server.db.Credentials
 import com.qualityverifier.server.db.RegisterOutcome
 import com.qualityverifier.server.db.Registration
 import com.qualityverifier.server.terms.ConsentKind
 import io.ktor.http.HttpStatusCode
+import io.ktor.server.application.ApplicationCall
 import io.ktor.server.auth.authenticate
 import io.ktor.server.auth.jwt.JWTPrincipal
 import io.ktor.server.auth.principal
@@ -103,7 +107,27 @@ fun Route.authRoutes(store: AuthStore, accessTokens: AccessTokens, terms: Terms?
                 return@post
             }
 
-            val credentials = store.credentialsForPhone(request.phone)
+            // One number may hold a Kagua and a Fundi Bora account (V38). The app that is
+            // signing in chooses which one the password is checked against, by the X-App-Id
+            // header every request from v0.4.0 on carries; it never creates an account or
+            // chooses a prompt, which stays the invite code's (V16).
+            val accounts = store.credentialsForPhone(request.phone)
+            val audience = signInAudience(call.request.headers[AppVersionHeaders.APP])
+            val credentials = when {
+                audience != null -> accounts.firstOrNull { it.audience == audience }
+                // A phone that does not say which app it is, as before V38: the number's
+                // one account, whichever app it is for.
+                // It costs two password checks whatever the number holds, as the two-account
+                // case below does, so the time taken never says whether there are two.
+                accounts.size <= 1 -> {
+                    Passwords.burnEquivalentWork(request.password)
+                    accounts.firstOrNull()
+                }
+                else -> {
+                    call.refuseUnnamedAppWithTwoAccounts(store, accounts, request.password)
+                    return@post
+                }
+            }
 
             // No account for that number: burn the same work a real verification costs
             // before answering. Otherwise "no such account" returns in microseconds and a
@@ -217,6 +241,62 @@ fun Route.authRoutes(store: AuthStore, accessTokens: AccessTokens, terms: Terms?
             )
         }
     }
+}
+
+/**
+ * Which account an app signs in to (V38): Kagua's buyer account, and the Fundi Bora account
+ * for Fundi Bora and for PesaLog, which signs in with it (V33). Null for a request that does
+ * not name a known app, which is how a phone older than v0.4.0 signs in.
+ */
+internal fun signInAudience(appHeader: String?): Audience? = when (AppId.fromId(appHeader)) {
+    AppId.KAGUA -> Audience.BUYER
+    AppId.FUNDI, AppId.TRACKER -> Audience.FUNDI
+    null -> null
+}
+
+/**
+ * Shown by a phone that does not name its app when its number holds two accounts. Sent as the
+ * detail of `invalid_request`, because every release from v0.1.0 shows that detail as it is
+ * (AuthClient.messageFor), and a phone this old knows no newer code.
+ */
+internal const val UPDATE_TO_SIGN_IN =
+    "This number has a Kagua account and a Fundi Bora account. Update the app to sign in."
+
+/**
+ * A sign-in that does not name its app, for a number with a Kagua and a Fundi Bora account.
+ *
+ * Neither account is chosen: a guess would sign somebody in to the other app's account. The
+ * password is checked first, and the work is padded to two checks on every unnamed sign-in, so
+ * only somebody who knows one of the two passwords learns that the number holds two accounts. A wrong password is answered and counted as on any account,
+ * against each account it was tried on, and a locked account is not tried at all, as the
+ * single-account path does.
+ */
+private suspend fun ApplicationCall.refuseUnnamedAppWithTwoAccounts(
+    store: AuthStore,
+    accounts: List<Credentials>,
+    password: String,
+) {
+    val now = Instant.now()
+    val usable = accounts.filter { !it.disabled && it.passwordHash != null }
+    val unlocked = usable.filter { it.lockedUntil?.isAfter(now) != true }
+    if (usable.isNotEmpty() && unlocked.isEmpty()) {
+        respond(
+            HttpStatusCode.TooManyRequests,
+            ErrorResponse("locked", "Too many attempts. Try again later."),
+        )
+        return
+    }
+    // Exactly two password checks' work, every account tried with no short cut, so a number
+    // with two accounts takes as long as one with a single account (see the caller).
+    val matched = unlocked.map { Passwords.verify(password, it.passwordHash!!) }.any { it }
+    repeat(2 - unlocked.size) { Passwords.burnEquivalentWork(password) }
+    if (matched) {
+        log.info("Sign-in with no app named for a number with two accounts; asked to update")
+        respond(HttpStatusCode.BadRequest, ErrorResponse("invalid_request", UPDATE_TO_SIGN_IN))
+        return
+    }
+    unlocked.forEach { store.recordFailedSignIn(it.userId, LOCKOUT, LOCKOUT_THRESHOLD) }
+    respond(HttpStatusCode.Unauthorized, ErrorResponse("invalid_credentials"))
 }
 
 /**
