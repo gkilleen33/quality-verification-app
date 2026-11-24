@@ -966,13 +966,106 @@ class ChatRouteTest {
 
         app.post("/v1/fundi/chat") { auth(); contentType(ContentType.Application.Json); setBody(request()) }
 
-        // The six answers for the first two of three improvements, written in the background.
+        // The eight answers (four buttons, row 49) for the first two of three improvements,
+        // written in the background.
         val deadline = System.currentTimeMillis() + 5_000
-        while (details.saved.size < 6 && System.currentTimeMillis() < deadline) Thread.sleep(20)
-        assertEquals(6, details.saved.size)
+        while (details.saved.size < 8 && System.currentTimeMillis() < deadline) Thread.sleep(20)
+        assertEquals(8, details.saved.size)
         assertEquals(setOf("Gap at the back joint", "Saw marks on the top"), details.saved.map { it.findingTitle }.toSet())
+        assertEquals(2, details.saved.count { it.kind == com.qualityverifier.text.DetailKind.TOOL })
         assertEquals("the turn alone reached the allowance check", 1, store.ensuredSessions)
-        assertEquals(6, store.usageAudiences.count { it.first == "detail_prefetch" && it.second == Audience.FUNDI })
+        assertEquals(8, store.usageAudiences.count { it.first == "detail_prefetch" && it.second == Audience.FUNDI })
+    }
+
+    // ---- Row 43: a question from an improvement's page carries the improvement.
+
+    /** A session whose newest reply is the one-list diagnosis, so improvement 2 is the saw marks. */
+    private fun afterDiagnosis() = listOf(
+        ChatMessage("u1", Role.USER, "Evaluate this table."),
+        ChatMessage("a1", Role.ASSISTANT, oneListShape),
+    )
+
+    private fun pageQuestion(improvement: Int?, text: String = "Can I use a scraper instead?") = ChatRequest(
+        sessionId = UUID.randomUUID().toString(), itemTypeId = "wooden-table", messageId = UUID.randomUUID().toString(),
+        text = text, improvement = improvement,
+    )
+
+    @Test
+    fun `row 43 - a page question is stored naming its improvement by the server's own title`() = testApplication {
+        val store = FakeChatStore(storedHistory = afterDiagnosis())
+        val claude = FakeClaude(ClaudeResult.Success("Yes, a card scraper does it.", TokenUsage(), null))
+        val app = withChat(store, claude, accountAudience = Audience.FUNDI)
+
+        val response = app.post("/v1/fundi/chat") {
+            auth(); contentType(ContentType.Application.Json); setBody(pageQuestion(2))
+        }
+
+        assertEquals(HttpStatusCode.OK, response.status)
+        assertEquals("About improvement 2, 'Saw marks on the top': Can I use a scraper instead?", store.lastTurnText)
+        assertEquals("typed, so not composed", false, store.sawComposed)
+        assertEquals(1, claude.calls)
+    }
+
+    @Test
+    fun `row 43 - a page question for an improvement the newest diagnosis lacks is refused before Claude`() = testApplication {
+        val store = FakeChatStore(storedHistory = afterDiagnosis())
+        val claude = FakeClaude(ClaudeResult.Success("unused", TokenUsage(), null))
+        val app = withChat(store, claude, accountAudience = Audience.FUNDI)
+
+        val outOfRange = app.post("/v1/fundi/chat") {
+            auth(); contentType(ContentType.Application.Json); setBody(pageQuestion(3))
+        }
+        assertEquals(HttpStatusCode.BadRequest, outOfRange.status)
+        assertTrue(outOfRange.bodyAsText().contains("invalid_request"))
+        assertEquals(0, claude.calls)
+        assertNull("nothing stored", store.lastTurnText)
+    }
+
+    @Test
+    fun `row 43 - a page question in a session with no diagnosis is refused before Claude`() = testApplication {
+        val store = FakeChatStore()
+        val claude = FakeClaude(ClaudeResult.Success("unused", TokenUsage(), null))
+        val app = withChat(store, claude, accountAudience = Audience.FUNDI)
+        val response = app.post("/v1/fundi/chat") {
+            auth(); contentType(ContentType.Application.Json); setBody(pageQuestion(1))
+        }
+        assertEquals(HttpStatusCode.BadRequest, response.status)
+        assertEquals(0, claude.calls)
+        assertNull(store.lastTurnText)
+    }
+
+    @Test
+    fun `row 43 - an improvement number is refused on Kagua's endpoint`() = testApplication {
+        val claude = FakeClaude(ClaudeResult.Success("unused", TokenUsage(), null))
+        val kagua = withChat(FakeChatStore(storedHistory = afterDiagnosis()), claude)
+        assertEquals(
+            HttpStatusCode.BadRequest,
+            kagua.post("/v1/chat") { auth(); contentType(ContentType.Application.Json); setBody(pageQuestion(1)) }.status,
+        )
+        assertEquals(0, claude.calls)
+    }
+
+    @Test
+    fun `row 43 - an improvement number below 1, or with no words, is refused`() = testApplication {
+        val claude = FakeClaude(ClaudeResult.Success("unused", TokenUsage(), null))
+        val fundi = withChat(FakeChatStore(storedHistory = afterDiagnosis()), claude, accountAudience = Audience.FUNDI)
+        assertEquals(
+            HttpStatusCode.BadRequest,
+            fundi.post("/v1/fundi/chat") { auth(); contentType(ContentType.Application.Json); setBody(pageQuestion(0)) }.status,
+        )
+        assertEquals(
+            HttpStatusCode.BadRequest,
+            fundi.post("/v1/fundi/chat") { auth(); contentType(ContentType.Application.Json); setBody(pageQuestion(1, text = "  ")) }.status,
+        )
+        assertEquals(0, claude.calls)
+    }
+
+    @Test
+    fun `row 43 - an ordinary turn is stored as typed`() = testApplication {
+        val store = FakeChatStore(storedHistory = afterDiagnosis())
+        val app = withChat(store, FakeClaude(ClaudeResult.Success("Sand it.", TokenUsage(), null)), accountAudience = Audience.FUNDI)
+        app.post("/v1/fundi/chat") { auth(); contentType(ContentType.Application.Json); setBody(pageQuestion(null)) }
+        assertEquals("Can I use a scraper instead?", store.lastTurnText)
     }
 
     @Test
@@ -1944,6 +2037,9 @@ class ChatRouteTest {
             private set
 
         private var lastTurn: Pair<ChatMessage, List<String>>? = null
+
+        /** The text of the last user turn the route stored, or null for none (row 43). */
+        val lastTurnText: String? get() = lastTurn?.first?.text
 
         override suspend fun replyAfter(sessionId: String, userMessageId: String) = storedReply
 

@@ -93,6 +93,16 @@ data class ChatRequest(
      * selects id, message_id, sha256 and mime_type from `attachments`, and nothing else.
      */
     @SerialName("photo_meta") val photoMeta: JsonElement? = null,
+    /**
+     * A question asked on one improvement's page (v0.7.0, release scope row 43): the
+     * improvement's place in the session's newest diagnosis, from 1, with [text] the maker's
+     * own words. The server stores the turn as
+     * [com.qualityverifier.text.ImprovementQuestion.text], naming the improvement by the title
+     * in its own copy of that diagnosis. Fundi Bora's only; absent from every other turn and
+     * from every app before v0.7.0. A v0.6.1 server refuses the key, as it refuses any it does
+     * not know, so the server deploys before the APK that sends it.
+     */
+    val improvement: Int? = null,
 ) {
     /**
      * The checked metadata for each photo in [blobs], by lowercase hash, and the keys that

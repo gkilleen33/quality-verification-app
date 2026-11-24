@@ -291,6 +291,72 @@ class DefaultPromptsInSyncTest {
         assertFalse("general praise is back in the verdict example", fundi.contains("Good work overall"))
     }
 
+    // Row 42 (Nathan, 20 and 23 November 2026): the phone shows two lines of a photo instruction
+    // before "Tap to read it all" (row 39), so where to stand and what is in the frame come first.
+    @Test
+    fun `row 42 - the prompt carries the photo-instruction rule and its examples`() {
+        val fundi = DefaultPrompts.FUNDI_MASTER
+        assertTrue(
+            "the 20-word rule is gone",
+            fundi.contains(
+                "Each photo instruction is at most 20 words, with where to stand and what must be in the frame " +
+                    "in the first 12, since the phone shows two lines before \"Tap to read it all\".",
+            ),
+        )
+        assertTrue(
+            "the do-it-first rule is gone",
+            fundi.contains("If something must be done first (scratch, press, wipe), say it in the first sentence, then what to photograph."),
+        )
+        val joint = "Fill the frame with the joint between the back rail and left leg. Hold the phone level with it."
+        val scratch = "Scratch the seat's underside with a fingernail. Then photograph the scratch, close up."
+        assertTrue(fundi.contains(joint))
+        assertTrue(fundi.contains(scratch))
+        // The plan block's own example follows the rule, since the model copies its shape.
+        assertTrue("the plan example still carries the long instruction", fundi.contains("\"instruction\": \"$joint\""))
+        assertFalse(fundi.contains("Get close enough that the joint where the back rail goes into the left leg"))
+        listOf(joint, scratch).forEach { assertTrue("$it is over 20 words", it.split(' ').size <= 20) }
+        // The phone's own words, so the rule names what the maker sees.
+        assertTrue(File(repoRoot, "capture/src/main/java/com/qualityverifier/ui/capture/CaptureScreen.kt").readText().contains("\"Tap to read it all\""))
+    }
+
+    // Row 43 (Nathan, 23 November 2026): each improvement has a short line for its row, and a
+    // page whose questions arrive named; a piece in progress is written about as finished.
+    @Test
+    fun `row 43 - the prompt writes row_line, answers a page question about its improvement only, and keeps the opening's rule`() {
+        val fundi = DefaultPrompts.FUNDI_MASTER
+        assertTrue(
+            fundi.contains(
+                "- row_line: one sentence, at most 15 words, cut from the finding's customer_line: " +
+                    "the defect as the customer sees it, and what they do.",
+            ),
+        )
+        assertTrue(fundi.contains("A rail that flexes makes customers think the sofa is weak, and offer less."))
+        assertTrue("the diagnosis example has no row_line", fundi.contains("\"row_line\""))
+        assertTrue(fundi.contains("title, fix_line, customer_line, row_line: as \"What the maker reads first\" says. Every finding has all four."))
+        // The protocol the phone and the server write, word for word.
+        val example = com.qualityverifier.text.ImprovementQuestion.of(3, "<title>", "").text.trimEnd()
+        assertEquals("About improvement 3, '<title>':", example)
+        assertTrue(fundi.contains("reaches you as \"About improvement N, '<title>': \" followed by the maker's own words"))
+        assertTrue(
+            fundi.contains(
+                "When the maker's message starts \"About improvement N\", answer about that improvement only. " +
+                    "If the question is about another part of the piece, say so in one sentence, then answer briefly.",
+            ),
+        )
+        assertTrue(
+            "customer_line no longer writes about the finished piece",
+            fundi.contains(
+                "On a piece still being made, write about the finished piece the customer will buy: what this defect " +
+                    "becomes once the piece is done, and what it makes them think. A defect the finishing will hide, such as " +
+                    "a crooked slat under the foam, reaches the customer only after use.",
+            ),
+        )
+        // Prompt E's opening is unchanged: no list or count of the improvements.
+        assertTrue(fundi.contains("no list or count of the improvements"))
+        // Every prompt E field stays, so a v0.6.1 phone still draws its card and three buttons.
+        listOf("\"fix_line\"", "\"customer_line\"", "\"tool_line\"").forEach { assertTrue(fundi.contains(it)) }
+    }
+
     // tool_line may only name a tool the maker has. The opening message lists those under
     // the headings FundiLabels writes, so the tool_line rule has to use the same words. A
     // rental goes out marked "(borrowed)" since V35, and a borrowed tool did before it; the

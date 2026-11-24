@@ -7,6 +7,7 @@ import com.qualityverifier.domain.ChatMessage
 import com.qualityverifier.domain.ItemType
 import com.qualityverifier.domain.Role
 import com.qualityverifier.domain.SessionStart
+import com.qualityverifier.text.ImprovementQuestion
 import com.qualityverifier.text.encodeIntake
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
@@ -71,6 +72,12 @@ private data class ChatBody(
     @SerialName("piece_studio_chosen") val pieceStudioChosen: Boolean? = null,
     /** The final assessment of the finished piece. Null, so not sent, for every other. */
     val final: Boolean? = null,
+    /**
+     * A question from one improvement's page (v0.7.0, row 43): the improvement's number, with
+     * [text] the maker's own words. Null, so not sent, on every other turn, as a v0.6.1 server
+     * refuses the key.
+     */
+    val improvement: Int? = null,
 )
 
 /** One slot as the server reads it: no id means the manager. */
@@ -129,6 +136,11 @@ class ServerChatService(
      */
     private val chatPath: String = "v1/chat",
     private val io: CoroutineDispatcher = Dispatchers.IO,
+    /**
+     * Whether a stored turn may be a question from an improvement's page (row 43). Fundi Bora's
+     * endpoint only, so a Kagua customer who happens to type the same words sends them as typed.
+     */
+    private val improvementPages: Boolean = chatPath.startsWith("v1/fundi"),
 ) : ChatService {
 
     override suspend fun send(
@@ -176,12 +188,17 @@ class ServerChatService(
         // Looked up rather than passed in: by the time a turn is sent the row exists,
         // and the caller would otherwise have to thread this through the seam.
         val start = runCatching { sessionStart(sessionId) }.getOrNull()
+        // A page question is stored here with its improvement named (ImprovementQuestion.text);
+        // the server is sent the number and the maker's words, and names the improvement itself
+        // from its own copy of the diagnosis. Read from the stored turn, so Retry and "Send
+        // again" send exactly what the first attempt did.
+        val asked = if (improvementPages && !turn.composed) ImprovementQuestion.parse(turn.text) else null
         val body = json.encodeToString(
             ChatBody(
                 sessionId = sessionId,
                 itemTypeId = itemType.id,
                 messageId = turn.id,
-                text = turn.text,
+                text = asked?.question ?: turn.text,
                 blobs = hashes,
                 previousSessionId = start?.previousSessionId,
                 // The column as stored rather than re-encoded from Kagua's decoded view,
@@ -200,6 +217,7 @@ class ServerChatService(
                 pieceStudioId = start?.pieceStudioId,
                 pieceStudioChosen = true.takeIf { start?.pieceStudioChosen == true },
                 final = true.takeIf { start?.isFinal == true },
+                improvement = asked?.number,
             )
         )
         // One retry, and only for the two conditions a retry can actually fix: a token

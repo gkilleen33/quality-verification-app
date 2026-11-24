@@ -38,6 +38,7 @@ import com.qualityverifier.images.UNREADABLE_PHOTO
 import com.qualityverifier.text.DetailKey
 import com.qualityverifier.text.DetailKind
 import com.qualityverifier.text.FundiLabels
+import com.qualityverifier.text.ImprovementQuestion
 import com.qualityverifier.text.detailAnswersOf
 import com.qualityverifier.text.ReportLabels
 import com.qualityverifier.text.buildFundiOpeningMessage
@@ -538,6 +539,28 @@ class AssessViewModel(
             _error.value = null
             try {
                 sessions.appendUserMessage(sessionId, text, emptyList(), composed = true)
+                deliver()
+            } finally {
+                _sending.value = false
+            }
+        }
+    }
+
+    /**
+     * A question typed on one improvement's page (v0.7.0, release scope row 43): about
+     * improvement [number] of the newest diagnosis, titled [title]. Stored with the improvement
+     * named ([ImprovementQuestion.text]), so the page finds it and the prompt answers about that
+     * improvement only; `ServerChatService` sends the number and the words, and the server
+     * names the improvement from its own copy of the same reply. Typed by the maker, so not
+     * composed.
+     */
+    fun askAboutImprovement(number: Int, title: String, question: String) {
+        if (number < 1 || title.isBlank() || question.isBlank() || _sending.value) return
+        _sending.value = true
+        viewModelScope.launch {
+            _error.value = null
+            try {
+                sessions.appendUserMessage(sessionId, ImprovementQuestion.of(number, title, question).text, emptyList())
                 deliver()
             } finally {
                 _sending.value = false

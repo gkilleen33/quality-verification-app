@@ -115,8 +115,35 @@ data class FundiLabels(
     val detailWhatWeFound: String,
     val detailCause: String,
     val detailNextTime: String,
+    /** The fourth button (row 49): a tool the maker does not have, to buy or rent. */
+    val detailTool: String,
     /** Under a button while Claude writes its answer. */
     val detailWriting: String,
+    // ---- v0.7.0: the reply as a list of improvements, and a page per improvement (row 43;
+    // mockup v2, "Daybed v2: customer value first", signed off 20 to 23 November 2026).
+    /** Above the reply's opening. The app's own heading; Claude does not write it. */
+    val replyHeading: String,
+    /** The callout above the list, holding the first improvement's customer_line. */
+    val customersNoticeFirst: String,
+    /** On a row of the list once the maker has asked about it: "1 question", "3 questions". */
+    private val oneQuestion: String,
+    private val questionsFormat: String,
+    /** What a tap on a row does, for a screen reader. */
+    val openImprovement: String,
+    /** The page's way back to the list. */
+    val allImprovements: String,
+    /** The page's place in the list: "2 of 5". */
+    private val improvementOfFormat: String,
+    /** Above the improvement's customer_line on its page. */
+    val customerThinks: String,
+    /** Above the improvement's fix_line on its page. */
+    val howToFix: String,
+    /** Above the page's own chat, about this improvement only. */
+    val askThisImprovement: String,
+    /** The reply box under the whole conversation, once the reply is a list. */
+    val askWholePiece: String,
+    val previousImprovement: String,
+    val nextImprovement: String,
     /** Before a finding's tool_line: a tool from the maker's own list that does the job faster. */
     val toolLineLabel: String,
     val oneCheckHeading: String,
@@ -345,6 +372,13 @@ data class FundiLabels(
 ) {
     fun lastSyncFailed(time: String) = lastSyncFailedFormat.replace("{time}", time)
 
+    /** "1 question" or "3 questions": what the maker has asked on an improvement's page. */
+    fun questions(n: Int) = if (n == 1) oneQuestion else questionsFormat.replace("{n}", n.toString())
+
+    /** "2 of 5": the improvement's place in the list. */
+    fun improvementOf(n: Int, total: Int) =
+        improvementOfFormat.replace("{n}", n.toString()).replace("{total}", total.toString())
+
     fun benchIsThere(tool: String) = benchIsThereFormat.replace("{tool}", tool)
 
     fun benchWhoOwns(tool: String) = benchWhoOwnsFormat.replace("{tool}", tool)
@@ -554,7 +588,21 @@ data class FundiLabels(
             detailWhatWeFound = "More on what we found",
             detailCause = "More on what's causing this",
             detailNextTime = "How to upgrade next time",
+            detailTool = "A tool to buy or rent",
             detailWriting = "Writing…",
+            replyHeading = "Here's what I see.",
+            customersNoticeFirst = "What customers will notice first",
+            oneQuestion = "1 question",
+            questionsFormat = "{n} questions",
+            openImprovement = "Open this improvement",
+            allImprovements = "All improvements",
+            improvementOfFormat = "{n} of {total}",
+            customerThinks = "What the customer thinks",
+            howToFix = "How to fix it",
+            askThisImprovement = "Ask about this improvement",
+            askWholePiece = "Ask about the whole piece",
+            previousImprovement = "Previous improvement",
+            nextImprovement = "Next improvement",
             toolLineLabel = "TOOL",
             oneCheckHeading = "ONE THING TO CHECK",
             nothingFound = "Nothing to put right on this one.",

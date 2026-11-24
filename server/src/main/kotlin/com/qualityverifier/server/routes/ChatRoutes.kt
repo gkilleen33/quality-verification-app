@@ -20,6 +20,7 @@ import com.qualityverifier.server.db.ChatStore
 import com.qualityverifier.server.db.PieceStudio
 import com.qualityverifier.server.db.SessionAccess
 import com.qualityverifier.text.AssistantContent
+import com.qualityverifier.text.ImprovementQuestion
 import com.qualityverifier.text.fundiDefectCount
 import com.qualityverifier.text.markdownToPlainText
 import com.qualityverifier.text.parseAssistantContent
@@ -223,6 +224,17 @@ private suspend fun RoutingContext.assessmentTurn(
                 call.respond(HttpStatusCode.BadRequest, ErrorResponse("invalid_hash"))
                 return
             }
+            // A page question (row 43) is Fundi Bora's, is typed, and has words to ask. Kagua's
+            // app never sends one, so one arriving there is a bug, refused like any other.
+            if (request.improvement != null &&
+                (audience != Audience.FUNDI || request.improvement < 1 || request.text.isBlank() || request.composed)
+            ) {
+                call.respond(
+                    HttpStatusCode.BadRequest,
+                    ErrorResponse("invalid_request", "improvement is a number from 1, on a typed Fundi Bora question"),
+                )
+                return
+            }
 
             // Refuse before spending anything upstream if a photo is missing. Dropping it
             // silently would produce an assessment of eight photos that reads as if it
@@ -300,10 +312,27 @@ private suspend fun RoutingContext.assessmentTurn(
                 )
             }
 
+            // A page question is stored with the improvement it is about (row 43), named by the
+            // title in this server's copy of the newest diagnosis: the prompt answers about that
+            // improvement only. A number that diagnosis does not have is refused, never guessed
+            // at; the phone numbers improvements from the same reply, so it means a bug.
+            val turnText = request.improvement?.let { number ->
+                val history = store.history(request.sessionId) { sha -> blobs.pathFor(sha).absolutePath }
+                val asked = ImprovementQuestion.about(newestDiagnosis(history), number, request.text)
+                if (asked == null) {
+                    call.respond(
+                        HttpStatusCode.BadRequest,
+                        ErrorResponse("invalid_request", "improvement $number is not in this assessment's newest diagnosis"),
+                    )
+                    return
+                }
+                asked.text
+            } ?: request.text
+
             val isNewTurn = store.appendUserTurn(
                 sessionId = request.sessionId,
                 messageId = request.messageId,
-                text = request.text,
+                text = turnText,
                 blobHashes = request.blobs,
                 composed = request.composed,
                 photoMeta = photoMeta.byHash,
@@ -532,6 +561,18 @@ private fun findingNamed(history: List<com.qualityverifier.domain.ChatMessage>, 
                 ?.takeIf { it >= 0 }
                 ?.let { message.id to it }
         }
+
+/**
+ * The diagnosis of the newest reply that sent one, or null when that reply's was clean or would
+ * not decode, or no reply sent one. The same reply the phone draws its list from, and so numbers
+ * its improvements from (`AssessScreen`'s newest diagnosis).
+ */
+private fun newestDiagnosis(history: List<com.qualityverifier.domain.ChatMessage>): com.qualityverifier.domain.Diagnosis? =
+    history.asReversed()
+        .filter { it.role == com.qualityverifier.domain.Role.ASSISTANT }
+        .map { parseAssistantContent(it.text) }
+        .firstOrNull { it.sentDiagnosis }
+        ?.diagnosis
 
 private fun sha256Of(value: String): String =
     MessageDigest.getInstance("SHA-256").digest(value.toByteArray(Charsets.UTF_8))
