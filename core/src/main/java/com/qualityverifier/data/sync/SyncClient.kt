@@ -486,8 +486,9 @@ class SyncClient(
     suspend fun isTester(): Boolean? = profileFlags()?.isTester
 
     /**
-     * The account's two flags from `/v1/me`: evaluator, and a shop's tablet (V39, row 12).
-     * Null when the server was unreachable.
+     * This account as `/v1/me` describes it: evaluator, a shop's tablet (V39, row 12), and
+     * the account's own number the studio form refuses (row 52). Null when the server was
+     * unreachable.
      */
     suspend fun profileFlags(): ProfileFlags? = withContext(io) {
         authenticated { token ->
@@ -497,7 +498,7 @@ class SyncClient(
             if (!response.isSuccessful) return@use null
             val text = response.body?.string() ?: return@use null
             runCatching {
-                json.decodeFromString<MeBody>(text).let { ProfileFlags(it.isTester, it.shopMode) }
+                json.decodeFromString<MeBody>(text).let { ProfileFlags(it.isTester, it.shopMode, it.phone) }
             }.getOrNull()
         }
     }
@@ -711,13 +712,18 @@ private data class MeBody(
     @SerialName("is_tester") val isTester: Boolean = false,
     /** Absent from a server before V39, and then false. */
     @SerialName("shop_mode") val shopMode: Boolean = false,
+    /** Absent from a server before v0.7.0. */
+    val phone: String? = null,
 )
 
 @Serializable
 private data class PasswordCheckBody(val password: String)
 
-/** The account's flags from `/v1/me` that the phone caches. */
-data class ProfileFlags(val isTester: Boolean, val shopMode: Boolean)
+/**
+ * What the phone caches of `/v1/me`: the tester and shop flags and, from a v0.7.0 server,
+ * the account's own number (row 52).
+ */
+data class ProfileFlags(val isTester: Boolean, val shopMode: Boolean, val phone: String? = null)
 
 /** What the shop tablet's password check found (row 12). */
 enum class PasswordCheck { MATCHES, WRONG, LOCKED, UNAVAILABLE }

@@ -223,10 +223,13 @@ class AuthClient(
                     // The terms answer is forgotten first, so a failed read leaves "not
                     // asked" rather than whatever the store last held.
                     store.setTermsRequired(null)
+                    // The same for the own number (row 52): never another account's.
+                    store.setOwnPhone(null)
                     fetchProfile(decoded.accessToken)?.let { profile ->
                         store.setTester(profile.isTester)
                         store.setTermsRequired(profile.termsRequired)
                         store.setShopMode(profile.shopMode)
+                        profile.phone?.let(store::setOwnPhone)
                     }
                     // Never allowed to fail the sign-in it follows.
                     runCatching { onSignedIn() }
@@ -297,4 +300,6 @@ private data class ProfileBody(
     @SerialName("terms_required") val termsRequired: Boolean = false,
     /** Absent from a server before V39, and then false: no shop accounts existed. */
     @SerialName("shop_mode") val shopMode: Boolean = false,
+    /** The account's own number (row 52). Absent from a server before v0.7.0. */
+    val phone: String? = null,
 )

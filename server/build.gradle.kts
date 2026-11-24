@@ -78,4 +78,14 @@ tasks.withType<Test>().configureEach {
     inputs.dir(layout.projectDirectory.dir("db/migrations"))
         .withPropertyName("migrations")
         .withPathSensitivity(PathSensitivity.RELATIVE)
+    // DeployAppVersionsTest runs tools/app-versions.sh against the three apps' build files,
+    // so a change to either has to re-run it.
+    inputs.dir(rootProject.layout.projectDirectory.dir("tools"))
+        .withPropertyName("tools")
+        .withPathSensitivity(PathSensitivity.RELATIVE)
+    inputs.files(
+        rootProject.layout.projectDirectory.file("app/build.gradle.kts"),
+        rootProject.layout.projectDirectory.file("fundi/build.gradle.kts"),
+        rootProject.layout.projectDirectory.file("tracker/build.gradle.kts"),
+    ).withPropertyName("appBuildFiles").withPathSensitivity(PathSensitivity.RELATIVE)
 }

@@ -80,6 +80,12 @@ data class MeResponse(
      * owner's controls. Fixed at registration by the invite code. An older build ignores it.
      */
     @SerialName("shop_mode") val shopMode: Boolean = false,
+    /**
+     * The account's own number, E.164, as stored. Fundi Bora's studio form refuses it
+     * (row 52), so the phone keeps a copy; it is the number the person signed in with, so
+     * nothing here is new to them. Older builds ignore it.
+     */
+    val phone: String? = null,
 )
 
 /** The terms an account must agree to, on `/v1/me` rather than the config route, which uses no database. */

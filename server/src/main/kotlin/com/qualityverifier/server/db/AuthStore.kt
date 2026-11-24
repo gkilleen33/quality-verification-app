@@ -32,6 +32,12 @@ data class UserRow(
      * assessments, and its phone deletes each one when the customer is done.
      */
     val shopMode: Boolean = false,
+    /**
+     * The account's own number, E.164 (V21). Null for an account deleted and anonymised
+     * (V11), whose number is cleared. Read by /v1/me and by the studio route, which refuses
+     * an entry on it (row 52).
+     */
+    val phone: String? = null,
 )
 
 /** What registration was given. Validated before it reaches here. */
@@ -257,7 +263,7 @@ class PostgresAuthStore(private val dataSource: DataSource) : AuthStore {
                 """
                 select id::text, display_name, account_type, business_name,
                        (disabled_at is not null or deleted_at is not null) as gone,
-                       is_tester, audience, shop_mode
+                       is_tester, audience, shop_mode, phone
                 from users where id = ?::uuid
                 """.trimIndent()
             ).use { statement ->
@@ -273,6 +279,7 @@ class PostgresAuthStore(private val dataSource: DataSource) : AuthStore {
                         audience = Audience.fromId(rows.getString(7).orEmpty())
                             ?: Audience.BUYER,
                         shopMode = rows.getBoolean(8),
+                        phone = rows.getString(9),
                     )
                 }
             }
