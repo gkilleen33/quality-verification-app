@@ -38,6 +38,12 @@ interface PromptRepository {
      */
     suspend fun benchPrompt(): String = DefaultPrompts.FUNDI_BENCH
 
+    /**
+     * Fundi Bora's English and Kiswahili switch (`prompts/fundi-translate.txt`, v0.7.0, row
+     * 29): translates one reply. A default for the test doubles, as [benchPrompt] has.
+     */
+    suspend fun translationPrompt(): String = DefaultPrompts.FUNDI_TRANSLATE
+
     /** Drop cached copies so the next read re-fetches. */
     suspend fun clearCache()
 }

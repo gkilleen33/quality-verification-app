@@ -75,6 +75,21 @@ class DefaultPromptsInSyncTest {
     }
 
     @Test
+    fun `row 29 - compiled-in translation prompt matches its prompt file and keeps every fixed value`() {
+        val onDisk = promptFile("fundi-translate.txt").readText().trimEnd('\n')
+        assertEquals("DefaultPrompts.FUNDI_TRANSLATE is stale - regenerate it", onDisk, DefaultPrompts.FUNDI_TRANSLATE)
+        // Every key the server's check holds to its original value is one the prompt tells
+        // Claude to keep; one it never names would be translated and every such reply refused.
+        com.qualityverifier.text.ReplyTranslation.CLOSED_KEYS.filterNot { it in setOf("id", "level") }.forEach { key ->
+            assertTrue("$key is missing from the translation prompt", DefaultPrompts.FUNDI_TRANSLATE.contains(key))
+        }
+        // Every block the app parses is named, and the reply arrives between the tags request() writes.
+        listOf("qv-plan", "qv-verdict", "qv-options", "fb-diagnosis", "fb-fixplan", "<reply>", "</reply>").forEach {
+            assertTrue("$it is missing from the translation prompt", DefaultPrompts.FUNDI_TRANSLATE.contains(it))
+        }
+    }
+
+    @Test
     fun `both masters keep a follow-up short and know how to look again`() {
         // Follow-ups were slow because nearly every one re-issued the whole verdict.
         for (master in listOf(DefaultPrompts.MASTER, DefaultPrompts.FUNDI_MASTER)) {

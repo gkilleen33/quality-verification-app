@@ -16,15 +16,24 @@ import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.SegmentedButton
+import androidx.compose.material3.SegmentedButtonDefaults
+import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -42,6 +51,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import coil.compose.AsyncImage
 import com.qualityverifier.data.session.PieceStudioChoice
+import com.qualityverifier.domain.AssessmentLanguage
 import com.qualityverifier.domain.ChatMessage
 import com.qualityverifier.domain.DefectMark
 import com.qualityverifier.domain.Finding
@@ -71,6 +81,7 @@ import com.qualityverifier.text.isImprovementList
 import com.qualityverifier.text.pageQuestionsOf
 import com.qualityverifier.text.markdownToPlainText
 import com.qualityverifier.text.parseAssistantContent
+import com.qualityverifier.text.translatedConversation
 import com.qualityverifier.ui.capture.CaptureScreen
 import com.qualityverifier.ui.photo.PhotoMark
 import com.qualityverifier.ui.photo.PhotoViewer
@@ -131,12 +142,18 @@ fun AssessScreen(
     val reviewHelpful by viewModel.reviewHelpful.collectAsState()
     val photoNumbers by viewModel.photoNumbers.collectAsState()
     val askFinished by viewModel.askFinished.collectAsState()
+    val shownLanguage by viewModel.shownLanguage.collectAsState()
+    val shownTranslations by viewModel.shownTranslations.collectAsState()
+    val translationState by viewModel.translationState.collectAsState()
 
     val labels = FundiLabels.ENGLISH
-    // The capture pipeline and the verdict speak ReportLabels, and follow the language
-    // chosen at intake — the rule Kagua keeps, so a Kiswahili conversation does not get
-    // English shot counters. Fundi Bora's own card headings are English until issue #20.
+    // The capture pipeline speaks ReportLabels, and follows the language chosen at intake —
+    // the rule Kagua keeps, so a Kiswahili conversation does not get English shot counters.
     val reportLabels = ReportLabels.forLanguage(language.code)
+    // The conversation's headings and buttons follow the English and Kiswahili switch (row 29),
+    // as its replies do. The intake, before the switch exists, stays English.
+    val shownLabels = FundiLabels.forLanguage(shownLanguage.code)
+    val shownReportLabels = ReportLabels.forLanguage(shownLanguage.code)
 
     var stage by remember { mutableStateOf(Stage.LOADING) }
     // The earlier physical test the maker went Back to, or null for the first one still
@@ -188,9 +205,9 @@ fun AssessScreen(
     // The defect's point on [viewing] when it was opened from a finding (row 19): x then y,
     // fractions of the photo. Null when it was opened from a thumbnail.
     var marked by rememberSaveable { mutableStateOf<FloatArray?>(null) }
-    val photos = remember(messages, run, purpose, reportLabels, viewing, marked) {
+    val photos = remember(messages, run, purpose, shownLabels, shownReportLabels, viewing, marked) {
         val mark = marked?.let { PhotoMark(it[0], it[1]) }
-        assessmentPhotos(messages, run, purpose, labels, reportLabels)
+        assessmentPhotos(messages, run, purpose, shownLabels, shownReportLabels)
             .map { if (mark != null && it.path == viewing) it.copy(mark = mark) else it }
     }
     // The improvement page open over the conversation (row 43): the reply whose list it came
@@ -345,13 +362,18 @@ fun AssessScreen(
 
             Stage.TALKING -> Conversation(
                 messages = messages,
+                translations = shownTranslations,
+                shownLanguage = shownLanguage,
+                translationState = translationState,
+                onShowLanguage = viewModel::showLanguage,
+                onRetryTranslation = viewModel::retryTranslation,
                 run = run,
                 sending = sending,
                 error = error,
                 unanswered = unanswered,
                 purpose = purpose,
-                labels = labels,
-                reportLabels = reportLabels,
+                labels = shownLabels,
+                reportLabels = shownReportLabels,
                 onSend = viewModel::send,
                 onRequestDetail = viewModel::requestDetail,
                 onAskAboutImprovement = viewModel::askAboutImprovement,
@@ -381,7 +403,7 @@ fun AssessScreen(
             PhotoViewer(
                 photos = photos,
                 initialIndex = viewingIndex,
-                labels = reportLabels,
+                labels = shownReportLabels,
                 onClose = { viewing = null; marked = null },
             )
         }
@@ -390,7 +412,14 @@ fun AssessScreen(
 
 @Composable
 private fun Conversation(
+    /** The conversation as stored: what every turn the app writes is written from. */
     messages: List<ChatMessage>,
+    /** Each reply's translation into [shownLanguage], by message id; empty when shown as written (row 29). */
+    translations: Map<String, String>,
+    shownLanguage: AssessmentLanguage,
+    translationState: TranslationState,
+    onShowLanguage: (AssessmentLanguage) -> Unit,
+    onRetryTranslation: () -> Unit,
     run: PlanRun?,
     sending: Boolean,
     error: AssessError?,
@@ -426,16 +455,24 @@ private fun Conversation(
     reviewHelpful: Boolean?,
     onAnswerHelpful: (Boolean) -> Unit,
 ) {
+    // The conversation as drawn (row 29): each translated reply in its original's place, and
+    // the app's turns naming each improvement by its shown title, so everything below pairs
+    // answers with improvements as it does in the original language. Never sent anywhere.
+    val view = remember(messages, translations) { translatedConversation(messages, translations) }
+    val shown = view.messages
     // A detail button's request and its answer show under the finding, not as turns (row 37),
     // and a page's question and its answer on that page (row 43).
-    val details = remember(messages) { detailAnswersOf(messages) }
-    val pages = remember(messages) { pageQuestionsOf(messages) }
-    val turns = remember(messages, details, pages) {
-        messages.filterNot { it.id in details.hidden || it.id in pages.hidden }
+    val details = remember(shown) { detailAnswersOf(shown) }
+    val pages = remember(shown) { pageQuestionsOf(shown) }
+    val turns = remember(shown, details, pages) {
+        shown.filterNot { it.id in details.hidden || it.id in pages.hidden }
     }
     // Only while nothing else is in flight or waiting: one turn at a time goes on the wire.
     val canSend = !sending && !unanswered && run == null
-    val requestDetail = onRequestDetail.takeIf { canSend }
+    // A tap names the improvement by the title Claude wrote, whichever language is shown, so
+    // the request, the stored answer it finds and the prompt's rule read as before.
+    val requestDetail: ((DetailKind, String) -> Unit)? =
+        if (canSend) { kind, title -> onRequestDetail(kind, view.originalTitle(title)) } else null
     val firstUserId = messages.firstOrNull { it.role == Role.USER }?.id
     // The chips come from the last turn the maker can see, so an answer under a finding
     // does not take away the replies the diagnosis offered.
@@ -455,6 +492,11 @@ private fun Conversation(
     val hasVerdict = remember(messages) {
         messages.any { it.role == Role.ASSISTANT && parseAssistantContent(it.text).verdict != null }
     }
+    // The reply chips send their words to Claude as the maker's turn, so they stay as Claude
+    // wrote them, whichever language is shown: a translation never enters the conversation.
+    val options = remember(messages, lastAssistant?.id) {
+        messages.firstOrNull { it.id == lastAssistant?.id }?.let { parseAssistantContent(it.text).options }.orEmpty()
+    }
     // Once the newest diagnosis is a list, the box under the conversation is for the whole
     // piece, and says so (row 43): each improvement has its own on its page.
     val listShown = remember(turns, latestDiagnosisId) {
@@ -462,8 +504,8 @@ private fun Conversation(
             ?.let { parseAssistantContent(it.text).diagnosis?.isImprovementList } == true
     }
     // The page's reply and its list, read from the stored conversation, so it opens offline.
-    val pageRows = remember(messages, pages, openPage?.first) {
-        openPage?.first?.let { id -> messages.firstOrNull { it.id == id } }
+    val pageRows = remember(shown, pages, openPage?.first) {
+        openPage?.first?.let { id -> shown.firstOrNull { it.id == id } }
             ?.let { parseAssistantContent(it.text).diagnosis }
             ?.let { improvementRows(it, pages) }
     }
@@ -475,6 +517,7 @@ private fun Conversation(
     }
 
     Column(Modifier.fillMaxSize().systemBarsPadding().imePadding()) {
+        LanguageSwitch(shownLanguage, labels, translationState, onShowLanguage, onRetryTranslation)
         LazyColumn(
             Modifier.weight(1f).padding(horizontal = 16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
@@ -563,7 +606,7 @@ private fun Conversation(
             unanswered -> Unit
 
             else -> ReplyBar(
-                options = lastAssistant?.let { parseAssistantContent(it.text).options }.orEmpty(),
+                options = options,
                 labels = labels,
                 onSend = onSend,
                 hint = if (listShown) labels.askWholePiece else labels.replyHint,
@@ -594,7 +637,7 @@ private fun Conversation(
             onRequestDetail = requestDetail.takeIf { current },
             exchanges = pages.byImprovement[row.key].orEmpty(),
             onAsk = if (current && canSend) {
-                { question -> onAskAboutImprovement(row.number, row.finding.title, question) }
+                { question -> onAskAboutImprovement(row.number, view.originalTitle(row.finding.title), question) }
             } else {
                 null
             },
@@ -603,6 +646,62 @@ private fun Conversation(
             onClose = onClosePage,
             statusRows = { TurnStatusRows(error, unanswered, onRetry, onDismissError) },
         )
+    }
+}
+
+/**
+ * English and Kiswahili, at the top of the assessment (v0.7.0, release scope row 29). The
+ * assessment opens in the language chosen at its intake; the other asks the server for the
+ * replies' translations, written on the first ask and kept, and the headings and buttons
+ * follow. While the server translates, a line says so; when a reply comes back untranslated,
+ * a line says those replies are shown as written, with "Try again". Each choice is the
+ * language's own name, the same in both, so a maker finds theirs whichever is shown.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun LanguageSwitch(
+    shown: AssessmentLanguage,
+    labels: FundiLabels,
+    state: TranslationState,
+    onShow: (AssessmentLanguage) -> Unit,
+    onRetry: () -> Unit,
+) {
+    Column(
+        Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 4.dp),
+        verticalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+        SingleChoiceSegmentedButtonRow(
+            Modifier.fillMaxWidth().semantics { contentDescription = labels.languageSwitch },
+        ) {
+            val languages = AssessmentLanguage.entries
+            languages.forEachIndexed { index, language ->
+                SegmentedButton(
+                    selected = language == shown,
+                    onClick = { onShow(language) },
+                    shape = SegmentedButtonDefaults.itemShape(index = index, count = languages.size),
+                    modifier = Modifier.heightIn(min = 48.dp),
+                ) { Text(language.ownName) }
+            }
+        }
+        when (state) {
+            TranslationState.WORKING -> Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
+                Text(labels.translating, style = MaterialTheme.typography.bodyMedium)
+            }
+            TranslationState.FAILED -> Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    labels.translationFailed,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.weight(1f),
+                )
+                TextButton(onClick = onRetry, modifier = Modifier.heightIn(min = 48.dp)) { Text(labels.translationRetry) }
+            }
+            TranslationState.IDLE -> Unit
+        }
     }
 }
 

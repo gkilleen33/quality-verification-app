@@ -41,6 +41,7 @@ import com.qualityverifier.domain.WorkerSlot
 import com.qualityverifier.domain.Workshop
 import com.qualityverifier.fundi.ui.assess.AssessViewModel
 import com.qualityverifier.fundi.ui.assess.PhotoTarget
+import com.qualityverifier.fundi.ui.assess.TranslationState
 import com.qualityverifier.images.ImageQuality
 import com.qualityverifier.images.UNREADABLE_PHOTO
 import kotlinx.coroutines.CompletableDeferred
@@ -100,6 +101,7 @@ class AssessViewModelTest {
         workers: FakeWorkers = FakeWorkers(),
         location: LocationSource = LocationSource.None,
         images: FakeImages = FakeImages(),
+        translations: com.qualityverifier.data.fundi.TranslationApi? = null,
     ) = AssessViewModel(
         sessionId = "s1",
         itemType = ItemType.WOODEN_TABLE,
@@ -112,7 +114,105 @@ class AssessViewModelTest {
         workers = workers,
         location = location,
         io = dispatcher,
+        translations = translations,
     )
+
+    // ------------------------------------------------------------------ English and Kiswahili (row 29)
+
+    /** Translates each reply it knows, by the hash of its text, counting each ask. */
+    private class FakeTranslations(
+        var known: Map<String, String>,
+        var available: Boolean = true,
+    ) : com.qualityverifier.data.fundi.TranslationApi {
+        val asked = mutableListOf<AssessmentLanguage>()
+        override suspend fun translate(sessionId: String, language: AssessmentLanguage) =
+            if (!available) {
+                asked += language
+                com.qualityverifier.data.fundi.TranslationOutcome.Unavailable
+            } else {
+                asked += language
+                com.qualityverifier.data.fundi.TranslationOutcome.Translated(
+                    known.mapKeys { com.qualityverifier.text.ReplyTranslation.keyOf(it.key) }, failed = 0,
+                )
+            }
+    }
+
+    @Test
+    fun `row 29 - an assessment opens as written, and the other language shows each reply's stored translation`() = runTest {
+        val sessions = FakeSessions().apply {
+            exists = true
+            seed(ChatMessage("u1", Role.USER, "I have finished this table.", composed = true), ChatMessage("a1", Role.ASSISTANT, "The top is level."))
+        }
+        val api = FakeTranslations(mapOf("The top is level." to "Juu iko sawa."))
+        val model = model(sessions = sessions, translations = api)
+        backgroundScope.launch { model.shownTranslations.collect {} }
+        advanceUntilIdle()
+        assertEquals(AssessmentLanguage.ENGLISH, model.shownLanguage.value)
+        assertTrue(model.shownTranslations.value.isEmpty())
+        assertTrue("nothing is translated in advance", api.asked.isEmpty())
+
+        model.showLanguage(AssessmentLanguage.SWAHILI)
+        advanceUntilIdle()
+        assertEquals(mapOf("a1" to "Juu iko sawa."), model.shownTranslations.value)
+        assertEquals(TranslationState.IDLE, model.translationState.value)
+
+        // Back, and over again: no second ask, since this screen holds it.
+        model.showLanguage(AssessmentLanguage.ENGLISH)
+        advanceUntilIdle()
+        assertTrue(model.shownTranslations.value.isEmpty())
+        model.showLanguage(AssessmentLanguage.SWAHILI)
+        advanceUntilIdle()
+        assertEquals(listOf(AssessmentLanguage.SWAHILI), api.asked)
+        // The stored conversation is untouched.
+        assertEquals("The top is level.", sessions.messagesOnce("s1")[1].text)
+    }
+
+    @Test
+    fun `row 29 - a reply that arrives while Kiswahili is shown is asked for in Kiswahili, and the turn went as typed`() = runTest {
+        val sessions = FakeSessions().apply {
+            exists = true
+            seed(ChatMessage("a0", Role.ASSISTANT, "The top is level."))
+        }
+        val api = FakeTranslations(mapOf("The top is level." to "Juu iko sawa."))
+        val chat = FakeChat()
+        val model = model(sessions = sessions, chat = chat, translations = api)
+        backgroundScope.launch { model.shownTranslations.collect {} }
+        advanceUntilIdle()
+        model.showLanguage(AssessmentLanguage.SWAHILI)
+        advanceUntilIdle()
+        assertEquals(1, api.asked.size)
+        // The server translates the next reply when asked about it.
+        api.known = api.known + ("ok" to "sawa")
+
+        model.send("Why is the leg loose?")
+        advanceUntilIdle()
+        assertEquals("Why is the leg loose?", chat.sent.single().text)
+        assertEquals(2, api.asked.size)
+        assertEquals("sawa", model.shownTranslations.value.values.last())
+    }
+
+    @Test
+    fun `row 29 - a translation that does not arrive keeps the original and says so, and Try again asks again`() = runTest {
+        val sessions = FakeSessions().apply {
+            exists = true
+            seed(ChatMessage("a0", Role.ASSISTANT, "The top is level."))
+        }
+        val api = FakeTranslations(mapOf("The top is level." to "Juu iko sawa."), available = false)
+        val model = model(sessions = sessions, translations = api)
+        backgroundScope.launch { model.shownTranslations.collect {} }
+        advanceUntilIdle()
+
+        model.showLanguage(AssessmentLanguage.SWAHILI)
+        advanceUntilIdle()
+        assertEquals(TranslationState.FAILED, model.translationState.value)
+        assertTrue(model.shownTranslations.value.isEmpty())
+
+        api.available = true
+        model.retryTranslation()
+        advanceUntilIdle()
+        assertEquals(TranslationState.IDLE, model.translationState.value)
+        assertEquals(mapOf("a0" to "Juu iko sawa."), model.shownTranslations.value)
+    }
 
     // ------------------------------------------------------------------ the location point
 

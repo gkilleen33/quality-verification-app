@@ -16,10 +16,11 @@ import com.qualityverifier.domain.ToolOwnership
  * uses [ReportLabels] — it reuses `qv-verdict` on a re-assessment, and a verdict needs its
  * headings — so the two are used together rather than one replacing the other.
  *
- * TRANSLATION STATUS: English only, and that is a gap rather than a decision. Kagua's
- * Swahili is unreviewed placeholder copy already (issue #20), and a producer-facing app in
- * Kenya needs that pass more than the buyer's app does, not less. Adding a guessed Swahili
- * [FundiLabels] now would make the gap harder to see, not smaller.
+ * TRANSLATION STATUS: English, plus [SWAHILI] for the assessment screen only (v0.7.0, release
+ * scope row 29), whose headings and buttons follow the English and Kiswahili switch. That
+ * Kiswahili is UNREVIEWED, as [ReportLabels]' is (issue #20): it needs a native speaker
+ * before any pilot. Every other screen, and every word the app writes into the conversation
+ * on the maker's behalf, stays English; see [SWAHILI].
  */
 data class FundiLabels(
     val code: String,
@@ -367,6 +368,15 @@ data class FundiLabels(
     val notSentYet: String,
     /** Above the workers and the pieces when the last sync failed; {time} is its time, "14:32". */
     private val lastSyncFailedFormat: String,
+    // ---- v0.7.0: the English and Kiswahili switch on an assessment (row 29). The two choices
+    // are the languages' own names (AssessmentLanguage.ownName), the same in both sets.
+    /** What the switch is, for a screen reader. */
+    val languageSwitch: String,
+    /** Under the switch while the server translates the replies. */
+    val translating: String,
+    /** Under the switch when a reply could not be translated; those replies stay as written. */
+    val translationFailed: String,
+    val translationRetry: String,
 ) {
     fun lastSyncFailed(time: String) = lastSyncFailedFormat.replace("{time}", time)
 
@@ -849,6 +859,103 @@ data class FundiLabels(
             notSentYet = "Not sent yet",
             lastSyncFailedFormat = "The last sync at {time} did not finish. What is marked \"Not sent yet\" " +
                 "is kept on this phone and is sent at the next sync.",
+            languageSwitch = "Language of the replies",
+            translating = "Translating…",
+            translationFailed = "Some replies could not be translated. They are shown in their original language.",
+            translationRetry = "Try again",
         )
+
+        /**
+         * The assessment screen in Kiswahili, for the English and Kiswahili switch (v0.7.0,
+         * row 29). UNREVIEWED: written for the build, not by a native speaker, and not in the
+         * Nairobi register row 16 will bring (deferred by Nathan, 14 November 2026). Treat it
+         * as [ReportLabels.SWAHILI] is treated: better than English headings over Kiswahili
+         * replies, not finished copy.
+         *
+         * Only what the assessment screen draws over a reply is here. Everything else is
+         * [ENGLISH]'s, deliberately: the opening turn and the plan's answers are written into
+         * the conversation from [ENGLISH] whichever language is shown (AssessViewModel), so
+         * switching never changes a word Claude reads; and the other screens have no switch.
+         */
+        val SWAHILI: FundiLabels = ENGLISH.copy(
+            code = "sw",
+            diagnosisHeading = "Utambuzi",
+            whatHappenedHeading = "KILICHOTOKEA",
+            whereItWentWrongHeading = "PALIPOKOSEWA",
+            habitToChangeHeading = "TABIA YA KUBADILISHA",
+            detailWhatWeFound = "Zaidi kuhusu tulichoona",
+            detailCause = "Zaidi kuhusu chanzo chake",
+            detailNextTime = "Jinsi ya kuboresha wakati ujao",
+            detailTool = "Kifaa cha kununua au kukodi",
+            detailWriting = "Inaandika…",
+            replyHeading = "Hiki ndicho ninachoona.",
+            customersNoticeFirst = "Wateja wataona nini kwanza",
+            oneQuestion = "Swali 1",
+            questionsFormat = "Maswali {n}",
+            openImprovement = "Fungua uboreshaji huu",
+            allImprovements = "Maboresho yote",
+            improvementOfFormat = "{n} kati ya {total}",
+            customerThinks = "Mteja anafikiri nini",
+            howToFix = "Jinsi ya kurekebisha",
+            askThisImprovement = "Uliza kuhusu uboreshaji huu",
+            askWholePiece = "Uliza kuhusu kipande kizima",
+            previousImprovement = "Uboreshaji uliopita",
+            nextImprovement = "Uboreshaji unaofuata",
+            toolLineLabel = "KIFAA",
+            oneCheckHeading = "JAMBO MOJA LA KUANGALIA",
+            nothingFound = "Hakuna cha kurekebisha kwenye kipande hiki.",
+            horizonNames = mapOf(
+                FixHorizon.FIX_NOW to "REKEBISHA SASA",
+                FixHorizon.PREVENT to "ZUIA",
+                FixHorizon.DRILL to "MAZOEZI",
+            ),
+            horizonBlurbs = mapOf(
+                FixHorizon.FIX_NOW to "Kipande hiki, leo.",
+                FixHorizon.PREVENT to "Kuanzia kipande kijacho.",
+                FixHorizon.DRILL to "Fanya mazoezi kwa vipande vya mbao vilivyobaki.",
+            ),
+            toolHeading = "KIFAA KINACHOFAA KUNUNUA",
+            minutesFormat = "dakika {n}",
+            purposeNames = mapOf(
+                FundiPurpose.EVALUATE to "Kagua kipande kilichokamilika",
+                FundiPurpose.WORK_IN_PROGRESS to "Kagua kazi inayoendelea",
+                FundiPurpose.DIAGNOSE to "Tambua na urekebishe tatizo fulani",
+                FundiPurpose.LEARN to "Jifunze ujuzi",
+                FundiPurpose.OTHER to "Kitu kingine",
+                FundiPurpose.REEVALUATE to "Kagua kipande hiki upya",
+                FundiPurpose.VERIFY_FIX to "Hakikisha tatizo limerekebishwa",
+                FundiPurpose.NEW_ISSUE to "Tatizo jipya limetokea",
+                FundiPurpose.CUSTOMER_RETURN to "Mteja amekirudisha",
+            ),
+            openingPhotoNames = mapOf(
+                FundiPurpose.EVALUATE to "Kipande kizima",
+                FundiPurpose.WORK_IN_PROGRESS to "Kipande kilivyo sasa",
+                FundiPurpose.CUSTOMER_RETURN to "Tatizo",
+                FundiPurpose.REEVALUATE to "Kipande kizima",
+                FundiPurpose.DIAGNOSE to "Tatizo",
+                FundiPurpose.NEW_ISSUE to "Tatizo",
+                FundiPurpose.VERIFY_FIX to "Mahali tatizo lilipokuwa",
+                FundiPurpose.LEARN to "Picha yako ya kwanza",
+                FundiPurpose.OTHER to "Picha yako ya kwanza",
+            ),
+            processing = "Tunashughulikia taarifa zako. Huenda ikachukua muda kidogo inapoandaa mpango.",
+            replyHint = "Andika jibu",
+            send = "Tuma",
+            sentPhotosFormat = "Picha {n} zimetumwa",
+            sentAnswers = "Majibu yako yametumwa",
+            seeOnPhoto = "Ona kwenye picha",
+            reviewHelpfulQuestion = "Je, ukaguzi huu ulikusaidia?",
+            reviewHelpfulYes = "Ndiyo",
+            reviewHelpfulNo = "Hapana",
+            reviewHelpfulThanks = "Asante. Jibu lako limehifadhiwa.",
+            languageSwitch = "Lugha ya majibu",
+            translating = "Inatafsiri…",
+            translationFailed = "Baadhi ya majibu hayakuweza kutafsiriwa. Yanaonyeshwa kwa lugha yake ya awali.",
+            translationRetry = "Jaribu tena",
+        )
+
+        /** The assessment screen's wording in the language shown: [SWAHILI] for "sw", else [ENGLISH]. */
+        fun forLanguage(code: String?): FundiLabels =
+            if (code?.trim()?.lowercase()?.startsWith("sw") == true) SWAHILI else ENGLISH
     }
 }

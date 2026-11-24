@@ -11,6 +11,8 @@ import com.qualityverifier.data.chat.ChatService
 import com.qualityverifier.data.db.SessionImageStore
 import com.qualityverifier.data.fundi.FundiProfiles
 import com.qualityverifier.data.fundi.ProfileOutcome
+import com.qualityverifier.data.fundi.TranslationApi
+import com.qualityverifier.data.fundi.TranslationOutcome
 import com.qualityverifier.data.location.LocationSource
 import com.qualityverifier.data.session.PieceStudioChoice
 import com.qualityverifier.data.session.ReviewAnswers
@@ -41,6 +43,7 @@ import com.qualityverifier.text.FundiLabels
 import com.qualityverifier.text.ImprovementQuestion
 import com.qualityverifier.text.detailAnswersOf
 import com.qualityverifier.text.ReportLabels
+import com.qualityverifier.text.ReplyTranslation
 import com.qualityverifier.text.buildFundiOpeningMessage
 import com.qualityverifier.text.buildSubmissionText
 import com.qualityverifier.text.parseAssistantContent
@@ -73,6 +76,18 @@ import java.util.UUID
  * same turn again cannot fix either.
  */
 data class AssessError(val message: String, val retryable: Boolean = false)
+
+/** The English and Kiswahili switch's state (row 29). */
+enum class TranslationState {
+    /** Nothing waiting: the replies are shown in the language chosen, or as written. */
+    IDLE,
+
+    /** The server is translating. */
+    WORKING,
+
+    /** Some replies came back untranslated, or the server could not be reached; those are shown as written. */
+    FAILED,
+}
 
 /** What a photograph being taken is for, so a kept one goes to the right place. */
 sealed interface PhotoTarget {
@@ -153,6 +168,8 @@ class AssessViewModel(
     val isTester: Boolean = false,
     /** Where a tester's answer is kept and sent. Null in tests about conversations. */
     private val reviewAnswers: ReviewAnswers? = null,
+    /** The English and Kiswahili switch (row 29). Null in tests about conversations: no switch works. */
+    private val translations: TranslationApi? = null,
 ) : ViewModel() {
 
     /**
@@ -310,6 +327,86 @@ class AssessViewModel(
      */
     private val _language = MutableStateFlow(AssessmentLanguage.ENGLISH)
     val language: StateFlow<AssessmentLanguage> = _language.asStateFlow()
+
+    /**
+     * The language the maker switched the replies to (v0.7.0, row 29), or null to show them as
+     * Claude wrote them, in the language chosen at intake, which is how an assessment opens.
+     * Screen only: [_language] still writes every turn the app sends, so switching never
+     * changes a word Claude reads.
+     */
+    private val _shownLanguage = MutableStateFlow<AssessmentLanguage?>(null)
+
+    /** The language the replies, and the screen's headings and buttons, are shown in. */
+    val shownLanguage: StateFlow<AssessmentLanguage> =
+        combine(_shownLanguage, _language) { shown, intake -> shown ?: intake }
+            .stateIn(viewModelScope, SharingStarted.Eagerly, AssessmentLanguage.ENGLISH)
+
+    /** Every translation this screen has had from the server, by language, then by [ReplyTranslation.keyOf]. */
+    private val translated = MutableStateFlow<Map<AssessmentLanguage, Map<String, String>>>(emptyMap())
+
+    private val _translationState = MutableStateFlow(TranslationState.IDLE)
+
+    /** Whether the switch is waiting on the server, or some replies came back untranslated. */
+    val translationState: StateFlow<TranslationState> = _translationState.asStateFlow()
+
+    /**
+     * Each reply's translation into [shownLanguage], by message id: empty when the replies are
+     * shown as written. A reply with none here is shown as written.
+     */
+    val shownTranslations: StateFlow<Map<String, String>> =
+        combine(sessions.observeMessages(sessionId), shownLanguage, _language, translated) { list, shown, intake, all ->
+            if (shown == intake) return@combine emptyMap()
+            val byKey = all[shown].orEmpty()
+            list.filter { it.role == Role.ASSISTANT }
+                .mapNotNull { message -> byKey[ReplyTranslation.keyOf(message.text)]?.let { message.id to it } }
+                .toMap()
+        }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyMap())
+
+    private var translating: Job? = null
+
+    /**
+     * The switch at the top of the assessment (row 29). The other language asks the server for
+     * the replies' translations, which it writes on the first ask and keeps; the language the
+     * assessment was written in shows the replies as they are.
+     */
+    fun showLanguage(language: AssessmentLanguage) {
+        _shownLanguage.value = language
+        if (language == _language.value) {
+            _translationState.value = TranslationState.IDLE
+            return
+        }
+        translateShown()
+    }
+
+    /** "Try again" after some replies came back untranslated. */
+    fun retryTranslation() = translateShown()
+
+    /**
+     * Asks for the replies in the language shown that this screen does not yet have. Once per
+     * reply in practice: the server answers a second ask from what it stored. Not while a
+     * request is open; the reply it was asked about arrives with it.
+     */
+    private fun translateShown() {
+        val api = translations ?: return
+        val language = _shownLanguage.value ?: return
+        if (language == _language.value || translating?.isActive == true) return
+        translating = viewModelScope.launch {
+            val replies = sessions.messagesOnce(sessionId).filter { it.role == Role.ASSISTANT && it.text.isNotBlank() }
+            fun missing() = replies.any { ReplyTranslation.keyOf(it.text) !in translated.value[language].orEmpty() }
+            if (!missing()) {
+                _translationState.value = TranslationState.IDLE
+                return@launch
+            }
+            _translationState.value = TranslationState.WORKING
+            when (val outcome = api.translate(sessionId, language)) {
+                is TranslationOutcome.Translated -> {
+                    translated.update { it + (language to (it[language].orEmpty() + outcome.byKey)) }
+                    _translationState.value = if (missing()) TranslationState.FAILED else TranslationState.IDLE
+                }
+                TranslationOutcome.Unavailable -> _translationState.value = TranslationState.FAILED
+            }
+        }
+    }
 
     /** The purpose chosen at intake, for labelling the opening turn once it is sent. */
     private val _purpose = MutableStateFlow<FundiPurpose?>(null)
@@ -818,7 +915,12 @@ class AssessViewModel(
 
     private suspend fun deliver() {
         when (val result = chat.send(sessionId, itemType, sessions.messagesOnce(sessionId))) {
-            is ChatResult.Success -> sessions.appendAssistantMessage(sessionId, result.text)
+            is ChatResult.Success -> {
+                sessions.appendAssistantMessage(sessionId, result.text)
+                // A reply that arrives while the other language is shown is asked for in it,
+                // so the conversation does not switch language half way down.
+                translateShown()
+            }
             // A sign-in failure is the one a resend cannot fix; Kagua offers Settings there.
             is ChatResult.Failure -> _error.value = AssessError(
                 message = result.message,
@@ -857,6 +959,7 @@ class AssessViewModel(
                     studioDays = container.studioDays,
                     isTester = container.isTester,
                     reviewAnswers = container.reviewAnswers,
+                    translations = container.translations,
                 )
             }
         }

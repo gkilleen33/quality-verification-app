@@ -167,6 +167,14 @@ class FakeApiStore(
         return detailAnswers
     }
 
+    /** What `/translations` returns (V41). */
+    var translations: List<com.qualityverifier.server.api.ApiTranslation> = emptyList()
+
+    override suspend fun translations(limit: Int, offset: Int): List<com.qualityverifier.server.api.ApiTranslation> {
+        lastLimit = limit
+        return translations
+    }
+
     override suspend fun benchPhotos(limit: Int, offset: Int): List<com.qualityverifier.server.api.ApiBenchPhoto> {
         lastLimit = limit
         return emptyList()
