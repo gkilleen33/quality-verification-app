@@ -30,6 +30,8 @@ import com.qualityverifier.ui.parts.Chip
 import com.qualityverifier.ui.parts.SettingsMenu
 import com.qualityverifier.ui.parts.SettingsMenuItem
 import androidx.compose.ui.window.DialogProperties
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 
 /**
  * The words of the Settings menu that differ between the apps. Fundi Bora's are English;
@@ -76,7 +78,9 @@ fun AccountMenu(
     foot: (@Composable () -> Unit)? = null,
 ) {
     val context = LocalContext.current
-    val viewModel: SettingsViewModel = viewModel(factory = SettingsViewModel.factory(container))
+    // Its own key: the password screen's view model is the same class, and a failed deletion's
+    // message must never show there.
+    val viewModel: SettingsViewModel = viewModel(key = "accountMenu", factory = SettingsViewModel.factory(container))
     val busy by viewModel.busy.collectAsState()
     val message by viewModel.message.collectAsState()
     val deleted by viewModel.accountDeleted.collectAsState()
@@ -85,7 +89,15 @@ fun AccountMenu(
     val preference = container.locationPreference
     // What is recorded, not the stored switch alone, as LocationOptIn draws it.
     var recording by remember { mutableStateOf(preference.records) }
-    val request = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {}
+    // The setting is the person's answer and the permission Android's; they can disagree, as
+    // LocationOptIn says. Read each time the menu opens, and after Android answers.
+    var granted by remember { mutableStateOf(hasLocationPermission(context)) }
+    val request = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { results ->
+        granted = results.values.any { it } || hasLocationPermission(context)
+    }
+    val askPermission = {
+        request.launch(arrayOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION))
+    }
     var confirmingDelete by remember { mutableStateOf(false) }
     var confirmingSignOut by remember { mutableStateOf(false) }
 
@@ -105,16 +117,21 @@ fun AccountMenu(
                     label = words.location,
                     line = words.locationLine,
                     state = Chip.state(recording, words.on, words.off),
+                    checked = recording,
                 ) {
                     val next = !recording
                     recording = next
                     // Moving the switch is an answer, so Fundi Bora stops asking.
                     preference.answer(next)
-                    if (next && !hasLocationPermission(context)) {
-                        request.launch(arrayOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION))
-                    }
+                    if (next && !granted) askPermission()
                 },
-            ) + extraItems + listOf(
+            ) +
+                // On while Android refuses the permission records nothing: said, with a way to
+                // ask again, as LocationOptIn does on the settings screen.
+                listOfNotNull(
+                    SettingsMenuItem(labels.allowLocationAccess, line = labels.locationPermissionNeeded) { askPermission() }
+                        .takeIf { recording && !granted },
+                ) + extraItems + listOf(
                 SettingsMenuItem(words.signOut) { confirmingSignOut = true },
                 SettingsMenuItem(words.deleteAccount, danger = true) { confirmingDelete = true },
             ),
@@ -147,7 +164,8 @@ fun AccountMenu(
             title = { Text(labels.deleteAccount) },
             text = {
                 Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
-                    CircularProgressIndicator(Modifier.size(24.dp))
+                    // Read by TalkBack, which says nothing for a spinner alone.
+                    CircularProgressIndicator(Modifier.size(24.dp).semantics { contentDescription = labels.deleteAccount })
                 }
             },
             confirmButton = {},

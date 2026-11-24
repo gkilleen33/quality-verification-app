@@ -16,46 +16,55 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.window.Popup
-import androidx.compose.ui.window.PopupProperties
-import androidx.compose.material3.Text
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
+import androidx.compose.ui.window.DialogWindowProvider
 
 /**
  * One item of the Settings menu: a label, an optional line under it, an optional On/Off chip,
  * and red when the action cannot be undone. [onClick] decides whether the menu closes: a
  * switch stays open so the new state can be seen, an item that opens a screen closes it.
+ * [checked] is set on a switch, so TalkBack reads it as one.
  */
 data class SettingsMenuItem(
     val label: String,
     val line: String? = null,
     val state: Chip? = null,
     val danger: Boolean = false,
+    val checked: Boolean? = null,
     val onClick: () -> Unit,
 )
+
+/** The mockups' scrim, #1C1611 at 28 %. */
+private const val SCRIM_ALPHA = 0.28f
 
 /**
  * Raj Hansini's UI review (row 46): the gear opens one dropdown panel over the screen, with a
  * scrim, in place of a settings screen. Its title is a tinted strip, as every card's is (P16).
  *
- * A popup the size of the window rather than Material's DropdownMenu: the mockup's panel is
- * wider than DropdownMenu allows, its scrim dims the whole screen so the panel reads as the
- * one thing to deal with, and tapping the scrim closes it. [foot] is anything under the items
- * (Kagua's research note and version).
+ * A full-window dialog rather than Material's DropdownMenu: the mockup's panel is wider than
+ * DropdownMenu allows, and its scrim dims the whole screen, the system bars included, so the
+ * panel reads as the one thing to deal with. Tapping the scrim or Back closes it. [foot] is
+ * anything under the items (Kagua's research note and version).
  */
 @Composable
 fun SettingsMenu(
@@ -65,17 +74,18 @@ fun SettingsMenu(
     closeDescription: String,
     foot: (@Composable () -> Unit)? = null,
 ) {
-    Popup(
-        alignment = Alignment.TopStart,
+    Dialog(
         onDismissRequest = onDismiss,
-        properties = PopupProperties(focusable = true),
+        properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false),
     ) {
+        // The dialog window's own dim, set to the mockups' scrim rather than drawn a second time.
+        val window = (LocalView.current.parent as? DialogWindowProvider)?.window
+        SideEffect { window?.setDimAmount(SCRIM_ALPHA) }
         BoxWithConstraints(Modifier.fillMaxSize()) {
             val scrimTap = remember { MutableInteractionSource() }
             Box(
                 Modifier
                     .fillMaxSize()
-                    .background(Color(0x471C1611))
                     .clickable(interactionSource = scrimTap, indication = null, role = Role.Button, onClick = onDismiss)
                     .semantics { contentDescription = closeDescription },
             )
@@ -85,13 +95,14 @@ fun SettingsMenu(
                 Modifier
                     .align(Alignment.TopEnd)
                     .statusBarsPadding()
-                    .padding(top = 58.dp, end = 14.dp)
+                    // Below the gear, which ends 66 dp down, as the mockup places the panel.
+                    .padding(top = 70.dp, end = 14.dp)
                     .width(width)
                     .shadow(10.dp, RoundedCornerShape(16.dp))
                     .clip(RoundedCornerShape(16.dp))
                     .background(Color.White)
                     .border(1.dp, Parts.Border, RoundedCornerShape(16.dp))
-                    .heightIn(max = maxHeight - 80.dp)
+                    .heightIn(max = maxHeight - 90.dp)
                     .verticalScroll(rememberScrollState()),
             ) {
                 CardHeading(title)
@@ -109,10 +120,12 @@ fun SettingsMenu(
 private fun MenuRow(item: SettingsMenuItem, divider: Boolean) {
     Column {
         if (divider) RowDivider()
+        val touch = item.checked?.let { Modifier.toggleable(value = it, role = Role.Switch, onValueChange = { item.onClick() }) }
+            ?: Modifier.clickable(role = Role.Button, onClick = item.onClick)
         Row(
             Modifier
                 .fillMaxWidth()
-                .clickable(role = Role.Button, onClick = item.onClick)
+                .then(touch)
                 .heightIn(min = 52.dp)
                 .padding(horizontal = 16.dp, vertical = 10.dp),
             verticalAlignment = Alignment.CenterVertically,
@@ -126,9 +139,9 @@ private fun MenuRow(item: SettingsMenuItem, divider: Boolean) {
                     lineHeight = 23.sp,
                     fontWeight = FontWeight.SemiBold,
                 )
-                item.line?.let { Text(it, color = Parts.Muted, fontSize = 14.sp, lineHeight = 20.sp) }
+                item.line?.let { Text(it, color = Parts.Muted, fontSize = 14.sp, lineHeight = 19.sp) }
             }
-            item.state?.let { ChipView(it) }
+            item.state?.let { ChipView(it, bold = true) }
         }
     }
 }

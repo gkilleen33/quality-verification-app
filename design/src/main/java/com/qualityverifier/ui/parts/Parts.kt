@@ -35,12 +35,18 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
@@ -97,7 +103,7 @@ data class Chip(val label: String, val container: Color, val content: Color, val
 }
 
 @Composable
-fun ChipView(chip: Chip, modifier: Modifier = Modifier, fontSize: Int = 14) {
+fun ChipView(chip: Chip, modifier: Modifier = Modifier, fontSize: Int = 14, bold: Boolean = false) {
     Row(
         modifier
             .clip(RoundedCornerShape(999.dp))
@@ -107,7 +113,13 @@ fun ChipView(chip: Chip, modifier: Modifier = Modifier, fontSize: Int = 14) {
         horizontalArrangement = Arrangement.spacedBy(5.dp),
     ) {
         chip.icon?.let { Icon(it, contentDescription = null, tint = chip.content, modifier = Modifier.size(13.dp)) }
-        Text(chip.label, color = chip.content, fontSize = fontSize.sp, fontWeight = FontWeight.SemiBold, lineHeight = 20.sp)
+        Text(
+            chip.label,
+            color = chip.content,
+            fontSize = fontSize.sp,
+            fontWeight = if (bold) FontWeight.Bold else FontWeight.SemiBold,
+            lineHeight = 20.sp,
+        )
     }
 }
 
@@ -230,7 +242,7 @@ fun CardRow(
                     Icons.AutoMirrored.Filled.KeyboardArrowRight,
                     contentDescription = null,
                     tint = Parts.Brand,
-                    modifier = Modifier.size(24.dp),
+                    modifier = Modifier.size(22.dp),
                 )
             }
         }
@@ -279,6 +291,8 @@ fun StatusBox(
             .clip(RoundedCornerShape(16.dp))
             .background(kind.container)
             .border(1.dp, kind.border, RoundedCornerShape(16.dp))
+            // Announced when it appears after a tap, as the mockup's role="status" is.
+            .semantics(mergeDescendants = false) { liveRegion = LiveRegionMode.Polite }
             .padding(horizontal = 16.dp, vertical = 14.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
@@ -294,6 +308,7 @@ fun StatusBox(
             shape = RoundedCornerShape(12.dp),
             border = BorderStroke(1.dp, kind.content),
             colors = ButtonDefaults.outlinedButtonColors(containerColor = Color.White, contentColor = kind.content),
+            contentPadding = PaddingValues(horizontal = 18.dp),
             modifier = Modifier.heightIn(min = 48.dp),
         ) { Text(button, fontSize = 16.sp, fontWeight = FontWeight.SemiBold) }
     }
@@ -407,9 +422,11 @@ fun BackBar(backLabel: String, onBack: () -> Unit, modifier: Modifier = Modifier
         Row(
             Modifier.fillMaxWidth().padding(start = 4.dp, end = 12.dp, top = 6.dp, bottom = 6.dp),
             verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween,
         ) {
             Row(
                 Modifier
+                    .weight(1f, fill = false)
                     .clip(RoundedCornerShape(12.dp))
                     .clickable(role = Role.Button, onClick = onBack)
                     .heightIn(min = 48.dp)
@@ -417,11 +434,27 @@ fun BackBar(backLabel: String, onBack: () -> Unit, modifier: Modifier = Modifier
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(6.dp),
             ) {
-                Icon(Icons.AutoMirrored.Filled.KeyboardArrowLeft, contentDescription = null, tint = Parts.Brand, modifier = Modifier.size(24.dp))
-                Text(backLabel, color = Parts.Brand, fontSize = 16.sp, fontWeight = FontWeight.SemiBold, maxLines = 1)
+                Icon(Icons.AutoMirrored.Filled.KeyboardArrowLeft, contentDescription = null, tint = Parts.Brand, modifier = Modifier.size(22.dp))
+                // A long piece name is cut with an ellipsis rather than pushing the right text out.
+                Text(
+                    backLabel,
+                    color = Parts.Brand,
+                    fontSize = 16.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
             }
-            Spacer(Modifier.weight(1f))
-            right?.let { Text(it, color = Parts.Muted, fontSize = 15.sp, maxLines = 1) }
+            right?.let {
+                Text(
+                    it,
+                    color = Parts.Muted,
+                    fontSize = 15.sp,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.padding(start = 12.dp).weight(1f, fill = false),
+                )
+            }
         }
         Box(Modifier.fillMaxWidth().heightIn(min = 1.dp, max = 1.dp).background(Parts.Border))
     }
@@ -491,8 +524,9 @@ fun WelcomeContent(
     modifier: Modifier = Modifier,
     tagline: String? = null,
 ) {
+    // Scrolls: on a small phone with large text the two buttons would otherwise fall off the screen.
     Column(
-        modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 18.dp),
+        modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp, vertical = 18.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp),
     ) {
         Wordmark(wordmark, tagline = tagline)

@@ -38,6 +38,26 @@ import com.qualityverifier.ui.parts.StatusKind
 import com.qualityverifier.ui.parts.lineStyle
 
 /**
+ * What the password screen's greyed button says is missing (P19), one reason at a time, and
+ * the red box's title. English, as the settings screen's messages were (SettingsViewModel).
+ */
+object PasswordWords {
+    const val NOT_CHANGED = "Your password was not changed"
+    const val SENDING = "Changing your password…"
+    const val TYPE_CURRENT = "Type your current password."
+    const val TYPE_AGAIN = "Type the new password again."
+
+    /** Null when the button can be pressed. [tooShort] is the screen's own hint for the new password. */
+    fun missing(busy: Boolean, current: String, next: String, repeat: String, tooShort: String): String? = when {
+        busy -> SENDING
+        current.isBlank() -> TYPE_CURRENT
+        next.length < 8 -> tooShort
+        repeat.isBlank() -> TYPE_AGAIN
+        else -> null
+    }
+}
+
+/**
  * "Change your password", from the Settings menu (row 46). The form the settings screen held,
  * on its own screen, as the mockups draw it: three fields, a note, and one button.
  *
@@ -92,18 +112,19 @@ fun ChangePasswordScreen(
                     modifier = Modifier.fillMaxWidth(),
                 )
             }
-            Text(labels.changePasswordBlurb, style = lineStyle, color = Parts.Muted)
             if (changed) {
+                // The note moves into the green box, which says what changed and what follows.
                 StatusBox(StatusKind.CONFIRMATION, labels.passwordChanged, labels.changePasswordBlurb, "OK", onBack)
+            } else {
+                Text(labels.changePasswordBlurb, style = lineStyle, color = Parts.Muted)
             }
             message?.let {
-                StatusBox(StatusKind.FAILURE, labels.changePassword, it, "OK", viewModel::dismissMessage)
+                StatusBox(StatusKind.FAILURE, PasswordWords.NOT_CHANGED, it, "OK", viewModel::dismissMessage)
             }
             PrimaryButton(
                 labels.changePassword,
                 onClick = { viewModel.changePassword(current, next, repeat) },
-                state = if (!busy && current.isNotBlank() && next.length >= 8 && repeat.isNotBlank()) ButtonState.Ready
-                else ButtonState(labels.passwordHint),
+                state = ButtonState(PasswordWords.missing(busy, current, next, repeat, labels.passwordHint)),
             )
         }
     }
