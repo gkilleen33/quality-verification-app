@@ -196,6 +196,22 @@ class PlanRunTest {
     }
 
     @Test
+    fun `row 40 - change answer on a finished run opens that test selected, and a new answer returns to the conversation`() {
+        // Fundi Bora's plan card "change answer" opens TestNavigation(revisiting = index).
+        var run = onTestFive().answered(4, "Level").answered(5, "Firm")
+        assertTrue(run.isComplete)
+        var tests = TestNavigation(revisiting = 3)
+        assertEquals("the test chosen", 3, tests.shown(run))
+        assertEquals("its answer selected", "Gap at the joint", run.answerShown(3))
+
+        run = run.answered(3, "Tight")
+        tests = tests.afterAnswer()
+        assertNull("no test left, so back to the conversation", tests.shown(run))
+        assertEquals("Tight", run.answers[3])
+        assertEquals(6, run.answers.size)
+    }
+
+    @Test
     fun `a plan that asks for nothing is already complete`() {
         // A follow-up plan often asks for one test and no photos, or the reverse.
         assertTrue(run(photos = 0, tests = 0).isComplete)
