@@ -73,6 +73,9 @@ class WorkersViewModel(
 
     fun add(details: WorkerDetails) = write { workers.add(details) }
 
+    /** "Try again" in the red box: sends what waits and pulls, as an edit does. */
+    fun retry() = write {}
+
     /** The name, number and kind together, as the form edits them. */
     fun edit(workerId: String, details: WorkerDetails) = write { workers.edit(workerId, details) }
 

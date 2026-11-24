@@ -29,6 +29,8 @@ import com.qualityverifier.ui.parts.Parts
 import com.qualityverifier.ui.parts.PrimaryButton
 import com.qualityverifier.ui.parts.RowCard
 import com.qualityverifier.ui.parts.ScreenTitle
+import com.qualityverifier.ui.parts.lineStyle
+import androidx.compose.material3.Text
 
 /** "My own job" in New piece's second card, kept apart from studio ids. */
 private const val OWN_JOB = ""
@@ -67,7 +69,10 @@ fun NewPieceScreen(
         ) {
             ScreenTitle(words.newPieceTitle)
             RowCard(heading = words.newPieceWhat) {
-                ItemType.homeChoices.forEachIndexed { i, type ->
+                // Every type Fundi Bora offered before, "Padded chair" included: Kagua's
+                // homeChoices leaves it out because Kagua asks about upholstery at intake,
+                // and Fundi Bora does not, so dropping it would change the plan Claude is sent.
+                ItemType.entries.forEachIndexed { i, type ->
                     CardRow(type.homeLabel, radio = typeId == type.id, onClick = { typeId = type.id }, divider = i > 0)
                 }
             }
@@ -76,6 +81,11 @@ fun NewPieceScreen(
                 live.forEach { studio ->
                     CardRow(studio.name, radio = studioId == studio.id, onClick = { studioId = studio.id }, divider = true)
                 }
+            }
+            // One sentence on who can see the assessments (Nathan, 16 November 2026), as the
+            // intake's studio question said it.
+            live.firstOrNull { it.id == studioId }?.let {
+                Text(words.studioSees(it.name), style = lineStyle, color = Parts.Muted)
             }
             PrimaryButton(
                 words.newPieceStart,

@@ -97,6 +97,9 @@ data class FundiScreenLabels(
     val ownWorkshopIncluded: String = "Your own workshop is already included.",
     val loading: String = "Loading…",
 ) {
+    /** "Owner +254712345678" under a studio's name. */
+    fun owner(phone: String) = "Owner $phone"
+
     /** "For: Example studio, Gikomba" under a piece's name. */
     fun pieceFor(studio: String) = "For: $studio"
 

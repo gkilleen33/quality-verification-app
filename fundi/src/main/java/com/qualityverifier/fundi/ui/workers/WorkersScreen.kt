@@ -23,7 +23,10 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.qualityverifier.domain.Worker
 import com.qualityverifier.fundi.ui.fundiContainer
+import com.qualityverifier.fundi.ui.home.OfflineBox
 import com.qualityverifier.fundi.ui.home.PieceLines
+import com.qualityverifier.ui.parts.StatusBox
+import com.qualityverifier.ui.parts.StatusKind
 import com.qualityverifier.text.FundiLabels
 import com.qualityverifier.text.FundiScreenLabels
 import com.qualityverifier.ui.parts.BackBar
@@ -52,6 +55,7 @@ fun WorkersScreen(backLabel: String, onBack: () -> Unit, onOpen: (Worker) -> Uni
     val roster by model.roster.collectAsState()
     val unsent by model.unsent.collectAsState()
     val counts by model.pieceCounts.collectAsState()
+    val syncStatus by model.syncStatus.collectAsState()
     val (active, archived) = remember(roster) { roster.sortedBy { it.name.lowercase() }.partition { !it.archived } }
     var showArchived by rememberSaveable { mutableStateOf(false) }
     val labels = FundiLabels.ENGLISH
@@ -95,9 +99,31 @@ fun WorkersScreen(backLabel: String, onBack: () -> Unit, onOpen: (Worker) -> Uni
             verticalArrangement = Arrangement.spacedBy(14.dp),
         ) {
             ScreenTitle(words.myWorkers)
-            if (roster.isEmpty()) {
-                // P20: an empty list says what goes there and offers the first move.
-                RowCard(hint = words.workersEmpty)
+            // P19: the roster's edits wait on this phone while the server cannot be reached.
+            if (OfflineBox.shows(syncStatus, syncing = false)) {
+                val since = syncStatus.lastSucceededAt
+                StatusBox(
+                    StatusKind.FAILURE,
+                    words.offlineTitle,
+                    words.offlineLine(since?.let(PieceLines::day), since?.let(PieceLines::time)),
+                    words.tryAgain,
+                    onButton = model::retry,
+                )
+            }
+            if (active.isEmpty()) {
+                // P20: an empty list says what goes there and offers the first move, even
+                // when only archived workers are left.
+                RowCard(hint = words.workersEmpty) {
+                    if (archived.isNotEmpty()) {
+                        CardRow(
+                            if (showArchived) labels.archivedHide else words.showArchived(archived.size),
+                            onClick = { showArchived = !showArchived },
+                            chevron = false,
+                            titleColor = Parts.Brand,
+                            divider = true,
+                        )
+                    }
+                }
                 PrimaryButton(words.addWorker, onClick = { adding = true }, icon = Icons.Filled.Add)
             } else {
                 SecondaryButton(words.addWorker, onClick = { adding = true })
@@ -109,14 +135,14 @@ fun WorkersScreen(backLabel: String, onBack: () -> Unit, onOpen: (Worker) -> Uni
                             onClick = { showArchived = !showArchived },
                             chevron = false,
                             titleColor = Parts.Brand,
-                            divider = active.isNotEmpty(),
+                            divider = true,
                         )
                     }
                 }
-                if (showArchived && archived.isNotEmpty()) {
-                    RowCard(heading = words.archived) {
-                        archived.forEachIndexed { i, worker -> row(worker, divider = i > 0) }
-                    }
+            }
+            if (showArchived && archived.isNotEmpty()) {
+                RowCard(heading = words.archived) {
+                    archived.forEachIndexed { i, worker -> row(worker, divider = i > 0) }
                 }
             }
         }

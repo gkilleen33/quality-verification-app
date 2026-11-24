@@ -92,14 +92,28 @@ fun PieceScreen(
 
     // A linked worker's piece: what the server holds of it, while the link holds.
     var theirs by remember(ref) { mutableStateOf<WorkerPiece?>(null) }
+    // Whether the server has answered for a linked worker's piece, so "Loading…" gives way to
+    // the offline line rather than staying for good.
+    var asked by remember(ref) { mutableStateOf(false) }
     var workerName by remember(ref) { mutableStateOf<String?>(null) }
     LaunchedEffect(ref) {
         val workerId = ref.workerId ?: return@LaunchedEffect
         workerName = roster.firstOrNull { it.id == workerId }?.name
         val outcome = runCatching { container.reports.workerPieces(workerId) }.getOrNull()
         theirs = (outcome as? WorkerPiecesOutcome.Loaded)?.pieces?.pieces?.firstOrNull { it.id == ref.pieceId && it.theirs }
+        asked = true
     }
     LaunchedEffect(roster, ref) { ref.workerId?.let { id -> roster.firstOrNull { it.id == id }?.name?.let { workerName = it } } }
+    // A piece of this account's that is not on the phone: an assessment started from New piece
+    // and left at the first question saved nothing. The page has nothing to show; go back.
+    // Asked of the database, not the list, which can be a moment behind on returning here.
+    LaunchedEffect(pieces, ref) {
+        if (ref.workerId == null && pieces != null && piece == null &&
+            container.sessionRepository.startOf(ref.pieceId) == null
+        ) {
+            onBack()
+        }
+    }
 
     val mine = ref.workerId == null && (piece?.latest?.pieceMine ?: true)
     val name = piece?.let(::pieceName) ?: theirs?.let { it.label ?: ItemType.fromId(it.itemTypeId)?.homeLabel }.orEmpty()
@@ -133,7 +147,12 @@ fun PieceScreen(
             }
 
             val rows = PieceRows.assessments(piece, theirs)
-            RowCard(heading = words.assessments, hint = words.loading.takeIf { rows.isEmpty() }) {
+            val hint = when {
+                rows.isNotEmpty() -> null
+                ref.workerId != null && asked -> words.theirPiecesOffline
+                else -> words.loading
+            }
+            RowCard(heading = words.assessments, hint = hint) {
                 rows.forEachIndexed { i, row ->
                     CardRow(
                         words.assessmentRow(PieceLines.day(row.at), row.theirs),
@@ -158,26 +177,25 @@ fun PieceScreen(
                     )
                     CardRow(
                         words.studio,
-                        line = studioName(latest, studios, words) +
-                            if (latest.pieceStudioCorrected) " · " + words.studioChangeUsed else "",
+                        // The Edit chip goes once the one correction is used; the mockup's
+                        // row says only the studio.
+                        line = studioName(latest, studios, words),
                         chip = Chip.neutral(words.edit).takeIf { canChangeStudio },
                         chevron = false,
                         onClick = { editing = Edit.STUDIO }.takeIf { canChangeStudio },
                         divider = true,
                     )
-                    var who by remember(latest.id) { mutableStateOf<List<WorkerSlot>?>(null) }
-                    LaunchedEffect(latest.id, editing) { if (editing == null) who = model.workersOf(latest.id) }
-                    CardRow(
-                        words.whoWorkedOnThis,
-                        line = who?.let { workersText(it, roster, words) } ?: words.loading,
-                        chip = Chip.neutral(words.edit),
-                        chevron = false,
-                        onClick = { editing = Edit.WORKERS },
-                        divider = true,
-                    )
+                    WhoRow(latest.id, model, roster, words, editing, divider = true) { editing = Edit.WORKERS }
                 }
                 if (latest.piece in unsent) {
                     Text(labels.notSentYet, style = lineStyle, color = Parts.Danger)
+                }
+            } else if (piece != null) {
+                // A manager's own assessment of a linked worker's piece, opened from Home: the
+                // name and studio are the worker's, but who worked on this assessment is the
+                // manager's to say, as the piece card's menu offered.
+                RowCard(heading = words.aboutThisPiece) {
+                    WhoRow(piece.latest.id, model, roster, words, editing) { editing = Edit.WORKERS }
                 }
             }
             below(piece)
@@ -221,8 +239,35 @@ fun PieceScreen(
 
 private enum class Edit { NAME, STUDIO, WORKERS }
 
-/** "For: My own job", the studio's name, or "Not chosen yet" for a piece never asked. */
-private fun studioName(latest: SessionSummary?, studios: List<Studio>, words: FundiScreenLabels): String = when {
+/** "Who worked on this?" for the latest assessment, read again after each edit. */
+@Composable
+private fun WhoRow(
+    sessionId: String,
+    model: PiecesViewModel,
+    roster: List<Worker>,
+    words: FundiScreenLabels,
+    editing: Edit?,
+    divider: Boolean = false,
+    onEdit: () -> Unit,
+) {
+    var who by remember(sessionId) { mutableStateOf<List<WorkerSlot>?>(null) }
+    LaunchedEffect(sessionId, editing) { if (editing == null) who = model.workersOf(sessionId) }
+    CardRow(
+        words.whoWorkedOnThis,
+        line = who?.let { workersText(it, roster, words) } ?: words.loading,
+        chip = Chip.neutral(words.edit),
+        chevron = false,
+        onClick = onEdit,
+        divider = divider,
+    )
+}
+
+/**
+ * "My own job", the studio's name, or "Not chosen yet" for a piece never asked. An account
+ * with no studio on its list was never asked either: every piece of its is its own job.
+ */
+internal fun studioName(latest: SessionSummary?, studios: List<Studio>, words: FundiScreenLabels): String = when {
+    studios.none { !it.archived } && latest?.pieceStudioId == null -> words.forOwnJob
     latest == null || !latest.pieceStudioChosen -> words.notAskedStudio
     latest.pieceStudioId == null -> words.forOwnJob
     else -> studios.firstOrNull { it.id == latest.pieceStudioId }?.name ?: "?"

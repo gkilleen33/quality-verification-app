@@ -35,10 +35,12 @@ import com.qualityverifier.domain.ItemType
 import com.qualityverifier.domain.WorkerDetails
 import com.qualityverifier.domain.WorkerPiece
 import com.qualityverifier.fundi.ui.fundiContainer
+import com.qualityverifier.fundi.ui.home.PieceAssessment
 import com.qualityverifier.fundi.ui.home.PieceLines
 import com.qualityverifier.text.FundiLabels
 import com.qualityverifier.text.FundiScreenLabels
 import com.qualityverifier.ui.parts.BackBar
+import com.qualityverifier.ui.parts.ButtonState
 import com.qualityverifier.ui.parts.CardRow
 import com.qualityverifier.ui.parts.Parts
 import com.qualityverifier.ui.parts.RowCard
@@ -138,7 +140,12 @@ fun WorkerPageScreen(
             if (current != null && linkedNow) {
                 SecondaryButton(words.sendReport, onClick = { onSendReport(current.id) })
             }
-            SecondaryButton(words.edit, onClick = { editing = true }, state = com.qualityverifier.ui.parts.ButtonState.Ready)
+            // Greyed until the worker has loaded, as the old Edit button was.
+            SecondaryButton(
+                words.edit,
+                onClick = { editing = true },
+                state = if (current != null) ButtonState.Ready else ButtonState(""),
+            )
 
             if (linkedNow) {
                 when (val state = theirPieces) {
@@ -186,7 +193,8 @@ object WorkerPageRows {
             Row(
                 pieceId = piece.pieceId,
                 title = piece.latest.pieceLabel ?: piece.latest.itemType.homeLabel,
-                line = PieceLines.line(newest?.problems?.size, (newest?.summary ?: piece.latest).updatedAt),
+                // The same line as Home's, "Not finished" for an assessment with no reply.
+                line = PieceLines.line(PieceAssessment(newest?.summary ?: piece.latest, newest?.problems?.size, newest?.purpose)),
             )
         }
 

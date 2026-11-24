@@ -99,7 +99,7 @@ fun StudiosScreen(backLabel: String, onBack: () -> Unit) {
     fun row(studio: Studio, divider: Boolean) {
         CardRow(
             studio.name,
-            line = studio.phone,
+            line = words.owner(studio.phone),
             chip = when {
                 studio.archived -> Chip.notLinked(words.archived)
                 studio.linked -> Chip.linked(words.linked)

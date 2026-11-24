@@ -62,7 +62,8 @@ private object Routes {
     /** New piece (row 46): what it is and who it is for, then the camera. */
     const val NEW_PIECE = "pieces/new"
     /** A piece's page (row 56); [worker] set for a linked worker's own piece, from their page. */
-    const val PIECE = "pieces/{pieceId}?worker={worker}"
+    // "piece/", not "pieces/": "pieces/new" and "pieces/all" would fit this pattern too.
+    const val PIECE = "piece/{pieceId}?worker={worker}"
     /** "All my pieces" (row 56), in progress and finished. */
     const val ALL_PIECES = "pieces/all"
     /** "Change your password", from the Settings menu (row 46). */
@@ -70,7 +71,7 @@ private object Routes {
     /** "Your agreement" from the Settings menu: the transfer to the United States. */
     const val AGREEMENT = "settings/agreement"
 
-    fun piece(pieceId: String, workerId: String? = null) = "pieces/$pieceId?worker=${workerId.orEmpty()}"
+    fun piece(pieceId: String, workerId: String? = null) = "piece/$pieceId?worker=${workerId.orEmpty()}"
     const val REGISTER_PHONE = "register/phone"
     const val REGISTER_PASSWORD = "register/password"
     const val TERMS = "terms/{mode}"
@@ -465,12 +466,16 @@ fun FundiNav() {
             NewPieceScreen(
                 backLabel = backLabel(navController, entry),
                 onBack = back,
-                // New piece goes from the stack, so Back from the assessment lands on Home,
-                // where the new piece is at the top of "My pieces" (P17).
+                // As the mockup: the new piece's page under its assessment, so Back from the
+                // reply reads "‹ <piece>" and lands on the page, and Back again on Home, where
+                // the piece is at the top of "My pieces" (P17). A first assessment's piece is
+                // its own session. New piece goes from the stack.
                 onStart = { itemType, studio ->
-                    navController.navigate(Routes.assess(UUID.randomUUID().toString(), itemType.id, studio = studio)) {
+                    val sessionId = UUID.randomUUID().toString()
+                    navController.navigate(Routes.piece(sessionId)) {
                         popUpTo(Routes.NEW_PIECE) { inclusive = true }
                     }
+                    navController.navigate(Routes.assess(sessionId, itemType.id, studio = studio))
                 },
             )
         }

@@ -19,6 +19,8 @@ import com.qualityverifier.domain.Worker
 import com.qualityverifier.domain.WorkerDetails
 import com.qualityverifier.domain.WorkerSlot
 import com.qualityverifier.fundi.ui.workers.WorkerPages
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -60,6 +62,9 @@ class PiecesViewModel(
         workers.observeWorkers()
             .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
+    /** Each assessment read so far, by id and version; see [pieces]. */
+    private val read = java.util.concurrent.ConcurrentHashMap<Pair<String, Long>, PieceAssessment>()
+
     /**
      * One row per piece, newest first, with what each assessment found: the findings in prompt
      * E's improvement list, or the problems an older reply lists, read by the same rules as a
@@ -69,13 +74,23 @@ class PiecesViewModel(
     val pieces: StateFlow<List<PieceSummary>?> =
         summaries.map { list ->
             PieceLines.piecesOf(list) { summary ->
-                PieceAssessment(
+                // Each assessment's replies are read and parsed once per version of it: a sync
+                // or a rename re-emits every summary, and most have not changed.
+                val key = summary.id to summary.updatedAt
+                read[key] ?: PieceAssessment(
                     summary = summary,
                     improvements = WorkerPages.problemsIn(messagesOf(summary.id))?.size,
                     purpose = intakeCodeOf(summary.id)?.let(FundiIntake::decode)?.second,
-                )
+                ).also { read[key] = it }
+            }.map { piece ->
+                // The summary itself is always the newest: a rename or a stage changes it
+                // without touching the assessment's replies.
+                piece.copy(assessments = piece.assessments.map { a -> a.copy(summary = list.first { it.id == a.summary.id }) })
             }
-        }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
+        }
+            // Off the main thread: reading and parsing every reply is the slow part of Home.
+            .flowOn(Dispatchers.Default)
+            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
 
     /** Pieces with a name or studio change still to send, tagged "Not sent yet" (row 6). */
     val unsent: StateFlow<Set<String>> =

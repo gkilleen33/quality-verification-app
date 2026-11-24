@@ -136,9 +136,8 @@ object PieceLines {
     /** "20 Nov", in Nairobi, like every other date in this project. */
     fun day(at: Long): String = format("d MMM", at)
 
-    /** "10:14", on the phone's own clock: the time the fundi saw. */
-    fun time(at: Long): String =
-        SimpleDateFormat("HH:mm", Locale.UK).format(Date(at))
+    /** "10:14", in Nairobi, as the day beside it is. */
+    fun time(at: Long): String = format("HH:mm", at)
 
     private fun format(pattern: String, at: Long): String =
         SimpleDateFormat(pattern, Locale.UK).apply { timeZone = TimeZone.getTimeZone("Africa/Nairobi") }.format(Date(at))

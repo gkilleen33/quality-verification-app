@@ -80,6 +80,7 @@ fun HomeScreen(
     val update by container.appVersionCheck.state.collectAsState()
     val status by model.syncStatus.collectAsState()
     val syncing by model.syncing.collectAsState()
+    val unsent by model.unsent.collectAsState()
     var menuOpen by rememberSaveable { mutableStateOf(false) }
 
     // Once, for a maker who reached Home without answering the location question. Until they
@@ -167,7 +168,10 @@ fun HomeScreen(
                     pieces.take(PieceLines.HOME_COUNT).forEachIndexed { i, piece ->
                         CardRow(
                             pieceName(piece),
-                            line = PieceLines.line(piece.newest),
+                            // A name, studio or worker change kept on this phone until the
+                            // next sync (row 6), as the piece card said it.
+                            line = PieceLines.line(piece.newest) +
+                                if (piece.pieceId in unsent) " · " + FundiLabels.ENGLISH.notSentYet else "",
                             chip = Chip.new(words.newTag).takeIf { PieceLines.isNew(piece, at) },
                             onClick = { onOpenPiece(piece) },
                             divider = i > 0,
