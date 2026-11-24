@@ -720,7 +720,7 @@ class AuthTest {
         }
 
     @Test
-    fun `row 53 - a locked Fundi Bora account is not tried`() = testApplication {
+    fun `row 53 - a locked Fundi Bora account is not tried, and the answer says to wait`() = testApplication {
         val store = FakeAuthStore().apply {
             seedAccount(SHOP_NUMBER, KAGUA_PASSWORD, audience = Audience.BUYER, userId = KAGUA_USER)
             seedAccount(
@@ -732,11 +732,45 @@ class AuthTest {
 
         val response = app.signIn(app = "kagua", password = FUNDI_PASSWORD, version = SHOP_KAGUA)
 
-        assertEquals(HttpStatusCode.Unauthorized, response.status)
+        // The locked account's own password may have been typed: "wait", not "wrong password".
+        assertEquals(HttpStatusCode.TooManyRequests, response.status)
         // Tried on the Kagua account only, and counted there.
         assertEquals(listOf(KAGUA_USER), store.failures)
         assertEquals(0, store.shopsMade)
     }
+
+    @Test
+    fun `row 53 - a locked Kagua account says to wait and never opens the shop by mistake`() = testApplication {
+        val store = FakeAuthStore().apply {
+            seedAccount(
+                SHOP_NUMBER, KAGUA_PASSWORD, audience = Audience.BUYER, userId = KAGUA_USER,
+                lockedUntil = Instant.now().plusSeconds(600),
+            )
+            seedAccount(SHOP_NUMBER, FUNDI_PASSWORD, audience = Audience.FUNDI, userId = FUNDI_USER)
+        }
+        val app = withAuth(store)
+
+        val response = app.signIn(app = "kagua", password = KAGUA_PASSWORD, version = SHOP_KAGUA)
+
+        assertEquals(HttpStatusCode.TooManyRequests, response.status)
+        assertEquals(listOf(FUNDI_USER), store.failures)
+        assertEquals(0, store.shopsMade)
+    }
+
+    @Test
+    fun `row 53 - a failed Kagua password counts even when the Fundi Bora password opens the shop`() =
+        testApplication {
+            // Otherwise somebody who knows the Fundi Bora password could guess the Kagua password
+            // without limit, reading each answer from which account the tokens are for.
+            val store = shopOwner()
+            val app = withAuth(store)
+
+            val response = app.signIn(app = "kagua", password = FUNDI_PASSWORD, version = SHOP_KAGUA)
+
+            assertTrue(response.bodyAsText().contains("\"user_id\":\"$FUNDI_SHOP\""))
+            assertEquals(listOf(KAGUA_USER), store.failures)
+            assertEquals(listOf(FUNDI_USER), store.cleared)
+        }
 
     @Test
     fun `row 53 - a number whose accounts are all locked is told to wait`() = testApplication {
@@ -791,6 +825,22 @@ class AuthTest {
         }
         assertEquals(0, store.shopsMade)
         assertTrue(store.cleared.isEmpty())
+    }
+
+    @Test
+    fun `row 53 - a replayed Fundi Bora refresh token signs the shop's tablets out too`() = testApplication {
+        val store = fundiOnly()
+        val app = withAuth(store)
+        app.signIn(app = "kagua", password = FUNDI_PASSWORD, version = SHOP_KAGUA)
+        val replayed = store.seedRefresh(FUNDI_USER, spent = true)
+
+        val response = app.post("/v1/auth/refresh") {
+            contentType(ContentType.Application.Json)
+            setBody(mapOf("refresh_token" to replayed))
+        }
+
+        assertEquals(HttpStatusCode.Unauthorized, response.status)
+        assertEquals(listOf(FUNDI_USER, FUNDI_SHOP), store.revoked)
     }
 
     @Test
@@ -941,6 +991,8 @@ class AuthTest {
                 "shop-of-$fundiUserId"
             }
         }
+
+        override suspend fun linkedShopAccount(fundiUserId: String): String? = shops[fundiUserId]
 
         override suspend fun findUser(userId: String): UserRow {
             val owner = shops.entries.firstOrNull { it.value == userId }?.key

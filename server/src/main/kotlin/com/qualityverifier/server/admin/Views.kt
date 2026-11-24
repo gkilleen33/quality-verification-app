@@ -455,7 +455,7 @@ fun HTML.usersPage(
                                 +" "
                                 a(href = "/admin/assessments?user=$owner") {
                                     attributes["title"] = "The Fundi Bora account this shop signs in with: $owner"
-                                    +"Fundi Bora account"
+                                    +"its Fundi Bora account's assessments"
                                 }
                             }
                         }

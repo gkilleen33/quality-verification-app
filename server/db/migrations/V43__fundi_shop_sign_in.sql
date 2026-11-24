@@ -130,26 +130,17 @@ BEGIN
         -- A linked row with a number, a password, without shop mode, or for Fundi Bora is refused.
         -- Each is tried as a deleted account, so the unique index on the live one cannot be what
         -- refuses it.
+        -- A number and a password together, since V5's users_credentials_are_paired already
+        -- refuses one without the other: only V43's CHECK refuses this row.
         refused := false;
         BEGIN
-            INSERT INTO users (id, audience, shop_mode, shop_of_user_id, phone, deleted_at)
-            VALUES (shop, 'buyer', true, fundi, '+999000000432', now());
+            INSERT INTO users (id, audience, shop_mode, shop_of_user_id, phone, password_hash, deleted_at)
+            VALUES (shop, 'buyer', true, fundi, '+999000000432', 'self-test', now());
         EXCEPTION WHEN check_violation THEN
             refused := true;
         END;
         IF NOT refused THEN
-            RAISE EXCEPTION 'V43 self-test: a linked shop account took a number';
-        END IF;
-
-        refused := false;
-        BEGIN
-            INSERT INTO users (id, audience, shop_mode, shop_of_user_id, password_hash, deleted_at)
-            VALUES (shop, 'buyer', true, fundi, 'self-test', now());
-        EXCEPTION WHEN check_violation THEN
-            refused := true;
-        END;
-        IF NOT refused THEN
-            RAISE EXCEPTION 'V43 self-test: a linked shop account took a password of its own';
+            RAISE EXCEPTION 'V43 self-test: a linked shop account took a number and a password of its own';
         END IF;
 
         refused := false;

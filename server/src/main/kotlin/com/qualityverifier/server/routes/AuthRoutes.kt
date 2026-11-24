@@ -206,6 +206,11 @@ fun Route.authRoutes(store: AuthStore, accessTokens: AccessTokens, terms: Terms?
                     "Spent refresh token replayed for user {}; revoked {} token(s)",
                     stored.userId, revoked,
                 )
+                // A Fundi Bora account's Kagua shop (V43, row 53) opens with the same password,
+                // so its tablets are signed out with it, as a password change does.
+                store.linkedShopAccount(stored.userId)?.let { shop ->
+                    log.warn("Revoked {} token(s) of shop {} with it", store.revokeChain(shop), shop)
+                }
                 call.respond(HttpStatusCode.Unauthorized, ErrorResponse("invalid_grant"))
                 return@post
             }
@@ -379,8 +384,9 @@ internal fun opensFundiShop(appHeader: String?, versionHeader: String?): Boolean
  *
  * As [refuseUnnamedAppWithTwoAccounts] does: every sign-in costs exactly two password checks'
  * work, whatever the number holds, so the time taken says nothing about which accounts exist; a
- * locked or disabled account is not tried; a wrong password counts as a failure against each
- * account it was tried on; and every refusal is the answer an unknown number gets. The account
+ * locked or disabled account is not tried; and the password counts as a failure against each
+ * account it was tried on and did not open. When nothing matched, the answer is `locked` if an
+ * account was skipped as locked, and otherwise the one an unknown number gets. The account
  * whose password matched has its failures cleared.
  */
 private suspend fun ApplicationCall.signInToKaguaOrFundiShop(
@@ -397,26 +403,35 @@ private suspend fun ApplicationCall.signInToKaguaOrFundiShop(
     )
     val usable = tried.filter { !it.disabled && it.passwordHash != null }
     val unlocked = usable.filter { it.lockedUntil?.isAfter(now) != true }
-    if (usable.isNotEmpty() && unlocked.isEmpty()) {
-        log.warn("Kagua sign-in attempt on a number whose accounts are all locked")
-        respond(
-            HttpStatusCode.TooManyRequests,
-            ErrorResponse("locked", "Too many attempts. Try again later."),
-        )
-        return
-    }
-    // Every account tried, with no short cut, then padded to two checks.
+    // Every unlocked account tried, with no short cut, then padded to two checks.
     val matches = unlocked.map { it to Passwords.verify(request.password, it.passwordHash!!) }
     repeat(2 - unlocked.size) { Passwords.burnEquivalentWork(request.password) }
     val matched = matches.firstOrNull { it.second }?.first
-    if (matched == null) {
-        unlocked.forEach { account ->
-            val failures = store.recordFailedSignIn(account.userId, LOCKOUT, LOCKOUT_THRESHOLD)
-            if (failures >= LOCKOUT_THRESHOLD) {
-                log.warn("Locked account {} after {} failures", account.userId, failures)
-            }
+
+    // A failure counts on every account the password was tried on, in order, before one opened,
+    // so a Kagua password that fails counts even when the Fundi Bora password then opens the
+    // shop. Otherwise somebody who knows the Fundi Bora password could guess the Kagua password
+    // without limit, reading each answer from which account the tokens are for (review fix).
+    // When the Kagua password opens its account, the Fundi Bora check after it is only the
+    // padding to two checks, and counts nothing.
+    matches.takeWhile { !it.second }.forEach { (account, _) ->
+        val failures = store.recordFailedSignIn(account.userId, LOCKOUT, LOCKOUT_THRESHOLD)
+        if (failures >= LOCKOUT_THRESHOLD) {
+            log.warn("Locked account {} after {} failures", account.userId, failures)
         }
-        respond(HttpStatusCode.Unauthorized, ErrorResponse("invalid_credentials"))
+    }
+    if (matched == null) {
+        // A locked account was not tried, so its own password may have been typed: say to
+        // wait, as a sign-in to that account alone would, rather than "wrong password".
+        if (unlocked.size < usable.size) {
+            log.warn("Kagua sign-in attempt on a number with a locked account")
+            respond(
+                HttpStatusCode.TooManyRequests,
+                ErrorResponse("locked", "Too many attempts. Try again later."),
+            )
+        } else {
+            respond(HttpStatusCode.Unauthorized, ErrorResponse("invalid_credentials"))
+        }
         return
     }
 
