@@ -27,6 +27,7 @@ import com.qualityverifier.ui.rememberAuthLabels
 import com.qualityverifier.ui.rememberUpdateLabels
 import com.qualityverifier.ui.update.UpdateRequiredScreen
 import com.qualityverifier.ui.chat.ChatScreen
+import com.qualityverifier.ui.home.HomeChrome
 import com.qualityverifier.ui.home.HomeScreen
 import com.qualityverifier.ui.main.MainScaffold
 import com.qualityverifier.ui.main.MainTab
@@ -35,14 +36,31 @@ import com.qualityverifier.ui.reports.ReportsScreen
 import com.qualityverifier.ui.settings.SettingsScreen
 import com.qualityverifier.ui.auth.RegisterScreen
 import com.qualityverifier.ui.auth.SignInScreen
+import com.qualityverifier.ui.parts.Parts
+import com.qualityverifier.ui.parts.WelcomeContent
+import com.qualityverifier.ui.parts.WelcomeStep
+import com.qualityverifier.ui.rememberKaguaLabels
+import com.qualityverifier.ui.settings.ChangePasswordScreen
+import com.qualityverifier.R
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.systemBarsPadding
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
 import java.util.UUID
 
 private object Routes {
+    /** The first screen of a signed-out phone (v0.7.1, row 57): what Kagua does, then sign in. */
+    const val WELCOME = "welcome"
     const val SIGN_IN = "sign-in"
     const val REGISTER = "register"
     const val SETTINGS = "settings"
+    /** "Change your password" from the Settings menu under Home's gear (row 57). */
+    const val CHANGE_PASSWORD = "settings/password"
     const val HOME = "home"
     const val REPORTS = "reports"
+    /** The shop owner's controls on a shop's tablet (row 12); a personal account has no Profile (row 57). */
     const val PROFILE = "profile"
     const val CHAT =
         "chat/{sessionId}?itemTypeId={itemTypeId}&carry={carry}&from={from}"
@@ -68,9 +86,8 @@ private object Routes {
     }
 
     fun of(tab: MainTab): String = when (tab) {
-        MainTab.HOME, MainTab.ASSESS -> HOME
+        MainTab.HOME -> HOME
         MainTab.REPORTS -> REPORTS
-        MainTab.PROFILE -> PROFILE
     }
 }
 
@@ -80,7 +97,7 @@ fun AppNav() {
     val navController = rememberNavController()
     // Evaluated once per process. Signing in navigates onward itself, and signing out
     // pops back to the start, so this never needs re-reading.
-    val start = remember { if (container.isSignedIn) Routes.HOME else Routes.SIGN_IN }
+    val start = remember { if (container.isSignedIn) Routes.HOME else Routes.WELCOME }
 
     // A review answered with no signal, flushed the next time the app is opened.
     //
@@ -111,7 +128,7 @@ fun AppNav() {
     // (see AppContainer.signOut).
     val leave = { pushPendingWork: Boolean ->
         container.signOut(pushPendingWork)
-        navController.navigate(Routes.SIGN_IN) {
+        navController.navigate(Routes.WELCOME) {
             // The whole back stack goes, so back from sign-in cannot reopen a signed-out
             // account's screens. That is all this does. The assessments stay on the phone;
             // they are cleared when a different account signs in (AppContainer's
@@ -135,7 +152,7 @@ fun AppNav() {
             when {
                 container.isSignedIn ->
                     navController.navigate(Routes.HOME) { popUpTo(0) { inclusive = true } }
-                here != Routes.SIGN_IN && here != Routes.REGISTER ->
+                here != Routes.SIGN_IN && here != Routes.REGISTER && here != Routes.WELCOME ->
                     navController.navigate(Routes.SIGN_IN) { popUpTo(0) { inclusive = true } }
             }
         }
@@ -154,27 +171,52 @@ fun AppNav() {
 
     NavHost(navController = navController, startDestination = start) {
 
+        // The first screen of a signed-out phone (v0.7.1, row 57, P17): what Kagua does,
+        // before anyone is asked to sign in.
+        composable(Routes.WELCOME) {
+            val words = rememberKaguaLabels()
+            Box(Modifier.fillMaxSize().background(Parts.Page).systemBarsPadding()) {
+                WelcomeContent(
+                    wordmark = stringResource(R.string.app_name).uppercase(),
+                    tagline = stringResource(R.string.app_tagline),
+                    title = words.welcomeTitle,
+                    howItWorks = words.howItWorks,
+                    steps = listOf(
+                        WelcomeStep(words.stepChoose, words.stepChooseLine),
+                        WelcomeStep(words.stepPhotos, words.stepPhotosLine),
+                        WelcomeStep(words.stepRead, words.stepReadLine),
+                    ),
+                    primary = words.signIn,
+                    onPrimary = { navController.navigate(Routes.SIGN_IN) },
+                    secondary = words.createAccount,
+                    onSecondary = { navController.navigate(Routes.REGISTER) },
+                )
+            }
+        }
+
         composable(Routes.SIGN_IN) {
             SignInScreen(
                 onSignedIn = {
                     navController.navigate(Routes.HOME) {
                         // Cleared, not stacked: back from Home must not return to a
-                        // sign-in screen for an account already signed in.
-                        popUpTo(Routes.SIGN_IN) { inclusive = true }
+                        // sign-in or welcome screen for an account already signed in.
+                        popUpTo(0) { inclusive = true }
                     }
                 },
-                onRegister = { navController.navigate(Routes.REGISTER) },
+                onRegister = {
+                    navController.navigate(Routes.REGISTER) { popUpTo(Routes.SIGN_IN) { inclusive = true } }
+                },
             )
         }
 
         composable(Routes.REGISTER) {
             RegisterScreen(
                 onRegistered = {
-                    navController.navigate(Routes.HOME) {
-                        popUpTo(Routes.SIGN_IN) { inclusive = true }
-                    }
+                    navController.navigate(Routes.HOME) { popUpTo(0) { inclusive = true } }
                 },
-                onSignIn = { navController.popBackStack() },
+                onSignIn = {
+                    navController.navigate(Routes.SIGN_IN) { popUpTo(Routes.REGISTER) { inclusive = true } }
+                },
             )
         }
 
@@ -182,18 +224,21 @@ fun AppNav() {
             // Read here, when the screen is built: signing in is what makes an account a shop's.
             val shopActive = shop.active
             SecureWindow(shopActive)
-            MainScaffold(MainTab.HOME, navController.tabSelector(), showTabs = !shopActive) { padding ->
+            MainScaffold(MainTab.HOME, navController.tabSelector(), showTabs = HomeChrome.of(shopActive).tabs) { padding ->
                 HomeScreen(
                     contentPadding = padding,
                     onItemChosen = { itemType ->
                         val sessionId = UUID.randomUUID().toString()
                         navController.navigate(Routes.chat(sessionId, itemType.id))
                     },
-                    onOpenReports = { navController.switchTo(MainTab.REPORTS) },
                     shopMode = shopActive,
                     // The password opened it; the account screen is on top of the start
                     // screen, so Back, and every end, closes it again.
                     onOwnerUnlocked = { navController.navigate(Routes.PROFILE) { launchSingleTop = true } },
+                    onChangePassword = { navController.navigate(Routes.CHANGE_PASSWORD) { launchSingleTop = true } },
+                    onSignOut = signOut,
+                    // The server has already deleted the account by the time this runs.
+                    onAccountDeleted = accountDeleted,
                 )
             }
         }
@@ -209,18 +254,34 @@ fun AppNav() {
                 ReportsScreen(
                     contentPadding = padding,
                     onOpenSession = { sessionId -> navController.navigate(Routes.chat(sessionId)) },
+                    onCheckFirst = { navController.switchTo(MainTab.HOME) },
                 )
             }
         }
 
+        composable(Routes.CHANGE_PASSWORD) {
+            ChangePasswordScreen(
+                container = container,
+                labels = rememberAuthLabels(),
+                backLabel = rememberKaguaLabels().tabHome,
+                onBack = { navController.popBackStack() },
+            )
+        }
+
+        // A shop's tablet only (row 12): the owner's controls, opened with the password. A
+        // personal account has no Profile; its settings are under Home's gear (row 57).
         composable(Routes.PROFILE) {
             val shopActive = shop.active
-            MainScaffold(MainTab.PROFILE, navController.tabSelector(), showTabs = !shopActive) { padding ->
+            if (!shopActive) {
+                LaunchedEffect(Unit) { navController.navigate(Routes.HOME) { popUpTo(0) { inclusive = true } } }
+                return@composable
+            }
+            MainScaffold(MainTab.HOME, navController.tabSelector(), showTabs = false) { padding ->
                 ProfileScreen(
                     contentPadding = padding,
                     onOpenSettings = { navController.navigate(Routes.SETTINGS) { launchSingleTop = true } },
                     onSignOut = signOut,
-                    shopMode = shopActive,
+                    shopMode = true,
                     onBackToStart = { navController.navigate(Routes.HOME) { popUpTo(0) { inclusive = true } } },
                 )
             }
@@ -264,16 +325,26 @@ fun AppNav() {
             val sessionId = entry.arguments?.getString("sessionId").orEmpty()
             val itemType = entry.arguments?.getString("itemTypeId")?.let(ItemType::fromId)
             val shopActive = shop.active
+            val words = rememberKaguaLabels()
             ChatScreen(
                 sessionId = sessionId,
                 itemType = itemType,
                 intakePrefill = decodeIntake(entry.arguments?.getString("carry")),
                 previousSessionId = entry.arguments?.getString("from"),
+                // The screen Back returns to, by name (P27).
+                backLabel = when (navController.previousBackStackEntry?.destination?.route) {
+                    Routes.REPORTS -> words.tabReports
+                    Routes.HOME -> words.tabHome
+                    else -> null
+                },
                 // On a shop's tablet, Back ends the customer's assessment as Done does (row 12).
                 onBack = { if (shopActive) shop.end(TabletEnd.DONE) else navController.popBackStack() },
                 shopMode = shopActive,
                 onDone = { shop.end(TabletEnd.DONE) },
-                onOpenSettings = { navController.navigate(Routes.PROFILE) },
+                // A sign-in failure on a personal phone: the settings screen, with sign-out.
+                onOpenSettings = { navController.navigate(Routes.SETTINGS) { launchSingleTop = true } },
+                // "Delete this report" on the report's page (row 57): it is gone, so is its page.
+                onDeleted = { navController.popBackStack() },
                 onAssessAnother = { nextItemType, carried ->
                     // A new conversation rather than a continuation of this one: each
                     // piece gets its own report, and the earlier one stays as it was.
@@ -287,9 +358,6 @@ fun AppNav() {
                         )
                     )
                 },
-                // A different kind of piece needs its own protocol and its own intake,
-                // so it starts where every first assessment starts: the grid.
-                onAssessDifferent = { navController.switchTo(MainTab.HOME) },
             )
         }
 
