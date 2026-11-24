@@ -72,6 +72,28 @@ data class ReportPdfLabels(
     val theirOwnAssessment: String,
     /** On a customer report (v0.6.0, row 27), under the final assessment of the finished piece. */
     val finalCheck: String,
+    /**
+     * Kagua's PDF from a shop's tablet (v0.7.0, row 31), which the customer downloads by QR
+     * code: its title, the label before the item, the heading over the problems, the heading
+     * over what the check could not see, and the line that says whose check it is. The two
+     * headings use the words Kagua's shared report already uses ("What to look at:", "Not
+     * checked:"), so a term means one thing in both.
+     */
+    val kaguaTitle: String,
+    val item: String,
+    val whatToLookAt: String,
+    val notChecked: String,
+    val independentCheck: String,
+    /**
+     * The page a report link answers with once it no longer works, or when it never did
+     * (row 31): one answer for a wrong token, a used-up one and an expired one, so the page
+     * says nothing about which. Shown in English and Kiswahili together, because a wrong
+     * token has no assessment and so no language.
+     */
+    val linkExpiredTitle: String,
+    val linkExpiredBody: String,
+    /** The same page's answer when one address has asked too often (the route's rate limit). */
+    val linkBusy: String,
 ) {
     fun title(kind: ReportKind, workerName: String? = null): String =
         titles.getValue(kind).replace("{name}", workerName.orEmpty())
@@ -129,6 +151,14 @@ data class ReportPdfLabels(
             ),
             theirOwnAssessment = "Their own assessment, made on their phone",
             finalCheck = "Final check of the finished piece",
+            kaguaTitle = "Kagua report",
+            item = "Item",
+            whatToLookAt = "What to look at",
+            notChecked = "Not checked",
+            independentCheck = "This is an independent check by Kagua.",
+            linkExpiredTitle = "This link has expired",
+            linkExpiredBody = "A Kagua report link works for 30 minutes, and for up to three downloads.",
+            linkBusy = "Too many tries from this network. Wait a few minutes and try again.",
         )
 
         // REVIEW: unreviewed Swahili throughout; see the class comment.
@@ -174,6 +204,16 @@ data class ReportPdfLabels(
             ),
             theirOwnAssessment = "Ukaguzi wake mwenyewe, uliofanywa kwenye simu yake",
             finalCheck = "Ukaguzi wa mwisho wa kipande kilichokamilika",
+            // Row 31. Not yet reviewed by a Kiswahili speaker. The two headings repeat
+            // ReportLabels.SWAHILI's shareWhatToLookAt and shareNotChecked.
+            kaguaTitle = "Ripoti ya Kagua",
+            item = "Kitu",
+            whatToLookAt = "Ya kuangalia",
+            notChecked = "Hayakuthibitishwa",
+            independentCheck = "Huu ni ukaguzi huru uliofanywa na Kagua.",
+            linkExpiredTitle = "Kiungo hiki kimeisha muda wake",
+            linkExpiredBody = "Kiungo cha ripoti ya Kagua kinafanya kazi kwa dakika 30, na kwa upakuaji hadi mara tatu.",
+            linkBusy = "Majaribio mengi mno kutoka mtandao huu. Subiri dakika chache kisha ujaribu tena.",
         )
     }
 }

@@ -85,10 +85,15 @@ import com.qualityverifier.server.mpesa.CounterpartyCoder
 import com.qualityverifier.server.mpesa.MpesaStore
 import com.qualityverifier.server.mpesa.PostgresMpesaStore
 import com.qualityverifier.server.routes.reportRoutes
+import com.qualityverifier.server.routes.shopReportLinkRoutes
+import com.qualityverifier.server.routes.shopReportPublicRoutes
 import com.qualityverifier.server.routes.syncRoutes
 import com.qualityverifier.server.routes.termsTextRoutes
 import com.qualityverifier.server.db.PostgresReportStore
+import com.qualityverifier.server.db.PostgresShopReportStore
+import com.qualityverifier.server.reports.AddressRateLimit
 import com.qualityverifier.server.reports.PdfRenderer
+import com.qualityverifier.server.reports.ShopReportService
 import com.qualityverifier.server.reports.ReportCache
 import com.qualityverifier.server.reports.ReportService
 import com.qualityverifier.server.terms.ConsentStore
@@ -237,6 +242,12 @@ fun main() {
         )
     }
 
+    // The customer's PDF by QR code on a shop's tablet (V40, row 31). Needs only the
+    // database: a Kagua PDF is drawn from stored replies, with no photos and no Anthropic key.
+    val shopReports = database?.let {
+        ShopReports(ShopReportService(PostgresShopReportStore(it.source), PdfRenderer()))
+    }
+
     // The settings the server reads while it runs (V27). Without a database every setting
     // is at its default, which leaves the terms gate off.
     val settings = database?.let { AppSettings(PostgresSettingsStore(it.source)) }
@@ -293,7 +304,7 @@ fun main() {
     )
 
     embeddedServer(Netty, port = config.port, host = config.host) {
-        module(config.version, database, auth, chat, fundi, admin, config.appVersions, settings, terms, mpesa, reports, tracker)
+        module(config.version, database, auth, chat, fundi, admin, config.appVersions, settings, terms, mpesa, reports, tracker, shopReports)
     }.start(wait = true)
 }
 
@@ -382,6 +393,25 @@ class Tracker(val store: TrackerStore, val coder: CounterpartyCoder?)
 /** Fundi Bora's PDF reports (V32). Absent without a database, and then not mounted. */
 class Reports(val service: ReportService)
 
+/**
+ * The customer's PDF by QR code on a shop's tablet (V40, row 31): the links and the public
+ * download, with its per-address limit. Absent without a database, and then not mounted.
+ */
+class ShopReports(val service: ShopReportService, val limit: AddressRateLimit = AddressRateLimit())
+
+/** The public report route's prefix. Its token is a credential for 30 minutes, so no log line carries it. */
+internal const val SHOP_REPORT_PATH_PREFIX = "/v1/r/"
+
+/**
+ * [path] as a log line may show it: a report link's token replaced, decoded first as the router
+ * decodes ("/v1/%72/..." is the report route). One that will not decode is shown without its
+ * last segment.
+ */
+internal fun loggablePath(path: String): String {
+    val decoded = runCatching { path.decodeURLPart() }.getOrNull() ?: return path.substringBeforeLast('/') + "/…"
+    return if (decoded.startsWith(SHOP_REPORT_PATH_PREFIX)) "$SHOP_REPORT_PATH_PREFIX…" else path
+}
+
 /** The admin portal. Absent when no session key is configured, so it simply is not mounted. */
 class Admin(
     val store: AdminStore,
@@ -462,6 +492,8 @@ fun Application.module(
     reports: Reports? = null,
     /** PesaLog's records. Mounted only with auth and terms: every route checks PesaLog's agreements. */
     tracker: Tracker? = null,
+    /** The shop tablet's report links. The download needs nothing else; the link needs auth. */
+    shopReports: ShopReports? = null,
 ) {
     install(ContentNegotiation) { json() }
     // Before routing, so it runs ahead of authentication. See installAppVersionGate.
@@ -501,7 +533,8 @@ fun Application.module(
         level = Level.INFO
         // Never the body. Request bodies here are photographs of people's homes and
         // workshops, and a log is the easiest place for them to leak.
-        format { call -> "${call.request.local.method.value} ${call.request.path()} -> ${call.response.status()?.value}" }
+        // Nor a report link's token (row 31), which downloads a customer's report for 30 minutes.
+        format { call -> "${call.request.local.method.value} ${loggablePath(call.request.path())} -> ${call.response.status()?.value}" }
     }
     install(StatusPages) {
         // A body the server could not read is the client's problem, not ours, and it has
@@ -525,7 +558,7 @@ fun Application.module(
             if (carriesMoneyRecords(path)) {
                 log.warn("Unreadable request on {}: {}", path, cause.javaClass.simpleName)
             } else {
-                log.warn("Unreadable request on {}: {}", path, cause.message)
+                log.warn("Unreadable request on {}: {}", loggablePath(path), cause.message)
             }
             // No detail on the wire. The message can name a field or quote the body,
             // and request bodies here are photographs of people's homes.
@@ -543,7 +576,7 @@ fun Application.module(
                 val state = (cause as? SQLException)?.sqlState?.let { " (SQL state $it)" }.orEmpty()
                 log.error("Unhandled failure on {}: {}{}", path, cause.javaClass.name, state)
             } else {
-                log.error("Unhandled failure on {}", path, cause)
+                log.error("Unhandled failure on {}", loggablePath(path), cause)
             }
             // The message stays server-side. A stack trace on the wire tells an
             // attacker about the stack and tells the customer nothing.
@@ -605,6 +638,13 @@ fun Application.module(
         // The reports, beside the other Fundi Bora routes and for the same reason outside
         // the chat block: they read stored replies and need no Anthropic key.
         if (auth != null) reports?.let { reportRoutes(it.service, auth.store) }
+
+        // The shop tablet's report links (V40, row 31): the tablet's request for one behind
+        // the token, and the customer's download with no sign-in at all.
+        shopReports?.let {
+            if (auth != null) shopReportLinkRoutes(it, auth.store)
+            shopReportPublicRoutes(it)
+        }
 
         admin?.let {
             adminRoutes(it.store, it.blobs, it.feedback, it.apiKeys, it.secureCookie)

@@ -88,6 +88,9 @@ import com.qualityverifier.text.parseAssistantContent
 import com.qualityverifier.domain.Ownership
 import com.qualityverifier.ui.shop.ShopDoneButton
 import com.qualityverifier.ui.shop.ShopNoticeScreen
+import com.qualityverifier.ui.shop.ShopSendReport
+import com.qualityverifier.shop.ReportLinkState
+import com.qualityverifier.shop.ShopReportLinkViewModel
 import androidx.activity.compose.BackHandler
 import com.qualityverifier.ui.turn.FailedTurnRow
 import com.qualityverifier.ui.turn.UnansweredTurnRow
@@ -152,6 +155,18 @@ fun ChatScreen(
             previousSessionId = previousSessionId,
         ),
     )
+
+    // The customer's report link on a shop's tablet (row 31). Scoped to this assessment's
+    // screen, so every end of the assessment takes the QR code with it. None on a personal phone.
+    val reportLink: ShopReportLinkViewModel? = if (shopMode) {
+        viewModel(
+            key = "report-link:$sessionId",
+            factory = ShopReportLinkViewModel.factory(container.shopReportLinks, sessionId),
+        )
+    } else {
+        null
+    }
+    val reportLinkState = reportLink?.state?.collectAsState()?.value ?: ReportLinkState.Idle
 
     val messages by viewModel.messages.collectAsState()
     // The photo open in the viewer, by path, or null (row 20). Saved across a rotation.
@@ -249,6 +264,14 @@ fun ChatScreen(
         if (messages.isNotEmpty()) {
             listState.animateScrollToItem(messages.lastIndex + if (showNextSteps) 1 else 0)
         }
+    }
+
+    // The QR code (row 31) opens inside the last card and pushes Done down; bring that card to
+    // the top so the whole code is in view for the customer's camera.
+    val qrShown = reportLinkState is ReportLinkState.Shown
+    LaunchedEffect(qrShown) {
+        val last = listState.layoutInfo.totalItemsCount - 1
+        if (qrShown && last >= 0) listState.animateScrollToItem(last)
     }
 
     // The evaluator questionnaire, at the other end of the same conversation. Full screen
@@ -497,9 +520,18 @@ fun ChatScreen(
 
                         // A shop's tablet (row 12): one customer, one finished piece, so no
                         // "check another" or "compare"; one button that deletes the tablet's copy.
+                        // Above it, the customer's PDF by QR code (row 31) in place of Share.
                         if (controls.done) {
                             item(key = "shop-done") {
                                 Spacer(Modifier.height(6.dp))
+                                if (controls.sendReport && reportLink != null) {
+                                    ShopSendReport(
+                                        labels = shareLabels,
+                                        state = reportLinkState,
+                                        onRequest = reportLink::request,
+                                    )
+                                    Spacer(Modifier.height(16.dp))
+                                }
                                 ShopDoneButton(labels = shareLabels, onDone = onDone)
                             }
                         }
@@ -852,6 +884,8 @@ internal data class ChatControls(
     val share: Boolean,
     val nextSteps: Boolean,
     val done: Boolean,
+    /** "Send this report to my phone" and its QR code (row 31): the tablet's Share. */
+    val sendReport: Boolean,
     val gallery: Boolean,
     val settingsOnError: Boolean,
 ) {
@@ -863,6 +897,7 @@ internal data class ChatControls(
                 share = hasVerdict && !shopMode,
                 nextSteps = afterVerdict && !shopMode,
                 done = afterVerdict && shopMode,
+                sendReport = afterVerdict && shopMode,
                 gallery = !shopMode,
                 settingsOnError = !shopMode,
             )

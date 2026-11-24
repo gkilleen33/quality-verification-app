@@ -1,20 +1,26 @@
 package com.qualityverifier.ui.shop
 
 import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -24,17 +30,27 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.qualityverifier.data.sync.PasswordCheck
+import com.qualityverifier.shop.ReportLinkState
+import com.qualityverifier.shop.reportQr
 import com.qualityverifier.text.AuthLabels
 import com.qualityverifier.text.ReportLabels
 import com.qualityverifier.ui.shopMode
 import kotlinx.coroutines.launch
+import kotlin.math.floor
 
 /**
  * What a walk-in customer reads before each assessment on a shop's tablet (row 12).
@@ -88,6 +104,92 @@ fun ShopDoneButton(labels: ReportLabels, onDone: () -> Unit) {
             .height(56.dp),
     ) { Text(labels.shopDone, style = MaterialTheme.typography.titleMedium) }
 }
+
+/**
+ * "Send this report to my phone" on a shop's tablet (row 31), above Done. Pressed, it becomes
+ * the QR code the customer scans with their own phone's camera, with what the code does and how
+ * long it works. Outlined, not filled: Done stays the loudest thing on the screen (P8).
+ */
+@Composable
+fun ShopSendReport(labels: ReportLabels, state: ReportLinkState, onRequest: () -> Unit) {
+    Column(
+        Modifier.fillMaxWidth(),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        if (state is ReportLinkState.Shown) {
+            ReportQrCode(
+                url = state.url,
+                description = labels.shopScanToDownload,
+                modifier = Modifier.size(QR_SIZE),
+            )
+            Text(labels.shopScanToDownload, style = MaterialTheme.typography.bodyLarge, textAlign = TextAlign.Center)
+            Text(
+                labels.shopLinkLimits,
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                textAlign = TextAlign.Center,
+            )
+        } else {
+            val loading = state is ReportLinkState.Loading
+            OutlinedButton(
+                onClick = onRequest,
+                enabled = !loading,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(56.dp),
+            ) {
+                if (loading) {
+                    CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
+                } else {
+                    Text(labels.shopSendReport, style = MaterialTheme.typography.titleMedium)
+                }
+            }
+            if (state is ReportLinkState.Failed) {
+                Text(labels.shopLinkFailed, color = MaterialTheme.colorScheme.error, textAlign = TextAlign.Center)
+            }
+        }
+    }
+}
+
+/**
+ * The QR code for [url], black on white whatever the theme, since a camera reads contrast and
+ * a dark theme would invert it. Each module is a whole number of pixels, so no hairline gaps
+ * open between them for a scanner to misread.
+ */
+@Composable
+fun ReportQrCode(url: String, description: String, modifier: Modifier = Modifier) {
+    val matrix = remember(url) { reportQr(url) }
+    Canvas(
+        modifier
+            .aspectRatio(1f)
+            .background(Color.White)
+            .semantics { contentDescription = description },
+    ) {
+        val cell = floor(size.minDimension / matrix.width)
+        val origin = (size.minDimension - cell * matrix.width) / 2
+        for (y in 0 until matrix.height) {
+            var x = 0
+            while (x < matrix.width) {
+                if (!matrix.get(x, y)) {
+                    x++
+                    continue
+                }
+                // One rectangle per horizontal run of dark modules.
+                val start = x
+                while (x < matrix.width && matrix.get(x, y)) x++
+                drawRect(
+                    color = Color.Black,
+                    topLeft = Offset(origin + start * cell, origin + y * cell),
+                    size = Size((x - start) * cell, cell),
+                )
+            }
+        }
+    }
+}
+
+/** Large enough to scan from a phone held at arm's length over the tablet. */
+private val QR_SIZE = 260.dp
 
 /**
  * The account's password before the owner's controls open (row 12), so a customer cannot sign

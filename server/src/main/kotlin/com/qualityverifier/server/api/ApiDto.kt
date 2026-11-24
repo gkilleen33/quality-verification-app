@@ -147,6 +147,17 @@ data class ApiAssessment(
     @SerialName("tablet_ended") val tabletEnded: String? = null,
     /** When the server heard [tabletEnded], epoch millis; null when it is null. */
     @SerialName("tablet_ended_at") val tabletEndedAt: Long? = null,
+    /**
+     * How many report links the shop tablet showed as a QR code for this assessment (V40, row
+     * 31), used or not. Zero for every assessment not made on a tablet.
+     */
+    @SerialName("report_links") val reportLinks: Int = 0,
+    /**
+     * How many times a customer downloaded this assessment's PDF through those links, at most
+     * three a link. A download does not move `updated_at`, so `updated_since` does not pick
+     * up a new one; a full pull does.
+     */
+    @SerialName("report_downloads") val reportDownloads: Int = 0,
 )
 
 /**

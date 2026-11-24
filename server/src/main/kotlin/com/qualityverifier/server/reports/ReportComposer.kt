@@ -123,6 +123,23 @@ data class ReportInput(
     val parts: List<WorkPart> = emptyList(),
 )
 
+/**
+ * One Kagua assessment as the shop tablet's PDF reads it (row 31). Nothing about the account
+ * that made it: the PDF a customer takes away names no shop, no account and no number.
+ */
+data class KaguaReportSession(
+    val id: String,
+    val itemTypeId: String,
+    /** Epoch millis. */
+    val createdAt: Long,
+    val verdictLanguage: String?,
+    /** The assistant's replies, oldest first. */
+    val replies: List<String>,
+)
+
+/** A composed Kagua PDF: the blocks the renderer draws, in [labels]' language. */
+data class KaguaReportContent(val labels: ReportLabels, val blocks: List<ReportBlock>)
+
 /** What a linked-worker report is composed from: one roster worker's work across pieces. */
 data class WorkerWorkInput(
     val workerId: String,
@@ -463,6 +480,55 @@ class ReportComposer {
         }
         blocks += closing(input, labels)
         return content(input, input.kind, listOf(chosen), blocks, labels, record)
+    }
+
+    /**
+     * Kagua's PDF from a shop's tablet (release scope row 31), which a walk-in customer
+     * downloads by QR code: the item, the date, the newest verdict with its headline and
+     * summary, each problem with what was seen, what it means and the fix, and what the check
+     * could not see, as the verdict card on the tablet shows them; then the line that says it
+     * is an independent check, and Kagua's sign-off. In the language the verdict declared.
+     *
+     * It takes no account, so it cannot print the shop's name, the account's name, or a
+     * phone number: [KaguaReportSession] carries none. No photos either: a photo taken in the
+     * shop can show its signboard, and text alone keeps the file small on mobile data.
+     */
+    fun composeKagua(session: KaguaReportSession): KaguaReportContent {
+        val verdict = session.replies.asReversed().firstNotNullOfOrNull { parseAssistantContent(it).verdict }
+        val labels = ReportLabels.forLanguage(
+            session.verdictLanguage?.takeIf { it.isNotBlank() } ?: verdict?.language?.takeIf { it.isNotBlank() },
+        )
+        val pdf = labels.pdf
+        val blocks = mutableListOf<ReportBlock>()
+        blocks += HeadingBlock(pdf.kaguaTitle, level = 1)
+        blocks += LineBlock(pdf.item, ItemType.fromId(session.itemTypeId)?.let(labels::itemName) ?: session.itemTypeId)
+        blocks += TextBlock(pdf.assessmentOf(day(session.createdAt)))
+        if (verdict == null) {
+            blocks += TextBlock(pdf.noFullVerdict)
+        } else {
+            blocks += LineBlock(pdf.verdict, verdictWords(verdict, labels))
+            verdict.summary.trim().takeIf { it.isNotEmpty() }?.let { blocks += LineBlock(pdf.summary, it) }
+            blocks += HeadingBlock(pdf.whatToLookAt, level = 2)
+            if (verdict.defects.isEmpty()) blocks += TextBlock(pdf.noProblems)
+            verdict.defects.forEach { defect ->
+                blocks += ProblemBlock(
+                    title = defect.title.trim(),
+                    severity = labels.severity(defect.severity),
+                    part = null,
+                    whatISee = defect.whatISee.trim(),
+                    whatItMeans = defect.whatItMeans.trim(),
+                    whatToDo = defect.whatToDo.trim(),
+                )
+            }
+            val unchecked = verdict.unverified.map { it.trim() }.filter { it.isNotEmpty() }
+            if (unchecked.isNotEmpty()) {
+                blocks += HeadingBlock(pdf.notChecked, level = 2)
+                unchecked.forEach { blocks += TextBlock("- $it") }
+            }
+        }
+        blocks += NoteBlock(pdf.independentCheck)
+        blocks += TextBlock(labels.shareSignOff)
+        return KaguaReportContent(labels = labels, blocks = blocks)
     }
 
     // ------------------------------------------------------------ shared pieces

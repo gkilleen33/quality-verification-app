@@ -131,6 +131,16 @@ data class ReportLabels(
     val shopNoticeDeleted: String,
     val shopNoticeResearchers: String,
     val shopNoticeStart: String,
+    /**
+     * The customer's PDF by QR code on a shop's tablet (release scope row 31): the button above
+     * Done, the two lines under the code, and the line when no link could be made. Kiswahili
+     * not yet reviewed. No number is asked for and nothing is sent by SMS, so the lines say
+     * only what the code does and how long it works.
+     */
+    val shopSendReport: String,
+    val shopScanToDownload: String,
+    val shopLinkLimits: String,
+    val shopLinkFailed: String,
     // The opening turn the intake writes on the customer's behalf.
     val intakeSaysBuying: String,
     val intakeSaysAlreadyOwn: String,
@@ -377,6 +387,10 @@ data class ReportLabels(
             shopNoticeDeleted = "This tablet deletes its copy when you finish.",
             shopNoticeResearchers = "Kagua is run by researchers, who keep the photos and the result.",
             shopNoticeStart = "Start",
+            shopSendReport = "Send this report to my phone",
+            shopScanToDownload = "Scan this code with your phone's camera to download the report.",
+            shopLinkLimits = "The link works for 30 minutes, and for up to three downloads.",
+            shopLinkFailed = "The report link could not be made. Check the internet connection and try again.",
             openingShotInstruction = "One photo of the whole thing to start. Stand back far " +
                 "enough that all of it is in the frame, including where it meets the floor. " +
                 "This lets me see what I am dealing with before asking for close-ups.",
@@ -523,6 +537,11 @@ data class ReportLabels(
             shopNoticeDeleted = "Kompyuta kibao hii inafuta nakala yake ukimaliza.",
             shopNoticeResearchers = "Kagua inaendeshwa na watafiti, ambao huhifadhi picha na matokeo.",
             shopNoticeStart = "Anza",
+            // Row 31. Not yet reviewed by a Kiswahili speaker.
+            shopSendReport = "Tuma ripoti hii kwenye simu yangu",
+            shopScanToDownload = "Changanua msimbo huu kwa kamera ya simu yako ili kupakua ripoti.",
+            shopLinkLimits = "Kiungo kinafanya kazi kwa dakika 30, na kwa upakuaji hadi mara tatu.",
+            shopLinkFailed = "Kiungo cha ripoti hakikuweza kutengenezwa. Angalia mtandao kisha ujaribu tena.",
             openingShotInstruction = "Picha moja ya kitu kizima kwa kuanzia. Simama mbali " +
                 "kiasi ili kiwe chote kwenye picha, pamoja na pale kinapogusa sakafu. " +
                 "Hii inanisaidia kuona ninachoshughulika nacho kabla ya kuomba picha za karibu.",
