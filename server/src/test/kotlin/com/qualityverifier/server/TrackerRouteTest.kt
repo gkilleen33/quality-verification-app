@@ -9,10 +9,14 @@ import com.qualityverifier.domain.CounterpartyBasis
 import com.qualityverifier.domain.MobileMoneyNetwork
 import com.qualityverifier.domain.MpesaCategory
 import com.qualityverifier.domain.VersionPolicy
+import com.qualityverifier.mpesa.NotificationMessage
+import com.qualityverifier.mpesa.TrackerIntake
+import com.qualityverifier.mpesa.TrackerReading
 import com.qualityverifier.server.TermsWorld.Companion.appVersion
 import com.qualityverifier.server.TermsWorld.Companion.signedInAs
 import com.qualityverifier.server.db.UserRow
 import com.qualityverifier.server.mpesa.CounterpartyCoder
+import com.qualityverifier.server.routes.TrackerTransactionDto
 import com.qualityverifier.server.terms.ConsentAction
 import com.qualityverifier.server.terms.ConsentKind
 import com.qualityverifier.server.terms.TermsGate
@@ -894,6 +898,81 @@ class TrackerRouteTest {
         assertEquals(null, send.counterpartyNameCode)
         assertEquals(coder.codes(null, "JANE DOE", null).nameCode, receipt.counterpartyNameCode)
         assertEquals(null, receipt.counterpartyMaskedCode)
+    }
+
+    /** PesaLog's own Json (TrackerContainer): a null field is left out of the body. */
+    private val phoneJson = Json {
+        ignoreUnknownKeys = true
+        encodeDefaults = true
+        explicitNulls = false
+    }
+
+    /**
+     * One M-Pesa SMS through PesaLog 0.2.0's whole path to the wire: TrackerIntake reads it as
+     * the notification listener hands it over, and the record becomes an upload row field for
+     * field as TrackerRepository's toEntity and TrackerClient's toBody copy it. The server's
+     * DTO carries the same serial names as TrackerClient's TransactionBody.
+     */
+    private fun asPesaLogSends(sms: String): String {
+        val agreedAt = 1_762_000_000_000
+        val message = NotificationMessage(MobileMoneyNetwork.MPESA, "MPESA", sms, receivedAt = 1_762_934_400_000)
+        val reading = TrackerIntake.read(message, agreedAt)
+        assertTrue("not read as a payment: $reading", reading is TrackerReading.Read)
+        val (network, record) = (reading as TrackerReading.Read).record
+        val row = TrackerTransactionDto(
+            network = network.id,
+            code = record.code,
+            direction = record.direction.id,
+            type = record.type.id,
+            amountKes = record.amountKes,
+            feeKes = record.feeKes,
+            balanceAfterKes = record.balanceAfterKes,
+            occurredAt = record.occurredAt,
+            counterpartyPhone = record.counterpartyPhone,
+            counterpartyName = record.counterpartyName,
+            counterpartyMasked = record.counterpartyMasked,
+            parserVersion = TrackerIntake.PARSER_VERSION,
+        )
+        return phoneJson.encodeToString(TrackerTransactionDto.serializer(), row)
+    }
+
+    @Test
+    fun `row 32 - a real M-Pesa send and receipt from the same person match by name and masked-number codes`() = testApplication {
+        val world = TermsWorld()
+        val client = world.mountTracker(this)
+        client.agreeToAll(world)
+        // Worded as MobileMoneyParserTest's real samples: the send prints the whole number, the
+        // receipt only "0720***123", and the receipt's name in another case and spacing.
+        val sendSms = "SFA1B2C3D5 Confirmed. Ksh500.00 sent to JANE DOE 0720456123 on 9/9/26 at 10:15 AM. " +
+            "New M-PESA balance is Ksh10.00. Transaction cost, Ksh7.00."
+        val receiptSms = "UINRL7DIVX Confirmed.You have received Ksh300.00 from jane  doe 0720***123 on 23/9/26 " +
+            "at 9:30 AM New M-PESA balance is Ksh310.00."
+
+        val sendBody = asPesaLogSends(sendSms)
+        val receiptBody = asPesaLogSends(receiptSms)
+        // What 0.2.0 puts on the wire: the name beside the full number on the send, the name
+        // beside the masked number on the receipt.
+        val sendFields = Json.parseToJsonElement(sendBody).jsonObject
+        val receiptFields = Json.parseToJsonElement(receiptBody).jsonObject
+        assertTrue(sendBody, "counterparty_phone" in sendFields && "counterparty_name" in sendFields)
+        assertFalse(sendBody, "counterparty_masked" in sendFields)
+        assertEquals("0720***123", receiptFields["counterparty_masked"]!!.jsonPrimitive.content)
+        assertTrue(receiptBody, "counterparty_name" in receiptFields)
+        assertFalse(receiptBody, "counterparty_phone" in receiptFields)
+
+        val response = client.upload(world, sendBody, receiptBody)
+
+        assertEquals(HttpStatusCode.OK, response.status)
+        val send = stored("SFA1B2C3D5")
+        val receipt = stored("UINRL7DIVX")
+        assertTrue(send.counterpartyNameCode != null && send.counterpartyMaskedCode != null)
+        assertEquals(send.counterpartyNameCode, receipt.counterpartyNameCode)
+        assertEquals(send.counterpartyMaskedCode, receipt.counterpartyMaskedCode)
+        // The code from the full number is on the send only; the receipt's is made from its name.
+        assertEquals(coder.code("0720456123", null), send.counterparty)
+        assertEquals(CounterpartyBasis.PHONE, send.counterparty?.basis)
+        assertEquals(CounterpartyBasis.NAME, receipt.counterparty?.basis)
+        assertTrue(send.counterparty != receipt.counterparty)
     }
 
     // ------------------------------------------------------------ row 33: the consent wording
