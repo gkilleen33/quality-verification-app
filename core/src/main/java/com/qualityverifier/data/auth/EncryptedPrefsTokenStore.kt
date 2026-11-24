@@ -120,6 +120,15 @@ class EncryptedPrefsTokenStore(
         editor.commit()
     }
 
+    override fun ownPhone(): String? = read(KEY_OWN_PHONE)
+
+    @SuppressLint("ApplySharedPref")
+    override fun setOwnPhone(value: String?) {
+        val editor = prefs()?.edit() ?: return
+        if (value.isNullOrBlank()) editor.remove(KEY_OWN_PHONE) else editor.putString(KEY_OWN_PHONE, value)
+        editor.commit()
+    }
+
     // Not the shop flag (row 12): a forced sign-out on a shop's tablet must not stop the wipe.
     @SuppressLint("ApplySharedPref")
     override fun clear() {
@@ -130,6 +139,7 @@ class EncryptedPrefsTokenStore(
             ?.remove(KEY_EXPIRES_AT)
             ?.remove(KEY_TESTER)
             ?.remove(KEY_TERMS_REQUIRED)
+            ?.remove(KEY_OWN_PHONE)
             ?.commit()
     }
 
@@ -152,5 +162,6 @@ class EncryptedPrefsTokenStore(
         const val KEY_EXPIRES_AT = "access_expires_at"
         const val KEY_TESTER = "is_tester"
         const val KEY_TERMS_REQUIRED = "terms_required"
+        const val KEY_OWN_PHONE = "own_phone"
     }
 }

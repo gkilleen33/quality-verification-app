@@ -160,6 +160,13 @@ interface SessionRepository {
     suspend fun pieceIsForStudio(pieceId: String): Boolean = false
 
     /**
+     * The "Studios I work for" entry one of this account's pieces is labelled for (V34), or
+     * null for "My own job" and a piece never asked. With the entry's linked mark, decides
+     * whether the maker makes the final assessment (row 51). Null in fakes and in Kagua.
+     */
+    suspend fun pieceStudioId(pieceId: String): String? = null
+
+    /**
      * Renames a piece, or clears its name with null. Written locally first and sent on
      * the next sync, before the pull, so a name given offline is not overwritten.
      */

@@ -67,6 +67,7 @@ fun StudiosScreen(onBack: () -> Unit) {
                 model.add(details)
             },
             onDismiss = { adding = false },
+            ownNumber = model.ownNumber,
         )
     }
     editing?.let { studio ->
@@ -86,6 +87,7 @@ fun StudiosScreen(onBack: () -> Unit) {
                 }
             },
             onDismiss = { editingId = null },
+            ownNumber = model.ownNumber,
         )
     }
 

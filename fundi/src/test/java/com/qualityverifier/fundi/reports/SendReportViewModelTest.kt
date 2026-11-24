@@ -12,6 +12,7 @@ import com.qualityverifier.domain.ReportKind
 import com.qualityverifier.domain.ReportPreview
 import com.qualityverifier.domain.ReportRequest
 import com.qualityverifier.domain.SessionSummary
+import com.qualityverifier.domain.Studio
 import com.qualityverifier.domain.VerdictLevel
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
@@ -96,6 +97,30 @@ class SendReportViewModelTest {
         assertEquals(listOf("piece-1" to ReportRequest(kind = "customer")), api.previewed)
         // No part control and no remove control exist: the preview is the server's blocks as they are.
         assertEquals(preview.blocks, step.preview.blocks)
+    }
+
+    // Row 51 (Nathan, 23 November 2026): on a piece labelled for a studio with no linked
+    // manager, the customer report is the maker's to send; with a linked one it is not.
+    private fun labelledFor(linked: Boolean) = SendReportViewModel(
+        ReportTarget.Piece("piece-1"), FakeApi(previewOutcome = PreviewOutcome.Loaded(preview)), fileFor = null,
+        summaries = MutableStateFlow(listOf(finished.value.single().copy(pieceStudioId = "entry-1"))),
+        studios = MutableStateFlow(listOf(Studio("entry-1", "Mama Njeri's", "+254711000223", archived = false, linked = linked))),
+    )
+
+    @Test
+    fun `row 51 - a maker with an unlinked studio is offered the customer report`() = runTest {
+        val model = labelledFor(linked = false)
+        advanceUntilIdle()
+        assertTrue(model.offered.value.contains(ReportKind.CUSTOMER))
+        assertFalse("no My manager without a link", model.offered.value.contains(ReportKind.TO_MANAGER))
+    }
+
+    @Test
+    fun `row 51 - a maker whose studio manager is linked is not offered it`() = runTest {
+        val model = labelledFor(linked = true)
+        advanceUntilIdle()
+        assertFalse(model.offered.value.contains(ReportKind.CUSTOMER))
+        assertTrue(model.offered.value.contains(ReportKind.TO_MANAGER))
     }
 
     @Test
