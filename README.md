@@ -296,11 +296,12 @@ assessment. It opens in the language chosen at intake; the other language asks t
 for the replies' translations, which it writes once per reply with
 [`prompts/fundi-translate.txt`](prompts/fundi-translate.txt) and keeps (V41). The
 headings and buttons follow the switch, from `FundiLabels.SWAHILI` and `ReportLabels`,
-whose Kiswahili is unreviewed in the same way. **A translation never enters the
-conversation**: the server reads it from its own table, every turn the app writes (a
-detail button, a page question, a reply chip, the plan's answers) is written from the
-original, and the next request to Claude is byte-identical with or without one
-(`TranslationRouteTest`).
+whose Kiswahili is unreviewed in the same way. The plan's camera and test screens and the
+reply chips show the translation too. **A translation never enters the conversation**:
+the server reads it from its own table, every turn the app writes (a detail button, a
+page question, a reply chip, the plan's answers) is written from the original, chosen by
+place rather than by the shown words, and the next request to Claude is byte-identical
+with or without one (`TranslationRouteTest`).
 
 ### The next piece in the same shop
 
