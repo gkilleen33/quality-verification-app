@@ -29,8 +29,11 @@ import com.qualityverifier.ui.photo.ViewerPhoto
  * under the wrong ones.
  *
  * [purpose] is the intake's purpose; null before it is known, which leaves the opening
- * photograph uncaptioned. [reportLabels] follows the assessment's language, as the
- * submission text did when it was written.
+ * photograph uncaptioned. [reportLabels] is the language the captions are shown in;
+ * [writtenIn] is the assessment's language, as the submission text was when it was written,
+ * and reads it. They differ when the maker has switched the replies to the other language
+ * (row 29); [messages] and [run] are then the translated conversation and run, whose plans
+ * have the same shots in the same places.
  */
 fun assessmentPhotos(
     messages: List<ChatMessage>,
@@ -38,6 +41,7 @@ fun assessmentPhotos(
     purpose: FundiPurpose?,
     labels: FundiLabels,
     reportLabels: ReportLabels,
+    writtenIn: ReportLabels = reportLabels,
 ): List<ViewerPhoto> {
     val photos = mutableListOf<ViewerPhoto>()
     val openingId = messages.firstOrNull { it.role == Role.USER }?.id
@@ -52,7 +56,7 @@ fun assessmentPhotos(
         if (message.attachments.isEmpty()) continue
         val captions: List<String?> = when {
             message.id == openingId -> List(message.attachments.size) { purpose?.let(labels::openingPhotoName) }
-            message.composed -> submittedShotTitles(plan, message.text, message.attachments.size, reportLabels)
+            message.composed -> submittedShotTitles(plan, message.text, message.attachments.size, reportLabels, writtenIn)
             else -> List(message.attachments.size) { null }
         }
         message.attachments.forEachIndexed { index, attachment ->
@@ -109,13 +113,15 @@ private fun submittedShotTitles(
     text: String,
     count: Int,
     labels: ReportLabels,
+    /** The language the turn was written in, which marks a skipped shot. */
+    writtenIn: ReportLabels,
 ): List<String?> {
     val unknown = List<String?>(count) { null }
     val answered = plan ?: return unknown
     if (answered.photos.isEmpty()) return unknown
     val shotLines = text.lines().drop(1).take(answered.photos.size)
     if (shotLines.size != answered.photos.size || shotLines.any { !it.startsWith("- ") }) return unknown
-    val skipped = ": ${labels.notDone}"
+    val skipped = ": ${writtenIn.notDone}"
     val taken = answered.photos.indices
         .filter { !shotLines[it].endsWith(skipped) }
         .map { shotTitle(answered.photos[it], it, answered, labels) }

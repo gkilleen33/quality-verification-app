@@ -8,10 +8,13 @@
 -- assessment's replies, one Claude call per reply; each translation is kept here, so later taps,
 -- on any phone signed in to the account, switch at once with no second call.
 --
--- ONE ROW PER REPLY AND LANGUAGE. A reply is named by the SHA-256 of its text (source_sha256),
--- because the phone's id for a reply it received is its own and not the server's; the unique
--- index keeps one translation per assessment, text and language. message_id is the first stored
--- reply with that text, for joining.
+-- ONE ROW PER REPLY, LANGUAGE AND PROMPT. A reply is named by the SHA-256 of its text
+-- (source_sha256), because the phone's id for a reply it received is its own and not the
+-- server's. prompt_sha is the SHA-256 of the translation prompt that wrote the row; the unique
+-- index keeps one translation per assessment, text, language and prompt, and the server serves
+-- only rows written by the current prompt. A new prompt (row 16's glossary and register) so
+-- writes a new row on the next switch, and the old one stays, for the record. message_id is the
+-- first stored reply with that text, for joining.
 --
 -- NEVER IN THE CONVERSATION. Nothing that builds a request to Claude reads this table: the
 -- history of the next turn is read from `messages` alone (ChatStore.history), so a translation
@@ -54,21 +57,32 @@ CREATE TABLE message_translations (
     -- Cleared on deletion.
     translated_text   text,
     model             text,
-    -- SHA-256 of the translation prompt (prompts/fundi-translate.txt) that wrote it.
-    prompt_sha        text,
+    -- SHA-256 of the translation prompt (prompts/fundi-translate.txt) that wrote it, lowercase
+    -- hex. Part of the key: a new prompt writes a new row.
+    prompt_sha        text NOT NULL,
     usage_event_id    bigint REFERENCES usage_events(id) ON DELETE SET NULL,
     created_at        timestamptz NOT NULL DEFAULT now(),
     CONSTRAINT message_translations_language_known
         CHECK (language IN ('en', 'sw')),
     CONSTRAINT message_translations_source_hex
         CHECK (source_sha256 ~ '^[0-9a-f]{64}$'),
+    CONSTRAINT message_translations_prompt_hex
+        CHECK (prompt_sha ~ '^[0-9a-f]{64}$'),
     CONSTRAINT message_translations_text_present
         CHECK (translated_text IS NULL OR length(translated_text) > 0)
 );
 
--- One translation per assessment, reply text and language; the route reads them by the first two.
+-- One translation per assessment, reply text, language and prompt; the route reads them by
+-- session, language and prompt.
 CREATE UNIQUE INDEX message_translations_key
-    ON message_translations (session_id, language, source_sha256);
+    ON message_translations (session_id, language, source_sha256, prompt_sha);
+
+-- The two foreign keys, so deleting a message or a usage row (ON DELETE SET NULL) finds the
+-- translations that name it without reading the whole table.
+CREATE INDEX message_translations_message_id
+    ON message_translations (message_id);
+CREATE INDEX message_translations_usage_event_id
+    ON message_translations (usage_event_id);
 
 ALTER TABLE usage_events DROP CONSTRAINT usage_events_call_kind_known;
 ALTER TABLE usage_events ADD CONSTRAINT usage_events_call_kind_known
@@ -84,6 +98,8 @@ DECLARE
     session_ uuid := '00000000-0000-4000-8000-000000000411';
     reply    uuid := '00000000-0000-4000-8000-000000000412';
     hash     text := repeat('ab', 32);
+    prompt_a text := repeat('01', 32);
+    prompt_b text := repeat('02', 32);
     usage_id bigint;
     refused  boolean;
 BEGIN
@@ -99,13 +115,13 @@ BEGIN
 
         -- Both languages of the same reply.
         INSERT INTO message_translations (session_id, message_id, source_sha256, language, translated_text, model, prompt_sha, usage_event_id)
-        VALUES (session_, reply, hash, 'sw', 'utambuzi', 'm', 'sha', usage_id),
-               (session_, reply, hash, 'en', 'diagnosis', 'm', 'sha', usage_id);
+        VALUES (session_, reply, hash, 'sw', 'utambuzi', 'm', prompt_a, usage_id),
+               (session_, reply, hash, 'en', 'diagnosis', 'm', prompt_a, usage_id);
 
         refused := false;
         BEGIN
-            INSERT INTO message_translations (session_id, source_sha256, language, translated_text)
-            VALUES (session_, repeat('cd', 32), 'fr', 'x');
+            INSERT INTO message_translations (session_id, source_sha256, language, translated_text, prompt_sha)
+            VALUES (session_, repeat('cd', 32), 'fr', 'x', prompt_a);
         EXCEPTION WHEN check_violation THEN
             refused := true;
         END;
@@ -115,8 +131,8 @@ BEGIN
 
         refused := false;
         BEGIN
-            INSERT INTO message_translations (session_id, source_sha256, language, translated_text)
-            VALUES (session_, upper(repeat('cd', 32)), 'sw', 'x');
+            INSERT INTO message_translations (session_id, source_sha256, language, translated_text, prompt_sha)
+            VALUES (session_, upper(repeat('cd', 32)), 'sw', 'x', prompt_a);
         EXCEPTION WHEN check_violation THEN
             refused := true;
         END;
@@ -126,8 +142,30 @@ BEGIN
 
         refused := false;
         BEGIN
+            INSERT INTO message_translations (session_id, source_sha256, language, translated_text, prompt_sha)
+            VALUES (session_, repeat('cd', 32), 'sw', 'x', 'sha');
+        EXCEPTION WHEN check_violation THEN
+            refused := true;
+        END;
+        IF NOT refused THEN
+            RAISE EXCEPTION 'V41 self-test: message_translations accepted a prompt fingerprint that is not a SHA-256';
+        END IF;
+
+        refused := false;
+        BEGIN
             INSERT INTO message_translations (session_id, source_sha256, language, translated_text)
-            VALUES (session_, repeat('cd', 32), 'sw', '');
+            VALUES (session_, repeat('cd', 32), 'sw', 'x');
+        EXCEPTION WHEN not_null_violation THEN
+            refused := true;
+        END;
+        IF NOT refused THEN
+            RAISE EXCEPTION 'V41 self-test: message_translations accepted a translation with no prompt fingerprint';
+        END IF;
+
+        refused := false;
+        BEGIN
+            INSERT INTO message_translations (session_id, source_sha256, language, translated_text, prompt_sha)
+            VALUES (session_, repeat('cd', 32), 'sw', '', prompt_a);
         EXCEPTION WHEN check_violation THEN
             refused := true;
         END;
@@ -135,24 +173,33 @@ BEGIN
             RAISE EXCEPTION 'V41 self-test: message_translations accepted an empty translation';
         END IF;
 
-        -- A second translation of the same reply into the same language.
+        -- A second translation of the same reply into the same language by the same prompt.
         refused := false;
         BEGIN
-            INSERT INTO message_translations (session_id, source_sha256, language, translated_text)
-            VALUES (session_, hash, 'sw', 'tena');
+            INSERT INTO message_translations (session_id, source_sha256, language, translated_text, prompt_sha)
+            VALUES (session_, hash, 'sw', 'tena', prompt_a);
         EXCEPTION WHEN unique_violation THEN
             refused := true;
         END;
         IF NOT refused THEN
-            RAISE EXCEPTION 'V41 self-test: a reply was translated twice into one language';
+            RAISE EXCEPTION 'V41 self-test: a reply was translated twice into one language by one prompt';
         END IF;
         -- What the store does instead: the first stands.
-        INSERT INTO message_translations (session_id, source_sha256, language, translated_text)
-        VALUES (session_, hash, 'sw', 'tena')
-        ON CONFLICT (session_id, language, source_sha256) DO NOTHING;
+        INSERT INTO message_translations (session_id, source_sha256, language, translated_text, prompt_sha)
+        VALUES (session_, hash, 'sw', 'tena', prompt_a)
+        ON CONFLICT (session_id, language, source_sha256, prompt_sha) DO NOTHING;
         IF (SELECT translated_text FROM message_translations
-             WHERE session_id = session_ AND language = 'sw' AND source_sha256 = hash) <> 'utambuzi' THEN
+             WHERE session_id = session_ AND language = 'sw' AND source_sha256 = hash AND prompt_sha = prompt_a) <> 'utambuzi' THEN
             RAISE EXCEPTION 'V41 self-test: a second translation replaced the first';
+        END IF;
+
+        -- A new prompt writes its own row beside the first, which stays.
+        INSERT INTO message_translations (session_id, source_sha256, language, translated_text, prompt_sha)
+        VALUES (session_, hash, 'sw', 'tafsiri mpya', prompt_b)
+        ON CONFLICT (session_id, language, source_sha256, prompt_sha) DO NOTHING;
+        IF (SELECT count(*) FROM message_translations
+             WHERE session_id = session_ AND language = 'sw' AND source_sha256 = hash) <> 2 THEN
+            RAISE EXCEPTION 'V41 self-test: a new prompt''s translation did not get a row of its own';
         END IF;
 
         refused := false;
@@ -320,8 +367,8 @@ BEGIN
     BEGIN
         INSERT INTO users (id, audience, phone, password_hash) VALUES (probe, 'fundi', '+999000000411', 'self-test');
         INSERT INTO sessions (id, user_id, item_type_id, audience) VALUES (session_, probe, 'wooden-table', 'fundi');
-        INSERT INTO message_translations (session_id, source_sha256, language, translated_text)
-        VALUES (session_, repeat('ef', 32), 'sw', 'Gundi ilienezwa kidogo.');
+        INSERT INTO message_translations (session_id, source_sha256, language, translated_text, prompt_sha)
+        VALUES (session_, repeat('ef', 32), 'sw', 'Gundi ilienezwa kidogo.', repeat('01', 32));
 
         IF NOT anonymise_user(probe) THEN
             RAISE EXCEPTION 'V41 self-test: anonymise_user did not anonymise the probe account';

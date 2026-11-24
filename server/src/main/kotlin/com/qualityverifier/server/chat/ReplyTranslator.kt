@@ -4,6 +4,7 @@ import com.qualityverifier.data.prompts.PromptRepository
 import com.qualityverifier.domain.AssessmentLanguage
 import com.qualityverifier.domain.Audience
 import com.qualityverifier.domain.ChatMessage
+import com.qualityverifier.domain.FundiIntake
 import com.qualityverifier.domain.Role
 import com.qualityverifier.server.db.ChatStore
 import com.qualityverifier.server.db.MessageRow
@@ -36,19 +37,22 @@ import kotlin.time.Duration.Companion.seconds
  * improvement's page, which are all replies. Not a detail answer that was prefetched and never
  * opened, which nobody reads, and not the maker's own words.
  *
- * **One call per reply, once.** Each translation is kept (`message_translations`, V41) and
- * served from there to every phone signed in to the account, with no second call. Two taps
- * at once share one call. A reply whose translation fails is tried again on the next tap, at
- * most [MAX_ATTEMPTS] times in this process, so a reply Claude cannot translate cleanly does
- * not cost a call on every tap.
+ * **One call per reply, once per prompt.** Each translation is kept (`message_translations`,
+ * V41) with the fingerprint of the prompt that wrote it, and served from there to every phone
+ * signed in to the account, with no second call, for as long as that prompt is the current
+ * one. Two taps at once share one call. A reply whose translation the check refuses is tried
+ * again on the next tap, at most [MAX_ATTEMPTS] refusals in this process, so a reply Claude
+ * cannot translate cleanly does not cost a call on every tap; a call that failed on its way
+ * (overloaded, the network) is not counted. The call carries no cache breakpoint.
  *
  * **Never in the conversation.** A translation is written to its own table and read only by
  * [translate]. Nothing here touches `messages`, and the call is a conversation of its own (the
  * translation prompt and one turn), so the assessment's cached prefix is untouched.
  *
  * **Checked before it is kept** ([ReplyTranslation.problem]): the same blocks, the same JSON
- * shape, the same enums and numbers. A translation that fails the check is not stored, and the
- * phone keeps the original and says so.
+ * shape, the same enums, the same numbers in prose and values, as many paragraphs, and a length
+ * in proportion. A translation that fails the check is not stored, and the phone keeps the
+ * original and says so.
  *
  * Billed as `usage_events.call_kind` 'translation', to Fundi Bora, outside the daily allowance,
  * which counts assessments started.
@@ -70,46 +74,87 @@ class ReplyTranslator(
     private val failures = ConcurrentHashMap<String, AtomicInteger>()
     private val inFlight = Semaphore(parallelism)
 
-    /**
-     * What a request gets back: every stored translation of the assessment's replies, by the
-     * hash of the original's text, and the hashes of replies with none yet (failed, refused by
-     * the check, or still being written when [wait] ran out).
-     */
-    data class Outcome(val translations: Map<String, String>, val failed: List<String>)
+    /** What a request gets back. */
+    sealed interface Outcome {
+        /**
+         * Every stored translation of the assessment's replies by the current prompt, by the
+         * hash of the original's text, and the hashes of replies with none yet (failed,
+         * refused by the check, or still being written when [wait] ran out).
+         */
+        data class Translated(val translations: Map<String, String>, val failed: List<String>) : Outcome
+
+        /**
+         * The assessment's intake chose this language, so Claude already wrote every reply in
+         * it: nothing to translate, and no call is made. The phone shows those replies as written.
+         */
+        data object SameLanguage : Outcome
+    }
 
     /**
      * Translates every reply of the assessment [sessionId] that has no translation into [into]
-     * yet, and returns them all. Null when the assessment is not this account's.
+     * by the current translation prompt yet, and returns them all. Null when the assessment is
+     * not this account's.
      */
     suspend fun translate(userId: String, sessionId: String, into: AssessmentLanguage): Outcome? {
-        val (_, rows) = store.sessionDetail(userId, sessionId) ?: return null
+        val (session, rows) = store.sessionDetail(userId, sessionId) ?: return null
+        // An assessment from before the intake code was stored has no language here; both are
+        // then allowed, as the phone, which knows it, asks only for the other.
+        if (FundiIntake.decode(session.intakeAnswers)?.first == into) return Outcome.SameLanguage
+        // Read once per request, so every reply of it is translated, stored and served by the
+        // same prompt. A new prompt (row 16's glossary) has a new fingerprint: the translations
+        // the old one wrote are no longer served, and each reply is translated again on the
+        // next switch.
+        val prompt = prompts.translationPrompt()
+        val promptSha = sha256Of(prompt)
         // One translation per text: a reply stored twice (a replayed turn) is one call.
         val replies = rows.filter { it.role == ASSISTANT && it.text.isNotBlank() }
             .distinctBy { ReplyTranslation.keyOf(it.text) }
         val keys = replies.map { ReplyTranslation.keyOf(it.text) }
-        val stored = translations.find(sessionId, into.code)
+        val stored = translations.find(sessionId, into.code, promptSha)
         val missing = replies.filter { ReplyTranslation.keyOf(it.text) !in stored }
-        if (missing.isEmpty()) return Outcome(stored.filterKeys { it in keys }, emptyList())
+        if (missing.isEmpty()) return Outcome.Translated(stored.filterKeys { it in keys }, emptyList())
 
-        val jobs = missing.mapNotNull { reply -> start(userId, sessionId, reply, into) }
+        val jobs = missing.mapNotNull { reply -> start(userId, sessionId, reply, into, prompt, promptSha) }
         // join, not await: a job that failed has already been logged, and the answer lists it.
         withTimeoutOrNull(wait) { jobs.forEach { it.join() } }
             ?: log.info("Translations for session {} took longer than {}; answering with what is ready", sessionId, wait)
-        val now = translations.find(sessionId, into.code)
-        return Outcome(now.filterKeys { it in keys }, keys.filterNot { it in now })
+        val now = translations.find(sessionId, into.code, promptSha)
+        return Outcome.Translated(now.filterKeys { it in keys }, keys.filterNot { it in now })
     }
 
-    /** The call for [reply], or the one already running for it; null once it has failed too often. */
-    private fun start(userId: String, sessionId: String, reply: MessageRow, into: AssessmentLanguage): Deferred<Unit>? {
-        val key = "$sessionId|${into.code}|${ReplyTranslation.keyOf(reply.text)}"
+    /** What one call came to. Only [REFUSED] counts toward [maxAttempts]. */
+    private enum class Attempt {
+        KEPT,
+
+        /** Claude wrote a translation and the check refused it: likely to happen again. */
+        REFUSED,
+
+        /**
+         * The call did not return a translation: overloaded, rate-limited, the network, a
+         * database error. Transient, so not counted; the next tap tries again.
+         */
+        FAILED,
+    }
+
+    /** The call for [reply], or the one already running for it; null once it has been refused too often. */
+    private fun start(
+        userId: String,
+        sessionId: String,
+        reply: MessageRow,
+        into: AssessmentLanguage,
+        prompt: String,
+        promptSha: String,
+    ): Deferred<Unit>? {
+        // The prompt's fingerprint is part of the key, so a new prompt starts with no refusals.
+        val key = "$sessionId|${into.code}|${ReplyTranslation.keyOf(reply.text)}|$promptSha"
         pending[key]?.takeIf { !it.isCompleted }?.let { return it }
         if ((failures[key]?.get() ?: 0) >= maxAttempts) return null
         // Lazy, so a request that loses the race below never starts a call of its own.
         val job = scope.async(start = CoroutineStart.LAZY) {
-            val ok = runCatching { translateOne(userId, sessionId, reply, into) }
+            val attempt = runCatching { translateOne(userId, sessionId, reply, into, prompt, promptSha) }
                 .onFailure { log.warn("Could not translate a reply of session {}", sessionId, it) }
-                .getOrDefault(false)
-            if (!ok) failures.getOrPut(key) { AtomicInteger() }.incrementAndGet()
+                .getOrDefault(Attempt.FAILED)
+            if (attempt == Attempt.REFUSED) failures.getOrPut(key) { AtomicInteger() }.incrementAndGet()
             Unit
         }
         while (true) {
@@ -123,13 +168,21 @@ class ReplyTranslator(
         return job
     }
 
-    /** One call. True when a translation was kept. */
-    private suspend fun translateOne(userId: String, sessionId: String, reply: MessageRow, into: AssessmentLanguage): Boolean {
-        val prompt = prompts.translationPrompt()
+    /** One call. */
+    private suspend fun translateOne(
+        userId: String,
+        sessionId: String,
+        reply: MessageRow,
+        into: AssessmentLanguage,
+        prompt: String,
+        promptSha: String,
+    ): Attempt {
         val turn = ChatMessage(id = "translate-${reply.id}", role = Role.USER, text = ReplyTranslation.request(reply.text, into))
         val (result, elapsed) = inFlight.withPermit {
             val startedAt = System.currentTimeMillis()
-            claude.send(prompt, listOf(turn), { null }, null, EFFORT) to (System.currentTimeMillis() - startedAt)
+            // No cache breakpoint: each reply is translated once per language and prompt, so
+            // nothing would read a cached prefix, and a one-hour write costs twice the input.
+            claude.sendUncached(prompt, listOf(turn), EFFORT) to (System.currentTimeMillis() - startedAt)
         }
         return when (result) {
             is ClaudeResult.Success -> {
@@ -143,7 +196,7 @@ class ReplyTranslator(
                 if (problem != null) {
                     // The reason names a block and a field, never the reply's words.
                     log.warn("Refused a translation of a reply of session {} into {}: {}", sessionId, into.code, problem)
-                    return false
+                    return Attempt.REFUSED
                 }
                 translations.save(
                     NewTranslation(
@@ -153,12 +206,12 @@ class ReplyTranslator(
                         language = into.code,
                         text = text,
                         model = result.model,
-                        promptSha = sha256Of(prompt),
+                        promptSha = promptSha,
                         usageEventId = usageId,
                     ),
                 )
                 log.info("Translated a reply of session {} into {} in {} ms", sessionId, into.code, elapsed)
-                true
+                Attempt.KEPT
             }
             is ClaudeResult.Failure -> {
                 store.recordUsage(
@@ -166,7 +219,9 @@ class ReplyTranslator(
                     httpStatus = result.httpStatus, latencyMillis = elapsed,
                     errorKind = result.error.name, audience = Audience.FUNDI, callKind = CALL_KIND,
                 )
-                false
+                // Already retried inside the client where that helps (overloaded, rate limit,
+                // server); not the translation's fault, so the next tap may try again.
+                Attempt.FAILED
             }
         }
     }
@@ -185,7 +240,11 @@ class ReplyTranslator(
         /** Translation calls in flight at once, server-wide. */
         const val MAX_IN_FLIGHT = 8
 
-        /** Failed calls for one reply and language before the server stops trying, until a restart. */
+        /**
+         * Translations Claude wrote that the check refused, for one reply, language and prompt,
+         * before the server stops asking, until a restart. A call that failed on its way
+         * (overloaded, the network) does not count.
+         */
         const val MAX_ATTEMPTS = 3
 
         /**

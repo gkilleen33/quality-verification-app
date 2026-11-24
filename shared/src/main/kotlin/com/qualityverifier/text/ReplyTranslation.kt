@@ -1,7 +1,9 @@
 package com.qualityverifier.text
 
 import com.qualityverifier.domain.AssessmentLanguage
+import com.qualityverifier.domain.AssessmentPlan
 import com.qualityverifier.domain.ChatMessage
+import com.qualityverifier.domain.PlanRun
 import com.qualityverifier.domain.Role
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
@@ -46,10 +48,14 @@ object ReplyTranslation {
      *
      * The phone draws a reply from its blocks, and the server, the reports and the research all
      * read the enums inside them, so a translation must change only words a person reads
-     * (Nathan, 16 November 2026). Checked two ways: every fenced block's JSON has the same shape,
-     * with every key, number, boolean and closed-vocabulary value ([CLOSED_KEYS]) unchanged; and
-     * the parsed reply draws the same things, with the same number of findings, shots, tests,
-     * options and steps, the same severities, areas, dimensions, verdict level and marks.
+     * (Nathan, 16 November 2026). Checked four ways: every fenced block's JSON has the same shape,
+     * with every key, number, boolean and closed-vocabulary value ([CLOSED_KEYS]) unchanged; the
+     * parsed reply draws the same things, with the same number of findings, shots, tests,
+     * options and steps, the same severities, areas, dimensions, verdict level and marks; the
+     * prose and every written value carry the same numbers ([numbersProblem]); and the prose has
+     * as many paragraphs, and the words about as many characters, as the original
+     * ([proseProblem]). The last two hold a reply that is only prose, such as a detail answer,
+     * which the first two do not look at.
      */
     fun problem(original: String, translated: String): String? {
         if (translated.isBlank()) return "the translation is empty"
@@ -59,8 +65,26 @@ object ReplyTranslation {
             return "the blocks differ: ${before.map { it.tag }} became ${after.map { it.tag }}"
         }
         before.zip(after).forEach { (a, b) -> blockProblem(a, b)?.let { return it } }
-        return parsedProblem(parseAssistantContent(original), parseAssistantContent(translated))
+        parsedProblem(parseAssistantContent(original), parseAssistantContent(translated))?.let { return it }
+        numbersProblem(original, translated)?.let { return it }
+        return proseProblem(original, before, translated, after)
     }
+
+    /**
+     * The bounds on a translation's length, as a share of the original's: the characters a
+     * person reads, the prose and every written value in the blocks. English and Kiswahili
+     * translations of each other run about 0.8 to 1.4 times the source's characters, so these
+     * leave wide room either way and refuse only a reply cut short or padded out, such as one
+     * missing most of its text or carrying a note about the translation.
+     */
+    const val MIN_LENGTH_RATIO = 0.4
+    const val MAX_LENGTH_RATIO = 2.5
+
+    /**
+     * Below this many readable characters in the original the ratio is not checked: "OK" to
+     * "Sawa" is twice the length and a faithful translation.
+     */
+    const val MIN_LENGTH_CHECKED = 80
 
     /**
      * Values from a fixed list, which the app, the server or the research reads: they stay in
@@ -151,6 +175,81 @@ object ReplyTranslation {
         else -> null
     }
 
+    /**
+     * Every number in the reply, prose and blocks alike, as a multiset of digit runs: "180
+     * grit" that became "120" anywhere, in a sentence or inside a written value, is refused.
+     * A translation keeps every number as written (the prompt says so), so the runs match
+     * exactly; a number written as a word in both languages has no digits either side. The
+     * reason names no number, so the log holds none of the reply.
+     */
+    private fun numbersProblem(original: String, translated: String): String? {
+        val before = DIGITS.findAll(original).map { it.value }.sorted().toList()
+        val after = DIGITS.findAll(translated).map { it.value }.sorted().toList()
+        return if (before == after) null else "the numbers differ: ${before.size} before, ${after.size} after"
+    }
+
+    private val DIGITS = Regex("[0-9]+")
+
+    /**
+     * The prose outside the blocks has as many paragraphs as the original's, so an opening or
+     * a closing paragraph cannot be dropped or added; and the characters a person reads are
+     * within [MIN_LENGTH_RATIO] and [MAX_LENGTH_RATIO] of the original's.
+     */
+    private fun proseProblem(original: String, before: List<Block>, translated: String, after: List<Block>): String? {
+        val paragraphsBefore = paragraphs(proseOf(original))
+        val paragraphsAfter = paragraphs(proseOf(translated))
+        if (paragraphsBefore != paragraphsAfter) {
+            return "the prose had $paragraphsBefore paragraphs and has $paragraphsAfter"
+        }
+        val lengthBefore = readableLength(original, before)
+        if (lengthBefore < MIN_LENGTH_CHECKED) return null
+        val ratio = readableLength(translated, after).toDouble() / lengthBefore
+        return if (ratio < MIN_LENGTH_RATIO || ratio > MAX_LENGTH_RATIO) {
+            "the translation is ${"%.2f".format(ratio)} times the original's length"
+        } else {
+            null
+        }
+    }
+
+    /** The text with every fenced block, fences included, taken out, each leaving a blank line. */
+    private fun proseOf(text: String): String {
+        val out = mutableListOf<String>()
+        var inBlock = false
+        text.lines().forEach { line ->
+            if (line.trim().startsWith("```")) {
+                if (!inBlock) out += ""
+                inBlock = !inBlock
+            } else if (!inBlock) {
+                out += line
+            }
+        }
+        return out.joinToString("\n")
+    }
+
+    private fun paragraphs(prose: String): Int = prose.split(PARAGRAPH_BREAK).count { it.isNotBlank() }
+
+    private val PARAGRAPH_BREAK = Regex("""\n[ \t]*\n""")
+
+    /**
+     * The characters a person reads, spaces left out: the prose, every written value in a JSON
+     * block (not a key, a number or a fixed-list value), and each line of any other block.
+     */
+    private fun readableLength(text: String, blocks: List<Block>): Int =
+        proseOf(text).count { !it.isWhitespace() } + blocks.sumOf { block ->
+            if (block.tag in JSON_TAGS) {
+                runCatching { json.parseToJsonElement(block.body.trim()) }.getOrNull()?.let { writtenLength(it, key = null) } ?: 0
+            } else {
+                block.body.count { !it.isWhitespace() }
+            }
+        }
+
+    private fun writtenLength(element: JsonElement, key: String?): Int = when (element) {
+        is JsonObject -> element.entries.sumOf { (k, v) -> writtenLength(v, k) }
+        is JsonArray -> element.sumOf { writtenLength(it, key) }
+        is JsonNull -> 0
+        is JsonPrimitive -> if (element.isString && key !in CLOSED_KEYS) element.content.count { !it.isWhitespace() } else 0
+    }
+
     /** The reply as the phone draws it: the same cards, the same rows, the same enums. */
     private fun parsedProblem(a: AssistantContent, b: AssistantContent): String? {
         if (a.options.size != b.options.size) return "the reply chips differ in number"
@@ -215,14 +314,20 @@ object ReplyTranslation {
  */
 class TranslatedConversation(
     val messages: List<ChatMessage>,
-    private val originals: Map<String, String>,
+    /** The conversation as stored, by message id. */
+    private val originals: Map<String, ChatMessage>,
 ) {
     /**
-     * The title Claude wrote for the improvement shown as [shown]. Every turn the app writes
-     * about an improvement names it by this, as it does in the original language, so the
-     * server's stored answers, the prompt's rules and the conversation are as before.
+     * The title Claude wrote for improvement [number] (from 1, counting every finding, as
+     * [ImprovementRow.number] does) of the reply [replyId], or null when that reply has no
+     * such improvement. Every turn the app writes about an improvement names it by this, as
+     * it does in the original language, so the server's stored answers, the prompt's rules
+     * and the conversation are as before. By place, never by the shown words: two titles
+     * that translate alike would otherwise send a tap to the wrong improvement.
      */
-    fun originalTitle(shown: String): String = originals[shown.trim()] ?: shown.trim()
+    fun originalTitle(replyId: String, number: Int): String? =
+        originals[replyId]?.let { parseAssistantContent(it.text).diagnosis }
+            ?.findings?.getOrNull(number - 1)?.title?.trim()?.takeIf { it.isNotBlank() }
 }
 
 /**
@@ -230,12 +335,13 @@ class TranslatedConversation(
  * With no translations, the conversation as it is.
  */
 fun translatedConversation(messages: List<ChatMessage>, translations: Map<String, String>): TranslatedConversation {
-    if (translations.isEmpty()) return TranslatedConversation(messages, emptyMap())
+    val originals = messages.associateBy { it.id }
+    if (translations.isEmpty()) return TranslatedConversation(messages, originals)
 
-    // Improvement titles, original to shown and back, from every translated diagnosis, the
-    // newest last so it wins. ReplyTranslation.problem has checked each has as many findings.
+    // Improvement titles, original to shown, from every translated diagnosis, the newest last
+    // so it wins. ReplyTranslation.problem has checked each has as many findings. Only for
+    // drawing the app's turns; a tap goes back by place (TranslatedConversation.originalTitle).
     val forward = mutableMapOf<String, String>()
-    val back = mutableMapOf<String, String>()
     messages.forEach { message ->
         if (message.role != Role.ASSISTANT) return@forEach
         val shown = translations[message.id] ?: return@forEach
@@ -248,7 +354,6 @@ fun translatedConversation(messages: List<ChatMessage>, translations: Map<String
             if (original.isBlank() || translated.isBlank()) return@forEach
             forward[original] = translated
             forward[ImprovementQuestion.titleOf(original)] = ImprovementQuestion.titleOf(translated)
-            back[translated] = original
         }
     }
 
@@ -265,5 +370,81 @@ fun translatedConversation(messages: List<ChatMessage>, translations: Map<String
             } ?: message
         }
     }
-    return TranslatedConversation(shown, back)
+    return TranslatedConversation(shown, originals)
 }
+
+/**
+ * One reply chip (`qv-options`): the words shown, and the words sent as the maker's turn when
+ * it is tapped, which are always the words Claude wrote (row 29). A translated chip shows its
+ * translation and sends its original, so a translation never enters the conversation.
+ */
+data class ReplyChip(val shown: String, val sends: String)
+
+/**
+ * The chips of the reply [original], each shown as the chip in the same place of [shown], its
+ * translation, when that has as many ([ReplyTranslation.problem] refuses one that has not);
+ * otherwise as written. Paired by place, never by words.
+ */
+fun replyChips(original: String?, shown: String?): List<ReplyChip> {
+    val written = original?.let { parseAssistantContent(it).options }.orEmpty()
+    val translated = shown?.let { parseAssistantContent(it).options }.orEmpty()
+    val labels = if (translated.size == written.size) translated else written
+    return written.indices.map { ReplyChip(shown = labels[it], sends = written[it]) }
+}
+
+/**
+ * A plan's collection run as the screen draws it in the other language (row 29): the camera's
+ * instructions, the tests' questions and answer buttons, and the plan card, in the language
+ * shown, from the translation of the reply that issued the plan.
+ *
+ * Drawn only. The run the app submits is [PlanRun] as gathered, whose every answer is the
+ * option Claude wrote (picked by its place, [optionAnswer]), "Not sure" in the language of the
+ * intake, or the maker's own typed words; the submission is built from it, so a translation
+ * never enters the conversation.
+ *
+ * @param translatedReply the translation of the reply [run] came from, or null for none.
+ * @param writtenNotSure "Not sure" as recorded, in the intake's language.
+ * @param shownNotSure "Not sure" as the screen shows it.
+ */
+fun translatedRun(run: PlanRun, translatedReply: String?, writtenNotSure: String, shownNotSure: String): PlanRun {
+    val original = run.plan
+    val translated = translatedReply?.let { parseAssistantContent(it).plan }?.takeIf { it.sameShapeAs(original) }
+    val plan = if (translated == null) {
+        original
+    } else {
+        // The original with only its words replaced, so every field the app reads (a test's
+        // diagram, the plan's language) is the one Claude wrote.
+        original.copy(
+            summary = translated.summary,
+            photos = original.photos.zip(translated.photos) { o, t ->
+                o.copy(title = t.title, note = t.note, instruction = t.instruction)
+            },
+            tests = original.tests.zip(translated.tests) { o, t ->
+                o.copy(
+                    title = t.title,
+                    subtitle = t.subtitle,
+                    instruction = t.instruction,
+                    options = o.options.zip(t.options) { oo, to -> oo.copy(label = to.label, detail = to.detail) },
+                )
+            },
+        )
+    }
+    // Each answer recorded as written, shown as the option in the same place, so the button
+    // the maker chose shows as chosen in either language.
+    val answers = run.answers.mapValues { (index, answer) ->
+        when {
+            answer == null -> null
+            answer == writtenNotSure -> shownNotSure
+            else -> original.tests.getOrNull(index)?.options?.indexOfFirst { it.label == answer }
+                ?.takeIf { it >= 0 }?.let { plan.tests[index].options[it].label } ?: answer
+        }
+    }
+    return run.copy(plan = plan, answers = answers)
+}
+
+/** The answer recorded when the maker taps option [option] of test [test]: the option Claude wrote there. */
+fun PlanRun.optionAnswer(test: Int, option: Int): String? = plan.tests.getOrNull(test)?.options?.getOrNull(option)?.label
+
+private fun AssessmentPlan.sameShapeAs(other: AssessmentPlan): Boolean =
+    photos.size == other.photos.size && tests.size == other.tests.size &&
+        tests.zip(other.tests).all { (a, b) -> a.options.size == b.options.size }

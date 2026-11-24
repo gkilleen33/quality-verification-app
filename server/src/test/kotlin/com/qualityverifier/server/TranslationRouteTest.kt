@@ -17,6 +17,7 @@ import com.qualityverifier.server.chat.ClaudeResult
 import com.qualityverifier.server.chat.PhotoShelf
 import com.qualityverifier.server.chat.ReplyTranslator
 import com.qualityverifier.server.chat.TokenUsage
+import com.qualityverifier.server.chat.UpstreamError
 import com.qualityverifier.server.db.ChatStore
 import com.qualityverifier.server.db.MessageRow
 import com.qualityverifier.server.db.NewTranslation
@@ -117,7 +118,8 @@ class TranslationRouteTest {
         )
         assertTrue(first.second.failed.isEmpty())
         assertEquals(2, translations.saved.size)
-        assertTrue(translations.saved.all { it.language == "sw" && it.model == "claude-sonnet-5-5" && it.promptSha != null })
+        assertTrue(translations.saved.all { it.language == "sw" && it.model == "claude-sonnet-5-5" })
+        assertTrue(translations.saved.all { it.promptSha == ReplyTranslation.keyOf(DefaultPrompts.FUNDI_TRANSLATE) })
 
         // Again, as a second phone signed in to the account would: from the store, no call.
         val second = client.translate(SESSION, "sw")
@@ -128,9 +130,71 @@ class TranslationRouteTest {
         // Each call billed to Fundi Bora as a translation, outside any assessment's allowance.
         assertEquals(List(2) { "translation" to Audience.FUNDI }, store.usage.toList())
         assertEquals(0, store.ensured.get())
-        // And asked of the translation prompt, at low effort, with one turn and no photos.
-        assertTrue(claude.translationRequests.all { it.effort == ReplyTranslator.EFFORT && it.history.size == 1 && it.photos == null })
+        // And asked of the translation prompt, at low effort, with one turn, through the call
+        // that carries no cache breakpoint.
+        assertTrue(claude.translationRequests.all { it.effort == ReplyTranslator.EFFORT && it.history.size == 1 })
+        assertTrue(claude.translationRequests.all { it.systemPrompt == DefaultPrompts.FUNDI_TRANSLATE })
         assertTrue(claude.translationRequests.all { it.history.single().text.startsWith("Translate this reply into Kiswahili.") })
+    }
+
+    @Test
+    fun `row 29 - a translation written by an earlier prompt is not served, and the reply is translated again`() = testApplication {
+        val store = MemoryChatStore().apply { seed(SESSION, USER, diagnosis, answer) }
+        val translations = MemoryTranslations()
+        val claude = FakeClaude(mapOf(diagnosis to diagnosisSw, answer to answerSw))
+        val prompts = Prompts()
+        val client = withRoutes(store, translations, claude, prompts = prompts)
+
+        assertEquals(HttpStatusCode.OK, client.translate(SESSION, "sw").first)
+        assertEquals(2, claude.translationCalls.get())
+
+        // Row 16's glossary, say: a new prompt, so a new fingerprint.
+        prompts.translate = DefaultPrompts.FUNDI_TRANSLATE + "\nGlossary: msasa means sandpaper."
+        val (status, body) = client.translate(SESSION, "sw")
+        assertEquals(HttpStatusCode.OK, status)
+        assertEquals(4, claude.translationCalls.get())
+        assertEquals(2, body.translations.size)
+        // The old rows stay, for the record; each prompt has its own.
+        assertEquals(4, translations.saved.size)
+        assertEquals(
+            setOf(ReplyTranslation.keyOf(DefaultPrompts.FUNDI_TRANSLATE), ReplyTranslation.keyOf(prompts.translate)),
+            translations.saved.map { it.promptSha }.toSet(),
+        )
+        assertTrue(claude.translationRequests.takeLast(2).all { it.systemPrompt == prompts.translate })
+
+        // And with the new prompt current, a third ask is answered from the table.
+        assertEquals(HttpStatusCode.OK, client.translate(SESSION, "sw").first)
+        assertEquals(4, claude.translationCalls.get())
+    }
+
+    @Test
+    fun `row 29 - the assessment's own language is refused, with no call`() = testApplication {
+        val store = MemoryChatStore().apply { seed(SESSION, USER, diagnosis); intakes[SESSION] = "fundi-en-evaluate" }
+        val claude = FakeClaude(mapOf(diagnosis to diagnosisSw))
+        val client = withRoutes(store, MemoryTranslations(), claude)
+        assertEquals(HttpStatusCode.BadRequest, client.translate(SESSION, "en").first)
+        assertEquals(0, claude.translationCalls.get())
+        // The other language is translated as before.
+        assertEquals(HttpStatusCode.OK, client.translate(SESSION, "sw").first)
+        assertEquals(1, claude.translationCalls.get())
+    }
+
+    @Test
+    fun `row 29 - a call that fails on its way does not count toward the three refusals`() = testApplication {
+        val store = MemoryChatStore().apply { seed(SESSION, USER, diagnosis) }
+        val translations = MemoryTranslations()
+        // Overloaded more times than the limit, then a translation that passes the check.
+        val claude = FakeClaude(mapOf(diagnosis to diagnosisSw), failFirst = ReplyTranslator.MAX_ATTEMPTS + 2)
+        val client = withRoutes(store, translations, claude)
+        repeat(ReplyTranslator.MAX_ATTEMPTS + 2) {
+            val (status, body) = client.translate(SESSION, "sw")
+            assertEquals(HttpStatusCode.OK, status)
+            assertEquals(listOf(ReplyTranslation.keyOf(diagnosis)), body.failed)
+        }
+        val (_, body) = client.translate(SESSION, "sw")
+        assertEquals(listOf(diagnosisSw), body.translations.map { it.text })
+        assertEquals(ReplyTranslator.MAX_ATTEMPTS + 3, claude.translationCalls.get())
+        assertEquals(1, translations.saved.size)
     }
 
     @Test
@@ -229,7 +293,7 @@ class TranslationRouteTest {
     }
 
     @Test
-    fun `row 29 - a reply that will not translate cleanly is tried at most three times`() = testApplication {
+    fun `row 29 - a reply whose translation is refused is tried at most three times`() = testApplication {
         val store = MemoryChatStore().apply { seed(SESSION, USER, diagnosis) }
         val bad = diagnosisSw.replace("\"area\":\"surface\"", "\"area\":\"uso\"")
         val claude = FakeClaude(mapOf(diagnosis to bad))
@@ -285,6 +349,7 @@ class TranslationRouteTest {
         translations: TranslationStore,
         claude: FakeClaude,
         audience: Audience = Audience.FUNDI,
+        prompts: Prompts = Prompts(),
     ): HttpClient {
         application {
             module(
@@ -292,7 +357,7 @@ class TranslationRouteTest {
                 database = null,
                 auth = Auth(Account(audience), AccessTokens(KEY)),
                 chat = Chat(
-                    store, BlobStore(folder.newFolder()), claude, Prompts(), NoFeedback,
+                    store, BlobStore(folder.newFolder()), claude, prompts, NoFeedback,
                     translations = translations,
                 ),
             )
@@ -301,26 +366,44 @@ class TranslationRouteTest {
     }
 
     private class Prompts : PromptRepository {
+        /** The translation prompt, changed by a test as a new prompt would be deployed. */
+        @Volatile var translate: String = DefaultPrompts.FUNDI_TRANSLATE
         override suspend fun systemPromptFor(itemType: ItemType, audience: Audience) = "FUNDI PROMPT FOR ${itemType.id}"
         override suspend fun compactionPrompt() = "WRITE YOUR NOTES"
+        override suspend fun translationPrompt() = translate
         override suspend fun clearCache() = Unit
     }
 
-    private data class Request(val history: List<ChatMessage>, val photos: PhotoShelf?, val effort: String?)
+    private data class Request(val systemPrompt: String, val history: List<ChatMessage>, val effort: String?)
 
     /**
-     * Answers a translation call from [translated], by the reply between its tags, and an
-     * assessment turn with the next of [assessmentReplies]. Records each assessment request as
-     * AnthropicClient would send it, with the same assembly and serialiser.
+     * Answers a translation call, which comes through [sendUncached], from [translated], by the
+     * reply between its tags; the first [failFirst] of them fail as overloaded, after the
+     * client's own retry. Answers an assessment turn with the next of [assessmentReplies], and
+     * records each assessment request as AnthropicClient would send it, with the same assembly
+     * and serialiser.
      */
     private class FakeClaude(
         private val translated: Map<String, String>,
         private val assessmentReplies: ArrayDeque<String> = ArrayDeque(),
         private val gate: CompletableDeferred<Unit>? = null,
+        private val failFirst: Int = 0,
     ) : ClaudeClient {
         val translationCalls = AtomicInteger()
         val translationRequests = CopyOnWriteArrayList<Request>()
         val assessmentRequests = CopyOnWriteArrayList<String>()
+
+        override suspend fun sendUncached(systemPrompt: String, history: List<ChatMessage>, effort: String?): ClaudeResult {
+            val call = translationCalls.incrementAndGet()
+            translationRequests += Request(systemPrompt, history, effort)
+            gate?.await()
+            if (call <= failFirst) {
+                return ClaudeResult.Failure(UpstreamError.OVERLOADED, "Overloaded", httpStatus = 529)
+            }
+            val original = history.single().text.substringAfter("<reply>\n").substringBeforeLast("\n</reply>")
+            val text = translated[original] ?: error("no translation for the reply")
+            return ClaudeResult.Success(text, TokenUsage(100, 100), "claude-sonnet-5-5")
+        }
 
         override suspend fun send(
             systemPrompt: String,
@@ -336,14 +419,7 @@ class TranslationRouteTest {
             photos: PhotoShelf?,
             effort: String?,
         ): ClaudeResult {
-            if (systemPrompt == DefaultPrompts.FUNDI_TRANSLATE) {
-                translationCalls.incrementAndGet()
-                translationRequests += Request(history, photos, effort)
-                gate?.await()
-                val original = history.single().text.substringAfter("<reply>\n").substringBeforeLast("\n</reply>")
-                val text = translated[original] ?: error("no translation for the reply")
-                return ClaudeResult.Success(text, TokenUsage(100, 100), "claude-sonnet-5-5")
-            }
+            assertFalse("a translation went through a cached call", history.lastOrNull()?.text.orEmpty().startsWith("Translate this reply"))
             assessmentRequests += AnthropicRequest.json.encodeToString(
                 AnthropicRequest.build(systemPrompt, history, imageBytes, { "" }, effort = effort),
             )
@@ -354,12 +430,13 @@ class TranslationRouteTest {
     private class MemoryTranslations : TranslationStore {
         val saved = CopyOnWriteArrayList<NewTranslation>()
 
-        override suspend fun find(sessionId: String, language: String): Map<String, String> =
-            saved.filter { it.sessionId == sessionId && it.language == language }.associate { it.sourceSha256 to it.text }
+        override suspend fun find(sessionId: String, language: String, promptSha: String): Map<String, String> =
+            saved.filter { it.sessionId == sessionId && it.language == language && it.promptSha == promptSha }
+                .associate { it.sourceSha256 to it.text }
 
         override suspend fun save(translation: NewTranslation) {
             if (saved.none { it.sessionId == translation.sessionId && it.language == translation.language &&
-                    it.sourceSha256 == translation.sourceSha256 }
+                    it.sourceSha256 == translation.sourceSha256 && it.promptSha == translation.promptSha }
             ) {
                 saved += translation
             }
@@ -370,6 +447,8 @@ class TranslationRouteTest {
     private class MemoryChatStore : ChatStore {
         private val owners = ConcurrentHashMap<String, String>()
         private val conversations = ConcurrentHashMap<String, MutableList<ChatMessage>>()
+        /** Each session's stored intake code (`sessions.intake_answers`), where a test sets one. */
+        val intakes = ConcurrentHashMap<String, String>()
         val usage = CopyOnWriteArrayList<Pair<String, Audience>>()
         val ensured = AtomicInteger()
         private var replies = 0
@@ -443,7 +522,7 @@ class TranslationRouteTest {
             val row = SessionRow(
                 id = sessionId, itemTypeId = "wooden-table", createdAt = 1L, updatedAt = 2L,
                 preview = "", messageCount = list.size, verdictLevelId = null, verdictLanguage = null,
-                previousSessionId = null, intakeAnswers = null,
+                previousSessionId = null, intakeAnswers = intakes[sessionId],
             )
             return row to list.mapIndexed { index, m ->
                 MessageRow(m.id, if (m.role == Role.USER) "USER" else "ASSISTANT", m.text, index, 1L, emptyList(), m.composed)

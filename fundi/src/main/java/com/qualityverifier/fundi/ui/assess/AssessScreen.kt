@@ -81,7 +81,10 @@ import com.qualityverifier.text.isImprovementList
 import com.qualityverifier.text.pageQuestionsOf
 import com.qualityverifier.text.markdownToPlainText
 import com.qualityverifier.text.parseAssistantContent
+import com.qualityverifier.text.ReplyChip
+import com.qualityverifier.text.replyChips
 import com.qualityverifier.text.translatedConversation
+import com.qualityverifier.text.translatedRun
 import com.qualityverifier.ui.capture.CaptureScreen
 import com.qualityverifier.ui.photo.PhotoMark
 import com.qualityverifier.ui.photo.PhotoViewer
@@ -147,13 +150,25 @@ fun AssessScreen(
     val translationState by viewModel.translationState.collectAsState()
 
     val labels = FundiLabels.ENGLISH
-    // The capture pipeline speaks ReportLabels, and follows the language chosen at intake —
-    // the rule Kagua keeps, so a Kiswahili conversation does not get English shot counters.
+    // The language chosen at intake: the language every turn the app writes is in, the
+    // submission of a plan's run included — the rule Kagua keeps.
     val reportLabels = ReportLabels.forLanguage(language.code)
     // The conversation's headings and buttons follow the English and Kiswahili switch (row 29),
-    // as its replies do. The intake, before the switch exists, stays English.
+    // as its replies do, and so do the camera's and the tests' screens, so a Kiswahili
+    // conversation does not get English shot counters. The intake, before the switch exists,
+    // stays English.
     val shownLabels = FundiLabels.forLanguage(shownLanguage.code)
     val shownReportLabels = ReportLabels.forLanguage(shownLanguage.code)
+    // The plan's run as drawn (row 29): its instructions, questions and answer buttons in the
+    // language shown, from the translation of the reply that issued it. Computed here rather
+    // than collected, so it is never a frame behind the run. Drawn only: every tap goes back by
+    // place, and the run the app submits is `run`, in Claude's words.
+    val shownRun = remember(run, shownTranslations, reportLabels, shownReportLabels) {
+        run?.let { translatedRun(it, shownTranslations[it.sourceMessageId], reportLabels.notSure, shownReportLabels.notSure) }
+    }
+    val shownMessages = remember(messages, shownTranslations) {
+        translatedConversation(messages, shownTranslations).messages
+    }
 
     var stage by remember { mutableStateOf(Stage.LOADING) }
     // The earlier physical test the maker went Back to, or null for the first one still
@@ -205,9 +220,10 @@ fun AssessScreen(
     // The defect's point on [viewing] when it was opened from a finding (row 19): x then y,
     // fractions of the photo. Null when it was opened from a thumbnail.
     var marked by rememberSaveable { mutableStateOf<FloatArray?>(null) }
-    val photos = remember(messages, run, purpose, shownLabels, shownReportLabels, viewing, marked) {
+    val photos = remember(shownMessages, shownRun, purpose, shownLabels, shownReportLabels, reportLabels, viewing, marked) {
         val mark = marked?.let { PhotoMark(it[0], it[1]) }
-        assessmentPhotos(messages, run, purpose, shownLabels, shownReportLabels)
+        // Captioned with the shot titles as shown; a submission turn is read in the intake's words.
+        assessmentPhotos(shownMessages, shownRun, purpose, shownLabels, shownReportLabels, writtenIn = reportLabels)
             .map { if (mark != null && it.path == viewing) it.copy(mark = mark) else it }
     }
     // The improvement page open over the conversation (row 43): the reply whose list it came
@@ -306,7 +322,8 @@ fun AssessScreen(
                 if (current == null || index == null) {
                     stage = Stage.TALKING
                 } else {
-                    val shot = current.plan.photos[index]
+                    // The shot as shown (row 29); the photograph is kept by its place.
+                    val shot = (shownRun ?: current).plan.photos[index]
                     CaptureScreen(
                         instruction = shot.instruction.ifBlank { shot.title },
                         reviewPhotoPath = review?.path,
@@ -322,8 +339,8 @@ fun AssessScreen(
                             viewModel.leaveCamera()
                             stage = Stage.TALKING
                         },
-                        counter = reportLabels.shotOf(index + 1, current.plan.photos.size),
-                        skipLabel = reportLabels.cannotDoThis,
+                        counter = shownReportLabels.shotOf(index + 1, current.plan.photos.size),
+                        skipLabel = shownReportLabels.cannotDoThis,
                         onSkip = { viewModel.skipShot(index) },
                         takenPaths = current.takenPaths,
                     )
@@ -338,13 +355,19 @@ fun AssessScreen(
                     revisitingTest = null
                     stage = Stage.TALKING
                 } else {
+                    val shown = shownRun ?: current
                     PhysicalTestsScreen(
-                        test = current.plan.tests[index],
+                        // The question and its buttons as shown (row 29). A tap is recorded by
+                        // the option's place, as the option Claude wrote; "Not sure" in the
+                        // intake's language; typed words as typed.
+                        test = shown.plan.tests[index],
                         index = index,
                         total = current.plan.tests.size,
-                        labels = reportLabels,
+                        labels = shownReportLabels,
                         // Replaces any earlier answer, then on to the first test with none.
                         onAnswer = { viewModel.answerTest(index, it); revisitingTest = tests.afterAnswer().revisiting },
+                        onOption = { viewModel.answerTestOption(index, it); revisitingTest = tests.afterAnswer().revisiting },
+                        onNotSure = { viewModel.answerTestNotSure(index); revisitingTest = tests.afterAnswer().revisiting },
                         onSkip = { viewModel.skipTest(index); revisitingTest = tests.afterAnswer().revisiting },
                         // Back opens the test before, its answer kept and selected (row 40);
                         // on the first test it leaves the tests as before.
@@ -353,12 +376,12 @@ fun AssessScreen(
                             revisitingTest = before?.revisiting
                             if (before == null) stage = Stage.TALKING
                         },
-                        selected = current.answerShown(index),
+                        selected = shown.answerShown(index),
                     )
                 }
             }
 
-            Stage.INSPECTING -> run?.let { InspectingScreen(it, reportLabels) }
+            Stage.INSPECTING -> (shownRun ?: run)?.let { InspectingScreen(it, shownReportLabels) }
 
             Stage.TALKING -> Conversation(
                 messages = messages,
@@ -367,7 +390,7 @@ fun AssessScreen(
                 translationState = translationState,
                 onShowLanguage = viewModel::showLanguage,
                 onRetryTranslation = viewModel::retryTranslation,
-                run = run,
+                run = shownRun,
                 sending = sending,
                 error = error,
                 unanswered = unanswered,
@@ -420,6 +443,7 @@ private fun Conversation(
     translationState: TranslationState,
     onShowLanguage: (AssessmentLanguage) -> Unit,
     onRetryTranslation: () -> Unit,
+    /** The plan's run as drawn, in the language shown (row 29); every tap on it goes back by place. */
     run: PlanRun?,
     sending: Boolean,
     error: AssessError?,
@@ -470,9 +494,15 @@ private fun Conversation(
     // Only while nothing else is in flight or waiting: one turn at a time goes on the wire.
     val canSend = !sending && !unanswered && run == null
     // A tap names the improvement by the title Claude wrote, whichever language is shown, so
-    // the request, the stored answer it finds and the prompt's rule read as before.
-    val requestDetail: ((DetailKind, String) -> Unit)? =
-        if (canSend) { kind, title -> onRequestDetail(kind, view.originalTitle(title)) } else null
+    // the request, the stored answer it finds and the prompt's rule read as before. Found by
+    // the improvement's place in its reply (from 1), never by the shown title, which two
+    // improvements could share once translated.
+    val requestDetail: ((DetailKind, String, Int) -> Unit)? =
+        if (canSend) {
+            { kind, replyId, number -> view.originalTitle(replyId, number)?.let { onRequestDetail(kind, it) } }
+        } else {
+            null
+        }
     val firstUserId = messages.firstOrNull { it.role == Role.USER }?.id
     // The chips come from the last turn the maker can see, so an answer under a finding
     // does not take away the replies the diagnosis offered.
@@ -492,10 +522,10 @@ private fun Conversation(
     val hasVerdict = remember(messages) {
         messages.any { it.role == Role.ASSISTANT && parseAssistantContent(it.text).verdict != null }
     }
-    // The reply chips send their words to Claude as the maker's turn, so they stay as Claude
-    // wrote them, whichever language is shown: a translation never enters the conversation.
-    val options = remember(messages, lastAssistant?.id) {
-        messages.firstOrNull { it.id == lastAssistant?.id }?.let { parseAssistantContent(it.text).options }.orEmpty()
+    // The reply chips show in the language shown, and a tap sends the chip in the same place
+    // as Claude wrote it (row 29): a translation never enters the conversation.
+    val chips = remember(messages, lastAssistant) {
+        replyChips(messages.firstOrNull { it.id == lastAssistant?.id }?.text, lastAssistant?.text)
     }
     // Once the newest diagnosis is a list, the box under the conversation is for the whole
     // piece, and says so (row 43): each improvement has its own on its page.
@@ -527,7 +557,8 @@ private fun Conversation(
                     message.role == Role.ASSISTANT ->
                         AssistantTurn(
                             message, labels, reportLabels, showOnPhoto, details,
-                            requestDetail.takeIf { message.id == latestDiagnosisId },
+                            requestDetail.takeIf { message.id == latestDiagnosisId }
+                                ?.let { request -> { kind: DetailKind, number: Int -> request(kind, message.id, number) } },
                             pages = pages,
                             onOpenImprovement = { position -> onOpenPage(message.id, position) },
                         )
@@ -606,7 +637,7 @@ private fun Conversation(
             unanswered -> Unit
 
             else -> ReplyBar(
-                options = options,
+                chips = chips,
                 labels = labels,
                 onSend = onSend,
                 hint = if (listShown) labels.askWholePiece else labels.replyHint,
@@ -634,10 +665,14 @@ private fun Conversation(
             },
             onOpenMark = onOpenMark,
             details = details,
-            onRequestDetail = requestDetail.takeIf { current },
+            // The page shows one improvement, so its buttons ask about that one, by its place.
+            onRequestDetail = requestDetail.takeIf { current }
+                ?.let { request -> { kind: DetailKind, _: String -> request(kind, replyId, row.number) } },
             exchanges = pages.byImprovement[row.key].orEmpty(),
             onAsk = if (current && canSend) {
-                { question -> onAskAboutImprovement(row.number, view.originalTitle(row.finding.title), question) }
+                view.originalTitle(replyId, row.number)?.let { title ->
+                    { question: String -> onAskAboutImprovement(row.number, title, question) }
+                }
             } else {
                 null
             },
@@ -734,7 +769,8 @@ private fun AssistantTurn(
     reportLabels: ReportLabels,
     showOnPhoto: (Finding) -> (() -> Unit)?,
     details: DetailAnswers,
-    onRequestDetail: ((DetailKind, String) -> Unit)?,
+    /** Asks for one detail of the improvement at this place in the reply (from 1). */
+    onRequestDetail: ((DetailKind, Int) -> Unit)?,
     /** The improvement pages' questions, for each row's count (row 43). */
     pages: PageQuestions,
     /** Opens the page of the row at this position in the reply's list (row 43). */
@@ -854,7 +890,8 @@ private fun Thumbnails(message: ChatMessage, onOpenPhoto: (String) -> Unit) {
  */
 @Composable
 private fun ReplyBar(
-    options: List<String>,
+    /** Each shown in the language shown; a tap sends the words Claude wrote (row 29). */
+    chips: List<ReplyChip>,
     labels: FundiLabels,
     onSend: (String) -> Unit,
     /** "Ask about the whole piece" once the reply is a list of improvements (row 43). */
@@ -862,10 +899,10 @@ private fun ReplyBar(
 ) {
     var text by remember { mutableStateOf("") }
     Column(Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        if (options.isNotEmpty()) {
+        if (chips.isNotEmpty()) {
             LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                items(options) { option ->
-                    AssistChip(onClick = { onSend(option) }, label = { Text(option) })
+                items(chips) { chip ->
+                    AssistChip(onClick = { onSend(chip.sends) }, label = { Text(chip.shown) })
                 }
             }
         }

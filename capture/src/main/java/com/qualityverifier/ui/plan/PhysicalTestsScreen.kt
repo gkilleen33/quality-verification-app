@@ -66,6 +66,14 @@ fun PhysicalTestsScreen(
      * Back to it to change it (row 40). Null for a test not yet answered, or skipped.
      */
     selected: String? = null,
+    /**
+     * An option tapped, by its place in [test]'s list. Fundi Bora's screen shows a translated
+     * test (row 29) and records the option Claude wrote in the same place, never the shown
+     * words; by default, as in Kagua, the shown label is the answer.
+     */
+    onOption: (Int) -> Unit = { onAnswer(test.options[it].label) },
+    /** "Not sure" tapped. By default the shown words are the answer, as in Kagua. */
+    onNotSure: () -> Unit = { onAnswer(labels.notSure) },
 ) {
     Scaffold(
         topBar = {
@@ -152,12 +160,12 @@ fun PhysicalTestsScreen(
                         modifier = Modifier.fillMaxWidth(),
                     ) { Text(labels.sendAnswer) }
                 }
-                test.options.forEach { option ->
+                test.options.forEachIndexed { place, option ->
                     val chosen = option.label == selected
                     // The earlier answer by a tick and a filled, bordered button: never by
                     // colour alone, since the maker reads it outdoors at arm's length.
                     OutlinedButton(
-                        onClick = { onAnswer(option.label) },
+                        onClick = { onOption(place) },
                         // Announced as selected by a screen reader, which sees no tick.
                         modifier = Modifier.fillMaxWidth().semantics { this.selected = chosen },
                         colors = if (chosen) {
@@ -211,7 +219,7 @@ fun PhysicalTestsScreen(
             // perform is not a wobbly stool.
             val notSureChosen = selected == labels.notSure
             TextButton(
-                onClick = { onAnswer(labels.notSure) },
+                onClick = onNotSure,
                 modifier = Modifier.fillMaxWidth().semantics { this.selected = notSureChosen },
             ) {
                 if (notSureChosen) {

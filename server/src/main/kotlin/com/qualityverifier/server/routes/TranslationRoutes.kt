@@ -64,15 +64,22 @@ fun Route.translationRoutes(translator: ReplyTranslator, auth: AuthStore) {
                 )
             }
             // 404 for another account's assessment as for none, as the chat route answers.
-            val outcome = translator.translate(userId, sessionId, language)
-                ?: return@post call.respond(HttpStatusCode.NotFound, ErrorResponse("no_such_session"))
-            call.respond(
-                TranslationResponse(
-                    language = language.code,
-                    translations = outcome.translations.entries.sortedBy { it.key }.map { TranslationItem(it.key, it.value) },
-                    failed = outcome.failed,
-                ),
-            )
+            when (val outcome = translator.translate(userId, sessionId, language)) {
+                null -> call.respond(HttpStatusCode.NotFound, ErrorResponse("no_such_session"))
+                // Claude wrote this assessment in that language, so there is nothing to
+                // translate; a phone asks only for the other, so this is a bad request.
+                ReplyTranslator.Outcome.SameLanguage -> call.respond(
+                    HttpStatusCode.BadRequest,
+                    ErrorResponse("same_language", "the assessment is already in \"${language.code}\""),
+                )
+                is ReplyTranslator.Outcome.Translated -> call.respond(
+                    TranslationResponse(
+                        language = language.code,
+                        translations = outcome.translations.entries.sortedBy { it.key }.map { TranslationItem(it.key, it.value) },
+                        failed = outcome.failed,
+                    ),
+                )
+            }
         }
     }
 }

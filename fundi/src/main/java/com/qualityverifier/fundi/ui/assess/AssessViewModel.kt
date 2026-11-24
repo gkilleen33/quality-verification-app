@@ -44,6 +44,7 @@ import com.qualityverifier.text.ImprovementQuestion
 import com.qualityverifier.text.detailAnswersOf
 import com.qualityverifier.text.ReportLabels
 import com.qualityverifier.text.ReplyTranslation
+import com.qualityverifier.text.optionAnswer
 import com.qualityverifier.text.buildFundiOpeningMessage
 import com.qualityverifier.text.buildSubmissionText
 import com.qualityverifier.text.parseAssistantContent
@@ -383,27 +384,51 @@ class AssessViewModel(
 
     /**
      * Asks for the replies in the language shown that this screen does not yet have. Once per
-     * reply in practice: the server answers a second ask from what it stored. Not while a
-     * request is open; the reply it was asked about arrives with it.
+     * reply in practice: the server answers a second ask from what it stored.
+     *
+     * One request at a time. A reply that arrives while one is open was not in it, so once it
+     * ends, the replies that arrived meanwhile are asked for, while the other language is still
+     * shown; a reply already asked about and still untranslated is not asked again until "Try
+     * again", so a reply the server cannot translate does not loop. A request that ends after
+     * the maker switched back changes nothing on screen: its translations are kept for the next
+     * switch, and no line about it is shown over the original.
      */
     private fun translateShown() {
         val api = translations ?: return
         val language = _shownLanguage.value ?: return
-        if (language == _language.value || translating?.isActive == true) return
-        translating = viewModelScope.launch {
-            val replies = sessions.messagesOnce(sessionId).filter { it.role == Role.ASSISTANT && it.text.isNotBlank() }
-            fun missing() = replies.any { ReplyTranslation.keyOf(it.text) !in translated.value[language].orEmpty() }
-            if (!missing()) {
-                _translationState.value = TranslationState.IDLE
-                return@launch
-            }
+        if (language == _language.value) return
+        if (translating?.isActive == true) {
+            // The open request is for this language (there are only two), and the maker has
+            // switched to it again: say it is still working.
             _translationState.value = TranslationState.WORKING
-            when (val outcome = api.translate(sessionId, language)) {
-                is TranslationOutcome.Translated -> {
-                    translated.update { it + (language to (it[language].orEmpty() + outcome.byKey)) }
-                    _translationState.value = if (missing()) TranslationState.FAILED else TranslationState.IDLE
+            return
+        }
+        translating = viewModelScope.launch {
+            fun shown() = _shownLanguage.value == language
+            suspend fun missing(): Set<String> {
+                val have = translated.value[language].orEmpty()
+                return sessions.messagesOnce(sessionId)
+                    .filter { it.role == Role.ASSISTANT && it.text.isNotBlank() }
+                    .map { ReplyTranslation.keyOf(it.text) }
+                    .filterTo(mutableSetOf()) { it !in have }
+            }
+            val asked = mutableSetOf<String>()
+            var unavailable = false
+            while (true) {
+                val wanted = missing()
+                if (wanted.isEmpty() || wanted.all { it in asked }) break
+                asked += wanted
+                if (shown()) _translationState.value = TranslationState.WORKING
+                when (val outcome = api.translate(sessionId, language)) {
+                    is TranslationOutcome.Translated ->
+                        translated.update { it + (language to (it[language].orEmpty() + outcome.byKey)) }
+                    TranslationOutcome.Unavailable -> unavailable = true
                 }
-                TranslationOutcome.Unavailable -> _translationState.value = TranslationState.FAILED
+                if (unavailable || !shown()) break
+            }
+            if (shown()) {
+                _translationState.value =
+                    if (unavailable || missing().isNotEmpty()) TranslationState.FAILED else TranslationState.IDLE
             }
         }
     }
@@ -821,6 +846,21 @@ class AssessViewModel(
 
     fun answerTest(index: Int, answer: String) {
         _run.update { it?.copy(answers = it.answers + (index to answer)) }
+    }
+
+    /**
+     * Option [option] of test [index] tapped, by its place on the screen: recorded as the
+     * option Claude wrote there, whichever language the button showed (row 29), so the
+     * submission Claude reads is in the plan's own words.
+     */
+    fun answerTestOption(index: Int, option: Int) {
+        val label = _run.value?.optionAnswer(index, option) ?: return
+        answerTest(index, label)
+    }
+
+    /** "Not sure" on test [index]: recorded in the intake's language, as the submission is written. */
+    fun answerTestNotSure(index: Int) {
+        answerTest(index, ReportLabels.forLanguage(_language.value.code).notSure)
     }
 
     /**
