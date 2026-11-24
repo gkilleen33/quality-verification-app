@@ -8,6 +8,7 @@ import android.content.SharedPreferences
 import android.util.Log
 import androidx.security.crypto.EncryptedSharedPreferences
 import androidx.security.crypto.MasterKey
+import com.qualityverifier.data.shop.ShopTabletFlag
 
 /**
  * Stores the tokens in [EncryptedSharedPreferences], Keystore-backed, exactly as the API
@@ -22,7 +23,14 @@ import androidx.security.crypto.MasterKey
  * suppression is at the top of this file and nowhere else, so the day it needs replacing,
  * this is the only file that changes.
  */
-class EncryptedPrefsTokenStore(private val context: Context) : TokenStore {
+class EncryptedPrefsTokenStore(
+    private val context: Context,
+    /**
+     * Whether the handset is a shop's tablet (row 12). Held outside this file, so [clear], and
+     * the self-healing delete of an unreadable file, leave it as it is: see [ShopTabletFlag].
+     */
+    private val shopTablet: ShopTabletFlag = ShopTabletFlag(context),
+) : TokenStore {
 
     @Volatile
     private var cached: SharedPreferences? = null
@@ -98,12 +106,9 @@ class EncryptedPrefsTokenStore(private val context: Context) : TokenStore {
         prefs()?.edit()?.putBoolean(KEY_TESTER, value)?.commit()
     }
 
-    override fun isShopMode(): Boolean = prefs()?.getBoolean(KEY_SHOP_MODE, false) ?: false
+    override fun isShopMode(): Boolean = shopTablet.isShopTablet
 
-    @SuppressLint("ApplySharedPref")
-    override fun setShopMode(value: Boolean) {
-        prefs()?.edit()?.putBoolean(KEY_SHOP_MODE, value)?.commit()
-    }
+    override fun setShopMode(value: Boolean) = shopTablet.set(value)
 
     // A string rather than a boolean, so "never asked" is its own state and not false.
     override fun termsRequired(): Boolean? = read(KEY_TERMS_REQUIRED)?.toBooleanStrictOrNull()
@@ -115,6 +120,7 @@ class EncryptedPrefsTokenStore(private val context: Context) : TokenStore {
         editor.commit()
     }
 
+    // Not the shop flag (row 12): a forced sign-out on a shop's tablet must not stop the wipe.
     @SuppressLint("ApplySharedPref")
     override fun clear() {
         prefs()?.edit()
@@ -124,7 +130,6 @@ class EncryptedPrefsTokenStore(private val context: Context) : TokenStore {
             ?.remove(KEY_EXPIRES_AT)
             ?.remove(KEY_TESTER)
             ?.remove(KEY_TERMS_REQUIRED)
-            ?.remove(KEY_SHOP_MODE)
             ?.commit()
     }
 
@@ -147,6 +152,5 @@ class EncryptedPrefsTokenStore(private val context: Context) : TokenStore {
         const val KEY_EXPIRES_AT = "access_expires_at"
         const val KEY_TESTER = "is_tester"
         const val KEY_TERMS_REQUIRED = "terms_required"
-        const val KEY_SHOP_MODE = "shop_mode"
     }
 }

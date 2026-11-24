@@ -2,6 +2,7 @@ package com.qualityverifier.data.shop
 
 import android.annotation.SuppressLint
 import android.content.Context
+import android.content.SharedPreferences
 import android.util.Log
 import com.qualityverifier.data.sync.TabletEndApi
 import com.qualityverifier.domain.TabletEnd
@@ -101,11 +102,47 @@ interface TabletEndQueue {
 }
 
 /**
+ * Whether this handset is a shop's tablet (row 12): the last account signed in on it was a shop
+ * account. Written from the sign-in answer and every profile read, through
+ * [com.qualityverifier.data.auth.TokenStore.setShopMode].
+ *
+ * Kept apart from the tokens, in plain shared preferences, so that clearing them does not clear
+ * it. The server refuses a refresh token (expiry, a device revoked in the portal, reuse
+ * detection) whenever it likes, and the phone answers by clearing the tokens, possibly with a
+ * customer's verdict on the screen. If that also forgot the tablet was a shop's, the wipe and
+ * `FLAG_SECURE` would stop at that moment, and the customer's photos and verdict would stay on
+ * the tablet for the next customer. So only the next sign-in changes it: a personal account
+ * signing in on the handset sets it false. An unreadable token file (a cleared Keystore) cannot
+ * take it either. Nothing in it is secret: a yes or a no.
+ */
+class ShopTabletFlag(private val prefs: SharedPreferences) {
+    // The app's constructor. The one taking the prefs directly lets plain JVM tests run.
+    constructor(context: Context) : this(
+        context.applicationContext.getSharedPreferences(SHOP_TABLET_PREFS, Context.MODE_PRIVATE),
+    )
+
+    val isShopTablet: Boolean get() = prefs.getBoolean(KEY, false)
+
+    @SuppressLint("ApplySharedPref")
+    fun set(value: Boolean) {
+        // commit(), as the tokens are: the next screen reads it straight back.
+        if (isShopTablet != value) prefs.edit().putBoolean(KEY, value).commit()
+    }
+
+    private companion object {
+        const val KEY = "is_shop_tablet"
+    }
+}
+
+/** The shop tablet's own small file: the flag above and the queue of ends below. */
+private const val SHOP_TABLET_PREFS = "kagua_shop_tablet"
+
+/**
  * [TabletEndQueue] in plain shared preferences: a session id, one of four words, and a time,
  * none of which is about the customer.
  */
 class PrefsTabletEndQueue(context: Context) : TabletEndQueue {
-    private val prefs = context.applicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+    private val prefs = context.applicationContext.getSharedPreferences(SHOP_TABLET_PREFS, Context.MODE_PRIVATE)
 
     @Synchronized
     @SuppressLint("ApplySharedPref")
@@ -132,7 +169,6 @@ class PrefsTabletEndQueue(context: Context) : TabletEndQueue {
     private fun raw(): Set<String> = prefs.getStringSet(KEY, null)?.toSet().orEmpty()
 
     private companion object {
-        const val PREFS_NAME = "kagua_shop_tablet"
         const val KEY = "pending_ends"
     }
 }

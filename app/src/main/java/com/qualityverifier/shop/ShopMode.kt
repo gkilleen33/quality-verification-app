@@ -1,10 +1,8 @@
 package com.qualityverifier.shop
 
-import android.content.Context
 import android.os.SystemClock
 import android.util.Log
-import coil.imageLoader
-import com.qualityverifier.di.AppContainer
+import com.qualityverifier.data.shop.ShopTabletWipe
 import com.qualityverifier.domain.TabletEnd
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -28,13 +26,21 @@ import kotlinx.coroutines.launch
  * checks it, so the app behaves as v0.6.1 did.
  */
 class ShopMode(
-    private val context: Context,
-    private val container: AppContainer,
+    /**
+     * Whether the handset is a shop's tablet: `AppContainer.shopMode`. Not "signed in to a
+     * shop account": the server can refuse the refresh token with a customer's verdict on the
+     * screen, and the tablet must go on wiping and hiding the screen after that.
+     */
+    private val isShopTablet: () -> Boolean,
+    private val tablet: ShopTabletWipe,
+    /** Drops the decoded photos the image loader holds in memory. */
+    private val clearPhotoCache: () -> Unit,
     /** Outlives every screen, so a wipe started as the app leaves the screen finishes. */
     private val scope: CoroutineScope,
+    clock: () -> Long = SystemClock::elapsedRealtime,
 ) {
-    /** The five minutes with no touch. Fed by MainActivity's touch handler. */
-    val idle = IdleWatch(IDLE_MILLIS) { SystemClock.elapsedRealtime() }
+    /** The five minutes with no touch. Fed by MainActivity's touch handler and every text field. */
+    val idle = IdleWatch(IDLE_MILLIS, clock)
 
     private val _resets = MutableStateFlow(0)
 
@@ -44,8 +50,29 @@ class ShopMode(
      */
     val resets: StateFlow<Int> = _resets.asStateFlow()
 
-    /** True for a signed-in shop account. Read at the moment it matters: sign-in can change it. */
-    val active: Boolean get() = container.isSignedIn && container.shopMode
+    /** True on a shop's tablet. Read at the moment it matters: a sign-in can change it. */
+    val active: Boolean get() = isShopTablet()
+
+    /**
+     * Set as the activity is destroyed: true only when it is destroyed to be built again at
+     * once for a rotation (or another configuration change: a resize, the language), in this
+     * same process. See [restoresSavedScreens].
+     */
+    @Volatile private var recreatingForRotation = false
+
+    fun activityDestroyed(changingConfigurations: Boolean) {
+        recreatingForRotation = changingConfigurations
+    }
+
+    /**
+     * Whether the activity being created may restore the screens Android saved for it. Read
+     * once per creation; it forgets the rotation it answers for.
+     */
+    fun mayRestoreScreens(): Boolean {
+        val rotation = recreatingForRotation
+        recreatingForRotation = false
+        return restoresSavedScreens(shopTablet = active, recreatedForRotation = rotation)
+    }
 
     /**
      * Ends whatever the tablet holds, recording [end]. Does nothing for a personal account.
@@ -57,15 +84,15 @@ class ShopMode(
         _resets.update { it + 1 }
         scope.launch {
             try {
-                val wiped = container.shopTablet.wipe(end)
+                val wiped = tablet.wipe(end)
                 if (wiped > 0) Log.i(TAG, "Deleted the tablet's copy of $wiped assessment(s): ${end.id}")
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
                 Log.e(TAG, "The tablet could not delete its copy", e)
             }
-            // The decoded photos Coil holds in memory are the last copy outside the files.
-            runCatching { context.imageLoader.memoryCache?.clear() }
+            // The decoded photos held in memory are the last copy outside the files.
+            runCatching { clearPhotoCache() }
         }
     }
 
@@ -76,8 +103,8 @@ class ShopMode(
     fun clearLeftovers() {
         if (!active) return
         scope.launch {
-            runCatching { container.shopTablet.wipe(TabletEnd.LEFT_APP) }
-            runCatching { container.shopTablet.flush() }
+            runCatching { tablet.wipe(TabletEnd.LEFT_APP) }
+            runCatching { tablet.flush() }
         }
     }
 
@@ -86,6 +113,25 @@ class ShopMode(
         const val IDLE_MILLIS = 5L * 60 * 1000
     }
 }
+
+/**
+ * Whether the screens Android saved may come back (row 12). Android saves the open screen, an
+ * assessment included, when the app leaves the screen, before the end that leaving causes
+ * has brought back the start screen. After the process dies in the background, it would open
+ * the next customer on the earlier customer's assessment. So a shop's tablet restores saved
+ * screens only across a rotation, which happens within one customer's assessment; anything
+ * else starts at the empty start screen. A personal phone restores as it always has.
+ */
+fun restoresSavedScreens(shopTablet: Boolean, recreatedForRotation: Boolean): Boolean =
+    !shopTablet || recreatedForRotation
+
+/**
+ * Whether the screen stays on while an assessment is open (row 12). On a shop's tablet the
+ * screen locking is one of the four ends, so a short screen timeout would delete a customer's
+ * assessment while they wait for the verdict. The five idle minutes are the tablet's timeout
+ * instead. A personal phone keeps its own settings.
+ */
+fun keepsScreenOn(shopTablet: Boolean): Boolean = shopTablet
 
 /**
  * Whether the screen has gone untouched for [timeoutMillis]. A clock in, so a test needs no

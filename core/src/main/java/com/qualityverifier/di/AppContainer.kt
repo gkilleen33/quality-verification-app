@@ -30,6 +30,7 @@ import com.qualityverifier.data.session.ReviewAnswers
 import com.qualityverifier.data.session.RoomSessionRepository
 import com.qualityverifier.data.session.SessionRepository
 import com.qualityverifier.data.shop.PrefsTabletEndQueue
+import com.qualityverifier.data.shop.ShopTabletFlag
 import com.qualityverifier.data.shop.ShopTabletWipe
 import com.qualityverifier.data.sync.AccountActions
 import com.qualityverifier.data.sync.AssessmentSync
@@ -163,7 +164,13 @@ class AppContainer(
      */
     val images: ImageFileStore = ImageFileStore(appContext, mayRecordLocation = { locationPreference.records })
 
-    val tokenStore: TokenStore = EncryptedPrefsTokenStore(appContext)
+    /**
+     * Whether the handset is a shop's tablet (row 12). Its own file, which signing out and a
+     * refused refresh token leave alone; only the next sign-in changes it.
+     */
+    private val shopTabletFlag = ShopTabletFlag(appContext)
+
+    val tokenStore: TokenStore = EncryptedPrefsTokenStore(appContext, shopTabletFlag)
 
     /** Fundi Bora's two M-Pesa answers. Declared before [localAccount], whose clear forgets them. */
     private val mpesaPreference = MpesaPreference(appContext)
@@ -312,11 +319,13 @@ class AppContainer(
     val isTester: Boolean get() = tokenStore.isTester()
 
     /**
-     * True when this is a Kagua account on a shop's tablet (server V39, row 12): the tablet
-     * keeps no customer's assessment. Read from the cached sign-in answer and profile. Fundi
-     * Bora accounts are never shops (a CHECK on the server), so this is false there.
+     * True when this handset is a shop's tablet (server V39, row 12): the tablet keeps no
+     * customer's assessment. From the last sign-in answer and profile, and still true after a
+     * sign-out or a refused refresh token, until another account signs in (see
+     * [ShopTabletFlag]). Fundi Bora accounts are never shops (a CHECK on the server), so this
+     * is false there.
      */
-    val shopMode: Boolean get() = tokenStore.isShopMode()
+    val shopMode: Boolean get() = shopTabletFlag.isShopTablet
 
     /**
      * Deletes the shop tablet's copy of every assessment and reports how (row 12). Every Room

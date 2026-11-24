@@ -43,6 +43,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -56,6 +57,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
@@ -90,6 +92,9 @@ import androidx.activity.compose.BackHandler
 import com.qualityverifier.ui.turn.FailedTurnRow
 import com.qualityverifier.ui.turn.UnansweredTurnRow
 import com.qualityverifier.ui.appContainer
+import com.qualityverifier.shop.keepsScreenOn
+// Aliased: this screen's own `shopMode` parameter is the Boolean.
+import com.qualityverifier.ui.shopMode as currentShopMode
 import com.qualityverifier.ui.rememberReportLabels
 import com.qualityverifier.ui.rememberTesterLabels
 import java.io.File
@@ -123,6 +128,18 @@ fun ChatScreen(
     // chose to stop, and the next one must find an empty start screen. Registered first, so
     // the intake's and the camera's own Back handlers, composed later, still come first.
     BackHandler(enabled = shopMode, onBack = onBack)
+    // On the tablet the screen stays on while the assessment is open: the screen locking ends
+    // the assessment, and a short timeout would end it while the customer waits for the
+    // verdict. The five idle minutes are the tablet's timeout instead (row 12).
+    val view = LocalView.current
+    DisposableEffect(view, shopMode) {
+        val keepOn = keepsScreenOn(shopMode)
+        if (keepOn) view.keepScreenOn = true
+        onDispose { if (keepOn) view.keepScreenOn = false }
+    }
+    // The on-screen keyboard's typing never reaches MainActivity's touch handler, so the text
+    // field restarts the tablet's idle minutes itself. Nothing for a personal account.
+    val idle = currentShopMode().idle
     val context = LocalContext.current
     val container = appContainer()
     val viewModel: ChatViewModel = viewModel(
@@ -665,7 +682,10 @@ fun ChatScreen(
                     }
                     OutlinedTextField(
                         value = draft,
-                        onValueChange = { draft = it },
+                        onValueChange = {
+                            draft = it
+                            idle.touched()
+                        },
                         placeholder = { Text("Ask about this furniture") },
                         maxLines = 4,
                         modifier = Modifier.weight(1f),

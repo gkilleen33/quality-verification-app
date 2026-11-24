@@ -42,6 +42,7 @@ import com.qualityverifier.domain.ItemType
 import com.qualityverifier.domain.Ownership
 import com.qualityverifier.domain.Usage
 import com.qualityverifier.text.ReportLabels
+import com.qualityverifier.ui.shopMode
 
 /**
  * The questions the app can answer for itself, asked before anything is sent.
@@ -320,6 +321,9 @@ private fun FullIntake(
     var progress by remember { mutableStateOf(IntakeProgress.start(needsUpholstery, fixedOwnership)) }
     var price by remember { mutableStateOf("") }
     var handedOver by remember { mutableStateOf(false) }
+    // Typing a price on the on-screen keyboard is not a touch MainActivity sees, so the field
+    // restarts a shop tablet's idle minutes itself (row 12). Nothing for a personal account.
+    val idle = shopMode().idle
 
     val language = progress.language
     val upholstered = progress.upholstered
@@ -403,7 +407,10 @@ private fun FullIntake(
                 IntakeQuestion.PRICE -> Question(labels.intakePriceQuestion) {
                     OutlinedTextField(
                         value = price,
-                        onValueChange = { price = it },
+                        onValueChange = {
+                            price = it
+                            idle.touched()
+                        },
                         label = { Text(labels.intakePriceHint) },
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth(),

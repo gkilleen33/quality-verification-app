@@ -1,6 +1,7 @@
 package com.qualityverifier
 
 import android.app.Application
+import coil.imageLoader
 import com.qualityverifier.di.AppContainer
 import com.qualityverifier.domain.AppId
 import com.qualityverifier.shop.ShopMode
@@ -31,7 +32,12 @@ class QualityVerifierApp : Application() {
         // At start, so the banner is ready before the home screen is. A second check
         // follows each sign-in; see AppContainer.
         container.appVersionCheck.check()
-        shop = ShopMode(this, container, CoroutineScope(SupervisorJob() + Dispatchers.IO))
+        shop = ShopMode(
+            isShopTablet = { container.shopMode },
+            tablet = container.shopTablet,
+            clearPhotoCache = { imageLoader.memoryCache?.clear() },
+            scope = CoroutineScope(SupervisorJob() + Dispatchers.IO),
+        )
         shop.clearLeftovers()
     }
 }

@@ -49,6 +49,10 @@ interface TokenStore {
      * app decides how to behave before any request can answer. False until the server says
      * otherwise, so an app updated from v0.6.1 keeps behaving as it did. Defaulted so a store
      * that never holds it (the push's copy, test fakes) reads as an ordinary account.
+     *
+     * Unlike everything else here, [clear] leaves it: it describes the handset until another
+     * account signs in, so a forced sign-out does not stop a shop tablet's wipe
+     * ([com.qualityverifier.data.shop.ShopTabletFlag]).
      */
     fun isShopMode(): Boolean = false
 

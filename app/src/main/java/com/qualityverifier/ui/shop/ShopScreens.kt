@@ -25,12 +25,15 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import com.qualityverifier.data.sync.PasswordCheck
 import com.qualityverifier.text.AuthLabels
 import com.qualityverifier.text.ReportLabels
+import com.qualityverifier.ui.shopMode
 import kotlinx.coroutines.launch
 
 /**
@@ -102,18 +105,34 @@ fun OwnerPasswordDialog(
     var password by remember { mutableStateOf("") }
     var checking by remember { mutableStateOf(false) }
     var problem by remember { mutableStateOf<String?>(null) }
+    // A dialog is a window of its own, whose touches never pass MainActivity's touch handler,
+    // and the on-screen keyboard's typing reaches neither. Both restart the idle minutes here,
+    // so five minutes cannot pass, and close the dialog, while the owner is typing.
+    val idle = shopMode().idle
 
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text(labels.ownerPasswordTitle) },
         text = {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Column(
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+                modifier = Modifier.pointerInput(idle) {
+                    awaitPointerEventScope {
+                        while (true) {
+                            // Initial pass: seen before the text field takes the touch.
+                            awaitPointerEvent(PointerEventPass.Initial)
+                            idle.touched()
+                        }
+                    }
+                },
+            ) {
                 Text(labels.ownerPasswordBody)
                 OutlinedTextField(
                     value = password,
                     onValueChange = {
                         password = it
                         problem = null
+                        idle.touched()
                     },
                     label = { Text(labels.passwordLabel) },
                     singleLine = true,

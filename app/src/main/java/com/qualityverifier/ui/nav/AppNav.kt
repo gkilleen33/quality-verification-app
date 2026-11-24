@@ -1,11 +1,10 @@
 package com.qualityverifier.ui.nav
 
-import android.app.Activity
 import android.view.WindowManager
+import androidx.activity.compose.LocalActivity
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
@@ -125,12 +124,19 @@ fun AppNav() {
 
     // A shop's tablet (row 12). Every end of a customer's assessment brings back an empty
     // start screen with nothing behind it, which also closes the owner's controls. The first
-    // value is skipped: it is the count as this composition found it, not an end.
+    // value is skipped: it is the count as this composition found it, not an end. When the
+    // server has refused the sign-in meanwhile (an expired or revoked refresh token), the
+    // tablet is still a shop's and has still wiped; it goes to sign-in with nothing behind,
+    // unless the owner is already there or registering, which no customer's screen is.
     val shop = shopMode()
     LaunchedEffect(shop) {
         shop.resets.drop(1).collect {
-            if (container.isSignedIn) {
-                navController.navigate(Routes.HOME) { popUpTo(0) { inclusive = true } }
+            val here = navController.currentDestination?.route
+            when {
+                container.isSignedIn ->
+                    navController.navigate(Routes.HOME) { popUpTo(0) { inclusive = true } }
+                here != Routes.SIGN_IN && here != Routes.REGISTER ->
+                    navController.navigate(Routes.SIGN_IN) { popUpTo(0) { inclusive = true } }
             }
         }
     }
@@ -299,7 +305,7 @@ private fun NavHostController.tabSelector(): (MainTab) -> Unit = { tab -> switch
  */
 @Composable
 private fun SecureWindow(active: Boolean) {
-    val window = (LocalContext.current as? Activity)?.window ?: return
+    val window = LocalActivity.current?.window ?: return
     SideEffect {
         if (active) {
             window.addFlags(WindowManager.LayoutParams.FLAG_SECURE)

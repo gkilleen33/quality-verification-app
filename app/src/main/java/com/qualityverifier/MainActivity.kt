@@ -19,7 +19,13 @@ import com.qualityverifier.ui.theme.QualityVerifierTheme
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
-        super.onCreate(savedInstanceState)
+        // A shop's tablet (row 12) restores no saved screen except across a rotation. Android
+        // saves the open assessment as the app leaves the screen, before the end that leaving
+        // causes has put the start screen back; after a process death it would open the next
+        // customer on the earlier one's chat. Dropped here, before anything is restored from
+        // it: the navigation's back stack, every saved field, and the view models' saved state.
+        val restore = savedInstanceState?.takeIf { shopMode().mayRestoreScreens() }
+        super.onCreate(restore)
         enableEdgeToEdge()
         setContent {
             QualityVerifierTheme {
@@ -43,6 +49,16 @@ class MainActivity : ComponentActivity() {
         } else {
             window.clearFlags(WindowManager.LayoutParams.FLAG_SECURE)
         }
+        this.shopMode().idle.touched()
+    }
+
+    /**
+     * Every key (a hardware keyboard, the volume keys) restarts the shop tablet's five idle
+     * minutes, as every touch does below. The on-screen keyboard reaches neither: its typing is
+     * caught by each text field on the tablet's screens, and a dialog's touches by the dialog.
+     */
+    override fun onUserInteraction() {
+        super.onUserInteraction()
         this.shopMode().idle.touched()
     }
 
@@ -70,5 +86,11 @@ class MainActivity : ComponentActivity() {
                 keyguardLocked = keyguard?.isKeyguardLocked == true,
             ),
         )
+    }
+
+    override fun onDestroy() {
+        // Whether the next onCreate is the same customer's screen turned round (see onCreate).
+        shopMode().activityDestroyed(isChangingConfigurations)
+        super.onDestroy()
     }
 }
