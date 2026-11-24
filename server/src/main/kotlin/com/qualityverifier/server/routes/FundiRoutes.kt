@@ -233,6 +233,15 @@ fun Route.fundiRoutes(store: FundiStore, auth: AuthStore) {
                 call.respond(HttpStatusCode.BadRequest, ErrorResponse("invalid_phone", fault))
                 return@put
             }
+            // Never the account's own number (row 52; Nathan, 23 November 2026): no link can
+            // form with oneself (V31's worker_links), so a piece labelled for that entry had
+            // nobody to make its final assessment. Refused here too, so a phone older than
+            // v0.7.0, whose form allows it, cannot save one; it drops the change on this 400.
+            // Archiving one saved before is still allowed.
+            if (!body.archived && e164 == auth.findUser(userId)?.phone) {
+                call.respond(HttpStatusCode.BadRequest, ErrorResponse(OWN_NUMBER, OWN_NUMBER_DETAIL))
+                return@put
+            }
             if (!store.upsertStudio(userId, studioId, name, e164, body.archived)) {
                 // 404, never 403, as for a worker: the id is client-made.
                 call.respond(HttpStatusCode.NotFound, ErrorResponse("no_such_studio"))
@@ -348,6 +357,12 @@ fun Route.fundiRoutes(store: FundiStore, auth: AuthStore) {
  * or one too old to send its version, is sent "owned" and "borrowed" instead.
  */
 const val FIRST_TOOL_OWNERS_VERSION = 6
+
+/** The error code for a studio entry on the account's own number (row 52). */
+const val OWN_NUMBER = "own_number"
+
+/** Nathan's sentence for it (23 November 2026), the same words the v0.7.0 form shows. */
+const val OWN_NUMBER_DETAIL = "This is your own number. Your own workshop is already included."
 
 private fun ApplicationCall.knowsOnlyOldOwners(): Boolean {
     val version = AppVersionHeaders.parseVersion(request.headers[AppVersionHeaders.VERSION])

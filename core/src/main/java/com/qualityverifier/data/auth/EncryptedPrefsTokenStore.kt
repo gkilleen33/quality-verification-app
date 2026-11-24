@@ -108,6 +108,15 @@ class EncryptedPrefsTokenStore(private val context: Context) : TokenStore {
         editor.commit()
     }
 
+    override fun ownPhone(): String? = read(KEY_OWN_PHONE)
+
+    @SuppressLint("ApplySharedPref")
+    override fun setOwnPhone(value: String?) {
+        val editor = prefs()?.edit() ?: return
+        if (value.isNullOrBlank()) editor.remove(KEY_OWN_PHONE) else editor.putString(KEY_OWN_PHONE, value)
+        editor.commit()
+    }
+
     @SuppressLint("ApplySharedPref")
     override fun clear() {
         prefs()?.edit()
@@ -117,6 +126,7 @@ class EncryptedPrefsTokenStore(private val context: Context) : TokenStore {
             ?.remove(KEY_EXPIRES_AT)
             ?.remove(KEY_TESTER)
             ?.remove(KEY_TERMS_REQUIRED)
+            ?.remove(KEY_OWN_PHONE)
             ?.commit()
     }
 
@@ -139,5 +149,6 @@ class EncryptedPrefsTokenStore(private val context: Context) : TokenStore {
         const val KEY_EXPIRES_AT = "access_expires_at"
         const val KEY_TESTER = "is_tester"
         const val KEY_TERMS_REQUIRED = "terms_required"
+        const val KEY_OWN_PHONE = "own_phone"
     }
 }

@@ -213,8 +213,9 @@ class ReportStepsTest {
             summaries = MutableStateFlow(labelled), studios = MutableStateFlow(listOf(studio("studio-1", linked = false))),
         )
         advanceUntilIdle()
-        // Labelled for a studio, so the customer report is the studio's; not linked, so no My manager.
-        assertEquals(listOf(ReportKind.PART_ISSUES, ReportKind.FULL), unlinked.offered.value)
+        // Labelled for a studio that is not linked: no My manager, and since v0.7.0 the customer
+        // report is the maker's, since the studio has no manager to send it (row 51).
+        assertEquals(listOf(ReportKind.CUSTOMER, ReportKind.PART_ISSUES, ReportKind.FULL), unlinked.offered.value)
 
         // "My own job" with a linked studio on the list: no My manager either (row 3).
         val ownJob = SendReportViewModel(

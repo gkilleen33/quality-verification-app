@@ -118,7 +118,12 @@ class AssessmentSync(
         // Refreshed here so a promotion in the portal reaches the phone without a
         // re-install. Null means the server was unreachable, in which case the cached
         // answer is better than assuming either way.
-        client.isTester()?.let(tokens::setTester)
+        // The account's own number comes with it (row 52), for the studio form; a server
+        // before v0.7.0 sends none, and the copy from sign-in is kept.
+        client.me()?.let { me ->
+            tokens.setTester(me.isTester)
+            me.phone?.let(tokens::setOwnPhone)
+        }
 
         // The roster comes down before the sessions that refer to it.
         if (rosterEnabled) client.workers()?.let { roster ->

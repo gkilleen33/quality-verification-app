@@ -121,6 +121,13 @@ data class ReportInput(
     val previous: ReportAssessment? = null,
     /** The parts a part report covers, in [WorkPart] order. */
     val parts: List<WorkPart> = emptyList(),
+    /**
+     * The account whose final assessment the customer report waited for (rows 27 and 51), or
+     * null for every final flag. Only its final assessments are headed "Final check": a
+     * maker's final, made while the studio had no linked manager, is an ordinary assessment
+     * in the report the manager sends once linked.
+     */
+    val finalBy: String? = null,
 )
 
 /** What a linked-worker report is composed from: one roster worker's work across pieces. */
@@ -341,7 +348,9 @@ class ReportComposer {
             blocks += HeadingBlock(assessmentHeading(assessment, labels), level = 2)
             // The check the report waited for (row 27). Who made it is not printed: the
             // customer report names nobody.
-            if (assessment.isFinal) blocks += TextBlock(pdf.finalCheck)
+            if (assessment.isFinal && (input.finalBy == null || assessment.userId == input.finalBy)) {
+                blocks += TextBlock(pdf.finalCheck)
+            }
             blocks += verdictLine(assessment, labels)
             photoPlan.forAssessment(index).takeIf { it.isNotEmpty() }?.let { blocks += PhotosBlock(it) }
             blocks += problemBlocks(assessment, assessment.problems.problems.indices.toList(), labels, forCustomer = true, record = record)

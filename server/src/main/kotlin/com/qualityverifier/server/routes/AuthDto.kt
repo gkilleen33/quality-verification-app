@@ -72,6 +72,12 @@ data class MeResponse(
      */
     @SerialName("mpesa_read_agreed") val mpesaReadAgreed: Boolean = false,
     @SerialName("mpesa_send_agreed") val mpesaSendAgreed: Boolean = false,
+    /**
+     * The account's own number, E.164, as stored. Fundi Bora's studio form refuses it
+     * (row 52), so the phone keeps a copy; it is the number the person signed in with, so
+     * nothing here is new to them. Older builds ignore it.
+     */
+    val phone: String? = null,
 )
 
 /** The terms an account must agree to, on `/v1/me` rather than the config route, which uses no database. */

@@ -43,6 +43,15 @@ interface TokenStore {
 
     fun setTermsRequired(value: Boolean?) = Unit
 
+    /**
+     * The account's own number, E.164, as /v1/me last gave it; null until a v0.7.0 server has
+     * answered. Fundi Bora's studio form refuses it (row 52), offline too, so it is cached
+     * like [isTester]. Defaulted for the stores that never hold it.
+     */
+    fun ownPhone(): String? = null
+
+    fun setOwnPhone(value: String?) = Unit
+
     fun clear()
 
     fun isSignedIn(): Boolean = refreshToken() != null
