@@ -547,6 +547,132 @@ class ChatRouteTest {
         assertEquals(0, claude.calls)
     }
 
+    // ---------------------------------------------------------------- a shop's tablet (row 12)
+    //
+    // Every customer's assessment on a shop's tablet belongs to the shop's account, so to
+    // ensureSession an earlier customer's is "its own". A tablet that Android reopened on an
+    // earlier screen would carry that conversation on. V39's shop_session_in_progress is the
+    // only one a shop account may add a turn to.
+
+    @Test
+    fun `row 12 - a shop tablet's turn into an earlier customer's assessment answers 404`() = testApplication {
+        val store = FakeChatStore(access = SessionAccess.Ok(created = false), inProgress = UUID.randomUUID().toString())
+        val claude = FakeClaude(ClaudeResult.Success("the earlier customer's history, answered", TokenUsage(), null))
+        val app = withChat(store, claude, accountShopMode = true)
+
+        val response = app.post("/v1/chat") {
+            auth(); contentType(ContentType.Application.Json); setBody(request())
+        }
+
+        assertEquals(HttpStatusCode.NotFound, response.status)
+        assertTrue(response.bodyAsText().contains("no_such_session"))
+        assertEquals("Claude must not be asked", 0, claude.calls)
+        assertNull("nothing may be stored", store.lastTurnText)
+    }
+
+    @Test
+    fun `row 12 - a shop tablet is never replayed an earlier customer's stored reply`() = testApplication {
+        // The retry path: the turn is already stored and so is its reply. Handing it back would
+        // show the next customer the earlier one's answer without a call to Claude.
+        val store = FakeChatStore(
+            access = SessionAccess.Ok(created = false),
+            turnAlreadyStored = true,
+            storedReply = StoredReply("m1", "the earlier customer's verdict"),
+            inProgress = UUID.randomUUID().toString(),
+        )
+        val claude = FakeClaude(ClaudeResult.Success("x", TokenUsage(), null))
+        val app = withChat(store, claude, accountShopMode = true)
+
+        val response = app.post("/v1/chat") {
+            auth(); contentType(ContentType.Application.Json); setBody(request())
+        }
+
+        assertEquals(HttpStatusCode.NotFound, response.status)
+        assertFalse(response.bodyAsText().contains("earlier customer"))
+        assertEquals(0, claude.calls)
+    }
+
+    @Test
+    fun `row 12 - a shop tablet's ended or stale assessment takes no more turns`() = testApplication {
+        // Nothing in progress: the newest has a tablet end, is marked deleted, or has not
+        // changed for 30 minutes (V39).
+        val store = FakeChatStore(access = SessionAccess.Ok(created = false), inProgress = null)
+        val claude = FakeClaude(ClaudeResult.Success("x", TokenUsage(), null))
+        val app = withChat(store, claude, accountShopMode = true)
+
+        val response = app.post("/v1/chat") {
+            auth(); contentType(ContentType.Application.Json); setBody(request())
+        }
+
+        assertEquals(HttpStatusCode.NotFound, response.status)
+        assertEquals(0, claude.calls)
+    }
+
+    @Test
+    fun `row 12 - a shop tablet carries on the assessment in progress`() = testApplication {
+        val turn = request()
+        val store = FakeChatStore(access = SessionAccess.Ok(created = false), inProgress = turn.sessionId)
+        val claude = FakeClaude(ClaudeResult.Success("the next step", TokenUsage(), null))
+        val app = withChat(store, claude, accountShopMode = true)
+
+        val response = app.post("/v1/chat") {
+            auth(); contentType(ContentType.Application.Json); setBody(turn)
+        }
+
+        assertEquals(HttpStatusCode.OK, response.status)
+        assertEquals(1, claude.calls)
+    }
+
+    @Test
+    fun `row 12 - a shop tablet's retry in the assessment in progress is still replayed`() = testApplication {
+        val turn = request()
+        val store = FakeChatStore(
+            access = SessionAccess.Ok(created = false),
+            turnAlreadyStored = true,
+            storedReply = StoredReply("m1", "already answered"),
+            inProgress = turn.sessionId,
+        )
+        val claude = FakeClaude(ClaudeResult.Success("should not be called", TokenUsage(), null))
+        val app = withChat(store, claude, accountShopMode = true)
+
+        val response = app.post("/v1/chat") {
+            auth(); contentType(ContentType.Application.Json); setBody(turn)
+        }
+
+        assertEquals(HttpStatusCode.OK, response.status)
+        assertTrue(response.bodyAsText().contains("already answered"))
+        assertEquals(0, claude.calls)
+    }
+
+    @Test
+    fun `row 12 - a shop tablet's first turn starts a new assessment`() = testApplication {
+        // Nothing is in progress until the first turn creates it.
+        val store = FakeChatStore(access = SessionAccess.Ok(created = true), inProgress = null)
+        val claude = FakeClaude(ClaudeResult.Success("the photo plan", TokenUsage(), null))
+        val app = withChat(store, claude, accountShopMode = true)
+
+        val response = app.post("/v1/chat") {
+            auth(); contentType(ContentType.Application.Json); setBody(request())
+        }
+
+        assertEquals(HttpStatusCode.OK, response.status)
+        assertEquals(1, claude.calls)
+    }
+
+    @Test
+    fun `row 12 - a personal Kagua account carries on its own earlier assessment as before`() = testApplication {
+        val store = FakeChatStore(access = SessionAccess.Ok(created = false), inProgress = null)
+        val claude = FakeClaude(ClaudeResult.Success("a follow-up answer", TokenUsage(), null))
+        val app = withChat(store, claude)
+
+        val response = app.post("/v1/chat") {
+            auth(); contentType(ContentType.Application.Json); setBody(request())
+        }
+
+        assertEquals(HttpStatusCode.OK, response.status)
+        assertEquals(1, claude.calls)
+    }
+
     @Test
     fun `a missing photo is refused before anything is spent upstream`() = testApplication {
         // Dropping it silently would produce an assessment of eight photos that reads as
@@ -1810,12 +1936,14 @@ class ChatRouteTest {
         /** Fundi Bora's detail answers (V37); null keeps a tap as it was before v0.7.0. */
         details: com.qualityverifier.server.db.DetailAnswerStore? = null,
         fundiEffort: String = Config.DEFAULT_FUNDI_EFFORT,
+        /** Whether the signed-in account is a shop's tablet (V39, row 12). */
+        accountShopMode: Boolean = false,
     ) = run {
         application {
             module(
                 version = "test",
                 database = null,
-                auth = Auth(AccountStore(accountAudience), AccessTokens(KEY)),
+                auth = Auth(AccountStore(accountAudience, accountShopMode), AccessTokens(KEY)),
                 chat = Chat(
                     store, blobs, claude, prompts, NoFeedback,
                     dailyAssessmentLimit = dailyLimit,
@@ -1926,7 +2054,10 @@ class ChatRouteTest {
          * the store when the count is taken, never in what Claude was sent (F19).
          */
         private val storedMeanwhile: List<ChatMessage> = emptyList(),
+        /** V39's `shop_session_in_progress` for the account: the one a shop tablet may add to. */
+        private val inProgress: String? = null,
     ) : ChatStore {
+        override suspend fun shopSessionInProgress(userId: String) = inProgress
         val savedDigests = java.util.concurrent.CopyOnWriteArrayList<com.qualityverifier.server.db.Digest>()
         var digestUsageRows = 0
             private set
@@ -2124,12 +2255,15 @@ class ChatRouteTest {
  */
 private class AccountStore(
     private val audience: Audience = Audience.BUYER,
+    /** A Kagua account on a shop's tablet (V39, row 12). */
+    private val shopMode: Boolean = false,
 ) : com.qualityverifier.server.db.AuthStore {
     override suspend fun register(registration: com.qualityverifier.server.db.Registration) =
         com.qualityverifier.server.db.RegisterOutcome.InviteUnusable
     override suspend fun findUser(userId: String) = com.qualityverifier.server.db.UserRow(
         id = userId, displayName = "A Customer", accountType = "individual",
         businessName = null, disabled = false, isTester = false, audience = audience,
+        shopMode = shopMode,
     )
     override suspend fun issueRefresh(
         userId: String, token: String, expiresAt: java.time.Instant,
