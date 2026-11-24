@@ -26,8 +26,13 @@ import com.qualityverifier.domain.Usage
  */
 private const val SEPARATOR = "-"
 
-/** Null when the intake was not completed, so there is nothing whole to carry. */
+/**
+ * Null when the intake was not completed, so there is nothing whole to carry; also when any
+ * question was answered in the customer's own words (v0.7.1, row 58), whose answers belong to
+ * that piece and live in its first turn, not in a code the next piece would inherit.
+ */
 fun encodeIntake(context: AssessmentContext): String? {
+    if (!context.isComplete) return null
     val language = context.language ?: return null
     val ownership = context.ownership ?: return null
     val usage = context.usage ?: return null

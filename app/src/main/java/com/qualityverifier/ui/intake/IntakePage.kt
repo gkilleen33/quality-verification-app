@@ -18,8 +18,8 @@ import com.qualityverifier.domain.Usage
  *
  * [needsUpholstery] asks "Does this chair have cushioning, or is it bare wood?" (chairs only).
  * [ownershipFixed] is a shop's tablet (row 12): buying is recorded and the card is not shown.
- * The price card shows once the answer is "I'm buying it", and never counts as left: a blank
- * price is "I don't know", as before.
+ * The price card shows once the answer is "I'm buying it", or while that question is answered
+ * in words, and never counts as left: a blank price is "I don't know", as before.
  */
 data class IntakePage(
     val language: AssessmentLanguage,
@@ -36,11 +36,18 @@ data class IntakePage(
     /** Cards whose "Something else" box is open. */
     val open: Set<IntakeTopic> = emptySet(),
 ) {
+    /**
+     * Whether the price card shows: after "I'm buying it", and also while the buying question
+     * is answered in words, since the words may well say they are buying ("for my sister"),
+     * and the hand-over line that used to let the assistant ask is gone.
+     */
+    private val asksPrice: Boolean get() = ownership == Ownership.BUYING || IntakeTopic.OWNERSHIP in open
+
     /** The cards on the page, in order. */
     val cards: List<IntakeTopic> get() = listOfNotNull(
         IntakeTopic.UPHOLSTERY.takeIf { needsUpholstery },
         IntakeTopic.OWNERSHIP.takeUnless { ownershipFixed },
-        IntakeTopic.PRICE.takeIf { ownership == Ownership.BUYING },
+        IntakeTopic.PRICE.takeIf { asksPrice },
         IntakeTopic.USAGE,
         IntakeTopic.DEPTH,
     )
@@ -88,8 +95,8 @@ data class IntakePage(
 
     private fun clear(topic: IntakeTopic): IntakePage = when (topic) {
         IntakeTopic.UPHOLSTERY -> copy(upholstered = null)
-        // Explaining instead of choosing takes the price card away with the choice.
-        IntakeTopic.OWNERSHIP -> copy(ownership = if (ownershipFixed) ownership else null, price = "", priceUnknown = false, explained = explained - IntakeTopic.PRICE)
+        // Explaining instead of choosing keeps the price card and what is on it.
+        IntakeTopic.OWNERSHIP -> copy(ownership = if (ownershipFixed) ownership else null)
         IntakeTopic.PRICE -> copy(price = "", priceUnknown = false)
         IntakeTopic.USAGE -> copy(usage = null)
         IntakeTopic.DEPTH -> copy(depth = null)
@@ -103,7 +110,7 @@ data class IntakePage(
     fun toContext(): AssessmentContext = AssessmentContext(
         language = language,
         ownership = ownership,
-        quotedPrice = if (ownership == Ownership.BUYING) price.trim() else "",
+        quotedPrice = if (asksPrice) price.trim() else "",
         usage = usage,
         depth = depth,
         explained = cards.mapNotNull { topic -> words(topic).takeIf { it.isNotEmpty() }?.let { topic to it } }.toMap(),

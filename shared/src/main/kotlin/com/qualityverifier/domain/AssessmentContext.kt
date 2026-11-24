@@ -8,10 +8,9 @@ package com.qualityverifier.domain
  * the screen opened so that the first thing a customer saw was a spinner. None of it
  * needed a model — they are a language, three multiple-choice questions and a number.
  *
- * Every field is nullable because the intake can be **abandoned part way**. A customer who
- * cannot find their answer among the buttons hands the conversation over instead, and
- * whatever they had already chosen goes with them rather than being thrown away. See
- * [isComplete] and [com.qualityverifier.text.buildIntakeMessage].
+ * Every choice is nullable because a question can be answered in the customer's own words
+ * instead ([explained], v0.7.1, row 58), and because answers from before v0.7.1 could be
+ * abandoned part way. See [isComplete] and [com.qualityverifier.text.buildIntakeMessage].
  */
 data class AssessmentContext(
     val language: AssessmentLanguage? = null,
@@ -22,9 +21,10 @@ data class AssessmentContext(
     val depth: AssessmentDepth? = null,
     /**
      * Questions answered in the customer's own words, by "Something else: let me explain" on
-     * their card (v0.7.1, release scope row 58), in place of a choice. Never stored in the
-     * intake code ([com.qualityverifier.text.encodeIntake]): a context with any is not
-     * [isComplete], so it is not carried into the next piece and the next check asks again.
+     * their card (v0.7.1, release scope row 58), in place of a choice. A context with any is
+     * not [isComplete] and has no intake code ([com.qualityverifier.text.encodeIntake]), so it
+     * is not carried into the next piece, even from a report reopened later, and the next
+     * check asks every question. Its answers are in the conversation's first turn.
      */
     val explained: Map<IntakeTopic, String> = emptyMap(),
 ) {
@@ -33,7 +33,10 @@ data class AssessmentContext(
      * False means it must pick up the questions itself.
      */
     val isComplete: Boolean
-        get() = language != null && ownership != null && usage != null && depth != null
+        // An answer in words (row 58), even beside a full set of choices, is not carried into
+        // the next piece: the words were about this one, and a cushioning described in words
+        // never settled which chair protocol applies.
+        get() = language != null && ownership != null && usage != null && depth != null && explained.isEmpty()
 }
 
 /**

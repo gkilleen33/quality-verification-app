@@ -28,7 +28,7 @@ import com.qualityverifier.domain.Usage
  */
 fun buildIntakeMessage(context: AssessmentContext, labels: ReportLabels): String {
     val parts = mutableListOf<String>()
-    fun explained(topic: IntakeTopic) = context.explained[topic]?.trim()?.takeIf { it.isNotEmpty() }
+    fun explained(topic: IntakeTopic) = context.explained[topic]?.let(::asSentence)
 
     // The cushioning decides the protocol, not the turn; only the customer's own words about
     // it are told.
@@ -50,6 +50,10 @@ fun buildIntakeMessage(context: AssessmentContext, labels: ReportLabels): String
         }
     } else {
         explained(IntakeTopic.OWNERSHIP)?.let { parts += labels.intakeSaysAbout(IntakeTopic.OWNERSHIP, it) }
+        // Buying told in words: the price card stays on the page, and anything given on it is
+        // told. Nothing is said for a blank one, since the words may not be about buying.
+        explained(IntakeTopic.PRICE)?.let { parts += labels.intakeSaysAbout(IntakeTopic.PRICE, it) }
+            ?: context.quotedPrice.trim().takeIf { it.isNotEmpty() }?.let { parts += labels.intakeSaysPrice(it) }
     }
 
     val usage = context.usage
@@ -78,4 +82,16 @@ fun buildIntakeMessage(context: AssessmentContext, labels: ReportLabels): String
     context.language?.let { parts += labels.intakeSaysUseLanguage }
 
     return parts.joinToString(" ")
+}
+
+/**
+ * The customer's words as one sentence of the turn: line breaks and runs of spaces become one
+ * space, and a full stop closes words that end without one, so "maybe 5000" does not run into
+ * the next sentence. Null for words that are only space. The same words always give the same
+ * sentence.
+ */
+private fun asSentence(words: String): String? {
+    val flat = words.trim().split(Regex("\\s+")).joinToString(" ")
+    if (flat.isEmpty()) return null
+    return if (flat.last() in ".!?") flat else "$flat."
 }

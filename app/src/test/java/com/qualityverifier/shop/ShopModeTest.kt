@@ -51,8 +51,10 @@ class ShopModeTest {
         page = page.chooseUsage(Usage.DAILY).chooseDepth(AssessmentDepth.FULL)
         assertTrue(page.canStart)
         assertEquals(Ownership.BUYING, page.toContext().ownership)
-        // Explaining a card on the tablet never clears the recorded buying.
-        assertEquals(Ownership.BUYING, page.explain(IntakeTopic.PRICE, "He did not say.").ownership)
+        // The recorded buying survives every change, even an explanation of the buying
+        // question the tablet never shows.
+        assertEquals(Ownership.BUYING, page.openExplain(IntakeTopic.OWNERSHIP).ownership)
+        assertEquals(Ownership.BUYING, page.explain(IntakeTopic.OWNERSHIP, "For the shop.").toContext().ownership)
     }
 
     // ---------------------------------------------------------------- after the verdict

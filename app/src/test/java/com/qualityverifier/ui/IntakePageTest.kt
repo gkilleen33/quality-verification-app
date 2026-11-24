@@ -88,6 +88,46 @@ class IntakePageTest {
     }
 
     @Test
+    fun `row 58 - a cushioning described in words is not carried into the next piece`() {
+        // Every other card chosen: still not carried, since the words never settled which
+        // chair protocol applies.
+        val context = chairPage()
+            .explain(IntakeTopic.UPHOLSTERY, "Padded seat, wooden back")
+            .chooseOwnership(Ownership.ALREADY_OWN)
+            .chooseUsage(Usage.DAILY)
+            .chooseDepth(AssessmentDepth.FULL)
+            .toContext()
+        assertFalse(context.isComplete)
+        assertNull(encodeIntake(context))
+    }
+
+    @Test
+    fun `row 58 - buying told in words keeps the price card, and its price is told`() {
+        var page = IntakePage.start(AssessmentLanguage.ENGLISH, needsUpholstery = false, fixedOwnership = null)
+            .explain(IntakeTopic.OWNERSHIP, "Buying it for my sister")
+        assertTrue(IntakeTopic.PRICE in page.cards)
+        page = page.typePrice("4,000").chooseUsage(Usage.OCCASIONAL).chooseDepth(AssessmentDepth.RAPID)
+        assertTrue(page.canStart)
+        assertEquals(
+            "About buying it: Buying it for my sister. The seller is asking 4,000. " +
+                "It will only be used occasionally. I would like a rapid assessment. Please answer me in English.",
+            buildIntakeMessage(page.toContext(), ReportLabels.ENGLISH),
+        )
+        // Choosing "I already own it" afterwards takes the price away.
+        assertEquals("", page.chooseOwnership(Ownership.ALREADY_OWN).toContext().quotedPrice)
+    }
+
+    @Test
+    fun `row 58 - words on several lines become one sentence with a full stop`() {
+        val page = IntakePage.start(AssessmentLanguage.ENGLISH, needsUpholstery = false, fixedOwnership = null)
+            .chooseOwnership(Ownership.BUYING)
+            .explain(IntakeTopic.PRICE, "  maybe 5000\n  if I pay cash ")
+            .chooseUsage(Usage.DAILY)
+            .chooseDepth(AssessmentDepth.FULL)
+        assertTrue(buildIntakeMessage(page.toContext(), ReportLabels.ENGLISH).contains("About the price: maybe 5000 if I pay cash. It will get"))
+    }
+
+    @Test
     fun `row 58 - a shop's tablet has no buying card`() {
         val page = IntakePage.start(AssessmentLanguage.SWAHILI, needsUpholstery = true, fixedOwnership = Ownership.BUYING)
         assertFalse(IntakeTopic.OWNERSHIP in page.cards)
