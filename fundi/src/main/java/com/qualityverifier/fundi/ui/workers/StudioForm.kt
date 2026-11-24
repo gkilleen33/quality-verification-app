@@ -21,6 +21,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.qualityverifier.domain.ContactNumber
 import com.qualityverifier.domain.KenyanPhone
+import com.qualityverifier.domain.OwnNumber
 import com.qualityverifier.domain.StudioDetails
 import com.qualityverifier.domain.WorkerNames
 import com.qualityverifier.text.AuthLabels
@@ -43,6 +44,8 @@ fun StudioForm(
     onSave: (StudioDetails) -> Unit,
     onDismiss: () -> Unit,
     onArchive: (() -> Unit)? = null,
+    /** The account's own number, refused here (row 52). Null when the phone does not know it yet. */
+    ownNumber: String? = null,
 ) {
     // Saveable, as the worker form's are: the contacts app comes in front of this
     // activity, and a low-memory phone recreates it on the way back.
@@ -73,6 +76,9 @@ fun StudioForm(
     val nameOk = WorkerNames.fits(name.trim()) && name.isNotBlank()
     // An empty field keeps a foreign number; anything typed replaces it.
     val number = KenyanPhone.toE164(digits) ?: foreign.takeIf { digits.isEmpty() }
+    // The account's own workshop is already on the list (row 52): an entry on its own number
+    // could never link, and a piece labelled for it would have no final assessment.
+    val ownNumberTyped = OwnNumber.isOwn(number, ownNumber)
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -116,6 +122,13 @@ fun StudioForm(
                         color = MaterialTheme.colorScheme.error,
                     )
                 }
+                if (ownNumberTyped) {
+                    Text(
+                        labels.studioOwnNumber,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.error,
+                    )
+                }
                 Text(
                     labels.studioPhoneWhy,
                     style = MaterialTheme.typography.bodySmall,
@@ -129,7 +142,7 @@ fun StudioForm(
         confirmButton = {
             TextButton(
                 onClick = { number?.let { onSave(StudioDetails(name.trim(), it)) } },
-                enabled = nameOk && number != null,
+                enabled = nameOk && number != null && !ownNumberTyped,
             ) { Text(labels.workerSave) }
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text(labels.workerCancel) } },

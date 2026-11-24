@@ -118,11 +118,14 @@ class AssessmentSync(
         // Refreshed here so a promotion in the portal reaches the phone without a
         // re-install. Null means the server was unreachable, in which case the cached
         // answer is better than assuming either way.
+        // The account's own number comes with it (row 52), for the studio form; a server
+        // before v0.7.0 sends none, and the copy from sign-in is kept.
         client.profileFlags()?.let { flags ->
             tokens.setTester(flags.isTester)
             // A shop's tablet (row 12), on the same footing: the sign-in answer set it, and
             // this keeps it right if that answer was missed.
             tokens.setShopMode(flags.shopMode)
+            flags.phone?.let(tokens::setOwnPhone)
         }
 
         // The roster comes down before the sessions that refer to it.

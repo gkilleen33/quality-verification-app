@@ -33,6 +33,12 @@ data class UserRow(
      */
     val shopMode: Boolean = false,
     /**
+     * The account's own number, E.164 (V21). Null for an account deleted and anonymised
+     * (V11), whose number is cleared, and for a Fundi Bora account's Kagua shop (V43), which
+     * has none. Read by /v1/me and by the studio route, which refuses an entry on it (row 52).
+     */
+    val phone: String? = null,
+    /**
      * The Fundi Bora account this Kagua shop account belongs to (V43, row 53), or null. Such an
      * account has no number and no password of its own: the Fundi Bora account's password
      * opens it, at sign-in and at the shop owner's password check, and only Fundi Bora changes
@@ -283,7 +289,7 @@ class PostgresAuthStore(private val dataSource: DataSource) : AuthStore {
                 select u.id::text, u.display_name, u.account_type, u.business_name,
                        (u.disabled_at is not null or u.deleted_at is not null
                         or o.disabled_at is not null or o.deleted_at is not null) as gone,
-                       u.is_tester, u.audience, u.shop_mode, u.shop_of_user_id::text
+                       u.is_tester, u.audience, u.shop_mode, u.phone, u.shop_of_user_id::text
                 from users u left join users o on o.id = u.shop_of_user_id
                 where u.id = ?::uuid
                 """.trimIndent()
@@ -300,7 +306,8 @@ class PostgresAuthStore(private val dataSource: DataSource) : AuthStore {
                         audience = Audience.fromId(rows.getString(7).orEmpty())
                             ?: Audience.BUYER,
                         shopMode = rows.getBoolean(8),
-                        shopOfUserId = rows.getString(9),
+                        phone = rows.getString(9),
+                        shopOfUserId = rows.getString(10),
                     )
                 }
             }

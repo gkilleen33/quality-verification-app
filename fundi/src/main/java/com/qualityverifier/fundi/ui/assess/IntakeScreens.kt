@@ -90,7 +90,8 @@ fun IntakeFlow(
     /**
      * Whether to ask "Is this piece finished?" (Nathan, 17 November 2026): true for an account
      * that may make the final assessment (`AssessViewModel.askFinished`). Skipped here as well
-     * when the maker labels a new piece for a studio, whose manager makes that assessment.
+     * when the maker labels a new piece for a studio with a linked manager, who makes that
+     * assessment; asked when the studio has none (row 51).
      */
     askFinished: Boolean = false,
     /** The answer to "Is this piece finished?", given before [onComplete]. */
@@ -100,7 +101,12 @@ fun IntakeFlow(
     val askStudio = !returning && studios.isNotEmpty()
     // Nothing chosen to begin with: the fundi picks, so a wrong label is never a default.
     var studio by remember { mutableStateOf<PieceStudioChoice?>(null) }
-    val askingFinished = askFinished && studio !is PieceStudioChoice.Studio
+    // A studio with a linked manager makes the final assessment, so its maker is not asked;
+    // one with no linked manager leaves it to the maker (row 51).
+    val forLinkedStudio = (studio as? PieceStudioChoice.Studio)?.let { chosen ->
+        studios.any { it.id == chosen.studioId && it.linked }
+    } == true
+    val askingFinished = askFinished && !forLinkedStudio
     val afterWorkers = if (askingFinished) Step.FINISHED else Step.LANGUAGE
 
     /** On from "Who worked on this?". An earlier yes is withdrawn when the question no longer applies. */

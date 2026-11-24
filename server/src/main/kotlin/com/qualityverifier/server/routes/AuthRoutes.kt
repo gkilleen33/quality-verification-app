@@ -255,6 +255,7 @@ fun Route.authRoutes(store: AuthStore, accessTokens: AccessTokens, terms: Terms?
                     mpesaReadAgreed = fundiAgreed(ConsentKind.MPESA_READ),
                     mpesaSendAgreed = fundiAgreed(ConsentKind.MPESA_SEND),
                     shopMode = user.shopMode,
+                    phone = user.phone,
                 )
             )
         }
