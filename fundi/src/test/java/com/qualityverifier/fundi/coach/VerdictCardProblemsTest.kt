@@ -47,6 +47,26 @@ class VerdictCardProblemsTest {
     }
 
     @Test
+    fun `row 43 - a reply drawn as the improvement list puts no titles on the verdict card`() {
+        // The list below the card names every improvement; the card listing them too
+        // showed each title twice (Nathan, 24 November 2026).
+        val reply = parseAssistantContent(
+            """
+            ```fb-diagnosis
+            {"findings":[
+              {"title":"Glue and nail the lower back rail","severity":"moderate","dimension":"joint_fit","fix_line":"Glue it, then nail it."},
+              {"title":"Sand the rough leg","severity":"cosmetic","dimension":"finishing","fix_line":"Sand it smooth."}]}
+            ```
+
+            ```qv-verdict
+            {"verdict":"fair","headline":"Two things to fix"}
+            ```
+            """.trimIndent(),
+        )
+        assertTrue(verdictCardProblems(reply).isEmpty())
+    }
+
+    @Test
     fun `a verdict-only follow-up lists nothing of its own`() {
         // The problems are on the earlier turn's cards, still on screen above it.
         val reply = parseAssistantContent("```qv-verdict\n{\"verdict\":\"fair\",\"headline\":\"Still the joint\"}\n```")
