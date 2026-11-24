@@ -4,6 +4,7 @@ import com.qualityverifier.domain.Audience
 import com.qualityverifier.server.auth.AccessTokens
 import com.qualityverifier.server.db.AuthStore
 import com.qualityverifier.server.db.Credentials
+import com.qualityverifier.server.db.LinkCreation
 import com.qualityverifier.server.db.RegisterOutcome
 import com.qualityverifier.server.db.Registration
 import com.qualityverifier.server.db.ShopReportLinkRow
@@ -31,6 +32,10 @@ import io.ktor.http.HttpStatusCode
 import io.ktor.serialization.kotlinx.json.json
 import io.ktor.server.testing.ApplicationTestBuilder
 import io.ktor.server.testing.testApplication
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.Json
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -182,6 +187,59 @@ class ShopReportTest {
             header("X-Forwarded-For", "10.0.0.99, 198.51.100.7")
         }
         assertEquals(HttpStatusCode.TooManyRequests, third.status)
+    }
+
+    @Test
+    fun `row 31 - IPv6 addresses in one slash 64 share a limit`() = testApplication {
+        val world = World(limit = AddressRateLimit(limit = 2, windowMillis = 10 * MINUTE, clock = { now }))
+        val client = world.mount(this)
+
+        // A phone can take a new address in its /64 for every request; each counts against one allowance.
+        listOf("2001:db8:a:b::1", "2001:db8:a:b:ffff:ffff:ffff:fffe").forEach { address ->
+            assertEquals(address, HttpStatusCode.NotFound, client.get("/v1/r/nope") { header("X-Real-IP", address) }.status)
+        }
+        val third = client.get("/v1/r/nope") { header("X-Real-IP", "2001:db8:a:b:1234::9") }
+        assertEquals(HttpStatusCode.TooManyRequests, third.status)
+        // The next /64 is another subscriber.
+        assertEquals(HttpStatusCode.NotFound, client.get("/v1/r/nope") { header("X-Real-IP", "2001:db8:a:c::1") }.status)
+
+        assertEquals("2001:db8:a:b::/64", AddressRateLimit.keyOf("2001:0db8:000a:000b:0000:0000:0000:0001"))
+        assertEquals("2001:db8:a:b::/64", AddressRateLimit.keyOf("[2001:db8:a:b::1%eth0]"))
+        // An IPv4 address, written plainly or mapped into IPv6, counts as itself.
+        assertEquals("198.51.100.7", AddressRateLimit.keyOf("198.51.100.7"))
+        assertEquals("198.51.100.7", AddressRateLimit.keyOf("::ffff:198.51.100.7"))
+        // Not an address at all: counted as it came, never looked up.
+        assertEquals("localhost", AddressRateLimit.keyOf("localhost"))
+        assertEquals("zz::1", AddressRateLimit.keyOf("zz::1"))
+    }
+
+    @Test
+    fun `row 31 - the address limit remembers a bounded number of addresses`() {
+        val limit = AddressRateLimit(limit = 1, windowMillis = 10 * MINUTE, clock = { now }, maxAddresses = 3)
+        listOf("198.51.100.1", "198.51.100.2", "198.51.100.3", "198.51.100.4").forEach {
+            assertTrue(it, limit.tryAcquire(it))
+        }
+        assertEquals(3, limit.remembered())
+        // The one heard from longest ago was forgotten, which only gives it a fresh allowance;
+        // the newest is still held to its limit.
+        assertTrue(limit.tryAcquire("198.51.100.1"))
+        assertFalse(limit.tryAcquire("198.51.100.4"))
+
+        // A flood of new addresses (an IPv6 block, or many /64s) does not grow it.
+        repeat(20_000) { n -> limit.tryAcquire("2001:db8:${n.toString(16)}::1") }
+        assertEquals(3, limit.remembered())
+    }
+
+    @Test
+    fun `row 31 - requests at once for one assessment make no sixth link`() = runBlocking {
+        val store = FakeShopReportStore()
+        val service = ShopReportService(store = store, renderer = PdfRenderer(), clock = { now })
+        val outcomes = (1..20).map {
+            async(Dispatchers.Default) { service.issue(SHOP, shopMode = true, sessionId = CURRENT) }
+        }.awaitAll()
+        assertEquals(ShopReportService.MAX_LINKS_PER_ASSESSMENT, outcomes.count { it is ShopReportService.IssueOutcome.Issued })
+        assertEquals(20 - ShopReportService.MAX_LINKS_PER_ASSESSMENT, outcomes.count { it == ShopReportService.IssueOutcome.TooMany })
+        assertEquals(ShopReportService.MAX_LINKS_PER_ASSESSMENT, store.links.size)
     }
 
     @Test
@@ -407,10 +465,13 @@ class FakeShopReportStore(
 
     override suspend fun sessionInProgress(userId: String): String? = inProgress[userId]
     override suspend fun session(sessionId: String): KaguaReportSession? = sessions[sessionId]
-    override suspend fun linkCount(sessionId: String): Int = links.count { it.sessionId == sessionId }
-    override suspend fun createLink(link: ShopReportLinkRow) {
+    /** Counts and writes in one step, as the real store does under its row lock. */
+    override suspend fun createLink(link: ShopReportLinkRow, maxLinks: Int): LinkCreation = synchronized(this) {
+        if (link.sessionId !in sessions) return LinkCreation.NO_SESSION
+        if (links.count { it.sessionId == link.sessionId } >= maxLinks) return LinkCreation.TOO_MANY
         check(links.none { it.tokenSha256 == link.tokenSha256 }) { "unique index" }
         links += link
+        LinkCreation.CREATED
     }
     override suspend fun link(tokenSha256: String): ShopReportLinkRow? = links.firstOrNull { it.tokenSha256 == tokenSha256 }
     override suspend fun claimDownload(tokenSha256: String, at: Long, maxDownloads: Int): Boolean {

@@ -1,14 +1,16 @@
 package com.qualityverifier.server.reports
 
+import com.qualityverifier.server.db.LinkCreation
 import com.qualityverifier.server.db.ShopReportLinkRow
 import com.qualityverifier.server.db.ShopReportStore
 import com.qualityverifier.text.parseAssistantContent
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.slf4j.LoggerFactory
+import java.net.Inet4Address
+import java.net.InetAddress
 import java.security.SecureRandom
 import java.util.Base64
-import java.util.concurrent.ConcurrentHashMap
 
 /**
  * The customer's PDF by QR code on a shop's tablet (release scope row 31; V40).
@@ -61,21 +63,24 @@ class ShopReportService(
         if (store.sessionInProgress(userId) != sessionId) return IssueOutcome.NoSuchSession
         val session = store.session(sessionId) ?: return IssueOutcome.NoSuchSession
         if (session.replies.none { parseAssistantContent(it).verdict != null }) return IssueOutcome.NoVerdict
-        if (store.linkCount(sessionId) >= MAX_LINKS_PER_ASSESSMENT) return IssueOutcome.TooMany
         val token = newToken()
         val now = clock()
         val expiresAt = now + LINK_LIFETIME_MILLIS
-        store.createLink(
-            ShopReportLinkRow(
-                tokenSha256 = hashOf(token),
-                sessionId = sessionId,
-                userId = userId,
-                createdAt = now,
-                expiresAt = expiresAt,
-            ),
+        val row = ShopReportLinkRow(
+            tokenSha256 = hashOf(token),
+            sessionId = sessionId,
+            userId = userId,
+            createdAt = now,
+            expiresAt = expiresAt,
         )
-        log.info("Report link issued for session {}", sessionId)
-        return IssueOutcome.Issued(path = PUBLIC_PATH_PREFIX + token, expiresAt = expiresAt)
+        return when (store.createLink(row, MAX_LINKS_PER_ASSESSMENT)) {
+            LinkCreation.TOO_MANY -> IssueOutcome.TooMany
+            LinkCreation.NO_SESSION -> IssueOutcome.NoSuchSession
+            LinkCreation.CREATED -> {
+                log.info("Report link issued for session {}", sessionId)
+                IssueOutcome.Issued(path = PUBLIC_PATH_PREFIX + token, expiresAt = expiresAt)
+            }
+        }
     }
 
     /**
@@ -141,20 +146,34 @@ class ShopReportService(
  *
  * Generous on purpose: Kenyan mobile networks put many phones behind one address, and a
  * customer may try a slow download more than once.
+ *
+ * An IPv6 address counts by its /64, the block one subscriber is given: a phone can take a new
+ * address inside it for every request, and would otherwise get a new allowance with each.
+ *
+ * At most [maxAddresses] are remembered. Past that the one heard from longest ago is
+ * forgotten, which only gives it a fresh allowance; so memory and the work per request stay
+ * bounded however many addresses arrive.
  */
 class AddressRateLimit(
     private val limit: Int = DEFAULT_LIMIT,
     private val windowMillis: Long = DEFAULT_WINDOW_MILLIS,
     private val clock: () -> Long = System::currentTimeMillis,
+    private val maxAddresses: Int = DEFAULT_MAX_ADDRESSES,
 ) {
-    private val seen = ConcurrentHashMap<String, ArrayDeque<Long>>()
+    // In access order, so the eldest entry is the one heard from longest ago. One lock for the
+    // map and every count in it: a request does at most [limit] removals under it, and counting
+    // and recording are then one step, so two requests at once cannot both take the last place.
+    private val seen = object : LinkedHashMap<String, ArrayDeque<Long>>(16, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, ArrayDeque<Long>>): Boolean =
+            size > maxAddresses
+    }
 
     /** True, and counted, when [address] may make one more request now. */
     fun tryAcquire(address: String): Boolean {
         val now = clock()
-        if (seen.size > MAX_ADDRESSES) forgetQuiet(now)
-        val times = seen.computeIfAbsent(address) { ArrayDeque() }
-        synchronized(times) {
+        val key = keyOf(address)
+        synchronized(seen) {
+            val times = seen.getOrPut(key) { ArrayDeque() }
             while (times.isNotEmpty() && times.first() <= now - windowMillis) times.removeFirst()
             if (times.size >= limit) return false
             times.addLast(now)
@@ -162,15 +181,36 @@ class AddressRateLimit(
         }
     }
 
-    /** Drops every address with nothing in the window, so the map cannot grow without end. */
-    private fun forgetQuiet(now: Long) {
-        seen.entries.removeIf { (_, times) -> synchronized(times) { times.lastOrNull()?.let { it <= now - windowMillis } ?: true } }
-    }
+    /** How many addresses are remembered now: never more than [maxAddresses]. */
+    internal fun remembered(): Int = synchronized(seen) { seen.size }
 
     companion object {
         /** Thirty requests in ten minutes per address: ten customers' three downloads each. */
         const val DEFAULT_LIMIT = 30
         const val DEFAULT_WINDOW_MILLIS = 10L * 60 * 1000
-        private const val MAX_ADDRESSES = 10_000
+
+        /** About 10 MB at the most: each address holds at most [DEFAULT_LIMIT] times, about 1 KB. */
+        const val DEFAULT_MAX_ADDRESSES = 10_000
+
+        /** Hex digits, colons and an IPv4 tail: an IPv6 literal, which [InetAddress] parses without DNS. */
+        private val IPV6_LITERAL = Regex("^[0-9A-Fa-f:]*:[0-9A-Fa-f:.]*$")
+
+        /**
+         * What [address] is counted under: an IPv6 address's /64, written as its first four
+         * groups; an IPv4 address (an IPv4-mapped IPv6 one included) as itself. Anything else
+         * as it came, since nginx sets the address and a test or a local run may send a name.
+         */
+        internal fun keyOf(address: String): String {
+            val literal = address.substringBefore('%').removePrefix("[").removeSuffix("]")
+            if (!IPV6_LITERAL.matches(literal)) return address
+            // The pattern above starts with a hex digit or a colon, which InetAddress takes as
+            // a literal and never looks up.
+            val parsed = runCatching { InetAddress.getByName(literal) }.getOrNull() ?: return address
+            if (parsed is Inet4Address) return parsed.hostAddress
+            val bytes = parsed.address
+            return (0 until 8 step 2).joinToString(":", postfix = "::/64") {
+                "%x".format(((bytes[it].toInt() and 0xff) shl 8) or (bytes[it + 1].toInt() and 0xff))
+            }
+        }
     }
 }

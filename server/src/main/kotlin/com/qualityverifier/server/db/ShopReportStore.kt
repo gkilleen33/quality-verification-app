@@ -17,7 +17,8 @@ import javax.sql.DataSource
  * downloads through it has no account and no piece, and needs nothing either of those reads.
  * The SQL is checked against the real database; the rules (30 minutes, three downloads, five
  * links an assessment) are `ShopReportService`'s, and [claimDownload] repeats them in its
- * WHERE so two downloads at once cannot both take the last one.
+ * WHERE so two downloads at once cannot both take the last one; [createLink] counts and
+ * writes under a lock on the assessment's row, so two requests cannot both take the last link.
  */
 interface ShopReportStore {
     /** V39's `shop_session_in_progress` for [userId]: the one assessment a shop's tablet may act on. */
@@ -29,11 +30,12 @@ interface ShopReportStore {
      */
     suspend fun session(sessionId: String): KaguaReportSession?
 
-    /** How many links [sessionId] has had, used up or not. */
-    suspend fun linkCount(sessionId: String): Int
-
-    /** Writes the row for a new link. [ShopReportLinkRow.downloads] is zero. */
-    suspend fun createLink(link: ShopReportLinkRow)
+    /**
+     * Writes the row for a new link unless its assessment already has [maxLinks], used up or
+     * not. Counting and writing are one step, so two requests at once cannot both take the
+     * last link. [ShopReportLinkRow.downloads] is zero.
+     */
+    suspend fun createLink(link: ShopReportLinkRow, maxLinks: Int): LinkCreation
 
     /** The link whose token hashes to [tokenSha256], whether it still works or not. */
     suspend fun link(tokenSha256: String): ShopReportLinkRow?
@@ -55,6 +57,15 @@ data class ShopReportLinkRow(
     val expiresAt: Long,
     val downloads: Int = 0,
 )
+
+/** What [ShopReportStore.createLink] came to. */
+enum class LinkCreation {
+    CREATED,
+    /** The assessment already has its maximum of links; nothing written. */
+    TOO_MANY,
+    /** The assessment is gone, or marked deleted, since it was found in progress; nothing written. */
+    NO_SESSION,
+}
 
 class PostgresShopReportStore(private val dataSource: DataSource) : ShopReportStore {
 
@@ -101,29 +112,53 @@ class PostgresShopReportStore(private val dataSource: DataSource) : ShopReportSt
         }
     }
 
-    override suspend fun linkCount(sessionId: String): Int = read { connection ->
-        connection.prepareStatement("select count(*)::int from shop_report_links where session_id = ?::uuid").use { statement ->
-            statement.setString(1, sessionId)
-            statement.executeQuery().use { rows -> rows.next(); rows.getInt(1) }
+    private suspend fun <T> tx(block: (Connection) -> T): T = withContext(Dispatchers.IO) {
+        dataSource.connection.use { connection ->
+            connection.autoCommit = false
+            try {
+                block(connection).also { connection.commit() }
+            } catch (e: Throwable) {
+                connection.rollback()
+                throw e
+            } finally {
+                connection.autoCommit = true
+            }
         }
     }
 
-    override suspend fun createLink(link: ShopReportLinkRow) {
-        read { connection ->
-            connection.prepareStatement(
-                """
-                insert into shop_report_links (token_sha256, session_id, user_id, created_at, expires_at)
-                values (?, ?::uuid, ?::uuid, ?, ?)
-                """.trimIndent()
-            ).use { statement ->
-                statement.setString(1, link.tokenSha256)
-                statement.setString(2, link.sessionId)
-                statement.setString(3, link.userId)
-                statement.setTimestamp(4, Timestamp.from(Instant.ofEpochMilli(link.createdAt)))
-                statement.setTimestamp(5, Timestamp.from(Instant.ofEpochMilli(link.expiresAt)))
-                statement.executeUpdate()
-            }
+    override suspend fun createLink(link: ShopReportLinkRow, maxLinks: Int): LinkCreation = tx { connection ->
+        // Held until commit, so a second request for the same assessment waits here and then
+        // counts this one's row: two presses at once cannot make a sixth link. `no key update`,
+        // as ChatStore takes on this row, still lets a customer's turn insert its message,
+        // whose foreign key needs only key share.
+        val present = connection.prepareStatement(
+            "select 1 from sessions where id = ?::uuid and client_deleted_at is null for no key update"
+        ).use { statement ->
+            statement.setString(1, link.sessionId)
+            statement.executeQuery().use { rows -> rows.next() }
         }
+        if (!present) return@tx LinkCreation.NO_SESSION
+        val count = connection.prepareStatement(
+            "select count(*)::int from shop_report_links where session_id = ?::uuid"
+        ).use { statement ->
+            statement.setString(1, link.sessionId)
+            statement.executeQuery().use { rows -> rows.next(); rows.getInt(1) }
+        }
+        if (count >= maxLinks) return@tx LinkCreation.TOO_MANY
+        connection.prepareStatement(
+            """
+            insert into shop_report_links (token_sha256, session_id, user_id, created_at, expires_at)
+            values (?, ?::uuid, ?::uuid, ?, ?)
+            """.trimIndent()
+        ).use { statement ->
+            statement.setString(1, link.tokenSha256)
+            statement.setString(2, link.sessionId)
+            statement.setString(3, link.userId)
+            statement.setTimestamp(4, Timestamp.from(Instant.ofEpochMilli(link.createdAt)))
+            statement.setTimestamp(5, Timestamp.from(Instant.ofEpochMilli(link.expiresAt)))
+            statement.executeUpdate()
+        }
+        LinkCreation.CREATED
     }
 
     override suspend fun link(tokenSha256: String): ShopReportLinkRow? = read { connection ->
