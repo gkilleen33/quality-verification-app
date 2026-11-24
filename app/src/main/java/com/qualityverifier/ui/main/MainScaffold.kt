@@ -36,11 +36,17 @@ enum class MainTab(val label: String, val icon: ImageVector) {
 fun MainScaffold(
     current: MainTab,
     onSelect: (MainTab) -> Unit,
+    /**
+     * False on a shop's tablet (row 12), which has no Reports and no Profile for a customer to
+     * open: the start screen is the whole app, and the owner reaches the account through the
+     * password.
+     */
+    showTabs: Boolean = true,
     content: @Composable (PaddingValues) -> Unit,
 ) {
     Scaffold(
         bottomBar = {
-            NavigationBar {
+            if (showTabs) NavigationBar {
                 MainTab.entries.forEach { tab ->
                     NavigationBarItem(
                         selected = tab == current,

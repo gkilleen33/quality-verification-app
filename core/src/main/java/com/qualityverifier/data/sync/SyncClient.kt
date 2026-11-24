@@ -5,6 +5,7 @@ import com.qualityverifier.data.auth.AuthenticatedHttp
 import com.qualityverifier.data.auth.TokenProvider
 import com.qualityverifier.data.session.LocalTesterFeedback
 import com.qualityverifier.domain.Employment
+import com.qualityverifier.domain.TabletEnd
 import com.qualityverifier.domain.WorkerSlot
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
@@ -164,7 +165,7 @@ class SyncClient(
     private val baseUrl: String,
     private val json: Json,
     private val io: CoroutineDispatcher = Dispatchers.IO,
-) {
+) : TabletEndApi {
 
     /** Null means the list could not be fetched — offline, or the server is unwell. */
     suspend fun sessions(): List<RemoteSession>? = withContext(io) {
@@ -482,15 +483,73 @@ class SyncClient(
         }
 
     /** Whether this account is one of our evaluators. Null when the server was unreachable. */
-    suspend fun isTester(): Boolean? = withContext(io) {
+    suspend fun isTester(): Boolean? = profileFlags()?.isTester
+
+    /**
+     * The account's two flags from `/v1/me`: evaluator, and a shop's tablet (V39, row 12).
+     * Null when the server was unreachable.
+     */
+    suspend fun profileFlags(): ProfileFlags? = withContext(io) {
         authenticated { token ->
             Request.Builder().url(baseUrl + "v1/me")
                 .addHeader("Authorization", "Bearer $token").get().build()
         }?.use { response ->
             if (!response.isSuccessful) return@use null
             val text = response.body?.string() ?: return@use null
-            runCatching { json.decodeFromString<MeBody>(text).isTester }.getOrNull()
+            runCatching {
+                json.decodeFromString<MeBody>(text).let { ProfileFlags(it.isTester, it.shopMode) }
+            }.getOrNull()
         }
+    }
+
+    /**
+     * Tells the server how a shop tablet's copy of an assessment ended (V39, row 12). Research
+     * data only: it deletes nothing, and the tablet never calls [deleteSession].
+     *
+     * True when the server has it, and also when it never will: a 400 is an end this server
+     * does not know. False for a transport failure, a 5xx, a 426, or a 404, which is kept:
+     * a wipe while the opening turn was still on its way reaches the server before the
+     * assessment does, and the report has to wait for it.
+     */
+    override suspend fun reportTabletEnd(sessionId: String, end: TabletEnd): Boolean = withContext(io) {
+        val body = """{"end":"${end.id}"}""".toRequestBody(JSON)
+        authenticated { token ->
+            Request.Builder().url(baseUrl + "v1/sessions/" + sessionId + "/tablet-end")
+                .addHeader("Authorization", "Bearer $token").put(body).build()
+        }?.use { response ->
+            when {
+                response.isSuccessful -> true
+                response.code == 404 -> false
+                response.code == UPGRADE_REQUIRED -> false
+                response.code in 400..499 -> {
+                    Log.w(TAG, "Server refused a tablet end (${response.code}); dropping it")
+                    true
+                }
+                else -> false
+            }
+        } ?: false
+    }
+
+    /**
+     * Checks the account's password for a phone already signed in: the shop tablet asks for
+     * it before the owner's controls open (row 12). The server counts a wrong one as a failed
+     * sign-in, with the same lockout.
+     */
+    suspend fun checkPassword(password: String): PasswordCheck = withContext(io) {
+        val body = json.encodeToString(PasswordCheckBody(password)).toRequestBody(JSON)
+        authenticated { token ->
+            Request.Builder().url(baseUrl + "v1/me/password-check")
+                .addHeader("Authorization", "Bearer $token").post(body).build()
+        }?.use { response ->
+            when {
+                response.isSuccessful -> PasswordCheck.MATCHES
+                // 403 wrong_password: a 401 would have been taken for a stale token.
+                response.code == 403 && response.peekBody(512).string().contains("wrong_password") ->
+                    PasswordCheck.WRONG
+                response.code == 429 -> PasswordCheck.LOCKED
+                else -> PasswordCheck.UNAVAILABLE
+            }
+        } ?: PasswordCheck.UNAVAILABLE
     }
 
     suspend fun changePassword(current: String, new: String): PasswordOutcome = withContext(io) {
@@ -594,4 +653,21 @@ private data class TesterFeedbackBody(
 @Serializable
 private data class MeBody(
     @SerialName("is_tester") val isTester: Boolean = false,
+    /** Absent from a server before V39, and then false. */
+    @SerialName("shop_mode") val shopMode: Boolean = false,
 )
+
+@Serializable
+private data class PasswordCheckBody(val password: String)
+
+/** The account's flags from `/v1/me` that the phone caches. */
+data class ProfileFlags(val isTester: Boolean, val shopMode: Boolean)
+
+/** What the shop tablet's password check found (row 12). */
+enum class PasswordCheck { MATCHES, WRONG, LOCKED, UNAVAILABLE }
+
+/** Where a shop tablet sends how its copy of an assessment ended (row 12). */
+interface TabletEndApi {
+    /** True when the server has it or never will; false to keep it and try again. */
+    suspend fun reportTabletEnd(sessionId: String, end: TabletEnd): Boolean
+}

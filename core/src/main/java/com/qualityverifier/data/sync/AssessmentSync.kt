@@ -118,7 +118,12 @@ class AssessmentSync(
         // Refreshed here so a promotion in the portal reaches the phone without a
         // re-install. Null means the server was unreachable, in which case the cached
         // answer is better than assuming either way.
-        client.isTester()?.let(tokens::setTester)
+        client.profileFlags()?.let { flags ->
+            tokens.setTester(flags.isTester)
+            // A shop's tablet (row 12), on the same footing: the sign-in answer set it, and
+            // this keeps it right if that answer was missed.
+            tokens.setShopMode(flags.shopMode)
+        }
 
         // The roster comes down before the sessions that refer to it.
         if (rosterEnabled) client.workers()?.let { roster ->

@@ -3,9 +3,17 @@ package com.qualityverifier
 import android.app.Application
 import com.qualityverifier.di.AppContainer
 import com.qualityverifier.domain.AppId
+import com.qualityverifier.shop.ShopMode
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 
 class QualityVerifierApp : Application() {
     lateinit var container: AppContainer
+        private set
+
+    /** Kagua on a shop's tablet (row 12). Inert for a personal account. */
+    lateinit var shop: ShopMode
         private set
 
     override fun onCreate() {
@@ -23,5 +31,7 @@ class QualityVerifierApp : Application() {
         // At start, so the banner is ready before the home screen is. A second check
         // follows each sign-in; see AppContainer.
         container.appVersionCheck.check()
+        shop = ShopMode(this, container, CoroutineScope(SupervisorJob() + Dispatchers.IO))
+        shop.clearLeftovers()
     }
 }

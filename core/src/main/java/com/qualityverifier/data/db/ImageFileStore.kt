@@ -47,9 +47,11 @@ import java.util.UUID
 class ImageFileStore(
     private val context: Context,
     private val mayRecordLocation: () -> Boolean = { false },
+    /** The app's private folder; a test passes a temporary one. Never shared storage. */
+    private val filesDir: () -> File = { context.filesDir },
 ) : ImageBytesSource, SessionImageStore {
 
-    private val root: File get() = File(context.filesDir, "images")
+    private val root: File get() = File(filesDir(), "images")
 
     fun sessionDir(sessionId: String): File =
         File(root, sessionId).apply { mkdirs() }
@@ -59,9 +61,9 @@ class ImageFileStore(
         File(sessionDir(sessionId), "${UUID.randomUUID()}.jpg")
 
     fun relativePathOf(file: File): String =
-        file.absolutePath.removePrefix(context.filesDir.absolutePath).trimStart('/')
+        file.absolutePath.removePrefix(filesDir().absolutePath).trimStart('/')
 
-    fun resolve(relativePath: String): File = File(context.filesDir, relativePath)
+    fun resolve(relativePath: String): File = File(filesDir(), relativePath)
 
     fun deleteSessionImages(sessionId: String) {
         runCatching { File(root, sessionId).deleteRecursively() }

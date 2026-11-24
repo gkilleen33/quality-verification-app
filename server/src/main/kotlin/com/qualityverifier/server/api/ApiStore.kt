@@ -92,7 +92,7 @@ class PostgresApiStore(private val dataSource: DataSource) : ApiStore {
                    u.business_location_accuracy_m, u.is_tester,
                    (extract(epoch from u.created_at) * 1000)::bigint,
                    (select count(*)::int from sessions s where s.user_id = u.id),
-                   (u.deleted_at is not null), u.audience
+                   (u.deleted_at is not null), u.audience, u.shop_mode
               from users u
              order by u.created_at
              limit ? offset ?
@@ -118,6 +118,7 @@ class PostgresApiStore(private val dataSource: DataSource) : ApiStore {
                     assessments = rows.getInt(11),
                     deleted = rows.getBoolean(12),
                     audience = rows.getString(13),
+                    shopMode = rows.getBoolean(14),
                 )
                 out
             }
@@ -706,6 +707,9 @@ class PostgresApiStore(private val dataSource: DataSource) : ApiStore {
             promptSha = getString(16),
             assessedAs = getString(17),
             final = getBoolean(18),
+            shopTablet = getBoolean(19),
+            tabletEnded = getString(20),
+            tabletEndedAt = nullableLong(21),
         )
     }
 
@@ -769,7 +773,10 @@ class PostgresApiStore(private val dataSource: DataSource) : ApiStore {
                    s.piece_id::text,
                    s.prompt_sha,
                    s.assessed_as,
-                   s.is_final
+                   s.is_final,
+                   s.shop_tablet,
+                   s.tablet_ended,
+                   (extract(epoch from s.tablet_ended_at) * 1000)::bigint
         """
     }
 }

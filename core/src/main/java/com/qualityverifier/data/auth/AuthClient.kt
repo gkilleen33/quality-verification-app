@@ -44,6 +44,8 @@ private data class TokenBody(
     @SerialName("expires_in") val expiresIn: Long = 0,
     @SerialName("refresh_token") val refreshToken: String = "",
     @SerialName("user_id") val userId: String = "",
+    /** Server V39 (row 12). Absent from an older server, which has no shop accounts. */
+    @SerialName("shop_mode") val shopMode: Boolean = false,
 )
 
 @Serializable
@@ -210,6 +212,9 @@ class AuthClient(
                         refreshToken = decoded.refreshToken,
                         userId = decoded.userId,
                     )
+                    // From the sign-in answer itself (row 12), so a shop's tablet behaves as
+                    // one from its first screen even if the profile read below fails.
+                    store.setShopMode(decoded.shopMode)
                     // Fetched here, not left to the next sync. An evaluator who registers
                     // and goes straight into an assessment — which is exactly what somebody
                     // handed a code does — would otherwise finish it before the phone knew
@@ -221,6 +226,7 @@ class AuthClient(
                     fetchProfile(decoded.accessToken)?.let { profile ->
                         store.setTester(profile.isTester)
                         store.setTermsRequired(profile.termsRequired)
+                        store.setShopMode(profile.shopMode)
                     }
                     // Never allowed to fail the sign-in it follows.
                     runCatching { onSignedIn() }
@@ -289,4 +295,6 @@ private data class ProfileBody(
     @SerialName("is_tester") val isTester: Boolean = false,
     /** Absent from a server older than the terms (v0.5.0), and then false, as it was. */
     @SerialName("terms_required") val termsRequired: Boolean = false,
+    /** Absent from a server before V39, and then false: no shop accounts existed. */
+    @SerialName("shop_mode") val shopMode: Boolean = false,
 )

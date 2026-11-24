@@ -30,6 +30,13 @@ import androidx.compose.material.icons.filled.Category
 import androidx.compose.material.icons.filled.Chair
 import androidx.compose.material.icons.filled.ChairAlt
 import androidx.compose.material.icons.filled.DoorSliding
+import androidx.compose.material.icons.filled.Lock
+import androidx.compose.foundation.layout.width
+import androidx.compose.material3.TextButton
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
+import com.qualityverifier.ui.rememberAuthLabels
+import com.qualityverifier.ui.shop.OwnerPasswordDialog
 import androidx.compose.material.icons.filled.TableBar
 import androidx.compose.material.icons.filled.TableRestaurant
 import androidx.compose.material.icons.filled.Weekend
@@ -71,8 +78,27 @@ fun HomeScreen(
     contentPadding: PaddingValues,
     onItemChosen: (ItemType) -> Unit,
     onOpenReports: () -> Unit,
+    /**
+     * A shop's tablet (row 12): no "My reports", and a "Shop owner" row behind the account's
+     * password in its place. False is the personal Kagua home, as in v0.6.1.
+     */
+    shopMode: Boolean = false,
+    /** The owner typed the right password. */
+    onOwnerUnlocked: () -> Unit = {},
 ) {
     val container = appContainer()
+    var askingOwner by remember { mutableStateOf(false) }
+    if (askingOwner) {
+        OwnerPasswordDialog(
+            labels = rememberAuthLabels(),
+            check = container.account::checkPassword,
+            onOpened = {
+                askingOwner = false
+                onOwnerUnlocked()
+            },
+            onDismiss = { askingOwner = false },
+        )
+    }
     val viewModel: HomeViewModel = viewModel(factory = HomeViewModel.factory(container))
     val reportCount by viewModel.reportCount.collectAsState()
     val update by container.appVersionCheck.state.collectAsState()
@@ -138,8 +164,29 @@ fun HomeScreen(
         }
 
         item(span = { GridItemSpan(maxLineSpan) }) {
-            MyReportsRow(count = reportCount, onClick = onOpenReports)
+            // A shop's tablet shows no earlier customer's assessment, not even a count.
+            if (shopMode) {
+                OwnerRow(label = rememberAuthLabels().ownerControls, onClick = { askingOwner = true })
+            } else {
+                MyReportsRow(count = reportCount, onClick = onOpenReports)
+            }
         }
+    }
+}
+
+/** The way into the account on a shop's tablet, quieter than the grid a customer uses. */
+@Composable
+private fun OwnerRow(label: String, onClick: () -> Unit) {
+    TextButton(
+        onClick = onClick,
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(top = 8.dp)
+            .height(56.dp),
+    ) {
+        Icon(Icons.Filled.Lock, contentDescription = null, modifier = Modifier.size(18.dp))
+        Spacer(Modifier.width(8.dp))
+        Text(label, style = MaterialTheme.typography.bodyLarge)
     }
 }
 

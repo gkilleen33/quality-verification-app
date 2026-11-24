@@ -26,6 +26,12 @@ data class UserRow(
      * the other app, and on the Fundi Bora profile endpoints.
      */
     val audience: Audience = Audience.BUYER,
+    /**
+     * A Kagua account on a shop's tablet (V39, row 12). Fixed at registration by the invite
+     * code and never changed. The server sends such an account none of its earlier
+     * assessments, and its phone deletes each one when the customer is done.
+     */
+    val shopMode: Boolean = false,
 )
 
 /** What registration was given. Validated before it reaches here. */
@@ -103,6 +109,13 @@ interface AuthStore {
     suspend fun recordFailedSignIn(userId: String, lockFor: java.time.Duration, threshold: Int): Int
     suspend fun clearFailedSignIns(userId: String)
 
+    /**
+     * When the account's sign-in lockout ends, or null when it is not locked. Read by the shop
+     * tablet's password check (row 12), which counts its failures as sign-in failures. The
+     * default says "not locked", which is what a store that keeps no lockout would say.
+     */
+    suspend fun lockedUntil(userId: String): Instant? = null
+
     /** The stored hash, for verifying a current password by user rather than by phone. */
     suspend fun passwordHashFor(userId: String): String?
 
@@ -163,10 +176,12 @@ class PostgresAuthStore(private val dataSource: DataSource) : AuthStore {
         val grants = connection.prepareStatement(REDEEMABLE_INVITE).use { statement ->
             statement.setString(1, registration.inviteCode)
             statement.executeQuery().use {
-                if (it.next()) it.getBoolean(1) to it.getString(2) else null
+                if (it.next()) Triple(it.getBoolean(1), it.getString(2), it.getBoolean(3)) else null
             }
         } ?: return@tx RegisterOutcome.InviteUnusable
-        val (grantsTester, audienceId) = grants
+        // Shop mode (V39, row 12) comes with the code too: only a shop DIL gives a tablet to
+        // gets one, and the business question at sign-up does not turn it on.
+        val (grantsTester, audienceId, grantsShopMode) = grants
 
         // No CASE around the point: ST_MakePoint(NULL, NULL) is already NULL, and
         // `? is null` gives Postgres no type to infer, which fails at prepare time
@@ -175,8 +190,8 @@ class PostgresAuthStore(private val dataSource: DataSource) : AuthStore {
             insert into users (
                 invite_code, display_name, account_type, business_name,
                 business_location, business_location_accuracy_m, business_location_at,
-                phone, password_hash, password_set_at, is_tester, audience
-            ) values (?, ?, ?, ?, ST_SetSRID(ST_MakePoint(?, ?), 4326)::geography, ?, ?, ?, ?, now(), ?, ?)
+                phone, password_hash, password_set_at, is_tester, audience, shop_mode
+            ) values (?, ?, ?, ?, ST_SetSRID(ST_MakePoint(?, ?), 4326)::geography, ?, ?, ?, ?, now(), ?, ?, ?)
             returning id::text
         """.trimIndent()
 
@@ -207,6 +222,8 @@ class PostgresAuthStore(private val dataSource: DataSource) : AuthStore {
                 // Straight through from the code. The CHECK on the column is the backstop
                 // if a code is ever given a value this build has not heard of.
                 statement.setString(12, audienceId)
+                // V39's CHECK refuses shop mode on anything but a Kagua account.
+                statement.setBoolean(13, grantsShopMode)
                 statement.executeQuery().use { rows ->
                     rows.next()
                     RegisterOutcome.Created(rows.getString(1))
@@ -240,7 +257,7 @@ class PostgresAuthStore(private val dataSource: DataSource) : AuthStore {
                 """
                 select id::text, display_name, account_type, business_name,
                        (disabled_at is not null or deleted_at is not null) as gone,
-                       is_tester, audience
+                       is_tester, audience, shop_mode
                 from users where id = ?::uuid
                 """.trimIndent()
             ).use { statement ->
@@ -255,6 +272,7 @@ class PostgresAuthStore(private val dataSource: DataSource) : AuthStore {
                         isTester = rows.getBoolean(6),
                         audience = Audience.fromId(rows.getString(7).orEmpty())
                             ?: Audience.BUYER,
+                        shopMode = rows.getBoolean(8),
                     )
                 }
             }
@@ -379,6 +397,19 @@ class PostgresAuthStore(private val dataSource: DataSource) : AuthStore {
         }
     }
 
+    override suspend fun lockedUntil(userId: String): Instant? = withContext(Dispatchers.IO) {
+        dataSource.connection.use { connection ->
+            connection.prepareStatement(
+                "select locked_until from users where id = ?::uuid and locked_until > now()"
+            ).use { statement ->
+                statement.setString(1, userId)
+                statement.executeQuery().use { rows ->
+                    if (rows.next()) rows.getTimestamp(1)?.toInstant() else null
+                }
+            }
+        }
+    }
+
     override suspend fun clearFailedSignIns(userId: String) = withContext(Dispatchers.IO) {
         dataSource.connection.use { connection ->
             connection.prepareStatement(
@@ -462,7 +493,7 @@ class PostgresAuthStore(private val dataSource: DataSource) : AuthStore {
          * free once it did. The lock makes the read wait and re-check revoked_at.
          */
         const val REDEEMABLE_INVITE =
-            "select grants_tester, audience from invite_codes where code = ? and revoked_at is null for share"
+            "select grants_tester, audience, grants_shop_mode from invite_codes where code = ? and revoked_at is null for share"
 
         /**
          * The unique index that refuses a second account on one number for one app, by name,

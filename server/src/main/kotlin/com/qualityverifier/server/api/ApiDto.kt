@@ -65,6 +65,12 @@ data class ApiUser(
      * "these fields will never be filled in" rather than "not captured".
      */
     val deleted: Boolean,
+    /**
+     * A Kagua account on a shop's tablet (V39, row 12), set by its invite code at registration
+     * and never changed. Its assessments are walk-in customers', not the owner's. Defaulted so
+     * the field's arrival changes no caller.
+     */
+    @SerialName("shop_mode") val shopMode: Boolean = false,
 )
 
 @Serializable
@@ -126,6 +132,21 @@ data class ApiAssessment(
     @SerialName("assessed_as") val assessedAs: String? = null,
     /** The final assessment of the finished piece, made before a customer report (V34, row 27). */
     val final: Boolean = false,
+    /**
+     * Made on a shop's tablet by a walk-in customer (V39, row 12): copied from the account's
+     * `shop_mode` when the assessment started.
+     */
+    @SerialName("shop_tablet") val shopTablet: Boolean = false,
+    /**
+     * How the tablet deleted its copy: `done` (the customer pressed "Done: delete this
+     * assessment", or went back to the start screen), `left_app`, `screen_lock`, or `idle`
+     * (five minutes with no touch). Null for an assessment not made on a tablet, and for one
+     * whose tablet has not reported it (switched off mid-way, or not back online yet). The
+     * server keeps the assessment whichever it is.
+     */
+    @SerialName("tablet_ended") val tabletEnded: String? = null,
+    /** When the server heard [tabletEnded], epoch millis; null when it is null. */
+    @SerialName("tablet_ended_at") val tabletEndedAt: Long? = null,
 )
 
 /**

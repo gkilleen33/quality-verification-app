@@ -43,6 +43,17 @@ interface TokenStore {
 
     fun setTermsRequired(value: Boolean?) = Unit
 
+    /**
+     * Whether this is a Kagua account on a shop's tablet (server V39, release scope row 12),
+     * from the sign-in answer and every profile read. Cached, as [isTester] is, because the
+     * app decides how to behave before any request can answer. False until the server says
+     * otherwise, so an app updated from v0.6.1 keeps behaving as it did. Defaulted so a store
+     * that never holds it (the push's copy, test fakes) reads as an ordinary account.
+     */
+    fun isShopMode(): Boolean = false
+
+    fun setShopMode(value: Boolean) = Unit
+
     fun clear()
 
     fun isSignedIn(): Boolean = refreshToken() != null

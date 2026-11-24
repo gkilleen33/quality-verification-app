@@ -76,12 +76,19 @@ fun IntakeScreen(
      * and asking again immediately afterwards reads as not having listened.
      */
     protocolSettled: Boolean = false,
+    /**
+     * An answer to "buying or already own it" decided before the intake. A shop's tablet
+     * (row 12) passes [Ownership.BUYING]: a walk-in customer is checking a finished piece
+     * before buying it, so the question is skipped and buying is recorded. Null asks it, as
+     * every personal assessment does.
+     */
+    fixedOwnership: Ownership? = null,
     onComplete: (AssessmentContext, ItemType) -> Unit,
     onBack: () -> Unit,
 ) {
     var startOver by remember { mutableStateOf(false) }
     val carried = prefill?.takeIf { it.isComplete }
-    if (carried != null && !startOver) {
+    if (carried != null && !startOver && fixedOwnership == null) {
         CarriedIntake(
             itemType = itemType,
             carried = carried,
@@ -94,9 +101,83 @@ fun IntakeScreen(
     FullIntake(
         itemType = itemType,
         protocolSettled = protocolSettled,
+        fixedOwnership = fixedOwnership,
         onComplete = onComplete,
         onBack = onBack,
     )
+}
+
+/** The questions of the full intake, in the order asked. */
+internal enum class IntakeQuestion { LANGUAGE, UPHOLSTERY, OWNERSHIP, PRICE, USAGE, DEPTH }
+
+/**
+ * Which question the full intake is on, how many there are, and where Back goes, from the
+ * answers so far. Apart from the screen so the order can be tested without Compose.
+ *
+ * [ownershipFixed] is the shop tablet's case (row 12): the ownership answer came with the
+ * intake, so the question is neither asked, counted, nor gone back to.
+ */
+internal data class IntakeProgress(
+    val needsUpholstery: Boolean,
+    val ownershipFixed: Boolean = false,
+    val language: AssessmentLanguage? = null,
+    val upholstered: Boolean? = null,
+    val ownership: Ownership? = null,
+    val priceAnswered: Boolean = false,
+    val usage: Usage? = null,
+    val depth: AssessmentDepth? = null,
+) {
+    val needsPrice: Boolean get() = ownership == Ownership.BUYING
+
+    val question: IntakeQuestion get() = when {
+        language == null -> IntakeQuestion.LANGUAGE
+        needsUpholstery && upholstered == null -> IntakeQuestion.UPHOLSTERY
+        ownership == null -> IntakeQuestion.OWNERSHIP
+        needsPrice && !priceAnswered -> IntakeQuestion.PRICE
+        usage == null -> IntakeQuestion.USAGE
+        else -> IntakeQuestion.DEPTH
+    }
+
+    /** The questions this intake asks, so far as the answers given can tell. */
+    private val asked: List<IntakeQuestion> get() = listOfNotNull(
+        IntakeQuestion.LANGUAGE,
+        IntakeQuestion.UPHOLSTERY.takeIf { needsUpholstery },
+        IntakeQuestion.OWNERSHIP.takeUnless { ownershipFixed },
+        IntakeQuestion.PRICE.takeIf { needsPrice },
+        IntakeQuestion.USAGE,
+        IntakeQuestion.DEPTH,
+    )
+
+    val totalSteps: Int get() = asked.size
+    val step: Int get() = asked.indexOf(question) + 1
+
+    /**
+     * Whether the total is known yet. Whether there is a price step depends on the ownership
+     * answer, so the counter waits for it; with ownership fixed it is known from the start.
+     */
+    val showCounter: Boolean get() = ownership != null
+
+    /** The answers with the last one taken back, or null when Back leaves the intake. */
+    fun back(): IntakeProgress? = when {
+        depth != null -> copy(depth = null)
+        usage != null -> copy(usage = null)
+        needsPrice && priceAnswered -> copy(priceAnswered = false)
+        // As v0.6.1 does, priceAnswered is left as it is.
+        ownership != null && !ownershipFixed -> copy(ownership = null)
+        needsUpholstery && upholstered != null -> copy(upholstered = null)
+        language != null -> copy(language = null)
+        else -> null
+    }
+
+    companion object {
+        fun start(needsUpholstery: Boolean, fixedOwnership: Ownership?) = IntakeProgress(
+            needsUpholstery = needsUpholstery,
+            ownershipFixed = fixedOwnership != null,
+            ownership = fixedOwnership,
+            // Owning means no price to ask about, as answering "already own" does.
+            priceAnswered = fixedOwnership == Ownership.ALREADY_OWN,
+        )
+    }
 }
 
 /**
@@ -230,48 +311,33 @@ private fun carriedRecap(context: AssessmentContext, labels: ReportLabels): Stri
 private fun FullIntake(
     itemType: ItemType,
     protocolSettled: Boolean,
+    fixedOwnership: Ownership?,
     onComplete: (AssessmentContext, ItemType) -> Unit,
     onBack: () -> Unit,
 ) {
-    var language by remember { mutableStateOf<AssessmentLanguage?>(null) }
-    var upholstered by remember { mutableStateOf<Boolean?>(null) }
-    var ownership by remember { mutableStateOf<Ownership?>(null) }
-    var price by remember { mutableStateOf("") }
-    var priceAnswered by remember { mutableStateOf(false) }
-    var usage by remember { mutableStateOf<Usage?>(null) }
-    var depth by remember { mutableStateOf<AssessmentDepth?>(null) }
-    var handedOver by remember { mutableStateOf(false) }
-
-    val labels = language?.let { ReportLabels.forLanguage(it.code) } ?: ReportLabels.ENGLISH
     // One grid entry covers both chair protocols, so which one applies is asked here.
     val needsUpholstery = itemType.needsUpholsteryQuestion && !protocolSettled
-    val resolvedItem = upholstered?.let { itemType.withUpholstery(it) } ?: itemType
-    val needsPrice = ownership == Ownership.BUYING
-    val totalSteps = 4 + (if (needsPrice) 1 else 0) + (if (needsUpholstery) 1 else 0)
+    var progress by remember { mutableStateOf(IntakeProgress.start(needsUpholstery, fixedOwnership)) }
+    var price by remember { mutableStateOf("") }
+    var handedOver by remember { mutableStateOf(false) }
 
-    val step = when {
-        language == null -> 1
-        needsUpholstery && upholstered == null -> 2
-        ownership == null -> if (needsUpholstery) 3 else 2
-        needsPrice && !priceAnswered -> totalSteps - 2
-        usage == null -> totalSteps - 1
-        else -> totalSteps
-    }
+    val language = progress.language
+    val upholstered = progress.upholstered
+    val ownership = progress.ownership
+    val usage = progress.usage
+    val depth = progress.depth
+
+    val labels = language?.let { ReportLabels.forLanguage(it.code) } ?: ReportLabels.ENGLISH
+    val resolvedItem = upholstered?.let { itemType.withUpholstery(it) } ?: itemType
+    val totalSteps = progress.totalSteps
+    val step = progress.step
     // Whether there is a price step depends on an answer not yet given at step one, so the
     // total is unknowable until then. Showing "1 / 4" and then "3 / 5" reads as a glitch;
     // showing nothing for one screen does not.
-    val showCounter = ownership != null
+    val showCounter = progress.showCounter
 
     fun back() {
-        when {
-            depth != null -> depth = null
-            usage != null -> usage = null
-            needsPrice && priceAnswered -> priceAnswered = false
-            ownership != null -> ownership = null
-            needsUpholstery && upholstered != null -> upholstered = null
-            language != null -> language = null
-            else -> onBack()
-        }
+        progress.back()?.let { progress = it } ?: onBack()
     }
 
     BackHandler(onBack = ::back)
@@ -313,29 +379,28 @@ private fun FullIntake(
                 .imePadding()
                 .padding(20.dp),
         ) {
-            when {
-                language == null -> Question("Language · Lugha") {
+            when (progress.question) {
+                IntakeQuestion.LANGUAGE -> Question("Language · Lugha") {
                     AssessmentLanguage.entries.forEach { option ->
-                        Choice(option.ownName) { language = option }
+                        Choice(option.ownName) { progress = progress.copy(language = option) }
                     }
                 }
 
-                needsUpholstery && upholstered == null ->
+                IntakeQuestion.UPHOLSTERY ->
                     Question(labels.intakeUpholsteryQuestion) {
-                        Choice(labels.intakeUpholsteryYes) { upholstered = true }
-                        Choice(labels.intakeUpholsteryNo) { upholstered = false }
+                        Choice(labels.intakeUpholsteryYes) { progress = progress.copy(upholstered = true) }
+                        Choice(labels.intakeUpholsteryNo) { progress = progress.copy(upholstered = false) }
                     }
 
-                ownership == null -> Question(labels.intakeOwnershipQuestion) {
-                    Choice(labels.intakeBuying) { ownership = Ownership.BUYING }
+                IntakeQuestion.OWNERSHIP -> Question(labels.intakeOwnershipQuestion) {
+                    Choice(labels.intakeBuying) { progress = progress.copy(ownership = Ownership.BUYING) }
                     Choice(labels.intakeAlreadyOwn) {
-                        ownership = Ownership.ALREADY_OWN
                         // No price to ask about, so that step never applies.
-                        priceAnswered = true
+                        progress = progress.copy(ownership = Ownership.ALREADY_OWN, priceAnswered = true)
                     }
                 }
 
-                needsPrice && !priceAnswered -> Question(labels.intakePriceQuestion) {
+                IntakeQuestion.PRICE -> Question(labels.intakePriceQuestion) {
                     OutlinedTextField(
                         value = price,
                         onValueChange = { price = it },
@@ -346,7 +411,7 @@ private fun FullIntake(
                     Spacer(Modifier.height(4.dp))
                     Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                         Button(
-                            onClick = { priceAnswered = true },
+                            onClick = { progress = progress.copy(priceAnswered = true) },
                             enabled = price.isNotBlank(),
                             modifier = Modifier
                                 .weight(1f)
@@ -355,7 +420,7 @@ private fun FullIntake(
                         OutlinedButton(
                             onClick = {
                                 price = ""
-                                priceAnswered = true
+                                progress = progress.copy(priceAnswered = true)
                             },
                             modifier = Modifier
                                 .weight(1f)
@@ -364,18 +429,18 @@ private fun FullIntake(
                     }
                 }
 
-                usage == null -> Question(labels.intakeUsageQuestion) {
-                    Choice(labels.intakeUsageDaily) { usage = Usage.DAILY }
-                    Choice(labels.intakeUsageOccasional) { usage = Usage.OCCASIONAL }
-                    Choice(labels.intakeUsageBusiness) { usage = Usage.BUSINESS }
+                IntakeQuestion.USAGE -> Question(labels.intakeUsageQuestion) {
+                    Choice(labels.intakeUsageDaily) { progress = progress.copy(usage = Usage.DAILY) }
+                    Choice(labels.intakeUsageOccasional) { progress = progress.copy(usage = Usage.OCCASIONAL) }
+                    Choice(labels.intakeUsageBusiness) { progress = progress.copy(usage = Usage.BUSINESS) }
                 }
 
-                else -> Question(labels.intakeDepthQuestion) {
+                IntakeQuestion.DEPTH -> Question(labels.intakeDepthQuestion) {
                     Choice(labels.intakeDepthFull, labels.intakeDepthFullDetail) {
-                        depth = AssessmentDepth.FULL
+                        progress = progress.copy(depth = AssessmentDepth.FULL)
                     }
                     Choice(labels.intakeDepthRapid, labels.intakeDepthRapidDetail) {
-                        depth = AssessmentDepth.RAPID
+                        progress = progress.copy(depth = AssessmentDepth.RAPID)
                     }
                 }
             }

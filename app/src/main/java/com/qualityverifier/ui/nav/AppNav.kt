@@ -1,7 +1,11 @@
 package com.qualityverifier.ui.nav
 
+import android.app.Activity
+import android.view.WindowManager
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
@@ -15,7 +19,11 @@ import com.qualityverifier.domain.ItemType
 import com.qualityverifier.domain.UpdatePrompt
 import com.qualityverifier.text.decodeIntake
 import com.qualityverifier.text.encodeIntake
+import com.qualityverifier.domain.TabletEnd
 import com.qualityverifier.ui.appContainer
+import com.qualityverifier.ui.shopMode
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.drop
 import com.qualityverifier.ui.rememberAuthLabels
 import com.qualityverifier.ui.rememberUpdateLabels
 import com.qualityverifier.ui.update.UpdateRequiredScreen
@@ -115,6 +123,29 @@ fun AppNav() {
     val signOut = { leave(true) }
     val accountDeleted = { leave(false) }
 
+    // A shop's tablet (row 12). Every end of a customer's assessment brings back an empty
+    // start screen with nothing behind it, which also closes the owner's controls. The first
+    // value is skipped: it is the count as this composition found it, not an end.
+    val shop = shopMode()
+    LaunchedEffect(shop) {
+        shop.resets.drop(1).collect {
+            if (container.isSignedIn) {
+                navController.navigate(Routes.HOME) { popUpTo(0) { inclusive = true } }
+            }
+        }
+    }
+    // Five minutes with no touch ends the assessment, checked every few seconds while the
+    // app is open. A personal account's watch never fires: end() does nothing for it.
+    LaunchedEffect(shop) {
+        while (true) {
+            delay(IDLE_CHECK_MILLIS)
+            if (shop.active && shop.idle.isIdle()) {
+                shop.idle.touched()
+                shop.end(TabletEnd.IDLE)
+            }
+        }
+    }
+
     NavHost(navController = navController, startDestination = start) {
 
         composable(Routes.SIGN_IN) {
@@ -142,7 +173,10 @@ fun AppNav() {
         }
 
         composable(Routes.HOME) {
-            MainScaffold(MainTab.HOME, navController.tabSelector()) { padding ->
+            // Read here, when the screen is built: signing in is what makes an account a shop's.
+            val shopActive = shop.active
+            SecureWindow(shopActive)
+            MainScaffold(MainTab.HOME, navController.tabSelector(), showTabs = !shopActive) { padding ->
                 HomeScreen(
                     contentPadding = padding,
                     onItemChosen = { itemType ->
@@ -150,11 +184,21 @@ fun AppNav() {
                         navController.navigate(Routes.chat(sessionId, itemType.id))
                     },
                     onOpenReports = { navController.switchTo(MainTab.REPORTS) },
+                    shopMode = shopActive,
+                    // The password opened it; the account screen is on top of the start
+                    // screen, so Back, and every end, closes it again.
+                    onOwnerUnlocked = { navController.navigate(Routes.PROFILE) { launchSingleTop = true } },
                 )
             }
         }
 
         composable(Routes.REPORTS) {
+            // A shop's tablet has no reports to show (row 12): nothing leads here, and if
+            // anything did, it would find the start screen instead.
+            if (shop.active) {
+                LaunchedEffect(Unit) { navController.navigate(Routes.HOME) { popUpTo(0) { inclusive = true } } }
+                return@composable
+            }
             MainScaffold(MainTab.REPORTS, navController.tabSelector()) { padding ->
                 ReportsScreen(
                     contentPadding = padding,
@@ -164,11 +208,14 @@ fun AppNav() {
         }
 
         composable(Routes.PROFILE) {
-            MainScaffold(MainTab.PROFILE, navController.tabSelector()) { padding ->
+            val shopActive = shop.active
+            MainScaffold(MainTab.PROFILE, navController.tabSelector(), showTabs = !shopActive) { padding ->
                 ProfileScreen(
                     contentPadding = padding,
                     onOpenSettings = { navController.navigate(Routes.SETTINGS) { launchSingleTop = true } },
                     onSignOut = signOut,
+                    shopMode = shopActive,
+                    onBackToStart = { navController.navigate(Routes.HOME) { popUpTo(0) { inclusive = true } } },
                 )
             }
         }
@@ -210,12 +257,16 @@ fun AppNav() {
         ) { entry ->
             val sessionId = entry.arguments?.getString("sessionId").orEmpty()
             val itemType = entry.arguments?.getString("itemTypeId")?.let(ItemType::fromId)
+            val shopActive = shop.active
             ChatScreen(
                 sessionId = sessionId,
                 itemType = itemType,
                 intakePrefill = decodeIntake(entry.arguments?.getString("carry")),
                 previousSessionId = entry.arguments?.getString("from"),
-                onBack = { navController.popBackStack() },
+                // On a shop's tablet, Back ends the customer's assessment as Done does (row 12).
+                onBack = { if (shopActive) shop.end(TabletEnd.DONE) else navController.popBackStack() },
+                shopMode = shopActive,
+                onDone = { shop.end(TabletEnd.DONE) },
                 onOpenSettings = { navController.navigate(Routes.PROFILE) },
                 onAssessAnother = { nextItemType, carried ->
                     // A new conversation rather than a continuation of this one: each
@@ -240,6 +291,26 @@ fun AppNav() {
 }
 
 private fun NavHostController.tabSelector(): (MainTab) -> Unit = { tab -> switchTo(tab) }
+
+/**
+ * On a shop's tablet (row 12) the window is never captured: no screenshot, and no picture of
+ * a customer's result in the recent-apps list. Set from the start screen, which every
+ * sign-in reaches before any assessment, as well as on each resume (MainActivity).
+ */
+@Composable
+private fun SecureWindow(active: Boolean) {
+    val window = (LocalContext.current as? Activity)?.window ?: return
+    SideEffect {
+        if (active) {
+            window.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
+        } else {
+            window.clearFlags(WindowManager.LayoutParams.FLAG_SECURE)
+        }
+    }
+}
+
+/** How often the shop tablet's idle watch is read (row 12). A few seconds late is fine. */
+private const val IDLE_CHECK_MILLIS = 10_000L
 
 /**
  * Tab switching keeps Home at the root of the stack, so the system back button leaves

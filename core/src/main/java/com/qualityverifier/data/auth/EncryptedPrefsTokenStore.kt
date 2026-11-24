@@ -98,6 +98,13 @@ class EncryptedPrefsTokenStore(private val context: Context) : TokenStore {
         prefs()?.edit()?.putBoolean(KEY_TESTER, value)?.commit()
     }
 
+    override fun isShopMode(): Boolean = prefs()?.getBoolean(KEY_SHOP_MODE, false) ?: false
+
+    @SuppressLint("ApplySharedPref")
+    override fun setShopMode(value: Boolean) {
+        prefs()?.edit()?.putBoolean(KEY_SHOP_MODE, value)?.commit()
+    }
+
     // A string rather than a boolean, so "never asked" is its own state and not false.
     override fun termsRequired(): Boolean? = read(KEY_TERMS_REQUIRED)?.toBooleanStrictOrNull()
 
@@ -117,6 +124,7 @@ class EncryptedPrefsTokenStore(private val context: Context) : TokenStore {
             ?.remove(KEY_EXPIRES_AT)
             ?.remove(KEY_TESTER)
             ?.remove(KEY_TERMS_REQUIRED)
+            ?.remove(KEY_SHOP_MODE)
             ?.commit()
     }
 
@@ -139,5 +147,6 @@ class EncryptedPrefsTokenStore(private val context: Context) : TokenStore {
         const val KEY_EXPIRES_AT = "access_expires_at"
         const val KEY_TESTER = "is_tester"
         const val KEY_TERMS_REQUIRED = "terms_required"
+        const val KEY_SHOP_MODE = "shop_mode"
     }
 }

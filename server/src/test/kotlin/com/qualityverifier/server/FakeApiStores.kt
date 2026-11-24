@@ -300,6 +300,7 @@ class RecordingAudit : com.qualityverifier.server.admin.AdminStore {
         label: String?,
         grantsTester: Boolean,
         audience: com.qualityverifier.domain.Audience,
+        grantsShopMode: Boolean,
     ) = no()
     override suspend fun revokeInvite(code: String) = no()
     override suspend fun users(

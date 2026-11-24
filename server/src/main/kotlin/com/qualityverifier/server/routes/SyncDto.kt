@@ -69,6 +69,14 @@ data class SessionDetailDto(
     val messages: List<MessageDto>,
 )
 
+/** The body of PUT /v1/sessions/{id}/tablet-end (V39, row 12). */
+@Serializable
+data class TabletEndRequest(val end: String = "")
+
+/** The body of POST /v1/me/password-check: the shop owner's password on the tablet (row 12). */
+@Serializable
+data class PasswordCheckRequest(val password: String = "")
+
 @Serializable
 data class ChangePasswordRequest(
     @SerialName("current_password") val currentPassword: String = "",

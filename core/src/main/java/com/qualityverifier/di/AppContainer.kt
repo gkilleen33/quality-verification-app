@@ -29,6 +29,8 @@ import com.qualityverifier.data.reports.ReportClient
 import com.qualityverifier.data.session.ReviewAnswers
 import com.qualityverifier.data.session.RoomSessionRepository
 import com.qualityverifier.data.session.SessionRepository
+import com.qualityverifier.data.shop.PrefsTabletEndQueue
+import com.qualityverifier.data.shop.ShopTabletWipe
 import com.qualityverifier.data.sync.AccountActions
 import com.qualityverifier.data.sync.AssessmentSync
 import com.qualityverifier.data.sync.SyncClient
@@ -50,6 +52,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.Json
 import okhttp3.OkHttpClient
@@ -158,7 +161,7 @@ class AppContainer(
      * Photos, and the camera metadata kept beside them. The location switch also decides
      * whether a photo's own GPS is kept: off means the camera's point is never sent either.
      */
-    val images: ImageFileStore = ImageFileStore(appContext) { locationPreference.records }
+    val images: ImageFileStore = ImageFileStore(appContext, mayRecordLocation = { locationPreference.records })
 
     val tokenStore: TokenStore = EncryptedPrefsTokenStore(appContext)
 
@@ -307,6 +310,30 @@ class AppContainer(
 
     /** True when this account is one of our evaluators. Read from the cached profile. */
     val isTester: Boolean get() = tokenStore.isTester()
+
+    /**
+     * True when this is a Kagua account on a shop's tablet (server V39, row 12): the tablet
+     * keeps no customer's assessment. Read from the cached sign-in answer and profile. Fundi
+     * Bora accounts are never shops (a CHECK on the server), so this is false there.
+     */
+    val shopMode: Boolean get() = tokenStore.isShopMode()
+
+    /**
+     * Deletes the shop tablet's copy of every assessment and reports how (row 12). Every Room
+     * table and every photo file, as a different account signing in does: one customer's
+     * assessment is all a tablet ever holds. Kagua's shop mode calls it; nothing else does.
+     */
+    val shopTablet: ShopTabletWipe = ShopTabletWipe(
+        localSessionIds = { sessionRepository.knownSessions().keys },
+        clearLocal = {
+            withContext(Dispatchers.IO) {
+                database.clearAllTables()
+                images.deleteAll()
+            }
+        },
+        pending = PrefsTabletEndQueue(appContext),
+        api = syncClient,
+    )
 
     val account: AccountActions = AccountActions(syncClient)
 
