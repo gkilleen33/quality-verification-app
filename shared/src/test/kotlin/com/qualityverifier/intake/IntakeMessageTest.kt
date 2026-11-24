@@ -3,6 +3,7 @@ package com.qualityverifier.intake
 import com.qualityverifier.domain.AssessmentContext
 import com.qualityverifier.domain.AssessmentDepth
 import com.qualityverifier.domain.AssessmentLanguage
+import com.qualityverifier.domain.IntakeTopic
 import com.qualityverifier.domain.Ownership
 import com.qualityverifier.domain.Usage
 import com.qualityverifier.text.ReportLabels
@@ -88,55 +89,62 @@ class IntakeMessageTest {
     }
 
     @Test
-    fun `abandoning the intake hands over what was already chosen`() {
-        // The customer got as far as saying they are buying, then could not find their
-        // answer among the buttons. Making them repeat the part they managed would be the
-        // second time the app failed them.
+    fun `row 58 - a question answered in your own words is told in its fixed sentence, in its place`() {
         val text = buildIntakeMessage(
             AssessmentContext(
                 language = AssessmentLanguage.ENGLISH,
                 ownership = Ownership.BUYING,
-                quotedPrice = "3500",
+                quotedPrice = "",
                 usage = null,
-                depth = null,
+                depth = AssessmentDepth.FULL,
+                explained = mapOf(
+                    IntakeTopic.PRICE to "  He said 9,000 but will take less. ",
+                    IntakeTopic.USAGE to "For my mother's shop, two hours a day.",
+                ),
             ),
             ReportLabels.ENGLISH,
         )
-        assertTrue(text.contains("I am buying this."))
-        assertTrue(text.contains("The seller is asking 3500."))
-        // Nothing invented for the answers that were never given.
-        assertFalse(text.contains("daily"))
-        assertFalse(text.contains("assessment."))
-        // And the assistant is told to pick the questioning up itself.
-        assertTrue(text.endsWith("so please ask me yourself."))
-    }
-
-    @Test
-    fun `abandoning at the very first question still asks for help`() {
-        val text = buildIntakeMessage(
-            AssessmentContext(language = AssessmentLanguage.SWAHILI),
-            ReportLabels.SWAHILI,
-        )
         assertEquals(
-            "Tafadhali nijibu kwa Kiswahili. " +
-                "Sikuweza kujibu mengine kwa vitufe, tafadhali niulize wewe mwenyewe.",
+            "I am buying this. About the price: He said 9,000 but will take less. " +
+                "About how it will be used: For my mother's shop, two hours a day. " +
+                "I would like the full assessment. Please answer me in English.",
             text,
         )
     }
 
     @Test
-    fun `a context missing only the depth is still a handover`() {
-        // isComplete is what decides, so a single unanswered question is enough. Sending
-        // it as though it were complete would leave the assistant expecting a depth it
-        // was never given and issuing the wrong plan.
+    fun `row 58 - the first turn no longer hands questions to the assistant`() {
+        // Every question is answered before the start now, so nothing is left for the
+        // assistant to ask; a carried intake mentions only what it carries.
+        val text = buildIntakeMessage(
+            AssessmentContext(
+                language = AssessmentLanguage.SWAHILI,
+                explained = mapOf(IntakeTopic.OWNERSHIP to "Ni ya dada yangu."),
+                usage = Usage.DAILY,
+                depth = AssessmentDepth.RAPID,
+            ),
+            ReportLabels.SWAHILI,
+        )
+        assertEquals(
+            "Kuhusu kununua: Ni ya dada yangu. Itatumika kwa nguvu kila siku. " +
+                "Nataka ukaguzi wa haraka. Tafadhali nijibu kwa Kiswahili.",
+            text,
+        )
+        assertFalse(text.contains("niulize wewe mwenyewe"))
+    }
+
+    @Test
+    fun `row 58 - the same answers always make the same first turn`() {
+        // The first turn is in the cached conversation, so it must not vary.
         val context = AssessmentContext(
             language = AssessmentLanguage.ENGLISH,
             ownership = Ownership.ALREADY_OWN,
-            usage = Usage.DAILY,
-            depth = null,
+            usage = Usage.BUSINESS,
+            depth = AssessmentDepth.FULL,
+            explained = mapOf(IntakeTopic.UPHOLSTERY to "Padded seat, wooden back."),
         )
-        assertFalse(context.isComplete)
-        assertTrue(buildIntakeMessage(context, ReportLabels.ENGLISH).contains("ask me yourself"))
+        assertEquals(buildIntakeMessage(context, ReportLabels.ENGLISH), buildIntakeMessage(context.copy(), ReportLabels.ENGLISH))
+        assertTrue(buildIntakeMessage(context, ReportLabels.ENGLISH).startsWith("About the cushioning: Padded seat, wooden back. "))
     }
 
     @Test

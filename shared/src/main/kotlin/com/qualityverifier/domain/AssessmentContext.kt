@@ -20,6 +20,13 @@ data class AssessmentContext(
     val quotedPrice: String = "",
     val usage: Usage? = null,
     val depth: AssessmentDepth? = null,
+    /**
+     * Questions answered in the customer's own words, by "Something else: let me explain" on
+     * their card (v0.7.1, release scope row 58), in place of a choice. Never stored in the
+     * intake code ([com.qualityverifier.text.encodeIntake]): a context with any is not
+     * [isComplete], so it is not carried into the next piece and the next check asks again.
+     */
+    val explained: Map<IntakeTopic, String> = emptyMap(),
 ) {
     /**
      * True when the app answered everything, so the assistant can go straight to a plan.
@@ -42,6 +49,13 @@ enum class AssessmentLanguage(val code: String, val ownName: String) {
 }
 
 enum class Ownership { BUYING, ALREADY_OWN }
+
+/**
+ * The questions on Kagua's page of questions after the language (v0.7.1, release scope row
+ * 58), each of which can be answered in the customer's own words. In the order the page asks
+ * them and the first turn tells them.
+ */
+enum class IntakeTopic { UPHOLSTERY, OWNERSHIP, PRICE, USAGE, DEPTH }
 
 enum class Usage { DAILY, OCCASIONAL, BUSINESS }
 
