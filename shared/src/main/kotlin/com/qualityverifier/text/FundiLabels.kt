@@ -4,6 +4,7 @@ import com.qualityverifier.domain.Employment
 import com.qualityverifier.domain.FixHorizon
 import com.qualityverifier.domain.FundiGoal
 import com.qualityverifier.domain.FundiPurpose
+import com.qualityverifier.domain.ItemType
 import com.qualityverifier.domain.ReportKind
 import com.qualityverifier.domain.ToolKind
 import com.qualityverifier.domain.ToolOwnership
@@ -409,6 +410,17 @@ data class FundiLabels(
 
     fun backToPiece(piece: String) = ending.backToPieceFormat.replace("{piece}", piece)
 
+    /**
+     * The piece as the closing screen names it: the maker's own name for it as typed; else, in
+     * English, its kind in lower case ("the daybed", as the mockup has it), and "the piece" for
+     * "Something else"; in Kiswahili, the word for a piece, since the kinds are English.
+     */
+    fun closingPiece(typed: String?, itemType: ItemType): String = when {
+        !typed.isNullOrBlank() -> typed.trim()
+        code == "sw" || itemType == ItemType.OTHER -> ending.pieceWord
+        else -> itemType.homeLabel.lowercase()
+    }
+
     /** The closing screen's second button, to Send report for this piece. */
     val sendReport: String get() = ending.sendReport
 
@@ -644,6 +656,7 @@ data class FundiLabels(
                 fixItFormat = "Fix it, then re-assess the {piece} to see what changed.",
                 backToPieceFormat = "Back to the {piece}",
                 sendReport = "Send report",
+                pieceWord = "piece",
             ),
             toolLineLabel = "TOOL",
             oneCheckHeading = "ONE THING TO CHECK",
@@ -946,6 +959,7 @@ data class FundiLabels(
                 fixItFormat = "Urekebishe, kisha kagua {piece} upya uone kilichobadilika.",
                 backToPieceFormat = "Rudi kwenye {piece}",
                 sendReport = "Tuma ripoti",
+                pieceWord = "kipande",
             ),
             toolLineLabel = "KIFAA",
             oneCheckHeading = "JAMBO MOJA LA KUANGALIA",
@@ -1019,4 +1033,6 @@ data class ImprovementEndLabels(
     val fixItFormat: String,
     val backToPieceFormat: String,
     val sendReport: String,
+    /** The piece when it has no name of its own and its kind does not name it ("piece", "kipande"). */
+    val pieceWord: String,
 )

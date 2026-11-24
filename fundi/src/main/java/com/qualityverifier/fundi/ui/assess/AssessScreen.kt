@@ -124,6 +124,8 @@ fun AssessScreen(
     presetStudio: PieceStudioChoice? = null,
     /** "Send report" on the closing screen after the last improvement (v0.7.1, row 56). */
     onSendReport: () -> Unit = {},
+    /** "Back to the <piece>" on the same screen: the piece's page. */
+    onBackToPiece: () -> Unit = onDone,
 ) {
     val container = fundiContainer()
     val viewModel: AssessViewModel = viewModel(
@@ -414,10 +416,9 @@ fun AssessScreen(
                 closing = closingReply,
                 onFinishList = { reply -> pageReply = null; closingReply = reply },
                 onCloseClosing = { closingReply = null },
-                // The piece as the closing screen names it: the maker's name for it as typed,
-                // or its kind in lower case, as the mockup writes "the daybed".
-                pieceName = pieceName?.takeIf { it.isNotBlank() } ?: itemType.homeLabel.lowercase(),
-                onBackToPiece = onDone,
+                // The piece as the closing screen names it, in the language shown.
+                pieceName = shownLabels.closingPiece(pieceName, itemType),
+                onBackToPiece = onBackToPiece,
                 onSendReport = onSendReport,
                 onRetry = viewModel::retry,
                 onDismissError = viewModel::dismissError,

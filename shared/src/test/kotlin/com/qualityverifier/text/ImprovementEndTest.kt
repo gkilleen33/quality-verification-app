@@ -26,6 +26,13 @@ class ImprovementEndTest {
         assertEquals("That's all 3 improvements", words.thatsAll(3))
         assertEquals("Fix them, then re-assess the daybed to see what changed.", words.fixThenReassess(3, "daybed"))
         assertEquals("Back to the daybed", words.backToPiece("daybed"))
+        // A piece with no name of its own: its kind, or "the piece" for something else; in
+        // Kiswahili always the word for a piece, since the kinds are English.
+        val table = com.qualityverifier.domain.ItemType.WOODEN_TABLE
+        assertEquals(table.homeLabel.lowercase(), words.closingPiece(null, table))
+        assertEquals("piece", words.closingPiece(" ", com.qualityverifier.domain.ItemType.OTHER))
+        assertEquals("Daybed for Wanjiru", words.closingPiece("Daybed for Wanjiru", com.qualityverifier.domain.ItemType.OTHER))
+        assertEquals("kipande", FundiLabels.SWAHILI.closingPiece(null, com.qualityverifier.domain.ItemType.WOODEN_TABLE))
         // One improvement reads as one.
         assertEquals("That's the one improvement", words.thatsAll(1))
         assertEquals("Fix it, then re-assess the daybed to see what changed.", words.fixThenReassess(1, "daybed"))

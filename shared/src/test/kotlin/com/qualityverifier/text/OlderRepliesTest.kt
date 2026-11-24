@@ -78,11 +78,49 @@ class OlderRepliesTest {
     }
 
     @Test
+    fun `row 54 - a defect one finding took by title is not given to another by place`() {
+        // Same length, so place could decide; but the defect at "Rough edges"'s place is the
+        // gap, which "Gap at the back joint" already took by title.
+        val oldest = Diagnosis(findings = listOf(Finding(title = "Gap at the back joint"), Finding(title = "Rough edges")))
+        val verdict = Verdict(
+            defects = listOf(
+                Defect(title = "Rough edges on top", whatToDo = "Sand to 180."),
+                Defect(title = "Gap at the back joint", whatToDo = "Re-glue the joint."),
+            ),
+        )
+        val list = olderReplyAsList(verdict, oldest)
+        assertEquals("Re-glue the joint.", list.findings[0].fixLine)
+        assertEquals("", list.findings[1].fixLine)
+    }
+
+    @Test
+    fun `row 54 - two findings of one title do not share the second defect's fix`() {
+        val oldest = Diagnosis(findings = listOf(Finding(title = "Loose joint"), Finding(title = "Loose joint")))
+        val verdict = Verdict(
+            defects = listOf(
+                Defect(title = "Loose joint", whatToDo = "Glue the front joint."),
+                Defect(title = "Loose joint", whatToDo = "Glue the back joint."),
+            ),
+        )
+        val list = olderReplyAsList(verdict, oldest)
+        assertEquals(listOf("Glue the front joint.", "Glue the back joint."), list.findings.map { it.fixLine })
+    }
+
+    @Test
+    fun `row 54 - what I see answers "More on what we found" where nothing else is stored`() {
+        val oneList = Diagnosis(
+            findings = listOf(Finding(title = "Gap", whatISee = "A 3 mm gap at the back.", whatToDo = "Re-glue it.")),
+        )
+        assertEquals("A 3 mm gap at the back.", olderReplyAsList(null, oneList).findings.single().whatHappened)
+    }
+
+    @Test
     fun `row 54 - drawing an older reply makes no Claude call`() {
         // The mapping is a pure function in :shared, which has no network client, and every
         // line it draws is a line already in the stored reply: nothing is written for it.
+        // (The screen asks Claude only when the maker taps a detail with nothing stored.)
         val list = olderReplyAsList(null, older)
-        val stored = older.findings.flatMap { listOf(it.title, it.whatHappened, it.manufacturingCause, it.rootHabit, it.whatItMeans, it.whatToDo) }
+        val stored = older.findings.flatMap { listOf(it.title, it.whatHappened, it.manufacturingCause, it.rootHabit, it.whatISee, it.whatItMeans, it.whatToDo) }
             .filter { it.isNotBlank() }
             .toSet()
         val drawn = list.findings.flatMap { listOf(it.title, it.customerLine, it.fixLine, it.rowLine, it.toolLine, it.whatHappened, it.manufacturingCause, it.rootHabit) }

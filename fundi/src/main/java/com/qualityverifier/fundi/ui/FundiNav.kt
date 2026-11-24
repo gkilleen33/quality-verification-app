@@ -696,6 +696,11 @@ fun FundiNav() {
                 pieceMine = !theirs,
                 givenLabel = givenLabel,
                 presetStudio = Routes.studioOf(entry.arguments?.getString("studio")),
+                // "Back to the <piece>" on the closing screen (row 56): the piece's page, also
+                // when this final assessment was opened from Send report on top of it.
+                onBackToPiece = {
+                    if (!navController.popBackStack(Routes.PIECE, inclusive = false)) navController.popBackStack()
+                },
                 // "Send report" on the closing screen (row 56). The assessment leaves the stack
                 // first, so that after sharing the piece's page under Send report shows its
                 // green box. A final assessment opened from Send report goes back to it.
