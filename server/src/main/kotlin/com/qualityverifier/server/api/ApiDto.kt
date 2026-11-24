@@ -530,6 +530,18 @@ data class ApiTrackerTransaction(
     @SerialName("counterparty_code") val counterpartyCode: String?,
     /** `phone` or `name`: what the code was computed from. */
     @SerialName("counterparty_basis") val counterpartyBasis: String?,
+    /**
+     * V42: the HMAC of the other person's normalised name, under the same key; null when the
+     * row named nobody, or came before V42 or from a phone that did not send the name.
+     */
+    @SerialName("counterparty_name_code") val counterpartyNameCode: String?,
+    /**
+     * V42: the HMAC of the number cut to what money received shows ("0720***123"); null when
+     * the row had no number, or came before V42 or from PesaLog 0.1.0 on money received. Same
+     * person: equal `counterparty_code` with basis `phone`, or equal name code and equal
+     * masked-number code (docs/data-api.md, "PesaLog").
+     */
+    @SerialName("counterparty_masked_code") val counterpartyMaskedCode: String?,
     @SerialName("parser_version") val parserVersion: Int,
     @SerialName("app_version") val appVersion: Int,
     /** The server's clock, at the first upload. */

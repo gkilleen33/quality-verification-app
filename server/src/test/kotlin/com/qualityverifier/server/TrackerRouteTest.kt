@@ -9,10 +9,14 @@ import com.qualityverifier.domain.CounterpartyBasis
 import com.qualityverifier.domain.MobileMoneyNetwork
 import com.qualityverifier.domain.MpesaCategory
 import com.qualityverifier.domain.VersionPolicy
+import com.qualityverifier.mpesa.NotificationMessage
+import com.qualityverifier.mpesa.TrackerIntake
+import com.qualityverifier.mpesa.TrackerReading
 import com.qualityverifier.server.TermsWorld.Companion.appVersion
 import com.qualityverifier.server.TermsWorld.Companion.signedInAs
 import com.qualityverifier.server.db.UserRow
 import com.qualityverifier.server.mpesa.CounterpartyCoder
+import com.qualityverifier.server.routes.TrackerTransactionDto
 import com.qualityverifier.server.terms.ConsentAction
 import com.qualityverifier.server.terms.ConsentKind
 import com.qualityverifier.server.terms.TermsGate
@@ -726,6 +730,293 @@ class TrackerRouteTest {
         assertTrue("expected the refusal to be logged", logged.contains("/v1/tracker/transactions"))
         listOf("0712345678", "0799111222", "JANE").forEach { assertFalse("$it reached the log:\n$logged", logged.contains(it)) }
         assertTrue(store.transactions.isEmpty())
+    }
+
+    // ------------------------------------------------------------ row 32: three codes (V42)
+
+    /** A row as PesaLog 0.2.0 sends it: the name with the number, or the name with the masked number. */
+    private fun transaction02(
+        code: String,
+        direction: String,
+        type: String,
+        name: String?,
+        phone: String? = null,
+        masked: String? = null,
+        network: String = "mpesa",
+    ): String = buildString {
+        append("""{"network":"$network","code":"$code","direction":"$direction","type":"$type","amount_kes":500.0,""")
+        append(""""occurred_at":1762934400000,""")
+        if (phone != null) append(""""counterparty_phone":"$phone",""")
+        if (name != null) append(""""counterparty_name":"$name",""")
+        if (masked != null) append(""""counterparty_masked":"$masked",""")
+        append(""""parser_version":2}""")
+    }
+
+    private fun stored(code: String) = store.transactions.values.single { it.code == code }
+
+    @Test
+    fun `row 32 - a send and a receipt from the same person get equal name and masked-number codes`() = testApplication {
+        val world = TermsWorld()
+        val client = world.mountTracker(this)
+        client.agreeToAll(world)
+
+        // "JANE DOE 0720456123" on money sent, "jane  doe 0720***123" on money received: the
+        // names differ only in case and spaces.
+        val response = client.upload(
+            world,
+            transaction02("SFA1B2C3D5", "out", "send", name = "JANE DOE", phone = "254720456123"),
+            transaction02("UINRL7DIVX", "in", "receive", name = "jane  doe", masked = "0720***123"),
+        )
+
+        assertEquals(HttpStatusCode.OK, response.status)
+        val send = stored("SFA1B2C3D5")
+        val receipt = stored("UINRL7DIVX")
+        assertTrue(send.counterpartyNameCode != null && send.counterpartyMaskedCode != null)
+        assertEquals(send.counterpartyNameCode, receipt.counterpartyNameCode)
+        assertEquals(send.counterpartyMaskedCode, receipt.counterpartyMaskedCode)
+        // The code each has always had is unchanged: the number for the send, the name for the receipt.
+        assertEquals(coder.code("0720456123", null), send.counterparty)
+        assertEquals(coder.code(null, "JANE DOE"), receipt.counterparty)
+    }
+
+    @Test
+    fun `row 32 - a different name with the same masked number gets a different name code`() = testApplication {
+        val world = TermsWorld()
+        val client = world.mountTracker(this)
+        client.agreeToAll(world)
+
+        client.upload(
+            world,
+            transaction02("UINRL7DIVX", "in", "receive", name = "JANE DOE", masked = "0720***123"),
+            transaction02("UINRL7DIVY", "in", "receive", name = "JOHN DOE", masked = "0720***123"),
+        )
+
+        assertEquals(stored("UINRL7DIVX").counterpartyMaskedCode, stored("UINRL7DIVY").counterpartyMaskedCode)
+        assertTrue(stored("UINRL7DIVX").counterpartyNameCode != stored("UINRL7DIVY").counterpartyNameCode)
+    }
+
+    /**
+     * Every path a payment's name or number could reach the server's records: the stored rows,
+     * the upload's log lines, a refused row, a masked value of the wrong shape, and a database
+     * error carrying the row back in its message.
+     */
+    @Test
+    fun `row 32 - no plain name or number appears in any stored row or log line`() = testApplication {
+        val world = TermsWorld()
+        val client = world.mountTracker(this)
+        client.agreeToAll(world)
+        val root = LoggerFactory.getLogger(org.slf4j.Logger.ROOT_LOGGER_NAME) as Logger
+        val events = ListAppender<ILoggingEvent>().apply { start() }
+        root.addAppender(events)
+        try {
+            client.upload(
+                world,
+                // Names unlike TermsWorld's account names, which a log line may carry legitimately.
+                transaction02("SFA1B2C3D5", "out", "send", name = "MUTHONI NJERI", phone = "254720456123"),
+                transaction02("UINRL7DIVX", "in", "receive", name = "Muthoni  Njeri", masked = "0720***123"),
+                // Masked value of the wrong shape: stored with no masked-number code, never echoed.
+                transaction02("UINRL7DIVY", "in", "receive", name = "CHEPKOECH ROTICH", masked = "0799 111 222 ROTICH"),
+                // Refused (unknown network), with a name and number in it.
+                transaction02("UINRL7DIVZ", "in", "receive", name = "AKINYI ATIENO", masked = "0711***999", network = "tkash"),
+            )
+            store.failNextInsert = java.sql.SQLException("Failing row contains (MUTHONI NJERI, 0720***123)", "23514")
+            client.upload(world, transaction02("SFA1B2C3E1", "out", "send", name = "MUTHONI NJERI", phone = "254720456123"))
+        } finally {
+            root.detachAppender(events)
+        }
+
+        assertEquals(3, store.transactions.size)
+        assertEquals(null, stored("UINRL7DIVY").counterpartyMaskedCode)
+        val logged = events.list.joinToString("\n") {
+            it.formattedMessage + (it.throwableProxy?.message ?: "") + (it.throwableProxy?.cause?.message ?: "")
+        }
+        assertTrue("expected the uploads to be logged:\n$logged", logged.contains("PesaLog upload for"))
+        val plain = listOf(
+            "MUTHONI", "muthoni", "Muthoni", "NJERI", "njeri", "CHEPKOECH", "chepkoech", "ROTICH", "rotich",
+            "AKINYI", "akinyi",
+            "720456123", "0720", "***", "456123", "0799", "111 222", "0711",
+        )
+        val rows = store.transactions.values.joinToString("\n") { it.toString() }
+        plain.forEach {
+            assertFalse("'$it' is in a stored row:\n$rows", rows.contains(it))
+            assertFalse("'$it' reached the log:\n$logged", logged.contains(it))
+        }
+    }
+
+    @Test
+    fun `row 32 - a PesaLog 0_1_0 upload without the masked field still succeeds`() = testApplication {
+        val world = TermsWorld()
+        val client = world.mountTracker(this)
+        client.agreeToAll(world)
+
+        // As 0.1.0 sends them: the number and no name on money sent, the name and no masked
+        // number on money received.
+        val response = client.upload(
+            world,
+            transaction(code = "SFA1B2C3D5", phone = "254720456123", name = null),
+            transaction(code = "UINRL7DIVX", direction = "in", type = "receive", phone = null, name = "JANE DOE"),
+        )
+
+        assertEquals(HttpStatusCode.OK, response.status)
+        val body = Json.parseToJsonElement(response.bodyAsText()).jsonObject
+        assertEquals(2, body["inserted"]!!.jsonPrimitive.int)
+        // The codes the server can make from what it has.
+        val send = stored("SFA1B2C3D5")
+        assertEquals(CounterpartyBasis.PHONE, send.counterparty?.basis)
+        assertEquals(null, send.counterpartyNameCode)
+        assertTrue(send.counterpartyMaskedCode != null)
+        val receipt = stored("UINRL7DIVX")
+        assertEquals(CounterpartyBasis.NAME, receipt.counterparty?.basis)
+        assertEquals(receipt.counterparty?.code, receipt.counterpartyNameCode)
+        assertEquals(null, receipt.counterpartyMaskedCode)
+    }
+
+    @Test
+    fun `row 32 - Fundi Bora rows from v0_5_0 phones get the codes the server can make`() = testApplication {
+        val world = TermsWorld()
+        val client = world.mountTracker(this)
+        assertEquals(HttpStatusCode.NoContent, client.agreeTo(world, "mpesa_read").status)
+        assertEquals(HttpStatusCode.NoContent, client.agreeTo(world, "mpesa_send").status)
+        fun mpesaRow(code: String, direction: String, type: String, phone: String?, name: String?) =
+            transaction(code = code, direction = direction, type = type, phone = phone, name = name)
+                .replace(""""network":"mpesa",""", "")
+
+        val response = client.post("/v1/fundi/mpesa/transactions") {
+            signedInAs(world.fundi)
+            appVersion(6)
+            contentType(ContentType.Application.Json)
+            setBody(
+                """{"transactions":[${mpesaRow("SFA1B2C3D5", "out", "send", "254720456123", null)},""" +
+                    """${mpesaRow("UINRL7DIVX", "in", "receive", null, "JANE DOE")}]}""",
+            )
+        }
+
+        assertEquals(HttpStatusCode.OK, response.status)
+        val send = mpesaStore.transactions.values.single { it.code == "SFA1B2C3D5" }
+        val receipt = mpesaStore.transactions.values.single { it.code == "UINRL7DIVX" }
+        assertEquals(coder.codes("254720456123", null, null).maskedCode, send.counterpartyMaskedCode)
+        assertEquals(null, send.counterpartyNameCode)
+        assertEquals(coder.codes(null, "JANE DOE", null).nameCode, receipt.counterpartyNameCode)
+        assertEquals(null, receipt.counterpartyMaskedCode)
+    }
+
+    /** PesaLog's own Json (TrackerContainer): a null field is left out of the body. */
+    private val phoneJson = Json {
+        ignoreUnknownKeys = true
+        encodeDefaults = true
+        explicitNulls = false
+    }
+
+    /**
+     * One M-Pesa SMS through PesaLog 0.2.0's whole path to the wire: TrackerIntake reads it as
+     * the notification listener hands it over, and the record becomes an upload row field for
+     * field as TrackerRepository's toEntity and TrackerClient's toBody copy it. The server's
+     * DTO carries the same serial names as TrackerClient's TransactionBody.
+     */
+    private fun asPesaLogSends(sms: String): String {
+        val agreedAt = 1_762_000_000_000
+        val message = NotificationMessage(MobileMoneyNetwork.MPESA, "MPESA", sms, receivedAt = 1_762_934_400_000)
+        val reading = TrackerIntake.read(message, agreedAt)
+        assertTrue("not read as a payment: $reading", reading is TrackerReading.Read)
+        val (network, record) = (reading as TrackerReading.Read).record
+        val row = TrackerTransactionDto(
+            network = network.id,
+            code = record.code,
+            direction = record.direction.id,
+            type = record.type.id,
+            amountKes = record.amountKes,
+            feeKes = record.feeKes,
+            balanceAfterKes = record.balanceAfterKes,
+            occurredAt = record.occurredAt,
+            counterpartyPhone = record.counterpartyPhone,
+            counterpartyName = record.counterpartyName,
+            counterpartyMasked = record.counterpartyMasked,
+            parserVersion = TrackerIntake.PARSER_VERSION,
+        )
+        return phoneJson.encodeToString(TrackerTransactionDto.serializer(), row)
+    }
+
+    @Test
+    fun `row 32 - a real M-Pesa send and receipt from the same person match by name and masked-number codes`() = testApplication {
+        val world = TermsWorld()
+        val client = world.mountTracker(this)
+        client.agreeToAll(world)
+        // Worded as MobileMoneyParserTest's real samples: the send prints the whole number, the
+        // receipt only "0720***123", and the receipt's name in another case and spacing.
+        val sendSms = "SFA1B2C3D5 Confirmed. Ksh500.00 sent to JANE DOE 0720456123 on 9/9/26 at 10:15 AM. " +
+            "New M-PESA balance is Ksh10.00. Transaction cost, Ksh7.00."
+        val receiptSms = "UINRL7DIVX Confirmed.You have received Ksh300.00 from jane  doe 0720***123 on 23/9/26 " +
+            "at 9:30 AM New M-PESA balance is Ksh310.00."
+
+        val sendBody = asPesaLogSends(sendSms)
+        val receiptBody = asPesaLogSends(receiptSms)
+        // What 0.2.0 puts on the wire: the name beside the full number on the send, the name
+        // beside the masked number on the receipt.
+        val sendFields = Json.parseToJsonElement(sendBody).jsonObject
+        val receiptFields = Json.parseToJsonElement(receiptBody).jsonObject
+        assertTrue(sendBody, "counterparty_phone" in sendFields && "counterparty_name" in sendFields)
+        assertFalse(sendBody, "counterparty_masked" in sendFields)
+        assertEquals("0720***123", receiptFields["counterparty_masked"]!!.jsonPrimitive.content)
+        assertTrue(receiptBody, "counterparty_name" in receiptFields)
+        assertFalse(receiptBody, "counterparty_phone" in receiptFields)
+
+        val response = client.upload(world, sendBody, receiptBody)
+
+        assertEquals(HttpStatusCode.OK, response.status)
+        val send = stored("SFA1B2C3D5")
+        val receipt = stored("UINRL7DIVX")
+        assertTrue(send.counterpartyNameCode != null && send.counterpartyMaskedCode != null)
+        assertEquals(send.counterpartyNameCode, receipt.counterpartyNameCode)
+        assertEquals(send.counterpartyMaskedCode, receipt.counterpartyMaskedCode)
+        // The code from the full number is on the send only; the receipt's is made from its name.
+        assertEquals(coder.code("0720456123", null), send.counterparty)
+        assertEquals(CounterpartyBasis.PHONE, send.counterparty?.basis)
+        assertEquals(CounterpartyBasis.NAME, receipt.counterparty?.basis)
+        assertTrue(send.counterparty != receipt.counterparty)
+    }
+
+    // ------------------------------------------------------------ row 33: the consent wording
+
+    private suspend fun HttpClient.agreeToVersion(world: TermsWorld, kind: String, version: String, sha: String) =
+        post("/v1/me/consents") {
+            signedInAs(world.fundi)
+            appVersion(1)
+            contentType(ContentType.Application.Json)
+            setBody("""{"version":"$version","language":"en","text_sha256":"$sha","kinds":["$kind"]}""")
+        }
+
+    @Test
+    fun `row 33 - an agreement to the old consent wording still checks`() = testApplication {
+        val world = TermsWorld()
+        val client = world.mountTracker(this)
+        assertEquals(HttpStatusCode.NoContent, client.agreeToTrackerTerms(world).status)
+        val old = TrackerConsentText.VERSION_2026_11
+
+        // What a PesaLog 0.1.0 phone sends: the 2026-11 label and the hash of the words it shows.
+        listOf("tracker_read", "tracker_send").forEach { kind ->
+            val sha = TrackerConsentText.published.getValue(Triple(kind, old, "en"))
+            assertEquals(kind, HttpStatusCode.NoContent, client.agreeToVersion(world, kind, old, sha).status)
+        }
+
+        assertEquals(listOf(old, old), world.consents.rows.takeLast(2).map { it.agreement?.version })
+        assertEquals(HttpStatusCode.OK, client.upload(world, transaction()).status)
+        assertEquals(1, store.transactions.size)
+    }
+
+    @Test
+    fun `row 33 - the new wording is recorded under its own label, and a mixed label and hash is refused`() = testApplication {
+        val world = TermsWorld()
+        val client = world.mountTracker(this)
+        client.agreeToAll(world)
+
+        assertEquals(TrackerConsentText.VERSION, world.consents.rows.last().agreement?.version)
+        assertEquals(TrackerConsentText.sha256Of(TrackerConsentText.SEND), world.consents.rows.last().agreement?.textSha256)
+        // The new wording's hash under the old label is no text any phone showed.
+        val newHash = TrackerConsentText.sha256Of(TrackerConsentText.SEND)
+        assertEquals(
+            HttpStatusCode.Conflict,
+            client.agreeToVersion(world, "tracker_send", TrackerConsentText.VERSION_2026_11, newHash).status,
+        )
     }
 
     @Test

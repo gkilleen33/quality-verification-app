@@ -96,6 +96,33 @@ class TermsTextTest {
         assertTrue(index.any { it.app == TermsApp.TRACKER.id && it.version == version && it.language == "en" })
     }
 
+    /**
+     * Row 33: PesaLog's terms carry, in their lists of what is kept and what is sent, the two
+     * sentences the questions carry (TrackerConsentText), and the earlier text stays listed for
+     * the agreements already made to it.
+     */
+    @Test
+    fun `row 33 - PesaLog's current terms say what the questions say, and never call the codes encrypted`() {
+        val text = File(folder, "${TermsApp.TRACKER.id}/${TrackerConsentText.TERMS_VERSION}/en.md").readText()
+        val kept = text.substringAfter("**Kept on your phone").substringBefore("**Sent to")
+        val sent = text.substringAfter("**Sent to DIL's server").substringBefore("## 6.")
+        assertTrue(
+            kept.contains(
+                "PesaLog keeps the name and number only to show you who each payment was with, so you can " +
+                    "follow how your business is doing",
+            ),
+        )
+        assertTrue(
+            sent.contains(
+                "PesaLog sends the other person's name or number to the server so that the server can replace " +
+                    "them with secure codes, made from the name, the number, and part of the number. The server " +
+                    "never stores the real name or phone number",
+            ),
+        )
+        assertTrue("the codes are called encrypted", !(kept + sent).contains("encrypt", ignoreCase = true))
+        assertTrue(index.any { it.app == TermsApp.TRACKER.id && it.version == "2026-11" })
+    }
+
     @Test
     fun `every app named in the index is one the server knows`() {
         index.forEach { assertNotNull("unknown app ${it.app}", TermsApp.fromId(it.app)) }

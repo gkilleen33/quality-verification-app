@@ -58,7 +58,9 @@ class TrackerContainer(
         .build()
 
     private val database: TrackerDatabase =
-        Room.databaseBuilder(appContext, TrackerDatabase::class.java, TrackerDatabase.NAME).build()
+        Room.databaseBuilder(appContext, TrackerDatabase::class.java, TrackerDatabase.NAME)
+            .addMigrations(*TrackerDatabase.MIGRATIONS)
+            .build()
 
     private val prefs = TrackerPreference(appContext)
 

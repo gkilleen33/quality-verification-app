@@ -251,6 +251,10 @@ private fun TrackerTransactionDto.toRow(appVersion: Int, coder: CounterpartyCode
     val balance = balanceAfterKes?.takeIf { it.isFinite() && kotlin.math.abs(it) < MAX_AMOUNT.toDouble() }
         ?.let { BigDecimal.valueOf(it).setScale(2, RoundingMode.HALF_UP) }
     if (occurredAt !in EARLIEST_MILLIS..LATEST_MILLIS || parserVersion <= 0) return null
+    // The same coder, key and rules as Fundi Bora's M-Pesa rows, so a number or name has one
+    // code in both tables. A masked number that is not the shape M-Pesa prints gives no
+    // masked-number code; the payment itself is still stored.
+    val codes = coder.codes(counterpartyPhone, counterpartyName, counterpartyMasked)
     return TrackerTransactionRow(
         network = knownNetwork,
         code = knownCode,
@@ -260,9 +264,9 @@ private fun TrackerTransactionDto.toRow(appVersion: Int, coder: CounterpartyCode
         feeKes = fee,
         balanceAfterKes = balance,
         occurredAtMillis = occurredAt,
-        // The same coder, key and rules as Fundi Bora's M-Pesa rows, so a number or name has
-        // one code in both tables.
-        counterparty = coder.code(counterpartyPhone, counterpartyName),
+        counterparty = codes.code,
+        counterpartyNameCode = codes.nameCode,
+        counterpartyMaskedCode = codes.maskedCode,
         parserVersion = parserVersion,
         appVersion = appVersion,
     )

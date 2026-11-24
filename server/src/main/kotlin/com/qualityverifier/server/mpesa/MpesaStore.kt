@@ -26,6 +26,9 @@ data class MpesaTransactionRow(
     val balanceAfterKes: BigDecimal?,
     val occurredAtMillis: Long,
     val counterparty: CounterpartyCode?,
+    /** V42's name code and masked-number code (CounterpartyCoder.codes); null when nothing to make one from. */
+    val counterpartyNameCode: String?,
+    val counterpartyMaskedCode: String?,
     val parserVersion: Int,
     val appVersion: Int,
 )
@@ -97,8 +100,9 @@ class PostgresMpesaStore(private val dataSource: DataSource) : MpesaStore {
             """
             insert into mpesa_transactions (
                 user_id, code, direction, tx_type, amount_kes, fee_kes, balance_after_kes,
-                occurred_at, counterparty_code, counterparty_basis, parser_version, app_version
-            ) values (?::uuid, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                occurred_at, counterparty_code, counterparty_basis,
+                counterparty_name_code, counterparty_masked_code, parser_version, app_version
+            ) values (?::uuid, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             on conflict (user_id, code) do nothing
             """.trimIndent()
         ).use { statement ->
@@ -113,8 +117,10 @@ class PostgresMpesaStore(private val dataSource: DataSource) : MpesaStore {
                 statement.setTimestamp(8, Timestamp(row.occurredAtMillis))
                 statement.setString(9, row.counterparty?.code)
                 statement.setString(10, row.counterparty?.basis?.id)
-                statement.setInt(11, row.parserVersion)
-                statement.setInt(12, row.appVersion)
+                statement.setString(11, row.counterpartyNameCode)
+                statement.setString(12, row.counterpartyMaskedCode)
+                statement.setInt(13, row.parserVersion)
+                statement.setInt(14, row.appVersion)
                 statement.addBatch()
             }
             // A conflict counts 0, so the sum is the number of new rows.

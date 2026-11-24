@@ -26,6 +26,11 @@ data class MpesaRecord(
     val counterpartyName: String?,
     /** "254712345678" when the message prints the number in full; M-Pesa masks it on money in. */
     val counterpartyPhone: String?,
+    /**
+     * The masked number as the message printed it on money in ("0720***123"). PesaLog keeps
+     * and sends it (V42, row 32); Fundi Bora's reader leaves it null.
+     */
+    val counterpartyMasked: String? = null,
 )
 
 /** What one SMS amounts to, by [MpesaIntake.read]. */

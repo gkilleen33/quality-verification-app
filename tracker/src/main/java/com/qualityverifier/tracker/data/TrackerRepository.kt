@@ -284,6 +284,7 @@ private fun TrackerRecord.toEntity(storedAt: Long) = TransactionEntity(
     counterpartyPhone = record.counterpartyPhone,
     parserVersion = TrackerIntake.PARSER_VERSION,
     storedAt = storedAt,
+    counterpartyMasked = record.counterpartyMasked,
 )
 
 /** Null for a row a later build wrote with a vocabulary this one does not know. */
@@ -298,6 +299,7 @@ private fun TransactionEntity.toEntry(): TrackerEntry? {
         occurredAt = occurredAt,
         counterpartyName = counterpartyName,
         counterpartyPhone = counterpartyPhone,
+        counterpartyMasked = counterpartyMasked,
     )
     val network = MobileMoneyNetwork.fromId(network) ?: return null
     return TrackerEntry(network, MpesaEntry(record, MpesaCategory.fromId(category), pieceId = null, comment = comment))

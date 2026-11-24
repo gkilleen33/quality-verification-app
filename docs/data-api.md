@@ -54,7 +54,7 @@ milliseconds throughout.
 | `GET /translations` | every translation of a Fundi Bora reply (V41), made when the fundi first switched the assessment between English and Kiswahili: `id`, `session_id`, `message_id` (the first stored reply with that text), `source_sha256` (SHA-256 of the original reply's text), `language` (`en` or `sw`, the language translated into), `translated_text`, `model`, `prompt_sha` (of `prompts/fundi-translate.txt`; part of the row's key, so a new prompt writes a new row), `usage_event_id`, `created_at`. See "Translations" below |
 | `GET /bench-photos` | each bench photo taken at Fundi Bora setup (V35): `id`, `user_id`, `sha256`, `latitude`, `longitude` and `location_accuracy_m` (null unless the fundi allowed location), `taken_at`, the `draft` tool list Claude made from it, `prompt_sha`, `model` |
 | `GET /reports` | every PDF report the server issued (V32): `piece_id` or `worker_id`, `kind`, `session_ids`, `parts`, `defect_refs`, `defect_snapshot`, `sha256`, `byte_size`, `issued_at` |
-| `GET /tracker-transactions` | every PesaLog transaction (V33), oldest first: `user_id`, `network`, `code`, `direction`, `type`, amounts, `occurred_at`, `counterparty_code` and `counterparty_basis`, `category`, `comment` |
+| `GET /tracker-transactions` | every PesaLog transaction (V33), oldest first: `user_id`, `network`, `code`, `direction`, `type`, amounts, `occurred_at`, `counterparty_code` and `counterparty_basis`, `counterparty_name_code` and `counterparty_masked_code` (V42; see "PesaLog" below for the matching rule), `category`, `comment` |
 | `GET /tracker-unread-counts` | per PesaLog account, `network` and `day`, how many mobile money messages the phone could not read |
 | `GET /tracker-deletions` | each deletion a person asked for from PesaLog: `user_id`, `deleted_at`, and how many rows went |
 | `GET /photos/{sha256}` | the JPEG bytes |
@@ -264,6 +264,44 @@ both apps and across accounts; the number or name itself was never stored.
 
 - A `code` is unique per account and `network`; an M-Pesa code and an Airtel Money id can
   coincide.
+
+### Matching a payment sent with a payment received (V42)
+
+M-Pesa prints the other person's full number on money sent ("JANE DOE 0720456123") and a
+masked one on money received from a person ("JANE DOE 0720***123"). `counterparty_code` is
+made from the full number when there is one and from the name otherwise, so a send to Jane
+and a receipt from Jane have two unrelated `counterparty_code`s. From V42 each row also
+carries two more codes, under the same key, so the two can be matched:
+
+| Field | An HMAC of | Null when |
+|---|---|---|
+| `counterparty_name_code` | the name, trimmed, lower-cased, and with each run of spaces made one ("name:jane doe") | the payment names nobody, or the phone did not send the name |
+| `counterparty_masked_code` | the number cut to what money received shows: the first four and last three digits of the local form ("masked:0720***123"), from a full number or a masked one | the payment carries no Kenyan mobile number, full or masked |
+
+**The matching rule.** Two payments are with the same person when
+
+1. their `counterparty_code`s are equal and both have `counterparty_basis` = `phone`, or
+2. their `counterparty_name_code`s are equal **and** their `counterparty_masked_code`s are equal.
+
+Neither new code alone identifies a person: about a thousand real numbers share any one
+masked number, and namesakes share a name. The server stores the codes and computes no
+match; the rule is applied in the analysis. A `counterparty_name_code` equals the
+`counterparty_code` of a row coded from the same name (basis `name`), since both are made
+from the same input.
+
+What each phone sends, and so which codes its rows have:
+
+- **PesaLog 0.2.0 and later** sends the name and the number on money sent, and the name and
+  the masked number on money received. A send and a receipt with the same person both get a
+  name code and a masked-number code, so rule 2 matches them.
+- **PesaLog 0.1.0** sends the number and not the name on money sent, and the name and not
+  the masked number on money received. Its sends get a masked-number code and no name code;
+  its receipts a name code and no masked-number code. Rule 2 never matches its rows.
+- **Rows stored before V42** have neither new code. They cannot be back-filled: the server
+  never kept the name or number to make them from.
+
+Fundi Bora's own M-Pesa records (`mpesa_transactions`, V29) get the same two columns, by the
+same rules; a v0.5.0 phone sends what PesaLog 0.1.0 sends. They have no data API route yet.
 - A person can delete their PesaLog rows from the app's Settings. Their transactions and
   unread counts then disappear from these routes, and `/tracker-deletions` gains a row
   saying when and how many.

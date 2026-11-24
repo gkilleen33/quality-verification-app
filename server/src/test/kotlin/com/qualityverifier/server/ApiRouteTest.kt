@@ -613,6 +613,7 @@ class ApiRouteTest {
                         id = 7, userId = API_USER.id, network = "airtel", code = "P3RAIQM1E4N",
                         direction = "out", type = "send", amountKes = 20.0, feeKes = null, balanceAfterKes = 170.0,
                         occurredAt = 1_762_934_400_000, counterpartyCode = code, counterpartyBasis = "phone",
+                        counterpartyNameCode = "d".repeat(64), counterpartyMaskedCode = "e".repeat(64),
                         parserVersion = 2, appVersion = 1, receivedAt = 1_762_934_500_000,
                         category = "wages", comment = null, annotatedAt = null,
                     ),
@@ -627,6 +628,9 @@ class ApiRouteTest {
             val transactions = app.get("/api/v1/tracker-transactions?limit=10") { key(keys.anyKey()) }.bodyAsText()
             assertTrue(transactions.contains("\"network\":\"airtel\""))
             assertTrue(transactions.contains("\"counterparty_code\":\"$code\""))
+            // Row 32 (V42): the name code and the masked-number code beside it.
+            assertTrue(transactions.contains("\"counterparty_name_code\":\"${"d".repeat(64)}\""))
+            assertTrue(transactions.contains("\"counterparty_masked_code\":\"${"e".repeat(64)}\""))
             assertTrue(transactions.contains("\"has_more\":false"))
             assertEquals(11, store.lastLimit)
             assertEquals("/api/v1/tracker-transactions", admin.audits.last().target)

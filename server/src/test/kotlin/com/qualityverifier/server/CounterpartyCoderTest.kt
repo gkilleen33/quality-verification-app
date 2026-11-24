@@ -2,6 +2,7 @@ package com.qualityverifier.server
 
 import com.qualityverifier.domain.CounterpartyBasis
 import com.qualityverifier.server.mpesa.CounterpartyCoder
+import com.qualityverifier.server.mpesa.CounterpartyCodes
 import com.qualityverifier.text.sha256Hex
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -92,5 +93,80 @@ class CounterpartyCoderTest {
     @Test
     fun `the key is not in toString`() {
         assertFalse(coder.toString().contains("kkkk"))
+    }
+
+    // ------------------------------------------------------------ row 32: three codes (V42)
+
+    /** "JANE DOE 0720456123" on money sent; "jane  doe 0720***123" on money received. */
+    private val send = coder.codes(phone = "254720456123", name = "JANE DOE", masked = null)
+    private val receipt = coder.codes(phone = null, name = " jane  doe ", masked = "0720***123")
+
+    @Test
+    fun `row 32 - a send and a receipt from the same person get equal name and masked-number codes`() {
+        assertEquals(send.nameCode, receipt.nameCode)
+        assertEquals(send.maskedCode, receipt.maskedCode)
+        listOf(send.nameCode, send.maskedCode).forEach { assertTrue(Regex("^[0-9a-f]{64}$").matches(it!!)) }
+        // And their old codes still differ: one from the number, one from the name.
+        assertEquals(CounterpartyBasis.PHONE, send.code?.basis)
+        assertEquals(CounterpartyBasis.NAME, receipt.code?.basis)
+        assertNotEquals(send.code, receipt.code)
+    }
+
+    @Test
+    fun `row 32 - a different name with the same masked number gets a different name code`() {
+        val namesake = coder.codes(phone = null, name = "JOHN DOE", masked = "0720***123")
+        assertEquals(receipt.maskedCode, namesake.maskedCode)
+        assertNotEquals(receipt.nameCode, namesake.nameCode)
+    }
+
+    @Test
+    fun `row 32 - a different number behind the same name gets a different masked-number code`() {
+        val other = coder.codes(phone = "0733456123", name = "JANE DOE", masked = null)
+        assertEquals(send.nameCode, other.nameCode)
+        assertNotEquals(send.maskedCode, other.maskedCode)
+    }
+
+    @Test
+    fun `row 32 - the existing code is the same with or without the new inputs`() {
+        assertEquals(coder.code("254720456123", "JANE DOE"), send.code)
+        assertEquals(coder.code("254720456123", null), send.code)
+        assertEquals(coder.code(null, "jane doe"), receipt.code)
+        // A name code is the code a row coded by that name has always had.
+        assertEquals(receipt.code?.code, receipt.nameCode)
+    }
+
+    @Test
+    fun `row 32 - every printed form of one masked number, and every form of the full number, is one key`() {
+        listOf("0720***123", "254720***123", "+254720***123", " 0720***123 ").forEach {
+            assertEquals(it, "0720***123", CounterpartyCoder.maskedKey(null, it))
+        }
+        listOf("0720456123", "254720456123", "+254720456123", "0720 456 123").forEach {
+            assertEquals(it, "0720***123", CounterpartyCoder.maskedKey(it, null))
+        }
+        // A full number wins over a masked one.
+        assertEquals("0733***456", CounterpartyCoder.maskedKey("0733000456", "0720***123"))
+    }
+
+    @Test
+    fun `row 32 - a masked value that is not what M-Pesa prints gives no masked-number code`() {
+        listOf("JANE DOE", "0720456123", "0720***", "***123", "0720-123", "0720***123 JANE", "0" + "7".repeat(30) + "***123", "")
+            .forEach { assertNull(it, coder.codes(phone = null, name = null, masked = it).maskedCode) }
+        // A foreign number has no M-Pesa masked form.
+        assertNull(coder.codes(phone = "+255712345678", name = null, masked = null).maskedCode)
+    }
+
+    @Test
+    fun `row 32 - a name, a number and a masked number never share a code`() {
+        val asName = coder.codes(phone = null, name = "0720***123", masked = null).nameCode
+        val asMasked = coder.codes(phone = null, name = null, masked = "0720***123").maskedCode
+        val asPhone = coder.codes(phone = "0720456123", name = null, masked = null)
+        assertNotEquals(asName, asMasked)
+        assertNotEquals(asPhone.code?.code, asPhone.maskedCode)
+    }
+
+    @Test
+    fun `row 32 - nothing to code gives no codes`() {
+        assertEquals(CounterpartyCodes(null, null, null), coder.codes(null, null, null))
+        assertEquals(CounterpartyCodes(null, null, null), coder.codes(null, "   ", null))
     }
 }

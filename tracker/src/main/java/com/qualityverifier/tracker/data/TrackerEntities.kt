@@ -36,6 +36,12 @@ data class TransactionEntity(
     val comment: String? = null,
     val annotatedAt: Long? = null,
     val annotationSyncedAt: Long? = null,
+    /**
+     * The masked number as M-Pesa printed it on money received ("0720***123"), from 0.2.0
+     * (database version 2). Sent with the name so the server can code both (V42, row 32).
+     * Null on rows 0.1.0 stored.
+     */
+    val counterpartyMasked: String? = null,
 )
 
 /** How many mobile money messages from one network, on one Nairobi day, PesaLog could not read. */

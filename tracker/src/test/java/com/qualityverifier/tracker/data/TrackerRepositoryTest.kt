@@ -279,6 +279,20 @@ class TrackerRepositoryTest {
     }
 
     @Test
+    fun `row 32 - a receipt keeps the masked number M-Pesa printed and uploads it with the name`() = runTest {
+        agreeToBoth()
+        val receipt = "UINRL7DIVX Confirmed.You have received Ksh200.00 from JANE DOE 0720***123 on 23/9/26 at 9:30 AM New M-PESA balance is Ksh210.00."
+        repository.take(messagesOf(BuiltNotification(title = "MPESA", text = receipt, time = clock + 1)).single())
+
+        repository.push()
+
+        val sent = api.uploaded.single()
+        assertEquals("JANE DOE", sent.counterpartyName)
+        assertEquals("0720***123", sent.counterpartyMasked)
+        assertEquals(null, sent.counterpartyPhone)
+    }
+
+    @Test
     fun `the server refusing sending turns sending off here`() = runTest {
         agreeToBoth()
         repository.take(messagesOf(BuiltNotification(title = "MPESA", text = send, time = clock + 1)).single())

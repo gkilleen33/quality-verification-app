@@ -135,6 +135,7 @@ object TrackerIntake {
                     occurredAt = at,
                     counterpartyName = tx.counterparty.takeIf { somebody },
                     counterpartyPhone = tx.counterpartyPhone.takeIf { somebody },
+                    counterpartyMasked = tx.counterpartyMasked.takeIf { somebody },
                 ),
             ),
         )
