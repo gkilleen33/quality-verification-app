@@ -52,11 +52,6 @@ class AssessmentSync(
      * from the roster route on every sync, which is a request with no answer worth paying for.
      */
     private val rosterEnabled: Boolean,
-    /**
-     * Fundi Bora's M-Pesa push (MpesaRepository.push), last in [push]. Null in Kagua, which
-     * reads no messages. It sends nothing unless the fundi agreed to sending.
-     */
-    private val mpesa: (suspend () -> Int)? = null,
     /** Fundi Bora's answers to "Which studio are you at today?" (V34). Null in Kagua. */
     private val studioDays: StudioDays? = null,
     /** Fundi Bora testers' "Was this review helpful?" answers (V36). Null in Kagua. */
@@ -236,8 +231,6 @@ class AssessmentSync(
         val reviews: Int,
         val names: Int,
         val rosterWrites: Int,
-        /** M-Pesa transactions, notes and unread days the server confirmed. */
-        val mpesa: Int = 0,
         /** The steps that threw, or left rows unsent; each was logged. Empty when all went. */
         val failed: List<SyncStep> = emptyList(),
     )
@@ -380,12 +373,8 @@ class AssessmentSync(
             }
             sent to all
         }
-        // Last, after the names: a note naming a piece is refused until the server has the
-        // piece, and an assessment's own turns are what put it there. A failure here leaves
-        // the rows on the phone for the next push, and costs the rest of this one nothing.
-        val mpesaSent = step(SyncStep.MPESA) { (mpesa?.invoke() ?: 0) to true }
         Pushed(
-            deletes = deletes, reviews = reviews, names = names, rosterWrites = rosterWrites, mpesa = mpesaSent,
+            deletes = deletes, reviews = reviews, names = names, rosterWrites = rosterWrites,
             failed = failed.toList(),
         )
     }
@@ -441,7 +430,7 @@ class AssessmentSync(
 /** The steps of [AssessmentSync.push], named in [AssessmentSync.Pushed.failed] and the log. */
 enum class SyncStep {
     DELETES, REVIEWS, REVIEW_ANSWERS, PIECE_NAMES, PIECE_STUDIOS, STUDIO_DAYS,
-    WORKERS, STUDIOS, SESSION_WORKERS, MPESA, PULL,
+    WORKERS, STUDIOS, SESSION_WORKERS, PULL,
 }
 
 /**

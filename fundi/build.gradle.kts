@@ -1,3 +1,5 @@
+import com.android.build.api.artifact.SingleArtifact
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
@@ -23,13 +25,11 @@ val releaseKeyAlias = extra["releaseKeyAlias"] as String
 val releaseKeyPassword = extra["releaseKeyPassword"] as String?
 val hasReleaseSigning = extra["hasReleaseSigning"] as Boolean
 
-// Fundi Bora's own M-Pesa SMS reading: off (Nathan, 17 November 2026). PesaLog reads M-Pesa
-// notifications instead, and an app that declares SMS permissions faces Google Play's SMS
-// policy. Off, the app declares no SMS permission and shows no M-Pesa question, Finances
-// tab or M-Pesa switch; the code stays, unused. To bring it back, set this to true: the
-// permissions and the receiver in src/mpesaSms/AndroidManifest.xml are merged in again.
-// The fundi terms must describe the reading again before such a build ships.
-val mpesaSmsReading = false
+// Fundi Bora reads no SMS and no notifications (v0.7.1, row 17; Nathan, 24 November 2026).
+// The M-Pesa SMS reader, switched off since v0.6.0, was deleted with its switch, its
+// screens and its Room tables. PesaLog reads M-Pesa notifications instead. CheckNoSmsReader,
+// at the foot of this file, fails the unit tests if an SMS permission or an SMS receiver
+// reaches the merged manifest again.
 
 android {
     namespace = "com.qualityverifier.fundi"
@@ -52,7 +52,6 @@ android {
             "SERVER_BASE_URL",
             "\"https://kagua.gradykilleen.me/\"",
         )
-        buildConfigField("boolean", "MPESA_SMS_READING", mpesaSmsReading.toString())
     }
 
     signingConfigs {
@@ -117,14 +116,57 @@ android {
     }
 }
 
-// The SMS permissions and receiver, only while the reading is on (see mpesaSmsReading).
+/**
+ * row 17: Fundi Bora's merged manifest declares no SMS permission and no SMS receiver.
+ *
+ * Read from the merged manifest rather than this module's own, because a library can
+ * declare a permission too and the merge would carry it in without a line here changing.
+ * A Gradle check rather than a unit test: the merged manifest is a build output that
+ * unit tests cannot name without a path tied to the plugin's version.
+ */
+abstract class CheckNoSmsReader : DefaultTask() {
+    @get:InputFile
+    @get:PathSensitive(PathSensitivity.NONE)
+    abstract val mergedManifest: RegularFileProperty
+
+    @get:OutputFile
+    abstract val report: RegularFileProperty
+
+    @TaskAction
+    fun check() {
+        val manifest = mergedManifest.get().asFile.readText()
+        // Built from parts, so the row's other check, a search of fundi/ for the permission
+        // names, finds none in this module's sources, this list included.
+        val forbidden = listOf("READ", "RECEIVE", "SEND").map { "android.permission.${it}_SMS" } +
+            listOf("RECEIVE_MMS", "RECEIVE_WAP_PUSH", "BIND_NOTIFICATION_LISTENER_SERVICE").map { "android.permission.$it" } +
+            listOf("SMS_RECEIVED", "WAP_PUSH_RECEIVED").map { "android.provider.Telephony.$it" }
+        val found = forbidden.filter { manifest.contains(it) }
+        if (found.isNotEmpty()) {
+            throw GradleException(
+                "row 17: Fundi Bora's merged manifest must declare no SMS permission and no " +
+                    "SMS or notification reader, but declares $found",
+            )
+        }
+        report.get().asFile.writeText(
+            "row 17: Fundi Bora's merged manifest declares no SMS permission and no SMS receiver: passed\n",
+        )
+    }
+}
+
 androidComponents {
     onVariants { variant ->
-        if (mpesaSmsReading) {
-            variant.sources.manifests.addStaticManifestFile("src/mpesaSms/AndroidManifest.xml")
+        val name = variant.name.replaceFirstChar { it.uppercase() }
+        tasks.register<CheckNoSmsReader>("check${name}NoSmsReader") {
+            description = "row 17: the $name merged manifest declares no SMS permission and no SMS receiver."
+            mergedManifest.set(variant.artifacts.get(SingleArtifact.MERGED_MANIFEST))
+            report.set(layout.buildDirectory.file("reports/no-sms-reader/${variant.name}.txt"))
         }
     }
 }
+
+// Run with the unit tests, which is what CI and the local check run.
+tasks.matching { it.name == "testDebugUnitTest" }.configureEach { dependsOn("checkDebugNoSmsReader") }
+tasks.matching { it.name == "testReleaseUnitTest" }.configureEach { dependsOn("checkReleaseNoSmsReader") }
 
 dependencies {
     implementation(project(":shared"))

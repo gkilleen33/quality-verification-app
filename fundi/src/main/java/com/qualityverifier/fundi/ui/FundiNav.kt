@@ -1,30 +1,11 @@
 package com.qualityverifier.fundi.ui
 
 import android.net.Uri
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.padding
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Chair
-import androidx.compose.material.icons.filled.Payments
-import androidx.compose.material3.Icon
-import androidx.compose.material3.NavigationBar
-import androidx.compose.material3.NavigationBarItem
-import androidx.compose.material3.Scaffold
-import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.saveable.rememberSaveable
-import androidx.compose.runtime.setValue
-import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
@@ -34,16 +15,10 @@ import androidx.navigation.navArgument
 import com.qualityverifier.domain.ItemType
 import com.qualityverifier.domain.UpdatePrompt
 import com.qualityverifier.data.reports.ReportTarget
-import com.qualityverifier.fundi.BuildConfig
 import com.qualityverifier.fundi.reports.SendReportScreen
 import com.qualityverifier.fundi.reports.SendReportViewModel
 import com.qualityverifier.fundi.ui.assess.AssessScreen
 import com.qualityverifier.fundi.ui.home.HomeScreen
-import com.qualityverifier.fundi.ui.mpesa.FinancesScreen
-import com.qualityverifier.fundi.ui.mpesa.MpesaConsentScreen
-import com.qualityverifier.fundi.ui.mpesa.MpesaQuestion
-import com.qualityverifier.fundi.ui.mpesa.MpesaSettingsSection
-import com.qualityverifier.fundi.ui.mpesa.MpesaTransactionScreen
 import com.qualityverifier.fundi.ui.auth.FundiAuthViewModel
 import com.qualityverifier.fundi.ui.auth.FundiPasswordScreen
 import com.qualityverifier.fundi.ui.auth.FundiPhoneScreen
@@ -63,7 +38,6 @@ import com.qualityverifier.fundi.ui.workers.WorkerPageScreen
 import com.qualityverifier.fundi.ui.workers.WorkersScreen
 import com.qualityverifier.text.AuthLabels
 import com.qualityverifier.text.FundiLabels
-import com.qualityverifier.text.MpesaLabels
 import com.qualityverifier.text.UpdateLabels
 import com.qualityverifier.ui.settings.SettingsScreen
 import com.qualityverifier.ui.update.UpdateRequiredScreen
@@ -109,18 +83,6 @@ private object Routes {
      */
     const val ASSESS = "assess/{sessionId}/{itemTypeId}?piece={piece}&returning={returning}" +
         "&final={final}&theirs={theirs}&label={label}"
-
-    /**
-     * The M-Pesa questions, from [MpesaQuestion]. [signUp] true between the terms and setup,
-     * where finishing goes on to setup; otherwise finishing goes back.
-     */
-    const val MPESA_CONSENT = "mpesa/consent/{question}?signUp={signUp}"
-    const val MPESA_TRANSACTION = "mpesa/transaction/{code}"
-
-    fun mpesaConsent(question: MpesaQuestion, signUp: Boolean = false) =
-        "mpesa/consent/${question.id}?signUp=$signUp"
-
-    fun mpesaTransaction(code: String) = "mpesa/transaction/$code"
 
     /**
      * [piece] defaults to the session itself, which is how a first assessment names its
@@ -224,16 +186,8 @@ fun FundiNav() {
                         navController.navigate(Routes.HOME) { popUpTo(0) { inclusive = true } }
                     }
                     // Setup, not home, for an account with no workshop profile: a new
-                    // account, or a maker who quit at the terms screen before setup. The
-                    // M-Pesa questions come first, between the terms and setup (Nathan,
-                    // 11 November 2026), while the build has the reading on.
-                    TermsStep.SETUP -> navController.navigate(
-                        if (BuildConfig.MPESA_SMS_READING) {
-                            Routes.mpesaConsent(MpesaQuestion.READ, signUp = true)
-                        } else {
-                            Routes.SETUP_WORKSHOP
-                        },
-                    ) {
+                    // account, or a maker who quit at the terms screen before setup.
+                    TermsStep.SETUP -> navController.navigate(Routes.SETUP_WORKSHOP) {
                         popUpTo(0) { inclusive = true }
                     }
                     else -> navController.navigate(Routes.HOME) { popUpTo(0) { inclusive = true } }
@@ -264,7 +218,7 @@ fun FundiNav() {
             )
         }
 
-        // Sign-up is two screens, then the terms, then the two M-Pesa questions, then setup.
+        // Sign-up is two screens, then the terms, then setup.
         composable(Routes.REGISTER_PHONE) { entry ->
             FundiPhoneScreen(
                 viewModel = sharedSignUpViewModel(navController, entry),
@@ -397,103 +351,43 @@ fun FundiNav() {
             )
         }
 
-        composable(
-            Routes.MPESA_CONSENT,
-            arguments = listOf(
-                navArgument("question") { type = NavType.StringType },
-                navArgument("signUp") { type = NavType.BoolType; defaultValue = false },
-            ),
-        ) { entry ->
-            val signUp = entry.arguments?.getBoolean("signUp") ?: false
-            MpesaConsentScreen(
-                first = MpesaQuestion.fromId(entry.arguments?.getString("question")),
-                onDone = {
-                    if (signUp) {
-                        // On to the first setup step, as the terms screen went before.
-                        navController.navigate(Routes.SETUP_WORKSHOP) { popUpTo(0) { inclusive = true } }
-                    } else {
-                        navController.popBackStack()
-                    }
-                },
-            )
-        }
-
-        composable(
-            Routes.MPESA_TRANSACTION,
-            arguments = listOf(navArgument("code") { type = NavType.StringType }),
-        ) { entry ->
-            MpesaTransactionScreen(
-                code = entry.arguments?.getString("code").orEmpty(),
-                onDone = { navController.popBackStack() },
-            )
-        }
-
+        // One screen: the Finances tab went with the M-Pesa reading (v0.7.1, row 17).
         composable(Routes.HOME) {
-            // Two tabs: the pieces, and the Finances tab (Grady's description, Slack,
-            // 11 November 2026). Saveable, so returning from a transaction lands on Finances.
-            // Finances only while the build has the M-Pesa reading on; with one tab left,
-            // there is no tab bar.
-            var tab by rememberSaveable { mutableStateOf(HomeTab.PIECES) }
-            val tabs = if (BuildConfig.MPESA_SMS_READING) HomeTab.entries else listOf(HomeTab.PIECES)
-            Scaffold(
-                bottomBar = {
-                    if (tabs.size > 1) NavigationBar {
-                        tabs.forEach { each ->
-                            NavigationBarItem(
-                                selected = tab == each,
-                                onClick = { tab = each },
-                                icon = { Icon(each.icon, contentDescription = null) },
-                                label = { Text(each.label(MpesaLabels.ENGLISH)) },
-                            )
-                        }
-                    }
-                },
-            ) { padding ->
-                when (tab) {
-                    HomeTab.PIECES -> Box(Modifier.padding(bottom = padding.calculateBottomPadding())) {
-                        HomeScreen(
-                            // Reading an assessment again: the same session, so its conversation
-                            // and photographs come back exactly as they were.
-                            onOpen = { latest ->
-                                navController.navigate(
-                                    Routes.assess(latest.id, latest.itemType.id, piece = latest.piece),
-                                )
-                            },
-                            // A re-assessment is a new session on the same piece — not a
-                            // continuation — so its verdict is recorded beside the first rather than
-                            // overwriting it, and the earlier conversation is not resent every turn.
-                            onReassess = { latest ->
-                                navController.navigate(
-                                    Routes.assess(
-                                        sessionId = UUID.randomUUID().toString(),
-                                        itemTypeId = latest.itemType.id,
-                                        piece = latest.piece,
-                                        returning = true,
-                                        // A linked worker's piece this account assessed as
-                                        // the studio's manager stays the worker's (row 11).
-                                        theirs = !latest.pieceMine,
-                                        label = latest.pieceLabel.takeIf { !latest.pieceMine },
-                                    ),
-                                )
-                            },
-                            onStart = { itemType ->
-                                navController.navigate(
-                                    Routes.assess(UUID.randomUUID().toString(), itemType.id),
-                                )
-                            },
-                            onWorkers = { navController.navigate(Routes.WORKERS) },
-                            onStudios = { navController.navigate(Routes.STUDIOS) },
-                            onSettings = { navController.navigate(Routes.SETTINGS) { launchSingleTop = true } },
-                            onSendReport = { latest -> navController.navigate(Routes.sendReport(latest.piece)) },
-                        )
-                    }
-                    HomeTab.FINANCES -> FinancesScreen(
-                        onOpen = { code -> navController.navigate(Routes.mpesaTransaction(code)) },
-                        onTurnOn = { navController.navigate(Routes.mpesaConsent(MpesaQuestion.READ)) },
-                        modifier = Modifier.padding(padding),
+            HomeScreen(
+                // Reading an assessment again: the same session, so its conversation
+                // and photographs come back exactly as they were.
+                onOpen = { latest ->
+                    navController.navigate(
+                        Routes.assess(latest.id, latest.itemType.id, piece = latest.piece),
                     )
-                }
-            }
+                },
+                // A re-assessment is a new session on the same piece — not a
+                // continuation — so its verdict is recorded beside the first rather than
+                // overwriting it, and the earlier conversation is not resent every turn.
+                onReassess = { latest ->
+                    navController.navigate(
+                        Routes.assess(
+                            sessionId = UUID.randomUUID().toString(),
+                            itemTypeId = latest.itemType.id,
+                            piece = latest.piece,
+                            returning = true,
+                            // A linked worker's piece this account assessed as
+                            // the studio's manager stays the worker's (row 11).
+                            theirs = !latest.pieceMine,
+                            label = latest.pieceLabel.takeIf { !latest.pieceMine },
+                        ),
+                    )
+                },
+                onStart = { itemType ->
+                    navController.navigate(
+                        Routes.assess(UUID.randomUUID().toString(), itemType.id),
+                    )
+                },
+                onWorkers = { navController.navigate(Routes.WORKERS) },
+                onStudios = { navController.navigate(Routes.STUDIOS) },
+                onSettings = { navController.navigate(Routes.SETTINGS) { launchSingleTop = true } },
+                onSendReport = { latest -> navController.navigate(Routes.sendReport(latest.piece)) },
+            )
         }
 
         composable(Routes.WORKERS) {
@@ -606,24 +500,13 @@ fun FundiNav() {
                 // Withdrawing the transfer agreement. Once the server confirms, the terms
                 // screen is the only screen left: nothing else works without the agreement.
                 agreementSection = {
-                    Column {
-                        // The two M-Pesa switches above the transfer withdrawal: they are the
-                        // ones somebody comes here to change. Only while the build has the
-                        // reading on.
-                        if (BuildConfig.MPESA_SMS_READING) {
-                            MpesaSettingsSection(
-                                onAsk = { question -> navController.navigate(Routes.mpesaConsent(question)) },
-                            )
-                            Spacer(Modifier.height(28.dp))
-                        }
-                        AgreementSection(
-                            onWithdrawn = {
-                                navController.navigate(Routes.terms(TermsMode.WITHDRAWN)) {
-                                    popUpTo(0) { inclusive = true }
-                                }
-                            },
-                        )
-                    }
+                    AgreementSection(
+                        onWithdrawn = {
+                            navController.navigate(Routes.terms(TermsMode.WITHDRAWN)) {
+                                popUpTo(0) { inclusive = true }
+                            }
+                        },
+                    )
                 },
             )
         }
@@ -657,17 +540,6 @@ fun FundiNav() {
                 givenLabel = entry.arguments?.getString("label")?.takeIf { it.isNotBlank() },
             )
         }
-    }
-}
-
-/** Home's two tabs. */
-private enum class HomeTab(val icon: ImageVector) {
-    PIECES(Icons.Filled.Chair),
-    FINANCES(Icons.Filled.Payments);
-
-    fun label(labels: MpesaLabels): String = when (this) {
-        PIECES -> labels.piecesTab
-        FINANCES -> labels.financesTab
     }
 }
 

@@ -44,7 +44,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.qualityverifier.domain.ItemType
-import com.qualityverifier.domain.MpesaCategory
 import com.qualityverifier.domain.PieceNames
 import com.qualityverifier.domain.SessionSummary
 import com.qualityverifier.domain.Studio
@@ -58,7 +57,6 @@ import com.qualityverifier.fundi.ui.fundiContainer
 import com.qualityverifier.fundi.ui.location.AssessmentLocationDialog
 import com.qualityverifier.fundi.ui.location.rememberAssessmentLocationAnswer
 import com.qualityverifier.text.FundiLabels
-import com.qualityverifier.text.MpesaLabels
 import com.qualityverifier.text.UpdateLabels
 import com.qualityverifier.ui.update.UpdateBanner
 import java.text.SimpleDateFormat
@@ -94,7 +92,6 @@ fun HomeScreen(
     val model: PiecesViewModel = viewModel(factory = PiecesViewModel.factory(container))
     val sessions by model.pieces.collectAsState()
     val roster by model.roster.collectAsState()
-    val spending by model.spending.collectAsState()
     val studios by model.studios.collectAsState()
     val update by container.appVersionCheck.state.collectAsState()
     val syncStatus by container.assessmentSync.status.collectAsState()
@@ -224,7 +221,6 @@ fun HomeScreen(
                     loadWorkers = { model.workersOf(latest.id) },
                     onSetWorkers = { people -> model.setWorkers(latest.id, people) },
                     onAddWorker = model::addWorker,
-                    spent = spending[latest.piece].orEmpty(),
                     studios = studios,
                     onSetStudio = { studioId -> model.setStudio(latest.piece, studioId) },
                     onServer = latest.piece in onServer,
@@ -250,8 +246,6 @@ private fun PieceRow(
     loadWorkers: suspend () -> List<WorkerSlot>,
     onSetWorkers: (List<WorkerSlot>) -> Unit,
     onAddWorker: (WorkerDetails, (Worker) -> Unit) -> Unit,
-    /** M-Pesa money out assigned to this piece, by category; null for none given yet. */
-    spent: Map<MpesaCategory?, Double>,
     /** "Studios I work for", archived ones too, for the studio line and its change. */
     studios: List<Studio> = emptyList(),
     /** A studio for the piece, or null for "My own job" (rows 1 and 2). */
@@ -367,7 +361,6 @@ private fun PieceRow(
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
-            if (spent.isNotEmpty()) SpentOnPiece(spent)
             // Two buttons and a menu rather than four buttons: on a 360 dp phone four in a
             // row squeezed "Workers" into a column one letter wide. Open and Re-assess are
             // the loop, so they stay in sight; renaming and the workers are occasional.
@@ -486,31 +479,6 @@ private fun StudioDialog(
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text(labels.pieceStudioCancel) } },
     )
-}
-
-/**
- * The piece's spending, one line per category in Grady's order, then money assigned without
- * a category, then the total. Fundi Bora has no screen per piece; its card is that screen.
- */
-@Composable
-private fun SpentOnPiece(spent: Map<MpesaCategory?, Double>, labels: MpesaLabels = MpesaLabels.ENGLISH) {
-    Column(Modifier.padding(top = 4.dp)) {
-        Text(labels.spentOnPiece, style = MaterialTheme.typography.labelLarge)
-        (MpesaCategory.entries + listOf(null)).forEach { category ->
-            val amount = spent[category] ?: return@forEach
-            Text(
-                "${category?.let(labels::category) ?: labels.noCategory}: ${labels.kes(amount)}",
-                style = MaterialTheme.typography.bodySmall,
-            )
-        }
-        if (spent.size > 1) {
-            Text(
-                "${labels.moneyOut}: ${labels.kes(spent.values.sum())}",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        }
-    }
 }
 
 /**

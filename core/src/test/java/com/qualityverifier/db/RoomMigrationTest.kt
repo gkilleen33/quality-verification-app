@@ -139,7 +139,31 @@ class RoomMigrationTest {
         }
     }
 
+    @Test
+    fun `row 17 - 17 to 18 drops the two M-Pesa tables, as schema 18 lacks them`() {
+        assertEquals(
+            listOf(
+                "DROP TABLE IF EXISTS `mpesa_transactions`",
+                "DROP TABLE IF EXISTS `mpesa_unread_days`",
+            ),
+            statementsOf(AppDatabase.MIGRATION_17_18),
+        )
+        val before = schema(17)
+        val after = schema(18)
+        listOf("mpesa_transactions", "mpesa_unread_days").forEach { table ->
+            assertTrue(table, before.contains("\"tableName\": \"$table\""))
+            assertFalse(table, after.contains("\"tableName\": \"$table\""))
+        }
+        // Every other table is as it was.
+        listOf(
+            "sessions", "messages", "attachments", "pieces", "workers", "worker_studios", "session_workers",
+            "pending_session_workers", "studio_days", "review_helpful", "pending_tester_feedback",
+        ).forEach { table ->
+            assertEquals(table, createSql(17, table), createSql(18, table))
+        }
+    }
+
     private companion object {
-        const val CURRENT = 17
+        const val CURRENT = 18
     }
 }

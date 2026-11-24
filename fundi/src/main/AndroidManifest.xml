@@ -5,9 +5,9 @@
          foreground location permissions from :core, CAMERA from :capture. A permission
          this app needs but whose code lives elsewhere belongs with that code. -->
 
-    <!-- The M-Pesa reader's SMS permissions and its receiver are in
-         src/mpesaSms/AndroidManifest.xml, merged in only while build.gradle.kts turns the
-         reading on (off since 17 November 2026). -->
+    <!-- No SMS permission and no SMS or notification reader (v0.7.1, row 17). The fundi
+         terms say the app does not read SMS messages; build.gradle.kts checks the merged
+         manifest for it. -->
 
     <application
         android:name=".FundiBoraApp"
