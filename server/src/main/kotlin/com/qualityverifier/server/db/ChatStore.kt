@@ -1280,11 +1280,16 @@ class PostgresChatStore(private val dataSource: DataSource) : ChatStore {
             dataSource.connection.use { connection ->
                 // Written only while empty, so the first report stands; a repeat finds the
                 // row and is answered as accepted, which stops the tablet sending it again.
+                // The first report also moves updated_at, which the data API's incremental
+                // pull (`updated_since`) reads, so research sees the end without a full pull;
+                // a repeat changes nothing, updated_at included. Every value on the right is
+                // the row's value before this update.
                 connection.prepareStatement(
                     """
                     update sessions
                        set tablet_ended = coalesce(tablet_ended, ?),
-                           tablet_ended_at = coalesce(tablet_ended_at, now())
+                           tablet_ended_at = coalesce(tablet_ended_at, now()),
+                           updated_at = case when tablet_ended is null then now() else updated_at end
                      where id = ?::uuid and user_id = ?::uuid and shop_tablet
                     """.trimIndent()
                 ).use { statement ->
