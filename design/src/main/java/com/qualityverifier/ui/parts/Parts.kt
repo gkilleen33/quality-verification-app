@@ -400,7 +400,8 @@ private fun AppButton(
                 modifier = size,
             ) { content() }
         }
-        state.reason?.let {
+        // A blank reason greys the button with no line, for a step whose field says what is missing.
+        state.reason?.takeIf { it.isNotBlank() }?.let {
             Text(
                 it,
                 style = lineStyle,

@@ -1,23 +1,13 @@
 package com.qualityverifier.fundi.ui.workers
 
-import androidx.compose.foundation.clickable
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.systemBarsPadding
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
-import androidx.compose.material3.Button
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -32,9 +22,19 @@ import com.qualityverifier.domain.Studio
 import com.qualityverifier.domain.StudioDetails
 import com.qualityverifier.fundi.ui.fundiContainer
 import com.qualityverifier.text.FundiLabels
+import com.qualityverifier.text.FundiScreenLabels
+import com.qualityverifier.ui.parts.BackBar
+import com.qualityverifier.ui.parts.CardRow
+import com.qualityverifier.ui.parts.Chip
+import com.qualityverifier.ui.parts.Parts
+import com.qualityverifier.ui.parts.RowCard
+import com.qualityverifier.ui.parts.ScreenTitle
+import com.qualityverifier.ui.parts.SecondaryButton
 
 /**
- * "Studios I work for" (V31): one card per studio, in the style of "My workers". Archived
+ * "Studios I work for" (V31; v0.7.1, row 46): one card of rows, each a studio with the owner's
+ * number and a chip, "Linked" or "Not linked", under "Your own workshop is already included.";
+ * archived studios behind "Show archived (N)". Archived
  * studios are kept apart, below the list, behind "Show archived" (Nathan, 17 November
  * 2026), so the list holds only the studios in use. Add opens [StudioForm]; tapping a card
  * opens it to edit, with Archive. A card reads "Linked" when the server's two-sided match
@@ -42,7 +42,7 @@ import com.qualityverifier.text.FundiLabels
  * the other side.
  */
 @Composable
-fun StudiosScreen(onBack: () -> Unit) {
+fun StudiosScreen(backLabel: String, onBack: () -> Unit) {
     val container = fundiContainer()
     val model: StudiosViewModel = viewModel(factory = StudiosViewModel.factory(container))
     val studios by model.list.collectAsState()
@@ -91,94 +91,50 @@ fun StudiosScreen(onBack: () -> Unit) {
         )
     }
 
-    LazyColumn(
-        Modifier.fillMaxSize().systemBarsPadding().padding(24.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp),
-    ) {
-        item {
-            Text(labels.studiosTitle, style = MaterialTheme.typography.displaySmall)
-            Spacer(Modifier.height(8.dp))
-        }
-        item {
-            Button(
-                onClick = { adding = true },
-                modifier = Modifier.fillMaxWidth().height(56.dp),
-            ) { Text(labels.studioAddTitle) }
-        }
-        // "None yet" only when there is truly nothing: archived studios are still studios.
-        if (studios.isEmpty()) {
-            item {
-                Text(
-                    labels.studiosEmpty,
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-        }
-        items(active, key = { it.id }) { studio ->
-            StudioRow(studio, labels, onClick = { editingId = studio.id })
-        }
-        if (archived.isNotEmpty()) {
-            item {
-                ArchivedToggle(labels, archived.size, showArchived) { showArchived = !showArchived }
-            }
-            if (showArchived) {
-                items(archived, key = { it.id }) { studio ->
-                    StudioRow(studio, labels, onClick = { editingId = studio.id })
+    val words = FundiScreenLabels.ENGLISH
+
+    // "Linked" is the server's word, from the last sync; "Archived" wins over it, since an
+    // archived entry is never linked.
+    @Composable
+    fun row(studio: Studio, divider: Boolean) {
+        CardRow(
+            studio.name,
+            line = studio.phone,
+            chip = when {
+                studio.archived -> Chip.notLinked(words.archived)
+                studio.linked -> Chip.linked(words.linked)
+                else -> Chip.notLinked(words.notLinked)
+            },
+            onClick = { editingId = studio.id },
+            divider = divider,
+        )
+    }
+
+    Column(Modifier.fillMaxSize().background(Parts.Page).systemBarsPadding()) {
+        BackBar(backLabel, onBack)
+        Column(
+            Modifier.verticalScroll(rememberScrollState()).padding(horizontal = 16.dp, vertical = 18.dp),
+            verticalArrangement = Arrangement.spacedBy(14.dp),
+        ) {
+            ScreenTitle(words.studiosIWorkFor)
+            SecondaryButton(words.addStudio, onClick = { adding = true })
+            // The line under the list says the account's own workshop needs no entry (row 52).
+            RowCard(hint = words.ownWorkshopIncluded) {
+                active.forEachIndexed { i, studio -> row(studio, divider = true) }
+                if (archived.isNotEmpty()) {
+                    CardRow(
+                        if (showArchived) labels.archivedHide else words.showArchived(archived.size),
+                        onClick = { showArchived = !showArchived },
+                        chevron = false,
+                        titleColor = Parts.Brand,
+                        divider = true,
+                    )
                 }
             }
-        }
-        item {
-            TextButton(onClick = onBack, modifier = Modifier.fillMaxWidth()) { Text("Back") }
-        }
-    }
-}
-
-/**
- * "Show archived (2)" below a list, and "Hide archived" once open. Shared by Studios and
- * My workers, which keep archived entries the same way.
- */
-@Composable
-internal fun ArchivedToggle(labels: FundiLabels, count: Int, open: Boolean, onToggle: () -> Unit) {
-    TextButton(onClick = onToggle, modifier = Modifier.fillMaxWidth()) {
-        Text(if (open) labels.archivedHide else labels.archivedShow(count))
-    }
-}
-
-@Composable
-private fun StudioRow(studio: Studio, labels: FundiLabels, onClick: () -> Unit) {
-    val muted = MaterialTheme.colorScheme.onSurfaceVariant
-    Card(
-        Modifier.fillMaxWidth().clickable(onClick = onClick),
-        colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
-        ),
-    ) {
-        Row(
-            Modifier.fillMaxWidth().padding(14.dp),
-            horizontalArrangement = Arrangement.SpaceBetween,
-        ) {
-            Column(Modifier.weight(1f, fill = false)) {
-                Text(
-                    studio.name,
-                    style = MaterialTheme.typography.titleMedium,
-                    color = if (studio.archived) muted else MaterialTheme.colorScheme.onSurface,
-                )
-                Text(studio.phone, style = MaterialTheme.typography.bodySmall, color = muted)
-            }
-            // "Linked" is the server's word, from the last sync; "Archived" wins over it,
-            // since an archived entry is never linked.
-            val tag = when {
-                studio.archived -> labels.workerPageArchived
-                studio.linked -> labels.linkedTag
-                else -> null
-            }
-            tag?.let {
-                Text(
-                    it,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = if (studio.linked && !studio.archived) MaterialTheme.colorScheme.primary else muted,
-                )
+            if (showArchived && archived.isNotEmpty()) {
+                RowCard(heading = words.archived) {
+                    archived.forEachIndexed { i, studio -> row(studio, divider = i > 0) }
+                }
             }
         }
     }

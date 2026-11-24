@@ -18,7 +18,19 @@ import com.qualityverifier.data.reports.ReportTarget
 import com.qualityverifier.fundi.reports.SendReportScreen
 import com.qualityverifier.fundi.reports.SendReportViewModel
 import com.qualityverifier.fundi.ui.assess.AssessScreen
+import com.qualityverifier.fundi.ui.home.AgreementScreen
+import com.qualityverifier.fundi.ui.home.AllPiecesScreen
+import com.qualityverifier.fundi.ui.home.FundiWelcomeScreen
 import com.qualityverifier.fundi.ui.home.HomeScreen
+import com.qualityverifier.fundi.ui.home.NewPieceScreen
+import com.qualityverifier.fundi.ui.home.PieceRef
+import com.qualityverifier.fundi.ui.home.PieceScreen
+import com.qualityverifier.fundi.ui.home.PiecesViewModel
+import com.qualityverifier.fundi.ui.home.pieceName
+import com.qualityverifier.data.session.PieceStudioChoice
+import com.qualityverifier.domain.SessionSummary
+import com.qualityverifier.text.FundiScreenLabels
+import com.qualityverifier.ui.settings.ChangePasswordScreen
 import com.qualityverifier.fundi.ui.auth.FundiAuthViewModel
 import com.qualityverifier.fundi.ui.auth.FundiPasswordScreen
 import com.qualityverifier.fundi.ui.auth.FundiPhoneScreen
@@ -44,7 +56,21 @@ import com.qualityverifier.ui.update.UpdateRequiredScreen
 import java.util.UUID
 
 private object Routes {
+    /** The first launch (v0.7.1, row 56): what the app does, before sign-in. */
+    const val WELCOME = "welcome"
     const val SIGN_IN = "sign-in"
+    /** New piece (row 46): what it is and who it is for, then the camera. */
+    const val NEW_PIECE = "pieces/new"
+    /** A piece's page (row 56); [worker] set for a linked worker's own piece, from their page. */
+    const val PIECE = "pieces/{pieceId}?worker={worker}"
+    /** "All my pieces" (row 56), in progress and finished. */
+    const val ALL_PIECES = "pieces/all"
+    /** "Change your password", from the Settings menu (row 46). */
+    const val CHANGE_PASSWORD = "settings/password"
+    /** "Your agreement" from the Settings menu: the transfer to the United States. */
+    const val AGREEMENT = "settings/agreement"
+
+    fun piece(pieceId: String, workerId: String? = null) = "pieces/$pieceId?worker=${workerId.orEmpty()}"
     const val REGISTER_PHONE = "register/phone"
     const val REGISTER_PASSWORD = "register/password"
     const val TERMS = "terms/{mode}"
@@ -82,7 +108,29 @@ private object Routes {
      * worker's name for it.
      */
     const val ASSESS = "assess/{sessionId}/{itemTypeId}?piece={piece}&returning={returning}" +
-        "&final={final}&theirs={theirs}&label={label}"
+        "&final={final}&theirs={theirs}&label={label}&studio={studio}"
+
+    /**
+     * New piece's answer to "Who is it for?" (row 46), as the ASSESS route carries it: empty
+     * for none (the intake asks, or the account has no studio), [OWN_JOB] or [NOT_ASKED], or
+     * a studio entry's id.
+     */
+    const val OWN_JOB = "own-job"
+    const val NOT_ASKED = "not-asked"
+
+    fun studioArg(choice: PieceStudioChoice?): String = when (choice) {
+        null -> ""
+        PieceStudioChoice.NotAsked -> NOT_ASKED
+        PieceStudioChoice.OwnJob -> OWN_JOB
+        is PieceStudioChoice.Studio -> choice.studioId
+    }
+
+    fun studioOf(arg: String?): PieceStudioChoice? = when (arg) {
+        null, "" -> null
+        NOT_ASKED -> PieceStudioChoice.NotAsked
+        OWN_JOB -> PieceStudioChoice.OwnJob
+        else -> PieceStudioChoice.Studio(arg)
+    }
 
     /**
      * [piece] defaults to the session itself, which is how a first assessment names its
@@ -96,8 +144,9 @@ private object Routes {
         final: Boolean = false,
         theirs: Boolean = false,
         label: String? = null,
+        studio: PieceStudioChoice? = null,
     ) = "assess/$sessionId/$itemTypeId?piece=$piece&returning=$returning&final=$final&theirs=$theirs" +
-        "&label=${Uri.encode(label.orEmpty())}"
+        "&label=${Uri.encode(label.orEmpty())}&studio=${Uri.encode(studioArg(studio))}"
 
     fun terms(mode: TermsMode) = "terms/${mode.id}"
 
@@ -121,7 +170,9 @@ fun FundiNav() {
         when (TermsRules.start(container.isSignedIn, container.tokenStore.termsRequired())) {
             TermsStep.HOME -> Routes.HOME
             TermsStep.TERMS -> Routes.TERMS_START
-            else -> Routes.SIGN_IN
+            // A signed-out phone opens on the welcome screen (row 56, P17), which leads to
+            // today's sign-in and invite-code screens.
+            else -> Routes.WELCOME
         }
     }
 
@@ -210,11 +261,19 @@ fun FundiNav() {
                         TermsStep.HOME -> Routes.HOME
                         else -> Routes.terms(TermsMode.RETURNING)
                     }
+                    // The whole stack, the welcome screen included: Back from Home leaves the app.
                     navController.navigate(next) {
-                        popUpTo(Routes.SIGN_IN) { inclusive = true }
+                        popUpTo(0) { inclusive = true }
                     }
                 },
                 onRegister = { navController.navigate(Routes.REGISTER_PHONE) },
+            )
+        }
+
+        composable(Routes.WELCOME) {
+            FundiWelcomeScreen(
+                onSignIn = { navController.navigate(Routes.SIGN_IN) { launchSingleTop = true } },
+                onInvite = { navController.navigate(Routes.REGISTER_PHONE) { launchSingleTop = true } },
             )
         }
 
@@ -223,7 +282,16 @@ fun FundiNav() {
             FundiPhoneScreen(
                 viewModel = sharedSignUpViewModel(navController, entry),
                 onProceed = { navController.navigate(Routes.REGISTER_PASSWORD) { launchSingleTop = true } },
-                onSignIn = { navController.popBackStack() },
+                // To sign-in whether this was opened from sign-in or from the welcome screen.
+                onSignIn = {
+                    if (navController.previousBackStackEntry?.destination?.route == Routes.SIGN_IN) {
+                        navController.popBackStack()
+                    } else {
+                        navController.navigate(Routes.SIGN_IN) {
+                            popUpTo(Routes.REGISTER_PHONE) { inclusive = true }
+                        }
+                    }
+                },
             )
         }
 
@@ -351,54 +419,143 @@ fun FundiNav() {
             )
         }
 
+        // Reading an assessment again: the same session, so its conversation and photographs
+        // come back exactly as they were.
+        val openAssessment = { latest: SessionSummary ->
+            navController.navigate(Routes.assess(latest.id, latest.itemType.id, piece = latest.piece))
+        }
+        // A re-assessment is a new session on the same piece — not a continuation — so its
+        // verdict is recorded beside the first rather than overwriting it, and the earlier
+        // conversation is not resent every turn.
+        val reassess = { latest: SessionSummary ->
+            navController.navigate(
+                Routes.assess(
+                    sessionId = UUID.randomUUID().toString(),
+                    itemTypeId = latest.itemType.id,
+                    piece = latest.piece,
+                    returning = true,
+                    // A linked worker's piece this account assessed as the studio's manager
+                    // stays the worker's (row 11).
+                    theirs = !latest.pieceMine,
+                    label = latest.pieceLabel.takeIf { !latest.pieceMine },
+                ),
+            )
+        }
+        val back: () -> Unit = { navController.popBackStack() }
+
         // One screen: the Finances tab went with the M-Pesa reading (v0.7.1, row 17).
-        composable(Routes.HOME) {
+        composable(Routes.HOME) { entry ->
             HomeScreen(
-                // Reading an assessment again: the same session, so its conversation
-                // and photographs come back exactly as they were.
-                onOpen = { latest ->
-                    navController.navigate(
-                        Routes.assess(latest.id, latest.itemType.id, piece = latest.piece),
-                    )
-                },
-                // A re-assessment is a new session on the same piece — not a
-                // continuation — so its verdict is recorded beside the first rather than
-                // overwriting it, and the earlier conversation is not resent every turn.
-                onReassess = { latest ->
-                    navController.navigate(
-                        Routes.assess(
-                            sessionId = UUID.randomUUID().toString(),
-                            itemTypeId = latest.itemType.id,
-                            piece = latest.piece,
-                            returning = true,
-                            // A linked worker's piece this account assessed as
-                            // the studio's manager stays the worker's (row 11).
-                            theirs = !latest.pieceMine,
-                            label = latest.pieceLabel.takeIf { !latest.pieceMine },
-                        ),
-                    )
-                },
-                onStart = { itemType ->
-                    navController.navigate(
-                        Routes.assess(UUID.randomUUID().toString(), itemType.id),
-                    )
-                },
+                model = piecesViewModel(navController, entry),
+                onNewPiece = { navController.navigate(Routes.NEW_PIECE) },
+                onOpenPiece = { piece -> navController.navigate(Routes.piece(piece.pieceId)) },
+                onAllPieces = { navController.navigate(Routes.ALL_PIECES) },
                 onWorkers = { navController.navigate(Routes.WORKERS) },
                 onStudios = { navController.navigate(Routes.STUDIOS) },
-                onSettings = { navController.navigate(Routes.SETTINGS) { launchSingleTop = true } },
-                onSendReport = { latest -> navController.navigate(Routes.sendReport(latest.piece)) },
+                onChangePassword = { navController.navigate(Routes.CHANGE_PASSWORD) { launchSingleTop = true } },
+                onAgreement = { navController.navigate(Routes.AGREEMENT) { launchSingleTop = true } },
+                onSignOut = signOut,
+                // The view model reports success only after DELETE /v1/account succeeds, so the
+                // server has already deleted the account by the time this runs.
+                onAccountDeleted = accountDeleted,
             )
         }
 
-        composable(Routes.WORKERS) {
+        composable(Routes.NEW_PIECE) { entry ->
+            NewPieceScreen(
+                backLabel = backLabel(navController, entry),
+                onBack = back,
+                // New piece goes from the stack, so Back from the assessment lands on Home,
+                // where the new piece is at the top of "My pieces" (P17).
+                onStart = { itemType, studio ->
+                    navController.navigate(Routes.assess(UUID.randomUUID().toString(), itemType.id, studio = studio)) {
+                        popUpTo(Routes.NEW_PIECE) { inclusive = true }
+                    }
+                },
+            )
+        }
+
+        composable(
+            Routes.PIECE,
+            arguments = listOf(
+                navArgument("pieceId") { type = NavType.StringType },
+                navArgument("worker") { type = NavType.StringType; defaultValue = "" },
+            ),
+        ) { entry ->
+            val ref = PieceRef(
+                pieceId = entry.arguments?.getString("pieceId").orEmpty(),
+                workerId = entry.arguments?.getString("worker")?.takeIf { it.isNotBlank() },
+            )
+            PieceScreen(
+                ref = ref,
+                model = piecesViewModel(navController, entry),
+                backLabel = backLabel(navController, entry),
+                onBack = back,
+                onOpenAssessment = openAssessment,
+                onReassess = reassess,
+                // "Assess piece" on one of the worker's own pieces (row 11): the manager's own
+                // new assessment of that piece, judged afresh.
+                onAssessTheirs = { piece ->
+                    navController.navigate(
+                        Routes.assess(
+                            sessionId = UUID.randomUUID().toString(),
+                            itemTypeId = piece.itemTypeId,
+                            piece = piece.id,
+                            returning = true,
+                            theirs = true,
+                            label = piece.label,
+                        ),
+                    )
+                },
+                onSendReport = { piece -> navController.navigate(Routes.sendReport(piece.pieceId)) },
+                // The worker's piece: its kind and name go with it, since this phone may hold
+                // no assessment of it yet.
+                onSendReportOnTheirs = { piece ->
+                    navController.navigate(Routes.sendReportOnTheirs(piece.id, piece.itemTypeId, piece.label))
+                },
+            )
+        }
+
+        composable(Routes.ALL_PIECES) { entry ->
+            AllPiecesScreen(
+                model = piecesViewModel(navController, entry),
+                backLabel = backLabel(navController, entry),
+                onBack = back,
+                onOpenPiece = { piece -> navController.navigate(Routes.piece(piece.pieceId)) },
+            )
+        }
+
+        composable(Routes.CHANGE_PASSWORD) { entry ->
+            ChangePasswordScreen(
+                container = container,
+                labels = remember(labels) { labels.onSettings(AuthLabels.ENGLISH) },
+                backLabel = backLabel(navController, entry),
+                onBack = back,
+            )
+        }
+
+        // Withdrawing the transfer agreement. Once the server confirms, the terms screen is
+        // the only screen left: nothing else works without the agreement.
+        composable(Routes.AGREEMENT) { entry ->
+            AgreementScreen(
+                backLabel = backLabel(navController, entry),
+                onBack = back,
+                onWithdrawn = {
+                    navController.navigate(Routes.terms(TermsMode.WITHDRAWN)) { popUpTo(0) { inclusive = true } }
+                },
+            )
+        }
+
+        composable(Routes.WORKERS) { entry ->
             WorkersScreen(
-                onBack = { navController.popBackStack() },
+                backLabel = backLabel(navController, entry),
+                onBack = back,
                 onOpen = { worker -> navController.navigate(Routes.workerPage(worker.id)) },
             )
         }
 
-        composable(Routes.STUDIOS) {
-            StudiosScreen(onBack = { navController.popBackStack() })
+        composable(Routes.STUDIOS) { entry ->
+            StudiosScreen(backLabel = backLabel(navController, entry), onBack = back)
         }
 
         composable(
@@ -455,39 +612,18 @@ fun FundiNav() {
         ) { entry ->
             WorkerPageScreen(
                 workerId = entry.arguments?.getString("workerId").orEmpty(),
-                onBack = { navController.popBackStack() },
+                backLabel = backLabel(navController, entry),
+                onBack = back,
                 onSendReport = { workerId -> navController.navigate(Routes.workerReport(workerId)) },
-                // The piece's newest assessment, as Home's "Open" opens it.
-                onOpenPiece = { latest ->
-                    navController.navigate(
-                        Routes.assess(latest.id, latest.itemType.id, piece = latest.piece),
-                    )
-                },
-                // "Assess piece" on one of the worker's own pieces (row 11): the manager's
-                // own new assessment of that piece, judged afresh.
-                onAssessPiece = { piece ->
-                    navController.navigate(
-                        Routes.assess(
-                            sessionId = UUID.randomUUID().toString(),
-                            itemTypeId = piece.itemTypeId,
-                            piece = piece.id,
-                            returning = true,
-                            theirs = true,
-                            label = piece.label,
-                        ),
-                    )
-                },
-                // "Send report" on the worker's piece: the manager's reports on it, the
-                // customer's among them. Its kind and name go with it, since this phone may
-                // hold no assessment of it yet.
-                onSendPieceReport = { piece ->
-                    navController.navigate(Routes.sendReportOnTheirs(piece.id, piece.itemTypeId, piece.label))
-                },
+                // The piece's page; a linked worker's own piece carries the worker, so its
+                // page can ask the server for it (rows 4 and 11).
+                onOpenPiece = { pieceId, theirsOf -> navController.navigate(Routes.piece(pieceId, theirsOf)) },
             )
         }
 
-        // Kagua's screen, with Fundi Bora's wording where Kagua's would be wrong, and the
-        // sign-out button Kagua keeps on Profile. Fundi Bora has no Profile.
+        // The settings screen, kept only for the terms screen's "account settings" link, so
+        // an account that has not agreed can still delete itself. Every other way in is the
+        // Settings menu on Home (row 46).
         composable(Routes.SETTINGS) {
             SettingsScreen(
                 container = container,
@@ -521,6 +657,7 @@ fun FundiNav() {
                 navArgument("final") { type = NavType.BoolType; defaultValue = false },
                 navArgument("theirs") { type = NavType.BoolType; defaultValue = false },
                 navArgument("label") { type = NavType.StringType; nullable = true },
+                navArgument("studio") { type = NavType.StringType; defaultValue = "" },
             ),
         ) { entry ->
             // The id is generated on the phone, so a retry of the same assessment is the
@@ -538,8 +675,56 @@ fun FundiNav() {
                 isFinal = entry.arguments?.getBoolean("final") ?: false,
                 pieceMine = !(entry.arguments?.getBoolean("theirs") ?: false),
                 givenLabel = entry.arguments?.getString("label")?.takeIf { it.isNotBlank() },
+                presetStudio = Routes.studioOf(entry.arguments?.getString("studio")),
             )
         }
+    }
+}
+
+/**
+ * The pieces, shared by Home, a piece's page and "All my pieces": scoped to Home's entry, so
+ * the three read one list and the sync runs once when Home opens, not again on every page.
+ * Scoped to the page's own entry when Home is not under it.
+ */
+@Composable
+private fun piecesViewModel(
+    navController: androidx.navigation.NavHostController,
+    entry: androidx.navigation.NavBackStackEntry,
+): PiecesViewModel {
+    val owner = remember(entry) { runCatching { navController.getBackStackEntry(Routes.HOME) }.getOrDefault(entry) }
+    val container = fundiContainer()
+    return viewModel(viewModelStoreOwner = owner, factory = PiecesViewModel.factory(container))
+}
+
+/**
+ * What Back says on [entry]'s screen: the name of the screen under it (P27), "Home", "My
+ * workers", the piece's or the worker's own name.
+ */
+@Composable
+private fun backLabel(
+    navController: androidx.navigation.NavHostController,
+    entry: androidx.navigation.NavBackStackEntry,
+): String {
+    val words = FundiScreenLabels.ENGLISH
+    val previous = remember(entry) { navController.previousBackStackEntry }
+    val container = fundiContainer()
+    return when (previous?.destination?.route) {
+        Routes.HOME -> words.home
+        Routes.WORKERS -> words.myWorkers
+        Routes.STUDIOS -> words.studiosIWorkFor
+        Routes.ALL_PIECES -> words.allPieces
+        Routes.NEW_PIECE -> words.newPieceTitle
+        Routes.PIECE -> {
+            val pieceId = previous.arguments?.getString("pieceId")
+            val pieces by piecesViewModel(navController, entry).pieces.collectAsState()
+            pieces?.firstOrNull { it.pieceId == pieceId }?.let(::pieceName) ?: words.home
+        }
+        Routes.WORKER_PAGE -> {
+            val workerId = previous.arguments?.getString("workerId")
+            val roster by container.workerRepository.observeWorkers().collectAsState(initial = emptyList())
+            roster.firstOrNull { it.id == workerId }?.name ?: words.myWorkers
+        }
+        else -> words.home
     }
 }
 

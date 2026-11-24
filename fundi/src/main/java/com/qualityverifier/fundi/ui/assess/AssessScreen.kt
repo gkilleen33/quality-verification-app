@@ -119,6 +119,8 @@ fun AssessScreen(
     pieceMine: Boolean = true,
     /** The worker's name for their piece, when [pieceMine] is false. */
     givenLabel: String? = null,
+    /** The studio chosen on New piece (v0.7.1, row 46); the intake then does not ask it. */
+    presetStudio: PieceStudioChoice? = null,
 ) {
     val container = fundiContainer()
     val viewModel: AssessViewModel = viewModel(
@@ -276,6 +278,7 @@ fun AssessScreen(
                 fixedPurpose = if (isFinal) FundiPurpose.REEVALUATE else null,
                 askFinished = askFinished,
                 onFinished = viewModel::answerFinished,
+                presetStudio = presetStudio,
             )
 
             Stage.OPENING_PHOTO -> {
