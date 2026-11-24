@@ -114,6 +114,21 @@ class SettingsViewModelTest {
     }
 
     @Test
+    fun `row 53 - a Fundi Bora shop is told to change its password in Fundi Bora`() = runTest {
+        val model = modelOf(FakeAccount(password = PasswordOutcome.OnFundiBora))
+
+        model.changePassword("the workshop password", "new-password", "new-password")
+        advanceUntilIdle()
+
+        assertFalse(model.passwordChanged.value)
+        assertEquals(
+            "This shop signs in with your Fundi Bora password. Change it in the Fundi Bora app.",
+            model.message.value,
+        )
+        assertFalse(model.busy.value)
+    }
+
+    @Test
     fun `a deleted account is reported so the caller signs out`() = runTest {
         val model = modelOf(FakeAccount(deleted = true))
 

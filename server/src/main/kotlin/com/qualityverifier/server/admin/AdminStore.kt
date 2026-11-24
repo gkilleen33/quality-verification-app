@@ -83,6 +83,12 @@ data class UserRow(
     val audience: Audience = Audience.BUYER,
     /** A Kagua account on a shop's tablet (V39, row 12), fixed by its invite code. */
     val shopMode: Boolean = false,
+    /**
+     * For a Kagua shop opened with Fundi Bora details (V43, row 53): the Fundi Bora account it
+     * belongs to, and that account's number, which the shop account does not have itself.
+     */
+    val shopOfUserId: String? = null,
+    val shopOfPhone: String? = null,
 )
 
 data class AuditRow(
@@ -677,15 +683,20 @@ class PostgresAdminStore(private val dataSource: DataSource) : AdminStore {
     ): Page<UserRow> = query { connection ->
         // Parameterised LIKE rather than string building. This is a text box on a page that
         // can read every conversation in the system; it is the last place to hand-roll SQL.
+        // A Fundi Bora account's Kagua shop (V43, row 53) has no number of its own: the owner's
+        // is read beside it, and searching that number finds the shop too.
         connection.prepareStatement(
             """
             select u.id::text, u.phone, u.display_name, u.account_type, u.business_name, u.created_at,
                    (select count(*)::int from sessions s where s.user_id = u.id),
                    (u.deleted_at is not null),
-                   u.is_tester, u.audience, u.shop_mode
+                   u.is_tester, u.audience, u.shop_mode,
+                   u.shop_of_user_id::text, o.phone
             from users u
+            left join users o on o.id = u.shop_of_user_id
             where (?::text is null
                    or u.phone ilike '%' || ? || '%'
+                   or o.phone ilike '%' || ? || '%'
                    or u.display_name ilike '%' || ? || '%'
                    or u.business_name ilike '%' || ? || '%')
               and (?::text is null or u.audience = ?)
@@ -697,11 +708,12 @@ class PostgresAdminStore(private val dataSource: DataSource) : AdminStore {
             statement.setString(2, search ?: "")
             statement.setString(3, search ?: "")
             statement.setString(4, search ?: "")
-            statement.setString(5, audience?.id)
+            statement.setString(5, search ?: "")
             statement.setString(6, audience?.id)
+            statement.setString(7, audience?.id)
             // One more than asked for, so "is there a next page" needs no count query.
-            statement.setInt(7, limit + 1)
-            statement.setInt(8, offset)
+            statement.setInt(8, limit + 1)
+            statement.setInt(9, offset)
             statement.executeQuery().use { rows ->
                 val out = mutableListOf<UserRow>()
                 while (rows.next()) out += UserRow(
@@ -716,6 +728,8 @@ class PostgresAdminStore(private val dataSource: DataSource) : AdminStore {
                     isTester = rows.getBoolean(9),
                     audience = Audience.fromId(rows.getString(10).orEmpty()) ?: Audience.BUYER,
                     shopMode = rows.getBoolean(11),
+                    shopOfUserId = rows.getString(12),
+                    shopOfPhone = rows.getString(13),
                 )
                 Page(out.take(limit), hasMore = out.size > limit)
             }

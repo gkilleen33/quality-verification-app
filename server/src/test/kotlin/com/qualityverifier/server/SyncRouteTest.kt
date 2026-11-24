@@ -42,6 +42,7 @@ import io.ktor.serialization.kotlinx.json.json
 import io.ktor.server.testing.ApplicationTestBuilder
 import io.ktor.server.testing.testApplication
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
@@ -776,6 +777,96 @@ class SyncRouteTest {
         assertEquals(true, tokens.shopMode)
     }
 
+    @Test
+    fun `row 53 - a Fundi Bora shop's owner controls open with the Fundi Bora password`() = testApplication {
+        val auth = FakeAuth(currentPassword = "the workshop password", shopOf = FUNDI_OWNER)
+        val app = withSync(FakeChatStore(), auth)
+
+        val response = app.post("/v1/me/password-check") {
+            auth(MINE); contentType(ContentType.Application.Json); setBody("""{"password":"the workshop password"}""")
+        }
+
+        assertEquals(HttpStatusCode.NoContent, response.status)
+        // Cleared on the account that holds the password, not on the shop.
+        assertEquals(listOf(FUNDI_OWNER), auth.clearedChecks)
+    }
+
+    @Test
+    fun `row 53 - a wrong password at a Fundi Bora shop counts against the Fundi Bora account`() = testApplication {
+        val auth = FakeAuth(currentPassword = "the workshop password", shopOf = FUNDI_OWNER)
+        val app = withSync(FakeChatStore(), auth)
+
+        val response = app.post("/v1/me/password-check") {
+            auth(MINE); contentType(ContentType.Application.Json); setBody("""{"password":"a customer's guess"}""")
+        }
+
+        assertEquals(HttpStatusCode.Forbidden, response.status)
+        assertTrue(response.bodyAsText().contains("wrong_password"))
+        assertEquals(listOf(FUNDI_OWNER), auth.failedChecks)
+    }
+
+    @Test
+    fun `row 53 - a locked Fundi Bora account locks its shop's owner controls`() = testApplication {
+        val auth = FakeAuth(
+            currentPassword = "the workshop password", shopOf = FUNDI_OWNER,
+            locked = Instant.now().plusSeconds(600),
+        )
+        val app = withSync(FakeChatStore(), auth)
+
+        val response = app.post("/v1/me/password-check") {
+            auth(MINE); contentType(ContentType.Application.Json); setBody("""{"password":"the workshop password"}""")
+        }
+
+        assertEquals(HttpStatusCode.TooManyRequests, response.status)
+        assertTrue(auth.clearedChecks.isEmpty())
+    }
+
+    @Test
+    fun `row 53 - the linked account cannot sign in with a password of its own`() = testApplication {
+        // The shop account has no password: its own id holds none, so only the Fundi Bora
+        // account's opens the owner's controls (the test above), and Kagua cannot set one.
+        val auth = FakeAuth(currentPassword = "the workshop password", shopOf = FUNDI_OWNER)
+        assertNull(auth.passwordHashFor(MINE))
+        val app = withSync(FakeChatStore(), auth)
+
+        val response = app.post("/v1/auth/password") {
+            auth(MINE); contentType(ContentType.Application.Json)
+            setBody(ChangePasswordRequest(currentPassword = "the workshop password", newPassword = "a shop password"))
+        }
+
+        assertEquals(HttpStatusCode.Forbidden, response.status)
+        assertTrue(response.bodyAsText().contains("password_on_fundi_bora"))
+        assertTrue(auth.passwordChanges.isEmpty())
+        assertTrue("no device is signed out", auth.revoked.isEmpty())
+    }
+
+    @Test
+    fun `row 53 - a Fundi Bora password change signs the shop's tablets out too`() = testApplication {
+        val shop = "77777777-8888-4999-aaaa-bbbbbbbbbbbb"
+        val auth = FakeAuth(currentPassword = "the workshop password", linkedShop = shop)
+        val app = withSync(FakeChatStore(), auth)
+
+        val response = app.post("/v1/auth/password") {
+            auth(MINE); contentType(ContentType.Application.Json)
+            setBody(ChangePasswordRequest(currentPassword = "the workshop password", newPassword = "a new password"))
+        }
+
+        assertEquals(HttpStatusCode.OK, response.status)
+        assertEquals(listOf(MINE), auth.passwordChanges)
+        assertEquals(listOf(MINE, shop), auth.revoked)
+    }
+
+    @Test
+    fun `row 53 - deleting a Fundi Bora shop from Kagua deletes the shop account only`() = testApplication {
+        val auth = FakeAuth(currentPassword = "the workshop password", shopOf = FUNDI_OWNER)
+        val app = withSync(FakeChatStore(), auth)
+
+        val response = app.delete("/v1/account") { auth(MINE) }
+
+        assertEquals(HttpStatusCode.NoContent, response.status)
+        assertEquals(listOf(MINE), auth.accountsDeleted)
+    }
+
     /** Stores a small distinct photo and returns its hash. */
     private fun BlobStore.storeTestPhoto(seed: Int): String {
         val bytes = ByteArray(64) { (it * 31 + seed).toByte() }
@@ -952,10 +1043,19 @@ class SyncRouteTest {
         /** A Kagua account on a shop's tablet (V39, row 12). */
         private val shopMode: Boolean = false,
         private val locked: Instant? = null,
+        /**
+         * The Fundi Bora account this shop account belongs to (V43, row 53). When set, the
+         * password and the lock are that account's, and the shop has neither of its own.
+         */
+        private val shopOf: String? = null,
+        /** For a Fundi Bora account: its Kagua shop account (V43, row 53). */
+        private val linkedShop: String? = null,
     ) : AuthStore {
+        override suspend fun linkedShopAccount(fundiUserId: String) = linkedShop
         val failedChecks = mutableListOf<String>()
         val clearedChecks = mutableListOf<String>()
-        override suspend fun lockedUntil(userId: String) = locked
+        private fun holdsPassword(userId: String) = shopOf == null || userId == shopOf
+        override suspend fun lockedUntil(userId: String) = locked.takeIf { holdsPassword(userId) }
         val passwordChanges = mutableListOf<String>()
         val accountsDeleted = mutableListOf<String>()
         val revoked = mutableListOf<String>()
@@ -965,7 +1065,10 @@ class SyncRouteTest {
 
         override suspend fun register(registration: Registration) = RegisterOutcome.InviteUnusable
         override suspend fun findUser(userId: String) =
-            UserRow(userId, "Grady", "individual", null, disabled = disabled, isTester = isTester, shopMode = shopMode)
+            UserRow(
+                userId, "Grady", "individual", null, disabled = disabled, isTester = isTester,
+                shopMode = shopMode || shopOf != null, shopOfUserId = shopOf.takeIf { userId != shopOf },
+            )
 
         override suspend fun issueRefresh(
             userId: String, token: String, expiresAt: Instant, userAgent: String?, replaces: String?,
@@ -990,7 +1093,8 @@ class SyncRouteTest {
         override suspend fun clearFailedSignIns(userId: String) {
             clearedChecks += userId
         }
-        override suspend fun passwordHashFor(userId: String) = currentPassword?.let(Passwords::hash)
+        override suspend fun passwordHashFor(userId: String) =
+            currentPassword?.takeIf { holdsPassword(userId) }?.let(Passwords::hash)
         override suspend fun setPasswordHash(userId: String, passwordHash: String) {
             passwordChanges += userId
         }
@@ -1004,6 +1108,9 @@ class SyncRouteTest {
     private companion object {
         const val KEY = "a-signing-key-long-enough-to-be-real"
         const val MINE = "11111111-2222-3333-4444-555555555555"
+
+        /** Row 53: the Fundi Bora account whose Kagua shop MINE is, in the tests that say so. */
+        const val FUNDI_OWNER = "66666666-7777-4888-9999-000000000000"
 
         /**
          * A real UUID, because the routes cast ids with `?::uuid`.

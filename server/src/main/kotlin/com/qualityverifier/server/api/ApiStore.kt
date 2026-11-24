@@ -95,7 +95,7 @@ class PostgresApiStore(private val dataSource: DataSource) : ApiStore {
                    u.business_location_accuracy_m, u.is_tester,
                    (extract(epoch from u.created_at) * 1000)::bigint,
                    (select count(*)::int from sessions s where s.user_id = u.id),
-                   (u.deleted_at is not null), u.audience, u.shop_mode
+                   (u.deleted_at is not null), u.audience, u.shop_mode, u.shop_of_user_id::text
               from users u
              order by u.created_at
              limit ? offset ?
@@ -122,6 +122,7 @@ class PostgresApiStore(private val dataSource: DataSource) : ApiStore {
                     deleted = rows.getBoolean(12),
                     audience = rows.getString(13),
                     shopMode = rows.getBoolean(14),
+                    shopOfUserId = rows.getString(15),
                 )
                 out
             }

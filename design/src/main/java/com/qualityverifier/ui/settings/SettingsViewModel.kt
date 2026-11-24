@@ -65,6 +65,7 @@ class SettingsViewModel(
                     }
                     PasswordOutcome.WrongPassword -> "That current password isn't right."
                     PasswordOutcome.TooShort -> "The new password must be at least 8 characters."
+                    PasswordOutcome.OnFundiBora -> PASSWORD_ON_FUNDI_BORA
                     PasswordOutcome.Unavailable ->
                         "Could not reach our server. Please try again shortly."
                 }
@@ -93,6 +94,14 @@ class SettingsViewModel(
     }
 
     companion object {
+        /**
+         * Kagua's shop signed in with Fundi Bora details (row 53): the server refuses a password
+         * change there, because only Fundi Bora changes that password. English only, as every
+         * message on this screen is.
+         */
+        const val PASSWORD_ON_FUNDI_BORA =
+            "This shop signs in with your Fundi Bora password. Change it in the Fundi Bora app."
+
         fun factory(container: AppContainer): ViewModelProvider.Factory = viewModelFactory {
             initializer {
                 SettingsViewModel(container.account::changePassword, container.account::deleteAccount)

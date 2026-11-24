@@ -199,8 +199,10 @@ data class AuthLabels(
             staySignedIn = "Stay signed in",
             ownerControls = "Shop owner",
             ownerPasswordTitle = "Shop owner's password",
-            ownerPasswordBody = "Type this tablet's Kagua password to open the account, sign out, " +
-                "or change the account's settings.",
+            // The password the tablet signed in with: Kagua's own, or from row 53 the Fundi Bora
+            // password of a fundi whose shop this is.
+            ownerPasswordBody = "Type the password this tablet signed in with to open the account, " +
+                "sign out, or change the account's settings.",
             ownerPasswordWrong = "That password is not right.",
             ownerPasswordLocked = "Too many attempts. Please wait 15 minutes and try again.",
             ownerPasswordUnavailable = "The password could not be checked. Check the internet " +
@@ -294,8 +296,9 @@ data class AuthLabels(
             // Not yet reviewed by a Kiswahili speaker (row 12).
             ownerControls = "Mwenye duka",
             ownerPasswordTitle = "Nenosiri la mwenye duka",
-            ownerPasswordBody = "Andika nenosiri la Kagua la kompyuta kibao hii ili kufungua " +
-                "akaunti, kutoka, au kubadilisha mipangilio ya akaunti.",
+            // Reworded for row 53; not yet reviewed by a Kiswahili speaker either.
+            ownerPasswordBody = "Andika nenosiri lililotumika kuingia kwenye kompyuta kibao hii ili " +
+                "kufungua akaunti, kutoka, au kubadilisha mipangilio ya akaunti.",
             ownerPasswordWrong = "Nenosiri hilo si sahihi.",
             ownerPasswordLocked = "Majaribio mengi mno. Tafadhali subiri dakika 15 kisha ujaribu tena.",
             ownerPasswordUnavailable = "Nenosiri halikuweza kuthibitishwa. Angalia mtandao " +

@@ -113,6 +113,19 @@ fun Route.authRoutes(store: AuthStore, accessTokens: AccessTokens, terms: Terms?
             // chooses a prompt, which stays the invite code's (V16).
             val accounts = store.credentialsForPhone(request.phone)
             val audience = signInAudience(call.request.headers[AppVersionHeaders.APP])
+
+            // Kagua from v0.7.0 may also be opened with the number's Fundi Bora details, as that
+            // account's shop (row 53, V43). An older Kagua cannot run shop mode and keeps #114's
+            // rule below: its own account only.
+            if (opensFundiShop(
+                    call.request.headers[AppVersionHeaders.APP],
+                    call.request.headers[AppVersionHeaders.VERSION],
+                )
+            ) {
+                call.signInToKaguaOrFundiShop(store, accessTokens, accounts, request)
+                return@post
+            }
+
             val credentials = when {
                 audience != null -> accounts.firstOrNull { it.audience == audience }
                 // A phone that does not say which app it is, as before V38: the number's
@@ -257,7 +270,10 @@ fun Route.authRoutes(store: AuthStore, accessTokens: AccessTokens, terms: Terms?
                 return@post
             }
             val request = call.receive<PasswordCheckRequest>()
-            val lockedUntil = store.lockedUntil(user.id)
+            // A Fundi Bora account's shop (V43, row 53) has no password of its own: the Fundi
+            // Bora account's opens it, and its failures and lockout count there, as at sign-in.
+            val passwordAccount = user.shopOfUserId ?: user.id
+            val lockedUntil = store.lockedUntil(passwordAccount)
             if (lockedUntil != null && lockedUntil.isAfter(Instant.now())) {
                 Passwords.burnEquivalentWork(request.password)
                 call.respond(
@@ -266,18 +282,18 @@ fun Route.authRoutes(store: AuthStore, accessTokens: AccessTokens, terms: Terms?
                 )
                 return@post
             }
-            val hash = store.passwordHashFor(user.id)
+            val hash = store.passwordHashFor(passwordAccount)
             if (hash == null || request.password.isEmpty() || !Passwords.verify(request.password, hash)) {
-                val failures = store.recordFailedSignIn(user.id, LOCKOUT, LOCKOUT_THRESHOLD)
+                val failures = store.recordFailedSignIn(passwordAccount, LOCKOUT, LOCKOUT_THRESHOLD)
                 if (failures >= LOCKOUT_THRESHOLD) {
-                    log.warn("Locked account {} after {} failed password checks", user.id, failures)
+                    log.warn("Locked account {} after {} failed password checks", passwordAccount, failures)
                 }
                 // 403, not 401: the phone answers every 401 by refreshing its token and
                 // sending again, which would count each wrong password twice.
                 call.respond(HttpStatusCode.Forbidden, ErrorResponse("wrong_password"))
                 return@post
             }
-            store.clearFailedSignIns(user.id)
+            store.clearFailedSignIns(passwordAccount)
             call.respond(HttpStatusCode.NoContent)
         }
     }
@@ -337,6 +353,91 @@ private suspend fun ApplicationCall.refuseUnnamedAppWithTwoAccounts(
     }
     unlocked.forEach { store.recordFailedSignIn(it.userId, LOCKOUT, LOCKOUT_THRESHOLD) }
     respond(HttpStatusCode.Unauthorized, ErrorResponse("invalid_credentials"))
+}
+
+/**
+ * The first Kagua `versionCode` that runs shop mode (v0.7.0, row 12), and so the first that may
+ * be signed in to a Fundi Bora account's shop (row 53).
+ */
+internal const val FUNDI_SHOP_FROM_KAGUA_VERSION = 8
+
+/**
+ * Whether a sign-in may open the number's Fundi Bora account as a Kagua shop (row 53): Kagua,
+ * at [FUNDI_SHOP_FROM_KAGUA_VERSION] or later. A phone that sends no version is older than
+ * v0.4.0 and is not.
+ */
+internal fun opensFundiShop(appHeader: String?, versionHeader: String?): Boolean =
+    AppId.fromId(appHeader) == AppId.KAGUA &&
+        (AppVersionHeaders.parseVersion(versionHeader) ?: 0) >= FUNDI_SHOP_FROM_KAGUA_VERSION
+
+/**
+ * A Kagua sign-in from a build that runs shop mode (row 53).
+ *
+ * The password is tried against the number's Kagua account first, so its own password always
+ * opens it as before, and then against the number's Fundi Bora account, which opens that
+ * account's linked Kagua shop account (V43), made on first use.
+ *
+ * As [refuseUnnamedAppWithTwoAccounts] does: every sign-in costs exactly two password checks'
+ * work, whatever the number holds, so the time taken says nothing about which accounts exist; a
+ * locked or disabled account is not tried; a wrong password counts as a failure against each
+ * account it was tried on; and every refusal is the answer an unknown number gets. The account
+ * whose password matched has its failures cleared.
+ */
+private suspend fun ApplicationCall.signInToKaguaOrFundiShop(
+    store: AuthStore,
+    accessTokens: AccessTokens,
+    accounts: List<Credentials>,
+    request: SignInRequest,
+) {
+    val now = Instant.now()
+    // Kagua's own account first, so its password wins when the two are the same.
+    val tried = listOfNotNull(
+        accounts.firstOrNull { it.audience == Audience.BUYER },
+        accounts.firstOrNull { it.audience == Audience.FUNDI },
+    )
+    val usable = tried.filter { !it.disabled && it.passwordHash != null }
+    val unlocked = usable.filter { it.lockedUntil?.isAfter(now) != true }
+    if (usable.isNotEmpty() && unlocked.isEmpty()) {
+        log.warn("Kagua sign-in attempt on a number whose accounts are all locked")
+        respond(
+            HttpStatusCode.TooManyRequests,
+            ErrorResponse("locked", "Too many attempts. Try again later."),
+        )
+        return
+    }
+    // Every account tried, with no short cut, then padded to two checks.
+    val matches = unlocked.map { it to Passwords.verify(request.password, it.passwordHash!!) }
+    repeat(2 - unlocked.size) { Passwords.burnEquivalentWork(request.password) }
+    val matched = matches.firstOrNull { it.second }?.first
+    if (matched == null) {
+        unlocked.forEach { account ->
+            val failures = store.recordFailedSignIn(account.userId, LOCKOUT, LOCKOUT_THRESHOLD)
+            if (failures >= LOCKOUT_THRESHOLD) {
+                log.warn("Locked account {} after {} failures", account.userId, failures)
+            }
+        }
+        respond(HttpStatusCode.Unauthorized, ErrorResponse("invalid_credentials"))
+        return
+    }
+
+    val signedInTo = if (matched.audience == Audience.FUNDI) {
+        // Null only for a linked account disabled in the database: answered as a disabled
+        // account is, with nothing counted.
+        store.shopAccountFor(matched.userId) ?: run {
+            log.warn("Fundi Bora account {} matched, but its Kagua shop account is disabled", matched.userId)
+            respond(HttpStatusCode.Unauthorized, ErrorResponse("invalid_credentials"))
+            return
+        }
+    } else {
+        matched.userId
+    }
+    store.clearFailedSignIns(matched.userId)
+    if (signedInTo != matched.userId) {
+        log.info("Signed in Fundi Bora account {} to its Kagua shop account {}", matched.userId, signedInTo)
+    } else {
+        log.info("Signed in user {}", signedInTo)
+    }
+    respond(issueTokens(store, accessTokens, signedInTo, request.userAgent))
 }
 
 /**
