@@ -42,8 +42,8 @@ android {
         applicationId = "com.qualityverifier.fundibora"
         minSdk = 24
         targetSdk = 36
-        versionCode = 8
-        versionName = "0.7.0"
+        versionCode = 9
+        versionName = "0.7.1"
 
         // The same backend as Kagua, which is the whole architecture — one server, one
         // database, two apps. Compiled in, as it is there.
