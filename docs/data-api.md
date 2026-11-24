@@ -47,7 +47,8 @@ milliseconds throughout.
 | `GET /assessments/{id}` | one assessment with its messages, photo hashes in order, each photo's camera metadata, its `problems`, the evaluator's critique if there is one, its `tools` (V35, see below), and its `report_link_times` (V40, see "Kagua on a shop's tablet") |
 | `GET /tester-feedback` | every evaluator critique, keyed on `session_id` |
 | `GET /review-helpful` | each Fundi Bora tester's answer to "Was this review helpful?" after a verdict (V36): `session_id`, `user_id` (null once the tester's account is deleted), `helpful`, `answered_at`. One per assessment, the first answer given |
-| `GET /pieces` | every piece a Fundi Bora maker has assessed: `id`, `user_id`, `item_type_id`, `created_at`, and its studio label, `studio_entry_id` and `studio_chosen_at` (V34). No name (see below) |
+| `GET /pieces` | every piece a Fundi Bora maker has assessed: `id`, `user_id`, `item_type_id`, `created_at`, its studio label, `studio_entry_id` and `studio_chosen_at` (V34), and the maker's last answer to "Is this piece finished?", `stage` (`in_progress` or `finished`) and `stage_set_at` (V44; both null until answered). No name (see below) |
+| `GET /piece-stage-changes` | each answer to "Is this piece finished?" on a piece's page (V44), a repeat included: `id`, `piece_id`, `user_id`, `old_stage` (null for the first), `new_stage`, `at` |
 | `GET /piece-studio-changes` | each change of a piece's studio label after it was made (V34): `piece_id`, `user_id`, `kind` (`first_choice` or `correction`), `old_studio_entry_id`, `new_studio_entry_id`, `at` |
 | `GET /studio-days` | each answer to "Which studio are you at today?" (V34): `user_id`, `day` (Nairobi date), `studio_entry_id` (null for the fundi's own workshop), `answered_at` |
 | `GET /detail-answers` | every Fundi Bora detail answer (V37): the answer to one detail button ("More on what we found", "More on what's causing this", "How to upgrade next time", and from v0.7.0's improvement list "A tool to buy or rent") of one improvement. `id`, `session_id`, `source_message_id` (the diagnosis reply), `finding_index` (from 0) and `finding_title`, `detail_kind` (`what_we_found`, `cause`, `next_time`, `tool`), `source` (`prefetch` or `tap`), `answer_text`, `model`, `effort` (the thinking effort asked for; null is the API's default, high), `prompt_sha`, `usage_event_id`, `created_at`, and `opened_at` and `opened_message_id` (null for an answer the fundi never opened). See "Detail answers" below |
@@ -203,6 +204,15 @@ the studio's account through `/worker-links`; null is "My own job" when `studio_
 set, and a piece never asked (made before v0.6.0 or by an older app) when it is null. A wrong
 label can be corrected once; `/piece-studio-changes` holds each change with its old and new
 entry, and the first answer for a piece never asked is a `first_choice`, not the correction.
+
+Since v0.7.1 (V44) a piece's page has a Status row, "In progress" or "Finished", which the maker
+can set. `stage` and `stage_set_at` on `/pieces` are the maker's last answer; null means never
+answered. They are not what the phone shows: the phone shows the newer of the answer and the
+stage the piece's latest assessment implies by its purpose (`work_in_progress` means in progress,
+any other purpose finished). To rebuild what a maker saw at a moment, compare `stage_set_at`
+with the assessments' `created_at`. Every answer, a repeat of the same stage included, is a row of
+`/piece-stage-changes`. The stage decides nothing about reports: a customer report still needs a
+final assessment.
 
 The account that runs the studio a piece is labelled for may add its own assessments to the
 worker's piece while the two sides are linked. Such an assessment has the manager's

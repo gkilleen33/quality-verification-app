@@ -170,6 +170,15 @@ fun Route.apiRoutes(
             call.respond(ApiPage(rows.take(limit), rows.size > limit, limit, offset))
         }
 
+        // Each answer to "Is this piece finished?" (V44, row 55), with the old and new stage.
+        get("/piece-stage-changes") {
+            requireKey() ?: return@get
+            val limit = call.limit()
+            val offset = call.offset()
+            val rows = store.pieceStageChanges(limit + 1, offset)
+            call.respond(ApiPage(rows.take(limit), rows.size > limit, limit, offset))
+        }
+
         // "Which studio are you at today?" (V34): one answer per account and Nairobi day.
         get("/studio-days") {
             requireKey() ?: return@get

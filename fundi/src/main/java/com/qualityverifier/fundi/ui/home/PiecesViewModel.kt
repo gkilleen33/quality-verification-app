@@ -7,6 +7,9 @@ import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
 import com.qualityverifier.data.session.SessionRepository
 import com.qualityverifier.data.sync.AssessmentSync
+import com.qualityverifier.data.sync.PieceApi
+import com.qualityverifier.data.sync.RemoteSentReport
+import com.qualityverifier.domain.PieceStage
 import com.qualityverifier.data.sync.SyncStatus
 import com.qualityverifier.data.workers.StudioRepository
 import com.qualityverifier.data.workers.WorkerRepository
@@ -50,6 +53,8 @@ class PiecesViewModel(
     summaries: Flow<List<SessionSummary>> = sessions.observeSummaries(),
     private val messagesOf: suspend (String) -> List<ChatMessage> = sessions::messagesOnce,
     private val intakeCodeOf: suspend (String) -> String? = { id -> sessions.startOf(id)?.intakeCode },
+    /** A piece's stage and sent reports on the server (rows 55, 56); null in tests that never ask. */
+    private val pieceApi: PieceApi? = null,
 ) : ViewModel() {
 
     /** Every entry of "Studios I work for", archived ones too, so an old label still has a name. */
@@ -151,6 +156,25 @@ class PiecesViewModel(
         viewModelScope.launch { onAdded(workers.add(details)) }
     }
 
+    /**
+     * Stores the fundi's answer to "Is this piece finished?" on the server (row 55) and, once
+     * it is there, on the phone. [onDone] says whether it was stored: online only, since the
+     * answer is the server's record.
+     */
+    fun setStage(pieceId: String, stage: PieceStage, onDone: (Boolean) -> Unit) {
+        val api = pieceApi ?: return onDone(false)
+        viewModelScope.launch {
+            val stored = runCatching { api.setPieceStage(pieceId, stage.id) }.getOrNull()
+            val at = stored?.setAt
+            if (stored != null && at != null) sessions.applyPieceStage(pieceId, stored.stage, at)
+            onDone(stored != null && at != null)
+        }
+    }
+
+    /** "Reports sent" on a piece's page (row 56), newest first; null when they could not be fetched. */
+    suspend fun sentReports(pieceId: String): List<RemoteSentReport>? =
+        pieceApi?.let { api -> runCatching { api.sentReports(pieceId) }.getOrNull() }
+
     /** Renames a piece, or clears the name with null. Written locally; the server hears on the next sync. */
     fun rename(pieceId: String, label: String?) {
         viewModelScope.launch {
@@ -167,6 +191,7 @@ class PiecesViewModel(
                     container.assessmentSync,
                     container.workerRepository,
                     container.studioRepository,
+                    pieceApi = container.pieces,
                 )
             }
         }

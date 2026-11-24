@@ -110,6 +110,14 @@ interface FundiStore {
      */
     suspend fun setPieceStudio(userId: String, pieceId: String, studioEntryId: String?): PieceStudioChange
 
+    /**
+     * Records the fundi's answer to "Is this piece finished?" (V44, row 55): [stage] is one
+     * of `PieceStage.ids`. Only the piece's maker. Each answer, a repeat included, is a row in
+     * `piece_stage_changes` with the old and new stage, in the same transaction, and moves
+     * `stage_set_at` to now, so the newest answer is the one that shows.
+     */
+    suspend fun setPieceStage(userId: String, pieceId: String, stage: String): PieceStageChange
+
     /** Today's answer to "Which studio are you at today?" (V34), or null when not yet answered. */
     suspend fun studioToday(userId: String): StudioDay?
 
@@ -132,6 +140,15 @@ sealed interface PieceStudioChange {
     data object NotYourStudio : PieceStudioChange
     /** The one correction has been used. */
     data object AlreadyCorrected : PieceStudioChange
+}
+
+/** What setting a piece's stage came to (V44, row 55). */
+sealed interface PieceStageChange {
+    /** Stored; [setAt] is the server's time, epoch millis. */
+    data class Set(val stage: String, val setAt: Long) : PieceStageChange
+
+    /** Not this account's piece, or none: the route answers 404 either way. */
+    data object NoSuchPiece : PieceStageChange
 }
 
 /** One account's answer for one Nairobi day. [studioEntryId] null is its own workshop. */
@@ -631,6 +648,42 @@ class PostgresFundiStore(private val dataSource: DataSource) : FundiStore {
                 statement.executeUpdate()
             }
             PieceStudioChange.Changed
+        }
+
+    override suspend fun setPieceStage(userId: String, pieceId: String, stage: String): PieceStageChange =
+        tx { connection ->
+            // Locked, so two answers sent at once are recorded in order, each with the old
+            // stage the other left. Only the maker's own piece: a manager's is not found.
+            val old = connection.prepareStatement(
+                "select stage from pieces where id = ?::uuid and user_id = ?::uuid for update"
+            ).use { statement ->
+                statement.setString(1, pieceId)
+                statement.setString(2, userId)
+                statement.executeQuery().use { rows -> if (rows.next()) listOf(rows.getString(1)) else null }
+            } ?: return@tx PieceStageChange.NoSuchPiece
+            connection.prepareStatement(
+                "insert into piece_stage_changes (piece_id, user_id, old_stage, new_stage) values (?::uuid, ?::uuid, ?, ?)"
+            ).use { statement ->
+                statement.setString(1, pieceId)
+                statement.setString(2, userId)
+                statement.setString(3, old.single())
+                statement.setString(4, stage)
+                statement.executeUpdate()
+            }
+            connection.prepareStatement(
+                """
+                update pieces set stage = ?, stage_set_at = now()
+                 where id = ?::uuid
+                returning (extract(epoch from stage_set_at) * 1000)::bigint
+                """.trimIndent()
+            ).use { statement ->
+                statement.setString(1, stage)
+                statement.setString(2, pieceId)
+                statement.executeQuery().use { rows ->
+                    rows.next()
+                    PieceStageChange.Set(stage, rows.getLong(1))
+                }
+            }
         }
 
     /**

@@ -45,6 +45,9 @@ data class SessionSummaryRow(
     val pieceStudioCorrected: Boolean = false,
     val pieceMine: Boolean = true,
     val isFinal: Boolean = false,
+    /** From `pieces` (server V44, row 55): the maker's last answer, and the server's time of it. */
+    val pieceStage: String? = null,
+    val pieceStageSetAt: Long? = null,
 )
 
 @Dao
@@ -67,6 +70,8 @@ interface SessionDao {
                COALESCE(p.studioCorrected, 0) AS pieceStudioCorrected,
                COALESCE(p.mine, 1) AS pieceMine,
                s.isFinal AS isFinal,
+               p.stage AS pieceStage,
+               p.stageSetAt AS pieceStageSetAt,
                COUNT(m.id) AS messageCount
         FROM sessions s
         LEFT JOIN messages m ON m.sessionId = s.id
@@ -251,6 +256,17 @@ interface SessionDao {
             "studioChosen = 1, studioPendingAt = :at WHERE id = :pieceId AND mine"
     )
     suspend fun setPieceStudio(pieceId: String, studioId: String?, at: Long)
+
+    /**
+     * A piece's stage as the server stored it (V44, row 55), from the answer to a set or from a
+     * sync, kept only when newer than what the phone holds, so an older answer arriving late
+     * never replaces a newer one.
+     */
+    @Query(
+        "UPDATE pieces SET stage = :stage, stageSetAt = :setAt " +
+            "WHERE id = :pieceId AND (stageSetAt IS NULL OR stageSetAt < :setAt)"
+    )
+    suspend fun applyPieceStage(pieceId: String, stage: String, setAt: Long)
 
     @Query("SELECT * FROM pieces WHERE studioPendingAt IS NOT NULL ORDER BY studioPendingAt")
     suspend fun unsyncedPieceStudios(): List<PieceEntity>

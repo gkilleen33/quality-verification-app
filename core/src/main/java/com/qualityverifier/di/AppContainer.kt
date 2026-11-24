@@ -33,6 +33,7 @@ import com.qualityverifier.data.shop.ShopTabletFlag
 import com.qualityverifier.data.shop.ShopTabletWipe
 import com.qualityverifier.data.sync.AccountActions
 import com.qualityverifier.data.sync.AssessmentSync
+import com.qualityverifier.data.sync.PieceApi
 import com.qualityverifier.data.sync.ShopReportLinkApi
 import com.qualityverifier.data.sync.SyncClient
 import com.qualityverifier.data.terms.TermsApi
@@ -339,6 +340,9 @@ class AppContainer(
      * holds. Kagua's shop mode asks for it; nothing else does.
      */
     val shopReportLinks: ShopReportLinkApi = syncClient
+
+    /** A Fundi Bora piece's stage and its sent reports (rows 55 and 56). Kagua links it and never calls it. */
+    val pieces: PieceApi = syncClient
 
     /** This account's own number, E.164, from the cached profile; null until a v0.7.0 server answers. */
     val ownPhone: String? get() = tokenStore.ownPhone()

@@ -54,6 +54,8 @@ class TermsGateTest {
         // v0.6.0 (V34): a piece's studio label, and the day's studio. Both behind the gate,
         // as every other route that writes or reads the maker's work is.
         HttpMethod.Put to "/v1/fundi/pieces/$uuid/studio",
+        // v0.7.1 (V44, row 55): a piece's stage, behind the gate as its studio label is.
+        HttpMethod.Put to "/v1/fundi/pieces/$uuid/stage",
         HttpMethod.Get to "/v1/fundi/studio-today",
         HttpMethod.Put to "/v1/fundi/studio-today",
         // v0.6.0 (V35): the bench photo collects a photo, a GPS point, and a Claude call.
@@ -300,6 +302,7 @@ class TermsGateTest {
             "PUT" to "/v1/fundi/studios/x",
             "PUT" to "/v1/fundi/pieces/x",
             "PUT" to "/v1/fundi/pieces/x/studio",
+            "PUT" to "/v1/fundi/pieces/x/stage",
             "GET" to "/v1/fundi/studio-today",
             "PUT" to "/v1/fundi/studio-today",
             "POST" to "/v1/fundi/bench-photos",

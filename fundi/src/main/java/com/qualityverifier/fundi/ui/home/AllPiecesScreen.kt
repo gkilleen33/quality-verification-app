@@ -13,6 +13,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import com.qualityverifier.domain.PieceStage
 import com.qualityverifier.text.FundiScreenLabels
 import com.qualityverifier.ui.parts.BackBar
 import com.qualityverifier.ui.parts.CardRow
@@ -23,8 +24,9 @@ import com.qualityverifier.ui.parts.ScreenTitle
 
 /**
  * "All my pieces" (row 56), from Home's "All my pieces (N)": every piece, in two cards,
- * "In progress" and "Finished", newest first in each. [stageOf] says which; until a piece's
- * stage is stored (PR 5, row 55), it is the stage its latest assessment's purpose implies.
+ * "In progress" and "Finished", newest first in each. [stageOf] says which: the same value as
+ * the piece's Status row (row 55), the newer of the fundi's answer and the stage the latest
+ * assessment implies ([PieceStatus]).
  */
 @Composable
 fun AllPiecesScreen(
@@ -32,7 +34,7 @@ fun AllPiecesScreen(
     backLabel: String,
     onBack: () -> Unit,
     onOpenPiece: (PieceSummary) -> Unit,
-    stageOf: (PieceSummary) -> PieceStage = { PieceStage.impliedBy(it.newest.purpose) },
+    stageOf: (PieceSummary) -> PieceStage = { PieceStatus.of(it).stage },
     now: () -> Long = System::currentTimeMillis,
 ) {
     val words = FundiScreenLabels.ENGLISH

@@ -377,6 +377,8 @@ private fun SessionRow.toDto() = SessionSummaryDto(
     pieceStudioChosen = pieceStudio.chosen && pieceMine,
     pieceStudioCorrected = pieceStudio.corrected && pieceMine,
     final = isFinal,
+    pieceStage = pieceStage.takeIf { pieceMine },
+    pieceStageSetAt = pieceStageSetAt.takeIf { pieceMine },
 )
 
 private fun MessageRow.toDto() = MessageDto(

@@ -96,7 +96,30 @@ data class FundiScreenLabels(
     val addStudio: String = "Add a studio",
     val ownWorkshopIncluded: String = "Your own workshop is already included.",
     val loading: String = "Loading…",
+
+    // The Status row and its pop-up (row 55)
+    val status: String = "Status",
+    val setByYou: String = "set by you",
+    val fromLastAssessment: String = "from the last assessment",
+    val stageQuestion: String = "Is this piece finished?",
+    val stageYes: String = "Yes, it is finished",
+    val stageNo: String = "No, I am still making it",
+    val stageFailed: String = "This needs a connection. Check your internet and try again.",
+
+    // Reports sent (row 56)
+    val reportsSent: String = "Reports sent",
+    val reportSentLine: String = "It is listed under Reports sent, below.",
+    val ok: String = "OK",
 ) {
+    /** "In progress · set by you", "Finished · from the last assessment". */
+    fun statusLine(stage: String, setByFundi: Boolean) = "$stage · " + if (setByFundi) setByYou else fromLastAssessment
+
+    /** "Sent 24 Nov". */
+    fun sentOn(day: String) = "Sent $day"
+
+    /** "Report sent to the customer". */
+    fun reportSentTo(recipient: String) = "Report sent to $recipient"
+
     /** "Owner +254712345678" under a studio's name. */
     fun owner(phone: String) = "Owner $phone"
 

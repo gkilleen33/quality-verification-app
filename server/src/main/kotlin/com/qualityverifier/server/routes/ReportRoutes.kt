@@ -45,6 +45,20 @@ fun Route.reportRoutes(reports: ReportService, auth: AuthStore) {
             respondPreview(reports.preview(userId, ReportTarget.Piece(pieceId), call.requestFromQuery()))
         }
 
+        // "Reports sent" on a piece's page (V32, row 56): the reports this account was issued
+        // on its own piece, newest first. A row means the server made the PDF and the phone
+        // received it for the share sheet; whether the fundi then sent it is not known.
+        get("/v1/fundi/pieces/{id}/reports") {
+            val userId = call.principal<JWTPrincipal>()?.subject
+                ?: return@get call.respond(HttpStatusCode.Unauthorized, ErrorResponse("invalid_token"))
+            if (!call.requireFundi(auth, userId)) return@get
+            val pieceId = call.parameters["id"]?.takeIf(::isUuid)
+                ?: return@get call.respond(HttpStatusCode.NotFound, ErrorResponse("no_such_piece"))
+            val sent = reports.sentReports(userId, pieceId)
+                ?: return@get call.respond(HttpStatusCode.NotFound, ErrorResponse("no_such_piece"))
+            call.respond(SentReportsDto(sent.map { SentReportDto(it.kind, it.issuedAt) }))
+        }
+
         post("/v1/fundi/pieces/{id}/reports") {
             val userId = call.principal<JWTPrincipal>()?.subject
                 ?: return@post call.respond(HttpStatusCode.Unauthorized, ErrorResponse("invalid_token"))

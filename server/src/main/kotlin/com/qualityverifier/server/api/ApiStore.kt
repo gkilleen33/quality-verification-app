@@ -51,6 +51,9 @@ interface ApiStore {
     /** Every change of a piece's studio label after creation (V34), oldest first. */
     suspend fun pieceStudioChanges(limit: Int, offset: Int): List<ApiPieceStudioChange>
 
+    /** Each answer to "Is this piece finished?" (V44, row 55), oldest first. */
+    suspend fun pieceStageChanges(limit: Int, offset: Int): List<ApiPieceStageChange>
+
     /** Every answer to "Which studio are you at today?" (V34), by day, then account. */
     suspend fun studioDays(limit: Int, offset: Int): List<ApiStudioDay>
 
@@ -413,7 +416,8 @@ class PostgresApiStore(private val dataSource: DataSource) : ApiStore {
             select p.id::text, p.user_id::text, p.item_type_id,
                    (extract(epoch from p.created_at) * 1000)::bigint,
                    p.studio_entry_id::text,
-                   (extract(epoch from p.studio_chosen_at) * 1000)::bigint
+                   (extract(epoch from p.studio_chosen_at) * 1000)::bigint,
+                   p.stage, (extract(epoch from p.stage_set_at) * 1000)::bigint
               from pieces p
              order by p.created_at, p.id
              limit ? offset ?
@@ -430,11 +434,41 @@ class PostgresApiStore(private val dataSource: DataSource) : ApiStore {
                     createdAt = rows.getLong(4),
                     studioEntryId = rows.getString(5),
                     studioChosenAt = rows.nullableLong(6),
+                    stage = rows.getString(7),
+                    stageSetAt = rows.nullableLong(8),
                 )
                 out
             }
         }
     }
+
+    override suspend fun pieceStageChanges(limit: Int, offset: Int): List<ApiPieceStageChange> =
+        query { connection ->
+            connection.prepareStatement(
+                """
+                select c.id, c.piece_id::text, c.user_id::text, c.old_stage, c.new_stage,
+                       (extract(epoch from c.at) * 1000)::bigint
+                  from piece_stage_changes c
+                 order by c.id
+                 limit ? offset ?
+                """.trimIndent()
+            ).use { statement ->
+                statement.setInt(1, limit)
+                statement.setInt(2, offset)
+                statement.executeQuery().use { rows ->
+                    val out = mutableListOf<ApiPieceStageChange>()
+                    while (rows.next()) out += ApiPieceStageChange(
+                        id = rows.getLong(1),
+                        pieceId = rows.getString(2),
+                        userId = rows.getString(3),
+                        oldStage = rows.getString(4),
+                        newStage = rows.getString(5),
+                        at = rows.getLong(6),
+                    )
+                    out
+                }
+            }
+        }
 
     override suspend fun pieceStudioChanges(limit: Int, offset: Int): List<ApiPieceStudioChange> =
         query { connection ->

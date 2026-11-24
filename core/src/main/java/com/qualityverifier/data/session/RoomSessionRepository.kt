@@ -55,9 +55,14 @@ class RoomSessionRepository(
                     pieceStudioCorrected = row.pieceStudioCorrected,
                     pieceMine = row.pieceMine,
                     isFinal = row.isFinal,
+                    pieceStage = row.pieceStage,
+                    pieceStageSetAt = row.pieceStageSetAt,
                 )
             }
         }
+
+    override suspend fun applyPieceStage(pieceId: String, stage: String, setAt: Long) =
+        dao.applyPieceStage(pieceId, stage, setAt)
 
     override fun observeMessages(sessionId: String): Flow<List<ChatMessage>> =
         dao.observeMessages(sessionId).map { rows -> rows.map { it.toDomain() } }

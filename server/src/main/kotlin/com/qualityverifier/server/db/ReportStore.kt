@@ -62,7 +62,17 @@ interface ReportStore {
      * by every account. The service keeps only the worker's and [userId]'s.
      */
     suspend fun labelledPiecesOf(userId: String, workerAccountId: String): List<PieceSessions>
+
+    /**
+     * The reports [userId] was issued on [pieceId] (V32; row 56, "Reports sent"), newest
+     * first, or null unless [userId] made the piece: the route answers 404 either way, and no
+     * account lists another's reports.
+     */
+    suspend fun sentReports(userId: String, pieceId: String): List<SentReport>?
 }
+
+/** One report issued on a piece: its V32 kind and when, epoch millis. */
+data class SentReport(val kind: String, val issuedAt: Long)
 
 /**
  * A roster entry the match holds for, and [accountId], the worker's own account. [name] is
@@ -280,6 +290,33 @@ class PostgresReportStore(private val dataSource: DataSource) : ReportStore {
         connection.prepareStatement("select display_name from users where id = ?::uuid").use { statement ->
             statement.setString(1, userId)
             statement.executeQuery().use { rows -> if (rows.next()) rows.getString(1) else null }
+        }
+    }
+
+    override suspend fun sentReports(userId: String, pieceId: String): List<SentReport>? = read { connection ->
+        val maker = connection.prepareStatement(
+            "select 1 from pieces where id = ?::uuid and user_id = ?::uuid"
+        ).use { statement ->
+            statement.setString(1, pieceId)
+            statement.setString(2, userId)
+            statement.executeQuery().use { it.next() }
+        }
+        if (!maker) return@read null
+        connection.prepareStatement(
+            """
+            select kind, (extract(epoch from issued_at) * 1000)::bigint
+              from reports
+             where piece_id = ?::uuid and user_id = ?::uuid
+             order by issued_at desc, id
+            """.trimIndent()
+        ).use { statement ->
+            statement.setString(1, pieceId)
+            statement.setString(2, userId)
+            statement.executeQuery().use { rows ->
+                val out = mutableListOf<SentReport>()
+                while (rows.next()) out += SentReport(rows.getString(1), rows.getLong(2))
+                out
+            }
         }
     }
 

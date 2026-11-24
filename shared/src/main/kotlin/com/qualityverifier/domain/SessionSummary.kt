@@ -33,6 +33,12 @@ data class SessionSummary(
     val pieceMine: Boolean = true,
     /** The final assessment of the finished piece, before a customer report. */
     val isFinal: Boolean = false,
+    /**
+     * The maker's last answer to "Is this piece finished?" (server V44, row 55): a
+     * [PieceStage] id, or null until answered; and the server's time of it.
+     */
+    val pieceStage: String? = null,
+    val pieceStageSetAt: Long? = null,
 ) {
     /** Which piece this is, falling back to the session itself for rows made before pieces. */
     val piece: String get() = pieceId ?: id

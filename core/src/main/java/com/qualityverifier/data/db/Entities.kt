@@ -131,6 +131,13 @@ data class PieceEntity(
      */
     @ColumnInfo(defaultValue = "1")
     val mine: Boolean = true,
+    /**
+     * The maker's last answer to "Is this piece finished?" (server V44, row 55):
+     * `in_progress` or `finished`, as the server stored it; null until answered.
+     */
+    val stage: String? = null,
+    /** When the server stored [stage], its clock, epoch millis; null with it. */
+    val stageSetAt: Long? = null,
 )
 
 /**

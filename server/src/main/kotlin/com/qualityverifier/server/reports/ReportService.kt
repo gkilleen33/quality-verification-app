@@ -94,6 +94,14 @@ class ReportService(
         }
 
     /**
+     * "Reports sent" on a piece's page (row 56): the reports this account was issued on its
+     * own piece, newest first, each with its kind and time. Null when the piece is not this
+     * account's, which the route answers with 404.
+     */
+    suspend fun sentReports(userId: String, pieceId: String): List<com.qualityverifier.server.db.SentReport>? =
+        store.sentReports(userId, pieceId)
+
+    /**
      * The pieces of one linked roster worker that a worker-work report can cover, with the
      * assessments the manager may read (rows 4, 11 and 22): the manager's own pieces that
      * name the worker, and the worker's own pieces labelled for the manager's studio. Each

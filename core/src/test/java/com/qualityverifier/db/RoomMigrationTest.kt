@@ -164,7 +164,23 @@ class RoomMigrationTest {
         }
     }
 
+    @Test
+    fun `row 55 - 18 to 19 adds each piece's stage and its time, as schema 19 has them`() {
+        assertEquals(
+            listOf("ALTER TABLE pieces ADD COLUMN stage TEXT", "ALTER TABLE pieces ADD COLUMN stageSetAt INTEGER"),
+            statementsOf(AppDatabase.MIGRATION_18_19),
+        )
+        val before = createSql(18, "pieces")
+        val after = createSql(19, "pieces")
+        assertFalse(before, before.contains("`stage`"))
+        assertTrue(after, after.contains("`stage` TEXT"))
+        assertTrue(after, after.contains("`stageSetAt` INTEGER"))
+        listOf("sessions", "messages", "workers", "worker_studios", "session_workers", "studio_days", "review_helpful").forEach { table ->
+            assertEquals(table, createSql(18, table), createSql(19, table))
+        }
+    }
+
     private companion object {
-        const val CURRENT = 18
+        const val CURRENT = 19
     }
 }
