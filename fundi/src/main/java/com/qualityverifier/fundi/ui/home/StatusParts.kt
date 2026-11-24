@@ -29,6 +29,8 @@ fun StageDialog(
     words: FundiScreenLabels,
     current: PieceStage,
     failed: Boolean,
+    /** A save is on its way: Save is greyed, so a second tap cannot record the answer twice. */
+    saving: Boolean,
     onDismiss: () -> Unit,
     onSave: (PieceStage) -> Unit,
 ) {
@@ -43,7 +45,9 @@ fun StageDialog(
                 if (failed) Text(words.stageFailed, style = lineStyle, color = Parts.Danger)
             }
         },
-        confirmButton = { TextButton(onClick = { onSave(picked) }) { Text(words.save, fontWeight = FontWeight.Bold) } },
+        confirmButton = {
+            TextButton(onClick = { onSave(picked) }, enabled = !saving) { Text(words.save, fontWeight = FontWeight.Bold) }
+        },
         dismissButton = { TextButton(onClick = onDismiss) { Text(words.cancel) } },
     )
 }

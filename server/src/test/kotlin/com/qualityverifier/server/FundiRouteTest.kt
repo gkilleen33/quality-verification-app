@@ -511,7 +511,7 @@ class FundiRouteTest {
             // A linked worker's piece this account reads as the studio's manager, and a
             // stranger's: neither is this account's to set.
             pieces[other] = "Their table"
-            othersPieces += other
+            makers[other] = "c0ffee00-0000-4000-8000-0000000000aa"
         }
         val app = withFundi(store, audience = Audience.FUNDI)
 
@@ -1062,24 +1062,25 @@ class FundiRouteTest {
             return true
         }
 
-        /** Pieces this fake owns, by id, with their current name. */
         /**
          * Each piece's stage and its history as the SQL keeps them (V44): the current
-         * (stage, set_at), and every answer, oldest first, as (account, old, new). Only the
-         * maker's own pieces, [pieces], take a stage; [othersPieces] are another account's.
+         * (stage, set_at), and every answer, oldest first, as (account, old, new). A piece
+         * takes a stage only from its maker, as the SQL's `where user_id = ?` has it: the
+         * maker is [makers]' entry, or FUNDI for a piece with none.
          */
         val stages = mutableMapOf<String, Pair<String, Long>>()
         val stageChanges = mutableMapOf<String, MutableList<Triple<String, String?, String>>>()
-        val othersPieces = mutableSetOf<String>()
+        val makers = mutableMapOf<String, String>()
         private var clock = 1_000L
         override suspend fun setPieceStage(userId: String, pieceId: String, stage: String): PieceStageChange {
-            if (pieceId !in pieces || pieceId in othersPieces) return PieceStageChange.NoSuchPiece
+            if (pieceId !in pieces || (makers[pieceId] ?: FUNDI) != userId) return PieceStageChange.NoSuchPiece
             stageChanges.getOrPut(pieceId) { mutableListOf() } += Triple(userId, stages[pieceId]?.first, stage)
             val at = ++clock
             stages[pieceId] = stage to at
             return PieceStageChange.Set(stage, at)
         }
 
+        /** Pieces this fake owns, by id, with their current name. */
         val pieces = mutableMapOf<String, String?>()
         override suspend fun renamePiece(userId: String, pieceId: String, label: String?): Boolean {
             if (pieceId !in pieces) return false

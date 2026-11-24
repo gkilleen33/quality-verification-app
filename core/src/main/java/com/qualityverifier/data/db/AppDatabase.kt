@@ -353,13 +353,15 @@ abstract class AppDatabase : RoomDatabase() {
 
         /**
          * Fundi Bora v0.7.1 (server V44, row 55): each piece's stage as the maker last set it on
-         * the server, and when. Null on every existing piece, which reads as never answered:
+         * the server, and when (the server's clock and, for the Status row, the phone's). Null
+         * on every existing piece, which reads as never answered:
          * the Status row then shows what the latest assessment implies.
          */
         val MIGRATION_18_19 = object : Migration(18, 19) {
             override fun migrate(db: SupportSQLiteDatabase) {
                 db.execSQL("ALTER TABLE pieces ADD COLUMN stage TEXT")
                 db.execSQL("ALTER TABLE pieces ADD COLUMN stageSetAt INTEGER")
+                db.execSQL("ALTER TABLE pieces ADD COLUMN stageSeenAt INTEGER")
             }
         }
 

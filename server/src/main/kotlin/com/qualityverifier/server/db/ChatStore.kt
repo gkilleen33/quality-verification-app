@@ -1355,10 +1355,11 @@ class PostgresChatStore(private val dataSource: DataSource) : ChatStore {
                  then p.label end"""
 
         /**
-         * Columns 13 to 17 of a session row (V34), after the label: whether the piece is the
-         * reader's own (one bind, the reader's id), its label, whether it was ever chosen,
-         * whether its one correction is used, and whether the session is final. Needs
-         * `pieces p` left-joined and `p.id` in the GROUP BY.
+         * Columns 13 to 19 of a session row (V34, V44), after the label: whether the piece is
+         * the reader's own (one bind, the reader's id), its label, whether it was ever chosen,
+         * whether its one correction is used, whether the session is final, and the piece's
+         * stage and its time (read only for the reader's own piece). Needs `pieces p`
+         * left-joined and `p.id` in the GROUP BY.
          */
         const val PIECE_COLUMNS = """
             (p.id is null or p.user_id = ?::uuid),

@@ -138,6 +138,12 @@ data class PieceEntity(
     val stage: String? = null,
     /** When the server stored [stage], its clock, epoch millis; null with it. */
     val stageSetAt: Long? = null,
+    /**
+     * When this phone stored [stage], on the phone's own clock; null with it. The Status row
+     * compares this, not [stageSetAt], with the start of the latest assessment, which is on
+     * the phone's clock too: a field phone's clock is often minutes off the server's.
+     */
+    val stageSeenAt: Long? = null,
 )
 
 /**

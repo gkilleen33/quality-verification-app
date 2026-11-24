@@ -15,22 +15,31 @@ object PieceStatus {
     data class Shown(val stage: PieceStage, val setByFundi: Boolean)
 
     /**
-     * [setAt] is the server's time of the fundi's answer; [latestStartedAt] when the latest
-     * assessment was started, on the phone's clock. An answer at or after that start wins.
+     * [seenAt] is when this phone stored the fundi's answer, and [latestStartedAt] when the
+     * latest assessment was started, both on the phone's clock: the server's time of the
+     * answer is never compared with a phone's, which is often minutes off. An answer stored
+     * at or after that start wins.
      */
-    fun shown(set: PieceStage?, setAt: Long?, latestPurpose: FundiPurpose?, latestStartedAt: Long?): Shown {
+    fun shown(set: PieceStage?, seenAt: Long?, latestPurpose: FundiPurpose?, latestStartedAt: Long?): Shown {
         val implied = PieceStage.impliedBy(latestPurpose)
-        if (set == null || setAt == null) return Shown(implied, setByFundi = false)
-        if (latestStartedAt == null || setAt >= latestStartedAt) return Shown(set, setByFundi = true)
+        if (set == null || seenAt == null) return Shown(implied, setByFundi = false)
+        if (latestStartedAt == null || seenAt >= latestStartedAt) return Shown(set, setByFundi = true)
         return Shown(implied, setByFundi = false)
     }
 
-    fun of(piece: PieceSummary): Shown = shown(
-        set = PieceStage.fromId(piece.latest.pieceStage),
-        setAt = piece.latest.pieceStageSetAt,
-        latestPurpose = piece.newest.purpose,
-        latestStartedAt = piece.newest.summary.createdAt,
-    )
+    /**
+     * The latest assessment is the one started last, not the one changed last: an older
+     * assessment that gets a late reply does not decide what the piece's stage is.
+     */
+    fun of(piece: PieceSummary): Shown {
+        val started = piece.assessments.maxBy { it.summary.createdAt }
+        return shown(
+            set = PieceStage.fromId(piece.latest.pieceStage),
+            seenAt = piece.latest.pieceStageSeenAt,
+            latestPurpose = started.purpose,
+            latestStartedAt = started.summary.createdAt,
+        )
+    }
 }
 
 /** Who a report on a piece went to (V32's kinds), as "Reports sent" and its green box say it (row 56). */

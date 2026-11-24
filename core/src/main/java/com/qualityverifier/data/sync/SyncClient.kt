@@ -390,10 +390,6 @@ class SyncClient(
     }
 
     /**
-     * `{"studio_id": ...}`. A null id is written out, since encodeDefaults is off and would
-     * drop it; absent and null read the same to the server, but the body says what is meant.
-     */
-    /**
      * Stores the maker's answer to "Is this piece finished?" (V44, row 55) and returns the
      * stage and the server's time of it, or null when it could not be stored (offline, the
      * server unwell, or not this account's piece). Online only: the answer is the server's
@@ -424,6 +420,10 @@ class SyncClient(
         }
     }
 
+    /**
+     * `{"studio_id": ...}`. A null id is written out, since encodeDefaults is off and would
+     * drop it; absent and null read the same to the server, but the body says what is meant.
+     */
     private fun studioBody(studioId: String?) =
         (if (studioId == null) """{"studio_id":null}""" else json.encodeToString(StudioIdBody(studioId)))
             .toRequestBody(JSON)

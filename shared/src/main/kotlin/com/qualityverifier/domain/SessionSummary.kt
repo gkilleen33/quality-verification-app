@@ -35,10 +35,12 @@ data class SessionSummary(
     val isFinal: Boolean = false,
     /**
      * The maker's last answer to "Is this piece finished?" (server V44, row 55): a
-     * [PieceStage] id, or null until answered; and the server's time of it.
+     * [PieceStage] id, or null until answered; the server's time of it; and the time this
+     * phone stored it, on the phone's clock, which is what the Status row compares.
      */
     val pieceStage: String? = null,
     val pieceStageSetAt: Long? = null,
+    val pieceStageSeenAt: Long? = null,
 ) {
     /** Which piece this is, falling back to the session itself for rows made before pieces. */
     val piece: String get() = pieceId ?: id

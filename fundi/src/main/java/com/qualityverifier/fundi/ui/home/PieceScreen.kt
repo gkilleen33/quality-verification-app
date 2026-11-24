@@ -125,10 +125,17 @@ fun PieceScreen(
     var sent by remember(ref) { mutableStateOf<List<RemoteSentReport>?>(null) }
     LaunchedEffect(ref, sentKind) { if (ref.workerId == null) sent = model.sentReports(ref.pieceId) }
     var stageFailed by remember { mutableStateOf(false) }
+    var stageSaving by remember { mutableStateOf(false) }
 
     val mine = ref.workerId == null && (piece?.latest?.pieceMine ?: true)
     val name = piece?.let(::pieceName) ?: theirs?.let { it.label ?: ItemType.fromId(it.itemTypeId)?.homeLabel }.orEmpty()
     var editing by remember { mutableStateOf<Edit?>(null) }
+
+    // Row 56: what the server issued for this fundi on this piece. A row means the server made
+    // the PDF and the phone handed it to the share sheet; whether the fundi then sent it from
+    // WhatsApp is not known. Listed only on the fundi's own piece, once there is one.
+    val reports = sent.orEmpty().mapNotNull { report -> ReportRecipient.of(report.kind)?.let { it to report } }
+    val listed = mine && reports.isNotEmpty()
 
     Column(Modifier.fillMaxSize().background(Parts.Page).systemBarsPadding()) {
         BackBar(backLabel, onBack)
@@ -136,12 +143,15 @@ fun PieceScreen(
             Modifier.verticalScroll(rememberScrollState()).padding(horizontal = 16.dp, vertical = 18.dp),
             verticalArrangement = Arrangement.spacedBy(14.dp),
         ) {
-            // P17: the result of sending shows where the fundi expects it, on the piece.
+            // P17: the result of sending shows where the fundi expects it, on the piece. "It is
+            // listed under Reports sent" only where that card is on screen: not on a linked
+            // worker's piece, whose reports the server lists for its maker only, and not when
+            // the list could not be read.
             sentKind?.let(ReportRecipient::of)?.let { recipient ->
                 StatusBox(
                     StatusKind.CONFIRMATION,
                     words.reportSentTo(recipient.inSentence),
-                    words.reportSentLine,
+                    if (listed) words.reportSentLine else "",
                     words.ok,
                     onButton = onSentSeen,
                 )
@@ -184,11 +194,7 @@ fun PieceScreen(
                 }
             }
 
-            // Row 56: what the server issued for this fundi on this piece. A row means the
-            // server made the PDF and the phone handed it to the share sheet; whether the
-            // fundi then sent it from WhatsApp is not known. Shown once there is one.
-            val reports = sent.orEmpty().mapNotNull { report -> ReportRecipient.of(report.kind)?.let { it to report } }
-            if (mine && reports.isNotEmpty()) {
+            if (listed) {
                 RowCard(heading = words.reportsSent) {
                     reports.forEachIndexed { i, (recipient, report) ->
                         CardRow(recipient.row, line = words.sentOn(PieceLines.day(report.issuedAt)), divider = i > 0)
@@ -267,14 +273,17 @@ fun PieceScreen(
                 words = words,
                 current = PieceStatus.of(piece).stage,
                 failed = stageFailed,
+                saving = stageSaving,
                 onDismiss = {
                     editing = null
                     stageFailed = false
                 },
             ) { stage ->
+                stageSaving = true
                 model.setStage(latest.piece, stage) { stored ->
                     // Kept open with a line when the server did not take it: the answer is the
                     // server's record, so it is never kept on the phone alone.
+                    stageSaving = false
                     stageFailed = !stored
                     if (stored) editing = null
                 }
