@@ -35,17 +35,22 @@ object ContactNumber {
         val international = cleaned.startsWith("+") || digits.startsWith("00")
         val local = when {
             international -> {
-                val whole = PhoneEntry.pasted(cleaned) ?: return refused(Problem.BAD_CODE)
-                if (!whole.kenyan) {
-                    val problem = whole.problem
-                        ?: Problem.TOO_LONG.takeIf { whole.toE164() == null }
-                    // Refused, the field keeps the country's code, so its reason and the
-                    // correction typed under it are that country's.
-                    return if (problem == null) PhoneEntry.Edit(whole) else refused(problem, whole.code)
+                val whole = PhoneEntry.pasted(cleaned)
+                val withCode = if (cleaned.startsWith("+")) digits else digits.removePrefix("00")
+                when {
+                    // Long enough to carry another country's code, as the field reads a
+                    // paste. "+712345678" is a Kenyan number with a stray +, not a Russian one.
+                    whole != null && !whole.kenyan && withCode.length > KenyanPhone.DIGITS -> {
+                        // Refused, the field keeps the country's code, so its reason and the
+                        // correction typed under it are that country's.
+                        val problem = whole.problem
+                        return if (problem == null) PhoneEntry.Edit(whole) else refused(problem, whole.code)
+                    }
+                    // "+2540712…": the trunk 0 a number after +254 never has (see KenyanPhone).
+                    whole != null && whole.kenyan -> whole.digits.removePrefix("0")
+                    // "+712…", "+0712…": a Kenyan number written with a +.
+                    else -> withCode.removePrefix("0")
                 }
-                // "+2540712…": the trunk 0 a number after +254 never has (see KenyanPhone);
-                // PhoneEntry.pasted has already dropped it.
-                whole.digits
             }
             digits.length == KenyanPhone.DIGITS + COUNTRY_DIGITS.length && digits.startsWith(COUNTRY_DIGITS) ->
                 digits.removePrefix(COUNTRY_DIGITS)

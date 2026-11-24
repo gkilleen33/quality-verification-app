@@ -32,8 +32,9 @@ data class PhoneEntry(
         get() = when {
             kenyan -> KenyanPhone.problem(digits)
             !isCountryCode(code) -> Problem.BAD_CODE
-            digits.startsWith("0") -> Problem.LEADING_ZERO
             digits.length < MIN_DIGITS || code.length + digits.length < MIN_E164_DIGITS -> Problem.TOO_SHORT
+            // Reachable by changing the code under a long number; typing refuses the digit.
+            code.length + digits.length > MAX_E164_DIGITS -> Problem.TOO_LONG
             else -> null
         }
 
@@ -112,10 +113,10 @@ data class PhoneEntry(
          * the code and the digits instead.
          *
          * With another code: only ASCII digits are kept; a whole number pasted with + or 00
-         * fills the code and the digits (Kenya's rules again if its code is 254); more digits
-         * than E.164 allows is refused without a message, as a full Kenyan field is; and a
-         * first digit 0, the trunk prefix a number after its country code never has, is
-         * refused unless it was left there by a deletion.
+         * fills the code and the digits (Kenya's rules again if its code is 254); and more
+         * digits than E.164 allows is refused without a message, as a full Kenyan field is.
+         * A first digit 0 is kept: in some countries (Côte d'Ivoire's mobiles, Italy's
+         * landlines) it is part of the number, and the server takes it.
          */
         fun edit(previous: PhoneEntry, proposed: String): Edit {
             val raw = proposed.dropWhile { it != '+' && it !in '0'..'9' }
@@ -126,16 +127,22 @@ data class PhoneEntry(
             val inserted = proposed.length - previous.digits.length
             val international = inserted > 1 && (raw.startsWith("+") || digits.startsWith("00")) &&
                 digits.removePrefix("00").length >= MIN_E164_DIGITS
-            if (international) {
-                val whole = pasted(proposed) ?: return Edit(previous, Problem.BAD_CODE)
-                if (!whole.kenyan) {
-                    // Too long for E.164: refused without a message, as a full field is.
-                    return if (whole.code.length + whole.digits.length > MAX_E164_DIGITS) Edit(previous) else Edit(whole)
-                }
+            val whole = if (international) pasted(proposed) else null
+            // Under +254, only a number long enough to carry another country's code leaves
+            // Kenya's rules: "+712345678" is a Kenyan number with a stray +, not a Russian one,
+            // and "+0712345678" is Kenyan too (KenyanPhone reads both, as it always did).
+            val foreign = whole != null && !whole.kenyan &&
+                (!previous.kenyan || digits.removePrefix("00").length > KenyanPhone.DIGITS)
+            if (foreign) {
+                // Too long for E.164: refused without a message, as a full field is.
+                return if (whole!!.code.length + whole.digits.length > MAX_E164_DIGITS) Edit(previous) else Edit(whole)
+            }
+            if (whole != null && whole.kenyan) {
                 // Kenya's code: read by Kenya's rules, as the field always read a +254 paste.
                 val kenyan = KenyanPhone.edit(if (previous.kenyan) previous.digits else "", proposed)
                 return if (kenyan.refused == null) Edit(PhoneEntry(KENYA, kenyan.digits)) else Edit(previous, kenyan.refused)
             }
+            if (international && whole == null && !previous.kenyan) return Edit(previous, Problem.BAD_CODE)
 
             if (previous.kenyan) {
                 val kenyan = KenyanPhone.edit(previous.digits, proposed)
@@ -143,11 +150,21 @@ data class PhoneEntry(
             }
 
             if (previous.code.length + digits.length > MAX_E164_DIGITS) return Edit(previous)
-            val zeroFirst = digits.startsWith("0")
-            if (zeroFirst && !previous.digits.startsWith("0") && !isDeletion(previous.digits, digits)) {
-                return Edit(previous, Problem.LEADING_ZERO)
-            }
             return Edit(previous.copy(digits = digits))
+        }
+
+        /**
+         * The field after the person chose [code] in the code box. The digits stay, unless
+         * they cannot be a number under the new code: switching to +254 under ten digits
+         * typed for another country clears them, rather than cutting them to a Kenyan number
+         * nobody typed.
+         */
+        fun withCode(entry: PhoneEntry, code: String): PhoneEntry {
+            if (code == entry.code) return entry
+            val kept = if (code == KENYA && (entry.digits.length > KenyanPhone.DIGITS ||
+                    KenyanPhone.problem(entry.digits) in setOf(Problem.LEADING_ZERO, Problem.WRONG_START))
+            ) "" else entry.digits
+            return PhoneEntry(code, kept)
         }
 
         /**
@@ -157,13 +174,14 @@ data class PhoneEntry(
          * and the length bound.
          */
         fun pasted(proposed: String): PhoneEntry? {
-            val raw = proposed.dropWhile { it != '+' && it !in '0'..'9' }
+            // "+44 (0)7911 …": the trunk 0 written in brackets after the code is not dialled
+            // from abroad and is not part of the E.164 number. A 0 written without brackets is
+            // kept, since in some countries it is part of the number.
+            val raw = proposed.dropWhile { it != '+' && it !in '0'..'9' }.replace("(0)", "")
             val all = raw.filter { it in '0'..'9' }
             val digits = if (raw.startsWith("+")) all else all.removePrefix("00")
             val length = codeLength(digits) ?: return null
-            // "+44 (0)7911 …": the trunk 0 some people write after the code is not dialled
-            // from abroad and is not part of the E.164 number.
-            return PhoneEntry(digits.take(length), digits.drop(length).removePrefix("0"))
+            return PhoneEntry(digits.take(length), digits.drop(length))
         }
 
         /**
@@ -173,11 +191,5 @@ data class PhoneEntry(
         fun editCode(proposed: String): String =
             proposed.filter { it in '0'..'9' }.trimStart('0').take(3)
 
-        /** As [KenyanPhone]'s: one run of digits cut out and nothing typed in. */
-        private fun isDeletion(previous: String, local: String): Boolean {
-            if (local.length >= previous.length) return false
-            val kept = local.commonPrefixWith(previous).length
-            return previous.endsWith(local.substring(kept))
-        }
     }
 }

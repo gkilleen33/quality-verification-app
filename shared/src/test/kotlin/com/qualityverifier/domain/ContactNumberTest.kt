@@ -44,9 +44,24 @@ class ContactNumberTest {
 
     @Test
     fun `row 47 - a foreign number that cannot be one is refused under its own code`() {
-        assertEquals(Edit(PhoneEntry("256", ""), Problem.TOO_SHORT), ContactNumber.read("+256 700"))
+        // Nine digits or fewer after a + read as Kenyan (a stray +, below), so this is too
+        // short under +254: refused either way.
+        assertEquals(Edit(PhoneEntry(), Problem.TOO_SHORT), ContactNumber.read("+256 700"))
         assertEquals(Edit(PhoneEntry("256", ""), Problem.TOO_LONG), ContactNumber.read("+256 7000 0000 0000 0"))
-        assertEquals(Edit(PhoneEntry(), Problem.BAD_CODE), ContactNumber.read("+0 712 345 678"))
+    }
+
+    @Test
+    fun `row 47 - a Kenyan number written with a stray plus stays Kenyan`() {
+        // "+7…" is Russia's code, but nine digits are a Kenyan number with a stray +.
+        assertEquals(kenyan("712345678"), ContactNumber.read("+712345678"))
+        assertEquals(kenyan("712345678"), ContactNumber.read("+0712345678"))
+        assertEquals(kenyan("712345678"), ContactNumber.read("+0 712 345 678"))
+    }
+
+    @Test
+    fun `row 47 - a leading 0 after another country's code is kept, a bracketed one dropped`() {
+        assertEquals(Edit(PhoneEntry("225", "0712345678")), ContactNumber.read("+225 07 12 34 56 78"))
+        assertEquals(Edit(PhoneEntry("44", "7700900123")), ContactNumber.read("+44 (0)7700 900123"))
     }
 
     @Test

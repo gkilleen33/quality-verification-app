@@ -87,10 +87,10 @@ fun PhoneNumberField(
             onUse = { code ->
                 choosingCode = false
                 refused = null
-                // Kenya's rules hold the field to nine digits; a longer number typed under
-                // another code is cut rather than refused, so it can be corrected in place.
-                val kept = if (code == PhoneEntry.KENYA) digits.take(KenyanPhone.DIGITS) else digits
-                if (code != entry.code || kept != digits) onEntryChange(PhoneEntry(code, kept))
+                // Digits that cannot be a Kenyan number are cleared on switching to +254,
+                // never cut to nine digits nobody typed (PhoneEntry.withCode).
+                val next = PhoneEntry.withCode(entry, code)
+                if (next != entry) onEntryChange(next)
             },
             onDismiss = { choosingCode = false },
         )

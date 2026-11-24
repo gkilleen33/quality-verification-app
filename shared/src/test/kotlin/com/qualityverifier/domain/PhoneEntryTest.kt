@@ -61,10 +61,30 @@ class PhoneEntryTest {
         // No more than fifteen digits with the code: a sixteenth is refused without a message.
         val full = PhoneEntry("256", "777777777777")
         assertEquals(Edit(full), PhoneEntry.edit(full, full.digits + "7"))
-        // The trunk 0 is refused, as after +254, with the abroad wording chosen by the screen.
-        assertEquals(Edit(uganda, Problem.LEADING_ZERO), PhoneEntry.edit(uganda, "0"))
+        // A leading 0 is kept after another code: in some countries it is part of the number.
+        assertEquals(Edit(PhoneEntry("256", "0")), PhoneEntry.edit(uganda, "0"))
+        assertEquals("+2250712345678", PhoneEntry("225", "0712345678").toE164())
         // Only ASCII digits are kept: the Arabic-Indic seven and the dash are dropped.
         assertEquals(PhoneEntry("256", "77"), PhoneEntry.edit(PhoneEntry("256", "7"), "7٧-7").entry)
+    }
+
+    @Test
+    fun `row 47 - a Kenyan number pasted with a stray plus stays Kenyan`() {
+        // "+7…" is Russia's code, but nine digits after a + are a Kenyan number, as before.
+        assertEquals(Edit(PhoneEntry(digits = "712345678")), PhoneEntry.edit(kenya, "+712345678"))
+        assertEquals(Edit(PhoneEntry(digits = "712345678")), PhoneEntry.edit(kenya, "+0712345678"))
+    }
+
+    @Test
+    fun `row 47 - changing the code never leaves a number nobody typed`() {
+        // Ten digits typed for the UK cannot be Kenyan: switching to +254 clears them.
+        assertEquals(PhoneEntry(), PhoneEntry.withCode(PhoneEntry("44", "7911123456"), PhoneEntry.KENYA))
+        // Nine digits that are a Kenyan number stay.
+        assertEquals(PhoneEntry(digits = "772123456"), PhoneEntry.withCode(PhoneEntry("256", "772123456"), PhoneEntry.KENYA))
+        // Too long for the new code: kept, and the field says why it cannot be sent.
+        val long = PhoneEntry.withCode(PhoneEntry("1", "41555526719999"), "256")
+        assertEquals(Problem.TOO_LONG, long.problem)
+        assertNull(long.toE164())
     }
 
     @Test
