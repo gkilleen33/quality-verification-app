@@ -247,6 +247,8 @@ data class FundiLabels(
     val studioPhoneLabel: String,
     /** One line under the number saying why it is asked for. */
     val studioPhoneWhy: String,
+    /** The studio form's refusal of the account's own number (row 52). */
+    val studioOwnNumber: String,
     val studioArchive: String,
     /** On a worker or studio card: the two-sided match holds. */
     val linkedTag: String,
@@ -749,6 +751,8 @@ data class FundiLabels(
             studioPhoneWhy = "The number the workshop owner uses for Fundi Bora. The app " +
                 "links you to the workshop only when they list your number too. Nothing " +
                 "is sent to them.",
+            // Nathan's words, 23 November 2026 (row 52). The server sends the same sentence.
+            studioOwnNumber = "This is your own number. Your own workshop is already included.",
             studioArchive = "I no longer work here",
             linkedTag = "Linked",
             reportMenuItem = "Send report",

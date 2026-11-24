@@ -24,6 +24,11 @@ class StudiosViewModel(
     private val studios: StudioRepository,
     /** Null in tests, where nothing is sent. */
     private val sync: AssessmentSync?,
+    /**
+     * The account's own number, which the form refuses (row 52). Null until a v0.7.0 server
+     * has answered /v1/me; the server refuses the write either way.
+     */
+    val ownNumber: String? = null,
 ) : ViewModel() {
 
     val list: StateFlow<List<Studio>> =
@@ -47,7 +52,7 @@ class StudiosViewModel(
 
     companion object {
         fun factory(container: AppContainer): ViewModelProvider.Factory = viewModelFactory {
-            initializer { StudiosViewModel(container.studioRepository, container.assessmentSync) }
+            initializer { StudiosViewModel(container.studioRepository, container.assessmentSync, container.ownPhone) }
         }
     }
 }

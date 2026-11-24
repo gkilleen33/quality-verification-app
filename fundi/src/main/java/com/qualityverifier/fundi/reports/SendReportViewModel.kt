@@ -172,7 +172,9 @@ class SendReportViewModel(
      * Since v0.6.0 the piece's studio label decides two of them, as the server does. The
      * customer report is the studio's: offered on a piece of this account's own that is not
      * labelled for a studio, and on a linked worker's piece this account assesses as the
-     * studio's manager; not to a worker on a piece labelled for a studio. "My manager" is
+     * studio's manager; not to a worker on a piece labelled for a studio with a linked
+     * manager. Since v0.7.0 it is offered to the maker on a piece labelled for a studio with
+     * no linked manager (row 51), the server's `FinalAssessment` rule. "My manager" is
      * offered only on a piece labelled for a studio the link holds with (row 3). The share
      * sheet picks the recipient, which the app cannot restrict (plan v7).
      */
@@ -182,7 +184,7 @@ class SendReportViewModel(
         val label = piece?.pieceStudioId?.takeIf { mine }
         val linked = label != null && list.any { it.id == label && it.linked && !it.archived }
         buildList {
-            if (!mine || label == null) add(ReportKind.CUSTOMER)
+            if (!mine || !linked) add(ReportKind.CUSTOMER)
             add(ReportKind.PART_ISSUES)
             add(ReportKind.FULL)
             if (linked) add(ReportKind.TO_MANAGER)

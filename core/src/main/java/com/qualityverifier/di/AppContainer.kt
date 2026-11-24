@@ -344,6 +344,9 @@ class AppContainer(
         api = syncClient,
     )
 
+    /** This account's own number, E.164, from the cached profile; null until a v0.7.0 server answers. */
+    val ownPhone: String? get() = tokenStore.ownPhone()
+
     val account: AccountActions = AccountActions(syncClient)
 
     /** Raised on any 403 terms_required. Fundi Bora's navigation listens; Kagua does not. */
