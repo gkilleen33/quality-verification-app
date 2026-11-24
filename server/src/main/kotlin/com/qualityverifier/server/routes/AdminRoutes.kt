@@ -371,7 +371,18 @@ fun Route.adminRoutes(
             // select and this build disagree — and the safe side of that is the app that
             // already exists.
             val audience = Audience.fromId(form["audience"].orEmpty()) ?: Audience.BUYER
-            store.createInvite(code, label, grantsTester, audience)
+            // A shop's tablet (V39, row 12). Kagua only: a Fundi Bora code with the box ticked
+            // is refused rather than quietly made without it, since whoever ticked it meant a
+            // tablet, and a code for the wrong app is the one mistake a fundi cannot undo.
+            val grantsShopMode = form["shop"] != null
+            if (grantsShopMode && audience != Audience.BUYER) {
+                val invites = store.invites()
+                call.respondHtml {
+                    invitesPage(session, invites, "No code made: a shop-tablet code is for Kagua only.")
+                }
+                return@post
+            }
+            store.createInvite(code, label, grantsTester, audience, grantsShopMode)
             store.audit(
                 session.adminId, session.email, "create-invite", target = code,
                 // Recorded in the audit line rather than only in the row: who was made an
@@ -380,12 +391,18 @@ fun Route.adminRoutes(
                 detail = listOfNotNull(
                     label,
                     "evaluator".takeIf { grantsTester },
+                    "shop tablet".takeIf { grantsShopMode },
                     appName(audience),
                 ).joinToString(" — ").takeIf { it.isNotEmpty() },
                 ip = call.clientIp(),
             )
             val invites = store.invites()
-            val who = if (grantsTester) "an evaluator" else "a ${audienceNoun(audience)}"
+            val who = when {
+                grantsTester && grantsShopMode -> "an evaluator's shop tablet"
+                grantsTester -> "an evaluator"
+                grantsShopMode -> "a shop tablet"
+                else -> "a ${audienceNoun(audience)}"
+            }
             val notice = "Created $code for $who on ${appName(audience)}."
             call.respondHtml { invitesPage(session, invites, notice) }
         }

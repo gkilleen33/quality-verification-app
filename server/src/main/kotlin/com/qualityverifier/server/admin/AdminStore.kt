@@ -46,6 +46,11 @@ data class InviteRow(
      * evaluators can be testing either half.
      */
     val audience: Audience,
+    /**
+     * Whoever redeems this registers Kagua on a shop's tablet (V39, row 12). Kagua codes only;
+     * the route and V39's CHECK both refuse it on a Fundi Bora code.
+     */
+    val grantsShopMode: Boolean = false,
 )
 
 data class UserRow(
@@ -76,6 +81,8 @@ data class UserRow(
      * about nothing.
      */
     val audience: Audience = Audience.BUYER,
+    /** A Kagua account on a shop's tablet (V39, row 12), fixed by its invite code. */
+    val shopMode: Boolean = false,
 )
 
 data class AuditRow(
@@ -214,6 +221,11 @@ interface AdminStore {
          * code and no client may name its own.
          */
         audience: Audience,
+        /**
+         * A shop-tablet code (V39, row 12): the only way a Kagua account comes to be in shop
+         * mode. Kagua only; the caller refuses it with [Audience.FUNDI].
+         */
+        grantsShopMode: Boolean,
     ): Boolean
 
     /**
@@ -591,7 +603,7 @@ class PostgresAdminStore(private val dataSource: DataSource) : AdminStore {
             """
             select i.code, i.label, i.created_at, i.revoked_at,
                    (select count(*)::int from users u where u.invite_code = i.code),
-                   i.grants_tester, i.audience
+                   i.grants_tester, i.audience, i.grants_shop_mode
             from invite_codes i
             order by i.created_at desc
             """.trimIndent()
@@ -606,6 +618,7 @@ class PostgresAdminStore(private val dataSource: DataSource) : AdminStore {
                     timesUsed = rows.getInt(5),
                     grantsTester = rows.getBoolean(6),
                     audience = Audience.fromId(rows.getString(7).orEmpty()) ?: Audience.BUYER,
+                    grantsShopMode = rows.getBoolean(8),
                 )
                 out
             }
@@ -617,17 +630,20 @@ class PostgresAdminStore(private val dataSource: DataSource) : AdminStore {
         label: String?,
         grantsTester: Boolean,
         audience: Audience,
+        grantsShopMode: Boolean,
     ): Boolean = query { connection ->
         connection.prepareStatement(
             """
-            insert into invite_codes (code, label, grants_tester, audience)
-            values (?, ?, ?, ?) on conflict do nothing
+            insert into invite_codes (code, label, grants_tester, audience, grants_shop_mode)
+            values (?, ?, ?, ?, ?) on conflict do nothing
             """.trimIndent()
         ).use { statement ->
             statement.setString(1, code)
             statement.setString(2, label)
             statement.setBoolean(3, grantsTester)
             statement.setString(4, audience.id)
+            // V39's CHECK refuses it on a Fundi Bora code; the route refuses that first.
+            statement.setBoolean(5, grantsShopMode)
             statement.executeUpdate() > 0
         }
     }
@@ -666,7 +682,7 @@ class PostgresAdminStore(private val dataSource: DataSource) : AdminStore {
             select u.id::text, u.phone, u.display_name, u.account_type, u.business_name, u.created_at,
                    (select count(*)::int from sessions s where s.user_id = u.id),
                    (u.deleted_at is not null),
-                   u.is_tester, u.audience
+                   u.is_tester, u.audience, u.shop_mode
             from users u
             where (?::text is null
                    or u.phone ilike '%' || ? || '%'
@@ -699,6 +715,7 @@ class PostgresAdminStore(private val dataSource: DataSource) : AdminStore {
                     deleted = rows.getBoolean(8),
                     isTester = rows.getBoolean(9),
                     audience = Audience.fromId(rows.getString(10).orEmpty()) ?: Audience.BUYER,
+                    shopMode = rows.getBoolean(11),
                 )
                 Page(out.take(limit), hasMore = out.size > limit)
             }

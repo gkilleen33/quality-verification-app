@@ -876,6 +876,58 @@ class AdminRouteTest {
         assertEquals(listOf(Audience.FUNDI), store.invitesFor)
     }
 
+    // Shop mode comes from the code (row 12), so this form is the only way a shop's tablet
+    // gets it: if the box stopped reaching the store, every tablet would keep its customers'
+    // assessments, with nothing failing.
+    @Test
+    fun `row 12 - the invite form issues a shop-tablet code, and the audit says so`() = testApplication {
+        val store = FakeAdminStore()
+        val app = withAdmin(store)
+        app.signIn()
+        val csrf = app.csrfToken()
+
+        val body = app.submitForm(
+            "/admin/invites",
+            parameters { append("csrf", csrf); append("label", "Mama Njeri's shop"); append("shop", "on") },
+        ).bodyAsText()
+
+        assertEquals(listOf(true), store.invitesGrantingShopMode)
+        assertEquals(listOf(Audience.BUYER), store.invitesFor)
+        assertTrue(body, body.contains("shop tablet"))
+        val entry = store.audits.single { it.action == "create-invite" }
+        assertTrue(entry.detail!!, entry.detail!!.contains("shop tablet"))
+    }
+
+    @Test
+    fun `row 12 - an invite without the shop box is not a shop code`() = testApplication {
+        val store = FakeAdminStore()
+        val app = withAdmin(store)
+        app.signIn()
+        val csrf = app.csrfToken()
+
+        app.submitForm("/admin/invites", parameters { append("csrf", csrf); append("label", "A buyer") })
+
+        assertEquals(listOf(false), store.invitesGrantingShopMode)
+    }
+
+    // A shop code is Kagua's. Ticked on a Fundi Bora code, it is refused rather than dropped:
+    // whoever ticked it meant a tablet, and an account in the wrong app cannot be changed.
+    @Test
+    fun `row 12 - a shop-tablet code for Fundi Bora is refused`() = testApplication {
+        val store = FakeAdminStore()
+        val app = withAdmin(store)
+        app.signIn()
+        val csrf = app.csrfToken()
+
+        val body = app.submitForm(
+            "/admin/invites",
+            parameters { append("csrf", csrf); append("shop", "on"); append("audience", "fundi") },
+        ).bodyAsText()
+
+        assertEquals(0, store.invitesCreated)
+        assertTrue(body, body.contains("Kagua only"))
+    }
+
     @Test
     fun `an invite with no app named is for the app that already exists`() = testApplication {
         val store = FakeAdminStore()
@@ -1325,6 +1377,7 @@ class AdminRouteTest {
         var invitesCreated = 0
             private set
         val invitesGrantingTester = mutableListOf<Boolean>()
+        val invitesGrantingShopMode = mutableListOf<Boolean>()
         val invitesFor = mutableListOf<Audience>()
         val testerChanges = mutableListOf<Pair<String, Boolean>>()
         var adminsCreated = 0
@@ -1438,8 +1491,10 @@ class AdminRouteTest {
             label: String?,
             grantsTester: Boolean,
             audience: Audience,
+            grantsShopMode: Boolean,
         ): Boolean {
             invitesGrantingTester += grantsTester
+            invitesGrantingShopMode += grantsShopMode
             invitesFor += audience
             invitesCreated++
             return true

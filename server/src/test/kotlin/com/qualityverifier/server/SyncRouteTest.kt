@@ -1,6 +1,7 @@
 package com.qualityverifier.server
 
 import com.qualityverifier.domain.Audience
+import com.qualityverifier.domain.TabletEnd
 import com.qualityverifier.server.auth.AccessTokens
 import com.qualityverifier.server.auth.Passwords
 import com.qualityverifier.server.blobs.BlobStore
@@ -557,6 +558,233 @@ class SyncRouteTest {
         header(HttpHeaders.Authorization, "Bearer ${AccessTokens(KEY).issue(userId).token}")
     }
 
+    // ---------------------------------------------------------- row 12: the shop's tablet
+
+    @Test
+    fun `row 12 - a shop account's session list is empty`() = testApplication {
+        // Earlier customers' assessments are on the server; a reinstalled tablet restores none.
+        val chat = FakeChatStore(sessions = listOf(row(SESSION), row(EARLIER)), inProgress = SESSION)
+        val app = withSync(chat, FakeAuth(shopMode = true))
+
+        val response = app.get("/v1/sessions") { auth(MINE) }
+
+        assertEquals(HttpStatusCode.OK, response.status)
+        val body = response.bodyAsText()
+        assertTrue(body, !body.contains(SESSION) && !body.contains(EARLIER))
+        assertEquals("the store is not even asked", null, chat.askedFor)
+    }
+
+    @Test
+    fun `row 12 - a shop account reads no earlier assessment`() = testApplication {
+        val chat = FakeChatStore(
+            detail = row(EARLIER) to listOf(MessageRow("m1", "ASSISTANT", "an earlier verdict", 0, 1L, emptyList())),
+            inProgress = SESSION,
+        )
+        val app = withSync(chat, FakeAuth(shopMode = true))
+
+        val response = app.get("/v1/sessions/$EARLIER") { auth(MINE) }
+
+        // The answer an unknown id gets, so the tablet cannot tell an earlier one exists.
+        assertEquals(HttpStatusCode.NotFound, response.status)
+        assertTrue(!response.bodyAsText().contains("earlier verdict"))
+        assertEquals(null, chat.detailAskedFor)
+    }
+
+    @Test
+    fun `row 12 - a shop account with nothing in progress reads nothing`() = testApplication {
+        val chat = FakeChatStore(detail = row(SESSION) to emptyList(), inProgress = null)
+        val app = withSync(chat, FakeAuth(shopMode = true))
+
+        assertEquals(HttpStatusCode.NotFound, app.get("/v1/sessions/$SESSION") { auth(MINE) }.status)
+    }
+
+    @Test
+    fun `row 12 - a shop account reads the assessment in progress`() = testApplication {
+        val chat = FakeChatStore(
+            detail = row(SESSION) to listOf(MessageRow("m1", "ASSISTANT", "this customer's plan", 0, 1L, emptyList())),
+            inProgress = SESSION,
+        )
+        val app = withSync(chat, FakeAuth(shopMode = true))
+
+        val response = app.get("/v1/sessions/$SESSION") { auth(MINE) }
+
+        assertEquals(HttpStatusCode.OK, response.status)
+        assertTrue(response.bodyAsText().contains("this customer's plan"))
+    }
+
+    @Test
+    fun `row 12 - a shop account's photos come only from the assessment in progress`() = testApplication {
+        val blobs = BlobStore(folder.newFolder())
+        val current = blobs.storeTestPhoto(1)
+        val earlier = blobs.storeTestPhoto(2)
+        val chat = FakeChatStore(
+            // The account owns both by the ordinary rule; the shop rule must not use it.
+            ownedBlobs = mapOf(MINE to setOf(current, earlier)),
+            inProgress = SESSION,
+            sessionBlobs = mapOf(SESSION to setOf(current), EARLIER to setOf(earlier)),
+        )
+        val app = withSync(chat, FakeAuth(shopMode = true), blobs = blobs)
+
+        assertEquals(HttpStatusCode.OK, app.get("/v1/blobs/$current") { auth(MINE) }.status)
+        assertEquals(HttpStatusCode.NotFound, app.get("/v1/blobs/$earlier") { auth(MINE) }.status)
+    }
+
+    @Test
+    fun `row 12 - a shop account with nothing in progress is sent no photo`() = testApplication {
+        val blobs = BlobStore(folder.newFolder())
+        val photo = blobs.storeTestPhoto(3)
+        val chat = FakeChatStore(ownedBlobs = mapOf(MINE to setOf(photo)), sessionBlobs = mapOf(SESSION to setOf(photo)))
+        val app = withSync(chat, FakeAuth(shopMode = true), blobs = blobs)
+
+        assertEquals(HttpStatusCode.NotFound, app.get("/v1/blobs/$photo") { auth(MINE) }.status)
+    }
+
+    @Test
+    fun `row 12 - a personal Kagua account's list, detail and photos are unchanged`() = testApplication {
+        val blobs = BlobStore(folder.newFolder())
+        val photo = blobs.storeTestPhoto(4)
+        val chat = FakeChatStore(
+            sessions = listOf(row(SESSION), row(EARLIER)),
+            detail = row(EARLIER) to emptyList(),
+            ownedBlobs = mapOf(MINE to setOf(photo)),
+            // Ignored for a personal account, whatever it says.
+            inProgress = SESSION,
+        )
+        val app = withSync(chat, FakeAuth(shopMode = false), blobs = blobs)
+
+        val list = app.get("/v1/sessions") { auth(MINE) }.bodyAsText()
+        assertTrue(list, list.contains(SESSION) && list.contains(EARLIER))
+        assertEquals(HttpStatusCode.OK, app.get("/v1/sessions/$EARLIER") { auth(MINE) }.status)
+        assertEquals(HttpStatusCode.OK, app.get("/v1/blobs/$photo") { auth(MINE) }.status)
+    }
+
+    @Test
+    fun `row 12 - a shop account's delete deletes nothing`() = testApplication {
+        // Only an app older than shop mode sends one; the tablet's own wipe never does.
+        val chat = FakeChatStore()
+        val app = withSync(chat, FakeAuth(shopMode = true))
+
+        assertEquals(HttpStatusCode.NotFound, app.delete("/v1/sessions/$SESSION") { auth(MINE) }.status)
+        assertEquals(null, chat.deleted)
+    }
+
+    @Test
+    fun `row 12 - a personal account's delete still marks the assessment`() = testApplication {
+        val chat = FakeChatStore()
+        val app = withSync(chat, FakeAuth(shopMode = false))
+
+        assertEquals(HttpStatusCode.NoContent, app.delete("/v1/sessions/$SESSION") { auth(MINE) }.status)
+        assertEquals(SESSION, chat.deleted)
+    }
+
+    @Test
+    fun `row 12 - each way the tablet copy ends is recorded`() = testApplication {
+        val chat = FakeChatStore(shopSessions = setOf(SESSION))
+        val app = withSync(chat, FakeAuth(shopMode = true))
+
+        TabletEnd.entries.forEach { end ->
+            val response = app.put("/v1/sessions/$SESSION/tablet-end") {
+                auth(MINE); contentType(ContentType.Application.Json); setBody("""{"end":"${end.id}"}""")
+            }
+            assertEquals(end.id, HttpStatusCode.NoContent, response.status)
+        }
+        assertEquals(TabletEnd.entries.map { SESSION to it }, chat.tabletEnds)
+    }
+
+    @Test
+    fun `row 12 - an unknown tablet end is refused`() = testApplication {
+        val chat = FakeChatStore(shopSessions = setOf(SESSION))
+        val app = withSync(chat, FakeAuth(shopMode = true))
+
+        val response = app.put("/v1/sessions/$SESSION/tablet-end") {
+            auth(MINE); contentType(ContentType.Application.Json); setBody("""{"end":"deleted"}""")
+        }
+
+        assertEquals(HttpStatusCode.BadRequest, response.status)
+        assertTrue(chat.tabletEnds.isEmpty())
+    }
+
+    @Test
+    fun `row 12 - a tablet end for an assessment not made on the tablet is a 404`() = testApplication {
+        val chat = FakeChatStore(shopSessions = emptySet())
+        val app = withSync(chat, FakeAuth(shopMode = false))
+
+        val response = app.put("/v1/sessions/$SESSION/tablet-end") {
+            auth(MINE); contentType(ContentType.Application.Json); setBody("""{"end":"done"}""")
+        }
+
+        assertEquals(HttpStatusCode.NotFound, response.status)
+    }
+
+    @Test
+    fun `row 12 - the owner's controls open with the account's password`() = testApplication {
+        val auth = FakeAuth(currentPassword = "the shop password", shopMode = true)
+        val app = withSync(FakeChatStore(), auth)
+
+        val response = app.post("/v1/me/password-check") {
+            auth(MINE); contentType(ContentType.Application.Json); setBody("""{"password":"the shop password"}""")
+        }
+
+        assertEquals(HttpStatusCode.NoContent, response.status)
+        assertEquals(listOf(MINE), auth.clearedChecks)
+    }
+
+    @Test
+    fun `row 12 - a wrong password at the tablet counts as a failed sign-in`() = testApplication {
+        val auth = FakeAuth(currentPassword = "the shop password", shopMode = true)
+        val app = withSync(FakeChatStore(), auth)
+
+        val response = app.post("/v1/me/password-check") {
+            auth(MINE); contentType(ContentType.Application.Json); setBody("""{"password":"a customer's guess"}""")
+        }
+
+        // 403 rather than 401, so the phone does not refresh and send it a second time.
+        assertEquals(HttpStatusCode.Forbidden, response.status)
+        assertTrue(response.bodyAsText().contains("wrong_password"))
+        assertEquals(listOf(MINE), auth.failedChecks)
+    }
+
+    @Test
+    fun `row 12 - a locked account's password check is refused before checking`() = testApplication {
+        val auth = FakeAuth(
+            currentPassword = "the shop password", shopMode = true,
+            locked = Instant.now().plusSeconds(600),
+        )
+        val app = withSync(FakeChatStore(), auth)
+
+        val response = app.post("/v1/me/password-check") {
+            auth(MINE); contentType(ContentType.Application.Json); setBody("""{"password":"the shop password"}""")
+        }
+
+        assertEquals(HttpStatusCode.TooManyRequests, response.status)
+        assertTrue(auth.clearedChecks.isEmpty())
+    }
+
+    @Test
+    fun `row 12 - the profile and the sign-in tokens say whether the account is a shop's`() = testApplication {
+        val app = withSync(FakeChatStore(), FakeAuth(currentPassword = "the shop password", shopMode = true))
+
+        val me = app.get("/v1/me") { auth(MINE) }.bodyAsText()
+        assertTrue(me, me.contains("\"shop_mode\":true"))
+
+        // A password change issues tokens through the same function as sign-in.
+        val response = app.post("/v1/auth/password") {
+            auth(MINE); contentType(ContentType.Application.Json)
+            setBody(ChangePasswordRequest(currentPassword = "the shop password", newPassword = "a new password"))
+        }
+        val tokens = Json { ignoreUnknownKeys = true }.decodeFromString<TokenResponse>(response.bodyAsText())
+        assertEquals(true, tokens.shopMode)
+    }
+
+    /** Stores a small distinct photo and returns its hash. */
+    private fun BlobStore.storeTestPhoto(seed: Int): String {
+        val bytes = ByteArray(64) { (it * 31 + seed).toByte() }
+        val sha = java.security.MessageDigest.getInstance("SHA-256").digest(bytes)
+            .joinToString("") { "%02x".format(it) }
+        kotlinx.coroutines.runBlocking { put(sha, bytes) }
+        return sha
+    }
+
     private fun row(id: String) = SessionRow(
         id = id, itemTypeId = "wooden-stool", createdAt = 1L, updatedAt = 2L,
         preview = "a preview", messageCount = 2, verdictLevelId = "fair",
@@ -610,7 +838,30 @@ class SyncRouteTest {
          * to opt in — a route that forgot the ownership check cannot then pass silently.
          */
         private val ownedBlobs: Map<String, Set<String>> = emptyMap(),
+        /** The shop account's assessment in progress (V39), or null for none. */
+        private val inProgress: String? = null,
+        /** Photo hashes by session, for the shop tablet's photo rule. */
+        private val sessionBlobs: Map<String, Set<String>> = emptyMap(),
+        /** Sessions made on a shop's tablet by [MINE], which take a tablet end. */
+        private val shopSessions: Set<String> = emptySet(),
     ) : ChatStore {
+        /** Each tablet end recorded, in order. */
+        val tabletEnds = mutableListOf<Pair<String, TabletEnd>>()
+
+        override suspend fun shopSessionInProgress(userId: String) = inProgress
+
+        override suspend fun blobInSession(userId: String, sessionId: String, sha: String) =
+            sessionBlobs[sessionId]?.contains(sha) == true
+
+        override suspend fun recordTabletEnd(userId: String, sessionId: String, end: TabletEnd): Boolean {
+            if (userId != MINE || sessionId !in shopSessions) return false
+            tabletEnds += sessionId to end
+            return true
+        }
+
+        /** Whether the route asked for the full list or the detail, which a shop account must not. */
+        var detailAskedFor: String? = null
+            private set
         /** What the route passed to ensureSession. Fixed by the endpoint, not resolved. */
         var storedAudience: Audience? = null
             private set
@@ -678,7 +929,10 @@ class SyncRouteTest {
             return sessions
         }
 
-        override suspend fun sessionDetail(userId: String, sessionId: String) = detail
+        override suspend fun sessionDetail(userId: String, sessionId: String): Pair<SessionRow, List<MessageRow>>? {
+            detailAskedFor = sessionId
+            return detail
+        }
 
         override suspend fun blobBelongsTo(userId: String, sha: String): Boolean =
             ownedBlobs[userId]?.contains(sha) == true
@@ -695,7 +949,13 @@ class SyncRouteTest {
         private val disabled: Boolean = false,
         /** Makes issuing a refresh token throw, as a dropped database connection would. */
         private val issueFails: Boolean = false,
+        /** A Kagua account on a shop's tablet (V39, row 12). */
+        private val shopMode: Boolean = false,
+        private val locked: Instant? = null,
     ) : AuthStore {
+        val failedChecks = mutableListOf<String>()
+        val clearedChecks = mutableListOf<String>()
+        override suspend fun lockedUntil(userId: String) = locked
         val passwordChanges = mutableListOf<String>()
         val accountsDeleted = mutableListOf<String>()
         val revoked = mutableListOf<String>()
@@ -705,7 +965,7 @@ class SyncRouteTest {
 
         override suspend fun register(registration: Registration) = RegisterOutcome.InviteUnusable
         override suspend fun findUser(userId: String) =
-            UserRow(userId, "Grady", "individual", null, disabled = disabled, isTester = isTester)
+            UserRow(userId, "Grady", "individual", null, disabled = disabled, isTester = isTester, shopMode = shopMode)
 
         override suspend fun issueRefresh(
             userId: String, token: String, expiresAt: Instant, userAgent: String?, replaces: String?,
@@ -723,8 +983,13 @@ class SyncRouteTest {
         }
 
         override suspend fun credentialsForPhone(phone: String): List<Credentials> = emptyList()
-        override suspend fun recordFailedSignIn(userId: String, lockFor: Duration, threshold: Int) = 0
-        override suspend fun clearFailedSignIns(userId: String) = Unit
+        override suspend fun recordFailedSignIn(userId: String, lockFor: Duration, threshold: Int): Int {
+            failedChecks += userId
+            return failedChecks.size
+        }
+        override suspend fun clearFailedSignIns(userId: String) {
+            clearedChecks += userId
+        }
         override suspend fun passwordHashFor(userId: String) = currentPassword?.let(Passwords::hash)
         override suspend fun setPasswordHash(userId: String, passwordHash: String) {
             passwordChanges += userId
@@ -748,6 +1013,9 @@ class SyncRouteTest {
          * malformed id reached Postgres and came back as a 500.
          */
         const val SESSION = "2ff77920-3928-46e5-8a77-5e16c1e901c6"
+
+        /** An earlier customer's assessment on the same shop account (row 12). */
+        const val EARLIER = "3aa88931-4a39-47f6-9b88-6f27d2f012d7"
 
         /** A second, entirely valid account. Signed in, just not the owner. */
         const val STRANGER = "99999999-8888-7777-6666-555555555555"

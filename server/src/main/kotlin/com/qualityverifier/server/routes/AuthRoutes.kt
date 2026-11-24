@@ -236,9 +236,50 @@ fun Route.authRoutes(store: AuthStore, accessTokens: AccessTokens, terms: Terms?
                     transferAgreed = status?.transferAgreed == true,
                     mpesaReadAgreed = fundiAgreed(ConsentKind.MPESA_READ),
                     mpesaSendAgreed = fundiAgreed(ConsentKind.MPESA_SEND),
+                    shopMode = user.shopMode,
                     phone = user.phone,
                 )
             )
+        }
+
+        /**
+         * The account's password, checked for a phone that is already signed in: a shop's
+         * tablet asks for it before the owner's controls open (row 12), so a customer cannot
+         * sign the tablet out or delete the shop's account. 204 when it matches.
+         *
+         * Counted as a sign-in attempt, with the same lockout, since otherwise a customer at
+         * the tablet could guess the owner's password without limit.
+         */
+        post("/v1/me/password-check") {
+            val userId = call.principal<JWTPrincipal>()?.subject
+            val user = userId?.let { store.findUser(it) }
+            if (user == null || user.disabled) {
+                call.respond(HttpStatusCode.Unauthorized, ErrorResponse("invalid_token"))
+                return@post
+            }
+            val request = call.receive<PasswordCheckRequest>()
+            val lockedUntil = store.lockedUntil(user.id)
+            if (lockedUntil != null && lockedUntil.isAfter(Instant.now())) {
+                Passwords.burnEquivalentWork(request.password)
+                call.respond(
+                    HttpStatusCode.TooManyRequests,
+                    ErrorResponse("locked", "Too many attempts. Try again later."),
+                )
+                return@post
+            }
+            val hash = store.passwordHashFor(user.id)
+            if (hash == null || request.password.isEmpty() || !Passwords.verify(request.password, hash)) {
+                val failures = store.recordFailedSignIn(user.id, LOCKOUT, LOCKOUT_THRESHOLD)
+                if (failures >= LOCKOUT_THRESHOLD) {
+                    log.warn("Locked account {} after {} failed password checks", user.id, failures)
+                }
+                // 403, not 401: the phone answers every 401 by refreshing its token and
+                // sending again, which would count each wrong password twice.
+                call.respond(HttpStatusCode.Forbidden, ErrorResponse("wrong_password"))
+                return@post
+            }
+            store.clearFailedSignIns(user.id)
+            call.respond(HttpStatusCode.NoContent)
         }
     }
 }
@@ -325,5 +366,8 @@ internal suspend fun issueTokens(
         expiresIn = access.expiresInSeconds,
         refreshToken = refresh,
         userId = userId,
+        // With the tokens, so a tablet knows it is a shop's from the moment it signs in, even
+        // if the profile read that follows fails (row 12).
+        shopMode = store.findUser(userId)?.shopMode == true,
     )
 }

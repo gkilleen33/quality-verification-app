@@ -156,6 +156,25 @@ class ChatViewModelUnansweredTurnTest {
         assertEquals(Role.ASSISTANT, sessions.snapshot().last().role)
     }
 
+    @Test
+    fun `row 12 - a reply that lands after the tablet deleted its copy is dropped, not written`() = runTest {
+        // The customer left the app while Claude was answering: the shop tablet deleted every
+        // row. The reply must neither recreate the assessment on the tablet nor crash on the
+        // missing row. The server keeps it either way.
+        val reply = CompletableDeferred<ChatResult>()
+        val sessions = FakeSessions(sessionExists = true)
+        val model = model(sessions, FakeChat(held = reply))
+        model.send("I am buying this.")
+        advanceUntilIdle()
+
+        sessions.wipe()
+        reply.complete(ChatResult.Success("Here is the plan."))
+        advanceUntilIdle()
+
+        assertTrue(sessions.snapshot().isEmpty())
+        assertEquals(null, model.error.value)
+    }
+
     // ---------------------------------------------------------------- harness
 
     private var chatCalls = 0
@@ -250,9 +269,18 @@ class ChatViewModelUnansweredTurnTest {
             ChatMessage(UUID.randomUUID().toString(), Role.USER, text, attachments)
                 .also { message -> state.value = state.value + message }
 
-        override suspend fun appendAssistantMessage(sessionId: String, text: String): ChatMessage =
-            ChatMessage(UUID.randomUUID().toString(), Role.ASSISTANT, text)
+        override suspend fun appendAssistantMessage(sessionId: String, text: String): ChatMessage {
+            // Room's foreign key refuses a message whose session row is gone.
+            check(sessionExists) { "FOREIGN KEY constraint failed" }
+            return ChatMessage(UUID.randomUUID().toString(), Role.ASSISTANT, text)
                 .also { message -> state.value = state.value + message }
+        }
+
+        /** What a shop tablet's wipe leaves (row 12): no row, no messages. */
+        fun wipe() {
+            sessionExists = false
+            state.value = emptyList()
+        }
 
         override suspend fun deleteMessage(messageId: String) {
             state.value = state.value.filterNot { it.id == messageId }

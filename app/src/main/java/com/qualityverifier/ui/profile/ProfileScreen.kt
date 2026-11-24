@@ -52,6 +52,12 @@ fun ProfileScreen(
     contentPadding: PaddingValues,
     onSignOut: () -> Unit,
     onOpenSettings: () -> Unit,
+    /**
+     * A shop's tablet (row 12), opened by the owner with the password: no count of
+     * assessments, a line saying what the tablet does, and a way back for the next customer.
+     */
+    shopMode: Boolean = false,
+    onBackToStart: () -> Unit = {},
 ) {
     val container = appContainer()
     val labels = rememberAuthLabels()
@@ -91,14 +97,27 @@ fun ProfileScreen(
             Text(stringResource(R.string.app_name), style = MaterialTheme.typography.headlineMedium)
             Spacer(Modifier.height(2.dp))
             Text(
-                text = when (sessions.size) {
-                    0 -> "No assessments yet."
-                    1 -> "1 assessment on this phone."
-                    else -> "${sessions.size} assessments on this phone."
+                text = if (shopMode) {
+                    labels.shopTabletNotice
+                } else {
+                    when (sessions.size) {
+                        0 -> "No assessments yet."
+                        1 -> "1 assessment on this phone."
+                        else -> "${sessions.size} assessments on this phone."
+                    }
                 },
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
+            if (shopMode) {
+                Spacer(Modifier.height(16.dp))
+                Button(
+                    onClick = onBackToStart,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(56.dp),
+                ) { Text(labels.ownerBackToStart) }
+            }
 
             Spacer(Modifier.height(24.dp))
             HorizontalDivider()

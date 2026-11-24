@@ -43,6 +43,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -56,6 +57,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
@@ -83,9 +85,16 @@ import com.qualityverifier.ui.plan.PlanCard
 import com.qualityverifier.text.ReportLabels
 import com.qualityverifier.text.RetryLabels
 import com.qualityverifier.text.parseAssistantContent
+import com.qualityverifier.domain.Ownership
+import com.qualityverifier.ui.shop.ShopDoneButton
+import com.qualityverifier.ui.shop.ShopNoticeScreen
+import androidx.activity.compose.BackHandler
 import com.qualityverifier.ui.turn.FailedTurnRow
 import com.qualityverifier.ui.turn.UnansweredTurnRow
 import com.qualityverifier.ui.appContainer
+import com.qualityverifier.shop.keepsScreenOn
+// Aliased: this screen's own `shopMode` parameter is the Boolean.
+import com.qualityverifier.ui.shopMode as currentShopMode
 import com.qualityverifier.ui.rememberReportLabels
 import com.qualityverifier.ui.rememberTesterLabels
 import java.io.File
@@ -105,7 +114,32 @@ fun ChatScreen(
     onAssessAnother: (ItemType, AssessmentContext?) -> Unit = { _, _ -> },
     /** Back to the grid: a different kind of piece needs its own intake. */
     onAssessDifferent: () -> Unit = {},
+    /**
+     * A shop's tablet (row 12). The customer reads the notice first; the intake records
+     * buying without asking; the result has one button, [onDone], instead of the next-steps
+     * card; there is no Share, no gallery, and no way to Settings. False is a personal
+     * account, unchanged from v0.6.1.
+     */
+    shopMode: Boolean = false,
+    /** "Done: delete this assessment". Only called in [shopMode]. */
+    onDone: () -> Unit = {},
 ) {
+    // On the tablet, Back from anywhere in the assessment ends it as Done does: the customer
+    // chose to stop, and the next one must find an empty start screen. Registered first, so
+    // the intake's and the camera's own Back handlers, composed later, still come first.
+    BackHandler(enabled = shopMode, onBack = onBack)
+    // On the tablet the screen stays on while the assessment is open: the screen locking ends
+    // the assessment, and a short timeout would end it while the customer waits for the
+    // verdict. The five idle minutes are the tablet's timeout instead (row 12).
+    val view = LocalView.current
+    DisposableEffect(view, shopMode) {
+        val keepOn = keepsScreenOn(shopMode)
+        if (keepOn) view.keepScreenOn = true
+        onDispose { if (keepOn) view.keepScreenOn = false }
+    }
+    // The on-screen keyboard's typing never reaches MainActivity's touch handler, so the text
+    // field restarts the tablet's idle minutes itself. Nothing for a personal account.
+    val idle = currentShopMode().idle
     val context = LocalContext.current
     val container = appContainer()
     val viewModel: ChatViewModel = viewModel(
@@ -142,6 +176,8 @@ fun ChatScreen(
 
     var draft by remember { mutableStateOf("") }
     var capturing by remember { mutableStateOf(false) }
+    // The shop tablet's notice (row 12), read once per assessment before the intake.
+    var noticeRead by rememberSaveable(sessionId) { mutableStateOf(false) }
     // Which part of a collection run is on screen. Kept here rather than in the view
     // model because it is navigation, not state worth surviving a process death.
     var runMode by remember { mutableStateOf(RunMode.NONE) }
@@ -174,7 +210,10 @@ fun ChatScreen(
     val runLabels = rememberReportLabels(run?.plan?.language)
     // Drawn as the last item in the list rather than under the verdict, so follow-up
     // questions do not push it out of reach.
-    val showNextSteps = shareable != null && run == null && !sending
+    val controls = ChatControls.of(
+        shopMode = shopMode, hasVerdict = shareable != null, runActive = run != null, sending = sending,
+    )
+    val showNextSteps = controls.afterVerdict
 
     val requestCameraPermission = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
@@ -227,6 +266,12 @@ fun ChatScreen(
         return
     }
 
+    // What the customer is told before a shop assessment starts (row 12).
+    if (shopMode && needsIntake && !noticeRead) {
+        ShopNoticeScreen(onStart = { noticeRead = true }, onBack = onBack)
+        return
+    }
+
     // Inspecting comes first: once submitted there is nothing else worth showing, and
     // the run has already been cleared from the view model.
     if (needsIntake) {
@@ -236,6 +281,8 @@ fun ChatScreen(
             // Inherited from the piece before it, which already settled which protocol
             // applies — so there is nothing for the upholstery question to decide.
             protocolSettled = previousSessionId != null,
+            // A walk-in customer on a shop's tablet is about to buy a finished piece.
+            fixedOwnership = Ownership.BUYING.takeIf { shopMode },
             onComplete = { context, resolvedItemType ->
                 viewModel.submitIntake(
                     context = context,
@@ -369,8 +416,10 @@ fun ChatScreen(
                 },
                 actions = {
                     // Only offered once there is a verdict: sharing a half-finished
-                    // walkthrough would send somebody a report that says nothing.
-                    if (shareable != null) {
+                    // walkthrough would send somebody a report that says nothing. Never on a
+                    // shop's tablet (row 12), where it would go out through the shop's own
+                    // apps.
+                    if (shareable != null && controls.share) {
                         IconButton(
                             onClick = {
                                 shareReport(
@@ -446,7 +495,16 @@ fun ChatScreen(
                             }
                         }
 
-                        if (showNextSteps) {
+                        // A shop's tablet (row 12): one customer, one finished piece, so no
+                        // "check another" or "compare"; one button that deletes the tablet's copy.
+                        if (controls.done) {
+                            item(key = "shop-done") {
+                                Spacer(Modifier.height(6.dp))
+                                ShopDoneButton(labels = shareLabels, onDone = onDone)
+                            }
+                        }
+
+                        if (controls.nextSteps) {
                             item(key = "next-steps") {
                                 Spacer(Modifier.height(6.dp))
                                 NextStepsCard(
@@ -498,7 +556,7 @@ fun ChatScreen(
                 }
             }
 
-            error?.let { chatError -> ErrorRow(chatError, viewModel, onOpenSettings) }
+            error?.let { chatError -> ErrorRow(chatError, viewModel, onOpenSettings.takeIf { controls.settingsOnError }) }
 
             // Only when there is no live error: a turn that just failed already has a row
             // with a Retry on it, and two prompts to do the same thing is worse than one.
@@ -607,7 +665,10 @@ fun ChatScreen(
                     ) {
                         Icon(Icons.Filled.PhotoCamera, contentDescription = "Take photo")
                     }
-                    IconButton(
+                    // Not on a shop's tablet (row 12): its gallery is the shop's, and the
+                    // picker is another app, so opening it would end the assessment as
+                    // leaving the app does.
+                    if (controls.gallery) IconButton(
                         onClick = {
                             pickImages.launch(
                                 androidx.activity.result.PickVisualMediaRequest(
@@ -621,7 +682,10 @@ fun ChatScreen(
                     }
                     OutlinedTextField(
                         value = draft,
-                        onValueChange = { draft = it },
+                        onValueChange = {
+                            draft = it
+                            idle.touched()
+                        },
                         placeholder = { Text("Ask about this furniture") },
                         maxLines = 4,
                         modifier = Modifier.weight(1f),
@@ -661,12 +725,16 @@ fun ChatScreen(
     }
 }
 
-/** A sign-in failure offers Settings instead of Retry: sending again cannot fix it. */
+/**
+ * A sign-in failure offers Settings instead of Retry: sending again cannot fix it. No
+ * Settings when [onOpenSettings] is null, on a shop's tablet, where the account is the
+ * owner's and behind the password (row 12).
+ */
 @Composable
 private fun ErrorRow(
     chatError: ChatError,
     viewModel: ChatViewModel,
-    onOpenSettings: () -> Unit,
+    onOpenSettings: (() -> Unit)?,
 ) {
     val auth = chatError.kind == ChatErrorKind.AUTH
     FailedTurnRow(
@@ -674,7 +742,9 @@ private fun ErrorRow(
         labels = RetryLabels.ENGLISH,
         onRetry = if (auth) null else viewModel::retry,
         onDismiss = viewModel::dismissError,
-        alternative = { TextButton(onClick = onOpenSettings) { Text("Open Settings") } },
+        alternative = {
+            if (onOpenSettings != null) TextButton(onClick = onOpenSettings) { Text("Open Settings") }
+        },
     )
 }
 
@@ -769,6 +839,36 @@ private fun MessageBubble(
 }
 
 private const val MAX_IMAGES_PER_PICK = 5
+
+/**
+ * Which of the conversation's controls show, apart from the screen so a test can hold them.
+ * A personal account gets exactly what v0.6.1 showed. A shop's tablet (row 12) gets one
+ * button after the verdict, Done, and none of Share, the next-steps card, the gallery, or the
+ * way to Settings from a failed turn.
+ */
+internal data class ChatControls(
+    /** A verdict is on screen and nothing is under way: the moment for what comes next. */
+    val afterVerdict: Boolean,
+    val share: Boolean,
+    val nextSteps: Boolean,
+    val done: Boolean,
+    val gallery: Boolean,
+    val settingsOnError: Boolean,
+) {
+    companion object {
+        fun of(shopMode: Boolean, hasVerdict: Boolean, runActive: Boolean, sending: Boolean): ChatControls {
+            val afterVerdict = hasVerdict && !runActive && !sending
+            return ChatControls(
+                afterVerdict = afterVerdict,
+                share = hasVerdict && !shopMode,
+                nextSteps = afterVerdict && !shopMode,
+                done = afterVerdict && shopMode,
+                gallery = !shopMode,
+                settingsOnError = !shopMode,
+            )
+        }
+    }
+}
 
 /** Which screen of a collection run is showing. */
 private enum class RunMode { NONE, CAPTURE, TESTS }

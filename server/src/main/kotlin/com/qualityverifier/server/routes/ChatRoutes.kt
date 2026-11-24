@@ -19,6 +19,7 @@ import com.qualityverifier.server.db.AuthStore
 import com.qualityverifier.server.db.ChatStore
 import com.qualityverifier.server.db.PieceStudio
 import com.qualityverifier.server.db.SessionAccess
+import com.qualityverifier.server.db.UserRow
 import com.qualityverifier.text.AssistantContent
 import com.qualityverifier.text.ImprovementQuestion
 import com.qualityverifier.text.fundiDefectCount
@@ -248,7 +249,7 @@ private suspend fun RoutingContext.assessmentTurn(
             // A guard, not a selector. The audience came from the route; this only
             // refuses an account that belongs to the other app, so neither prompt can be
             // reached by an account that is not for it.
-            if (!requireAudience(audience, auth, userId)) return
+            val account = requireAudience(audience, auth, userId) ?: return
 
             // The system prompt is assembled here from the protocols on GitHub, and
             // whatever the client sends is irrelevant — a client that could supply its own
@@ -281,6 +282,20 @@ private suspend fun RoutingContext.assessmentTurn(
                 // 404, never 403: telling the difference would let anybody enumerate
                 // which session ids exist.
                 log.warn("User {} tried to post into another user's session", userId)
+                call.respond(HttpStatusCode.NotFound, ErrorResponse("no_such_session"))
+                return
+            }
+            // A shop's tablet (V39, row 12) adds turns only to the assessment in progress. The
+            // account is the shop's, so every earlier customer's assessment is "its own", and a
+            // tablet that reopened on an earlier screen (Android restores one after a process
+            // death) would otherwise carry on the earlier customer's conversation, photos and
+            // history included, for the next customer. Refused as another account's session is,
+            // before anything is stored, spent or replayed: the replay below would hand back the
+            // earlier customer's stored reply. A new assessment (created) is always allowed.
+            if (access is SessionAccess.Ok && !access.created && account.shopMode &&
+                store.shopSessionInProgress(userId) != request.sessionId
+            ) {
+                log.warn("Shop account {} tried to post into session {}, which is not in progress", userId, request.sessionId)
                 call.respond(HttpStatusCode.NotFound, ErrorResponse("no_such_session"))
                 return
             }
@@ -513,17 +528,20 @@ private suspend fun RoutingContext.assessmentTurn(
  * 403 rather than 404: the two apps have entirely independent accounts, so a Kagua account
  * reaching Fundi Bora's endpoint is a client bug worth naming, and there is no id here
  * whose existence could be leaked by saying so.
+ *
+ * Returns the account when it may go on, so the caller can read its other flags (shop mode,
+ * V39) without a second lookup; null once the refusal is sent.
  */
 private suspend fun RoutingContext.requireAudience(
     audience: Audience,
     auth: AuthStore,
     userId: String,
-): Boolean {
-    val actual = auth.findUser(userId)?.audience
-    if (actual == audience) return true
-    log.warn("Account {} ({}) tried to use the {} assessment endpoint", userId, actual, audience)
+): UserRow? {
+    val account = auth.findUser(userId)
+    if (account != null && account.audience == audience) return account
+    log.warn("Account {} ({}) tried to use the {} assessment endpoint", userId, account?.audience, audience)
     call.respond(HttpStatusCode.Forbidden, ErrorResponse("wrong_app"))
-    return false
+    return null
 }
 
 /**

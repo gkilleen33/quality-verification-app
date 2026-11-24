@@ -83,6 +83,17 @@ data class AuthLabels(
     val signOut: String,
     val signOutConfirmBody: String,
     val staySignedIn: String,
+    // The shop tablet's owner controls (release scope row 12): behind the account's password,
+    // so a customer cannot sign the tablet out or delete the shop's account.
+    val ownerControls: String,
+    val ownerPasswordTitle: String,
+    val ownerPasswordBody: String,
+    val ownerPasswordWrong: String,
+    val ownerPasswordLocked: String,
+    val ownerPasswordUnavailable: String,
+    val ownerOpen: String,
+    val ownerBackToStart: String,
+    val shopTabletNotice: String,
     /**
      * REVIEW CRITICAL: what we keep, for how long, and what deleting an account does.
      *
@@ -186,6 +197,18 @@ data class AuthLabels(
             signOutConfirmBody = "You will need your phone number and password to sign in " +
                 "again. Assessments already on this phone stay on it.",
             staySignedIn = "Stay signed in",
+            ownerControls = "Shop owner",
+            ownerPasswordTitle = "Shop owner's password",
+            ownerPasswordBody = "Type this tablet's Kagua password to open the account, sign out, " +
+                "or change the account's settings.",
+            ownerPasswordWrong = "That password is not right.",
+            ownerPasswordLocked = "Too many attempts. Please wait 15 minutes and try again.",
+            ownerPasswordUnavailable = "The password could not be checked. Check the internet " +
+                "connection and try again.",
+            ownerOpen = "Open",
+            ownerBackToStart = "Back to the start screen",
+            shopTabletNotice = "This is a shop's tablet. It deletes each customer's assessment " +
+                "when they finish, and the researchers keep a copy.",
             locationHeading = "Location",
             recordLocationLabel = "Record a GPS point at the start of new evaluations.",
             recordLocationHint = "We use this for research, to link assessments to the " +
@@ -268,6 +291,19 @@ data class AuthLabels(
             signOutConfirmBody = "Utahitaji namba yako ya simu na neno la siri kuingia " +
                 "tena. Ukaguzi ulio kwenye simu hii unabaki.",
             staySignedIn = "Baki umeingia",
+            // Not yet reviewed by a Kiswahili speaker (row 12).
+            ownerControls = "Mwenye duka",
+            ownerPasswordTitle = "Nenosiri la mwenye duka",
+            ownerPasswordBody = "Andika nenosiri la Kagua la kompyuta kibao hii ili kufungua " +
+                "akaunti, kutoka, au kubadilisha mipangilio ya akaunti.",
+            ownerPasswordWrong = "Nenosiri hilo si sahihi.",
+            ownerPasswordLocked = "Majaribio mengi mno. Tafadhali subiri dakika 15 kisha ujaribu tena.",
+            ownerPasswordUnavailable = "Nenosiri halikuweza kuthibitishwa. Angalia mtandao " +
+                "kisha ujaribu tena.",
+            ownerOpen = "Fungua",
+            ownerBackToStart = "Rudi kwenye skrini ya mwanzo",
+            shopTabletNotice = "Hii ni kompyuta kibao ya duka. Inafuta tathmini ya kila mteja " +
+                "anapomaliza, na watafiti huhifadhi nakala.",
             locationHeading = "Mahali",
             recordLocationLabel = "Rekodi mahali (GPS) kila ukaguzi mpya unapoanza.",
             recordLocationHint = "Tunatumia hii kwa utafiti, kuunganisha ukaguzi na maduka " +

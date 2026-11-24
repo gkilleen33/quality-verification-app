@@ -29,6 +29,7 @@ import com.qualityverifier.text.buildComparisonRequest
 import com.qualityverifier.text.buildIntakeMessage
 import com.qualityverifier.text.buildSubmissionText
 import com.qualityverifier.text.parseAssistantContent
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -738,7 +739,22 @@ class ChatViewModel(
     private suspend fun deliver(type: ItemType) {
         val history = sessions.messagesOnce(sessionId)
         when (val result = chat.send(sessionId, type, history)) {
-            is ChatResult.Success -> sessions.appendAssistantMessage(sessionId, result.text)
+            is ChatResult.Success -> {
+                // A shop's tablet (row 12) may have deleted its copy of this assessment while
+                // the reply was on its way: the customer left, locked the screen, or went idle.
+                // The server has the reply; the tablet has no row left to put it in, and must
+                // not make one. A personal account's assessment is never deleted under it, so
+                // there this always finds the row and goes on as before.
+                if (!sessions.sessionExists(sessionId)) return
+                try {
+                    sessions.appendAssistantMessage(sessionId, result.text)
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    // Deleted between the check and the write. Anything else is still a bug.
+                    if (sessions.sessionExists(sessionId)) throw e
+                }
+            }
             is ChatResult.Failure -> _error.value = ChatError(result.kind, result.message)
         }
     }

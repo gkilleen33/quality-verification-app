@@ -42,8 +42,8 @@ milliseconds throughout.
 
 | Endpoint | Returns |
 |---|---|
-| `GET /users` | accounts, with phone, `audience`, name, business, latitude/longitude and accuracy. From V38 one number may be on two accounts, one per app (see below) |
-| `GET /assessments` | assessments, newest last, each with the `app_version_code` that started it, its `purpose`, `language`, `piece_id`, `prompt_sha`, `assessed_as` and `final` (V34). Filters: `user`, `item`, `testers=1`, `updated_since` |
+| `GET /users` | accounts, with phone, `audience`, name, business, latitude/longitude and accuracy, and `shop_mode` (V39). From V38 one number may be on two accounts, one per app (see below) |
+| `GET /assessments` | assessments, newest last, each with the `app_version_code` that started it, its `purpose`, `language`, `piece_id`, `prompt_sha`, `assessed_as` and `final` (V34), and `shop_tablet`, `tablet_ended` and `tablet_ended_at` (V39, see "Kagua on a shop's tablet" below). Filters: `user`, `item`, `testers=1`, `updated_since` |
 | `GET /assessments/{id}` | one assessment with its messages, photo hashes in order, each photo's camera metadata, its `problems`, the evaluator's critique if there is one, and its `tools` (V35, see below) |
 | `GET /tester-feedback` | every evaluator critique, keyed on `session_id` |
 | `GET /review-helpful` | each Fundi Bora tester's answer to "Was this review helpful?" after a verdict (V36): `session_id`, `user_id` (null once the tester's account is deleted), `helpful`, `answered_at`. One per assessment, the first answer given |
@@ -277,6 +277,15 @@ From prompt E (#107, 18 November 2026) a Fundi Bora diagnosis no longer writes e
 - **Cost.** Each prefetch is a `usage_events` row with `call_kind` = `detail_prefetch`, joined by `usage_event_id`. A tap's call is billed as a `turn`, as before. Neither counts against the daily allowance, which counts assessments started.
 - **Thinking effort.** From v0.7.0, Fundi Bora's turns, notes and detail answers ask for medium thinking (`effort` = `medium`; the server setting `fundi_effort`), where before they used the API's default, high.
 - **Deletion.** When an account is deleted its rows stay, with `finding_title` and `answer_text` set to null.
+
+## Kagua on a shop's tablet
+
+From v0.7.0 (V39) DIL may give a shop a tablet with Kagua on it. The shop owner registers it with a shop-tablet invite code, and walk-in customers use it to check a finished piece before buying. The tablet deletes its own copy of each customer's assessment; the server keeps every one.
+
+- **Which accounts.** `shop_mode` on `GET /users` is true for an account registered with a shop-tablet code. It is set by the code at registration and never changes, and only Kagua accounts (`audience` = `buyer`) can have it. Its `account_type` is whatever the owner answered at sign-up; read `shop_mode`, not `account_type`, to find the tablets.
+- **Which assessments.** `shop_tablet` on `GET /assessments` is true for an assessment made on a shop's tablet, copied from the account when the assessment started. These are customers' assessments, not the shop owner's, and every one records buying (the tablet does not ask "buying or already own it").
+- **How the tablet's copy ended.** `tablet_ended` is `done` (the customer pressed "Done: delete this assessment", or went back to the start screen), `left_app` (the app left the screen with the screen on: Home, another app, a notification), `screen_lock` (the screen went off or locked), or `idle` (five minutes with no touch). `tablet_ended_at` is when the server heard it, not when it happened: a tablet that was offline reports when it is back. Both are null for an assessment not made on a tablet, and for one whose tablet never reported (switched off mid-way, or still offline). The first report stands.
+- **Deletion.** A shop's assessments are never marked `deleted_by_user`: the tablet's own deletion is local only, and the server ignores a delete from an older app signed in to a shop account.
 
 ## Three things that will bite an analysis if nobody mentions them
 

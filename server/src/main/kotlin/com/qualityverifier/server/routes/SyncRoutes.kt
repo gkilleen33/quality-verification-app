@@ -1,5 +1,6 @@
 package com.qualityverifier.server.routes
 
+import com.qualityverifier.domain.TabletEnd
 import com.qualityverifier.server.auth.AccessTokens
 import com.qualityverifier.server.auth.Passwords
 import com.qualityverifier.server.blobs.BlobStore
@@ -46,6 +47,12 @@ fun Route.syncRoutes(
 
         get("/v1/sessions") {
             val userId = call.userId() ?: return@get call.unauthorized()
+            // A shop's tablet (V39, row 12) is sent no assessment, so a reinstall or a second
+            // tablet restores nothing of an earlier customer's. The server keeps them all.
+            if (isShopAccount(auth, userId)) {
+                call.respond(SessionListDto(emptyList()))
+                return@get
+            }
             call.respond(SessionListDto(chat.sessionsFor(userId).map { it.toDto() }))
         }
 
@@ -56,6 +63,12 @@ fun Route.syncRoutes(
             // into a 500. It is the same "no such thing" as any other unknown id, so it
             // gets the same answer.
             if (!isUuid(id)) {
+                call.respond(HttpStatusCode.NotFound, ErrorResponse("no_such_session"))
+                return@get
+            }
+            // A shop's tablet reads only the assessment in progress (V39's
+            // shop_session_in_progress); any earlier one gets the answer an unknown id gets.
+            if (isShopAccount(auth, userId) && chat.shopSessionInProgress(userId) != id) {
                 call.respond(HttpStatusCode.NotFound, ErrorResponse("no_such_session"))
                 return@get
             }
@@ -98,6 +111,15 @@ fun Route.syncRoutes(
                 call.respond(HttpStatusCode.NotFound, ErrorResponse("no_such_session"))
                 return@delete
             }
+            // A shop's assessments are the research record and are never marked deleted, which
+            // would start V11's seven-day purge (row 12). Shop mode never sends this; an older
+            // app signed in to a shop account might, and 404 is the answer that tells it to
+            // stop asking without deleting anything.
+            if (isShopAccount(auth, userId)) {
+                log.info("Ignored a delete of session {} from a shop account", id)
+                call.respond(HttpStatusCode.NotFound, ErrorResponse("no_such_session"))
+                return@delete
+            }
             if (!chat.markClientDeleted(userId, id)) {
                 // Idempotent from the client's point of view: already deleted, never
                 // existed, or not theirs all mean "stop asking".
@@ -105,6 +127,36 @@ fun Route.syncRoutes(
                 return@delete
             }
             log.info("Session {} marked deleted by its owner", id)
+            call.respond(HttpStatusCode.NoContent)
+        }
+
+        /**
+         * How a shop tablet's copy of an assessment ended (V39, row 12): `{"end": "done"}`,
+         * or `left_app`, `screen_lock`, `idle`. Research data only; it deletes nothing. The
+         * first report wins and a repeat is answered 204, so a retried report is harmless.
+         */
+        put("/v1/sessions/{id}/tablet-end") {
+            val userId = call.userId() ?: return@put call.unauthorized()
+            val id = call.parameters["id"].orEmpty()
+            if (!isUuid(id)) {
+                call.respond(HttpStatusCode.NotFound, ErrorResponse("no_such_session"))
+                return@put
+            }
+            val end = TabletEnd.fromId(call.receive<TabletEndRequest>().end)
+            if (end == null) {
+                call.respond(
+                    HttpStatusCode.BadRequest,
+                    ErrorResponse("invalid_request", "end must be one of " + TabletEnd.entries.joinToString { it.id }),
+                )
+                return@put
+            }
+            if (!chat.recordTabletEnd(userId, id, end)) {
+                // Not this account's, not made on a shop's tablet, or not on the server yet
+                // (its first turn has not arrived): the same answer as everywhere here.
+                call.respond(HttpStatusCode.NotFound, ErrorResponse("no_such_session"))
+                return@put
+            }
+            log.info("Shop tablet ended its copy of session {}: {}", id, end.id)
             call.respond(HttpStatusCode.NoContent)
         }
 
@@ -129,7 +181,15 @@ fun Route.syncRoutes(
             // alone carries no owner; without this, any account could read any photo it
             // knew the hash of. 404 rather than 403, for the same reason as a session:
             // 403 would confirm the photo exists.
-            if (!chat.blobBelongsTo(userId, sha)) {
+            // A shop's tablet is sent the photos of the assessment in progress and of no other
+            // (row 12), so a photo shared by two customers' assessments still goes only to the
+            // one being done now.
+            val mayRead = if (isShopAccount(auth, userId)) {
+                chat.shopSessionInProgress(userId)?.let { current -> chat.blobInSession(userId, current, sha) } == true
+            } else {
+                chat.blobBelongsTo(userId, sha)
+            }
+            if (!mayRead) {
                 call.respond(HttpStatusCode.NotFound, ErrorResponse("no_such_blob"))
                 return@get
             }
@@ -258,6 +318,14 @@ fun Route.syncRoutes(
         }
     }
 }
+
+/**
+ * Whether [userId] is a Kagua account on a shop's tablet (V39, row 12). Read on each request
+ * rather than carried in the token, as the evaluator flag is, though unlike that flag it never
+ * changes after registration.
+ */
+private suspend fun isShopAccount(auth: AuthStore, userId: String): Boolean =
+    auth.findUser(userId)?.shopMode == true
 
 private fun io.ktor.server.application.ApplicationCall.userId(): String? =
     principal<JWTPrincipal>()?.subject

@@ -118,6 +118,19 @@ data class ReportLabels(
     val assessDifferent: String,
     val compareFoundHeading: String,
     val compareAsk: String,
+    /**
+     * Kagua on a shop's tablet (release scope row 12). The one button after the verdict, and
+     * the notice the customer reads before each assessment, which is shown in both languages
+     * at once because it comes before the language question. Kiswahili not yet reviewed.
+     * The notice promises only that the shop owner is not sent the assessment: the tablet
+     * cannot stop an owner watching over the customer's shoulder.
+     */
+    val shopDone: String,
+    val shopNoticeHeading: String,
+    val shopNoticeNotShared: String,
+    val shopNoticeDeleted: String,
+    val shopNoticeResearchers: String,
+    val shopNoticeStart: String,
     // The opening turn the intake writes on the customer's behalf.
     val intakeSaysBuying: String,
     val intakeSaysAlreadyOwn: String,
@@ -358,6 +371,12 @@ data class ReportLabels(
             compareFoundHeading = "Found on it:",
             compareAsk = "Tell me the differences that matter between the two, " +
                 "and say what you cannot compare.",
+            shopDone = "Done: delete this assessment",
+            shopNoticeHeading = "Before you start",
+            shopNoticeNotShared = "This assessment is not shared with the shop owner.",
+            shopNoticeDeleted = "This tablet deletes its copy when you finish.",
+            shopNoticeResearchers = "Kagua is run by researchers, who keep the photos and the result.",
+            shopNoticeStart = "Start",
             openingShotInstruction = "One photo of the whole thing to start. Stand back far " +
                 "enough that all of it is in the frame, including where it meets the floor. " +
                 "This lets me see what I am dealing with before asking for close-ups.",
@@ -497,6 +516,13 @@ data class ReportLabels(
             compareFoundHeading = "Yaliyoonekana:",
             compareAsk = "Nieleze tofauti muhimu kati ya hizi mbili, na useme kile " +
                 "ambacho hakiwezi kulinganishwa.",
+            // Not yet reviewed by a Kiswahili speaker (row 12).
+            shopDone = "Nimemaliza: futa tathmini hii",
+            shopNoticeHeading = "Kabla ya kuanza",
+            shopNoticeNotShared = "Tathmini hii haitumwi kwa mwenye duka.",
+            shopNoticeDeleted = "Kompyuta kibao hii inafuta nakala yake ukimaliza.",
+            shopNoticeResearchers = "Kagua inaendeshwa na watafiti, ambao huhifadhi picha na matokeo.",
+            shopNoticeStart = "Anza",
             openingShotInstruction = "Picha moja ya kitu kizima kwa kuanzia. Simama mbali " +
                 "kiasi ili kiwe chote kwenye picha, pamoja na pale kinapogusa sakafu. " +
                 "Hii inanisaidia kuona ninachoshughulika nacho kabla ya kuomba picha za karibu.",

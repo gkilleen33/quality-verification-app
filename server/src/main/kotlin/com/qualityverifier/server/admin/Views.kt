@@ -438,7 +438,13 @@ fun HTML.usersPage(
                             +(user.phone ?: "—")
                             if (user.deleted) span("muted") { +" (deleted)" }
                         }
-                        td { appTag(user.audience) }
+                        td {
+                            appTag(user.audience)
+                            if (user.shopMode) {
+                                +" "
+                                span("tag") { +"shop tablet" }
+                            }
+                        }
                         td { +(user.name ?: "—") }
                         td { +(user.accountType ?: "—") }
                         td { +(user.businessName ?: "—") }
@@ -781,6 +787,17 @@ fun HTML.invitesPage(session: AdminSession, invites: List<InviteRow>, notice: St
                     +"pilot findings. Independent of the app — an evaluator can be testing "
                     +"either one."
                 }
+                label("check") {
+                    input(type = InputType.checkBox, name = "shop")
+                    +" This is for a shop's tablet (Kagua only)"
+                }
+                p("muted") {
+                    +"The shop owner registers Kagua on the tablet DIL gives the shop. The "
+                    +"tablet deletes each customer's assessment when they finish, shows no "
+                    +"history and no Share, and asks for the account's password before the "
+                    +"owner's controls. Every assessment is still kept here. This cannot be "
+                    +"changed afterwards."
+                }
                 button(type = ButtonType.submit) { +"Create a code" }
             }
         }
@@ -806,7 +823,11 @@ fun HTML.invitesPage(session: AdminSession, invites: List<InviteRow>, notice: St
                         }
                         td {
                             if (invite.grantsTester) span("tag") { +"evaluator" }
-                            else +audienceNoun(invite.audience)
+                            if (invite.grantsShopMode) {
+                                if (invite.grantsTester) +" "
+                                span("tag") { +"shop tablet" }
+                            }
+                            if (!invite.grantsTester && !invite.grantsShopMode) +audienceNoun(invite.audience)
                         }
                         td { +invite.timesUsed.toString() }
                         td { +invite.createdAt.readable() }

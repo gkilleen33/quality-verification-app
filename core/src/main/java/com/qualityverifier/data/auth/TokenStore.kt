@@ -44,6 +44,21 @@ interface TokenStore {
     fun setTermsRequired(value: Boolean?) = Unit
 
     /**
+     * Whether this is a Kagua account on a shop's tablet (server V39, release scope row 12),
+     * from the sign-in answer and every profile read. Cached, as [isTester] is, because the
+     * app decides how to behave before any request can answer. False until the server says
+     * otherwise, so an app updated from v0.6.1 keeps behaving as it did. Defaulted so a store
+     * that never holds it (the push's copy, test fakes) reads as an ordinary account.
+     *
+     * Unlike everything else here, [clear] leaves it: it describes the handset until another
+     * account signs in, so a forced sign-out does not stop a shop tablet's wipe
+     * ([com.qualityverifier.data.shop.ShopTabletFlag]).
+     */
+    fun isShopMode(): Boolean = false
+
+    fun setShopMode(value: Boolean) = Unit
+
+    /**
      * The account's own number, E.164, as /v1/me last gave it; null until a v0.7.0 server has
      * answered. Fundi Bora's studio form refuses it (row 52), offline too, so it is cached
      * like [isTester]. Defaulted for the stores that never hold it.

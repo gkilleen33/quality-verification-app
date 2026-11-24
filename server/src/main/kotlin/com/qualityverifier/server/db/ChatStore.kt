@@ -2,6 +2,7 @@ package com.qualityverifier.server.db
 
 import com.qualityverifier.domain.Attachment
 import com.qualityverifier.domain.Audience
+import com.qualityverifier.domain.TabletEnd
 import com.qualityverifier.domain.WorkerSlot
 import com.qualityverifier.server.routes.SessionLocation
 import com.qualityverifier.domain.ChatMessage
@@ -323,6 +324,31 @@ interface ChatStore {
      * make the delete button a lie in the one direction that matters.
      */
     suspend fun blobBelongsTo(userId: String, sha: String): Boolean
+
+    /**
+     * The one assessment of a shop account (V39, row 12) a phone may read: the account's
+     * newest, while its tablet has not reported deleting it, it has not been deleted, and it
+     * has changed in the last 30 minutes. Null when there is none. See
+     * `shop_session_in_progress` in V39 for why each condition is there.
+     *
+     * The default is null, so a store that does not implement it shows a shop account nothing.
+     */
+    suspend fun shopSessionInProgress(userId: String): String? = null
+
+    /**
+     * Whether [sha] is a photo of [sessionId], an assessment of [userId] that is not deleted.
+     * The photo route asks this for a shop account instead of [blobBelongsTo], so a shop
+     * tablet is sent the photos of the assessment in progress and of no other. False by
+     * default, for the same reason as [shopSessionInProgress].
+     */
+    suspend fun blobInSession(userId: String, sessionId: String, sha: String): Boolean = false
+
+    /**
+     * Records how a shop tablet's copy of [sessionId] ended (V39, row 12). The first report
+     * wins: a second is accepted and changes nothing, so a retried report is harmless. False
+     * when the session is not this account's, or was not made on a shop's tablet.
+     */
+    suspend fun recordTabletEnd(userId: String, sessionId: String, end: TabletEnd): Boolean = false
 }
 
 class PostgresChatStore(private val dataSource: DataSource) : ChatStore {
@@ -464,9 +490,10 @@ class PostgresChatStore(private val dataSource: DataSource) : ChatStore {
             """
             insert into sessions (
                 id, user_id, item_type_id, previous_session_id, intake_answers, prompt_sha,
-                audience, piece_id, app_version_code, assessed_as, is_final
+                audience, piece_id, app_version_code, assessed_as, is_final, shop_tablet
             ) values (
-                ?::uuid, ?::uuid, ?, ?::uuid, ?, ?, ?, ?::uuid, ?, ?, ?
+                ?::uuid, ?::uuid, ?, ?::uuid, ?, ?, ?, ?::uuid, ?, ?, ?,
+                coalesce((select u.shop_mode from users u where u.id = ?::uuid), false)
             )
             on conflict (id) do nothing
             """.trimIndent()
@@ -489,6 +516,9 @@ class PostgresChatStore(private val dataSource: DataSource) : ChatStore {
             // this assessment was made, and a wrong pick is found by this column.
             statement.setString(10, footing?.assessedAs)
             statement.setBoolean(11, keepFinal)
+            // Made on a shop's tablet (V39, row 12): copied from the account once, here, as the
+            // audience is, so the assessment says what it was without a join.
+            statement.setString(12, userId)
             statement.executeUpdate()
         }
         // The tools to hand for this assessment (V35, row 10), worked out once, now, from the
@@ -1215,6 +1245,68 @@ class PostgresChatStore(private val dataSource: DataSource) : ChatStore {
                     statement.setString(1, sha)
                     statement.setString(2, userId)
                     statement.executeQuery().use { rows -> rows.next() && rows.getBoolean(1) }
+                }
+            }
+        }
+
+    override suspend fun shopSessionInProgress(userId: String): String? =
+        withContext(Dispatchers.IO) {
+            dataSource.connection.use { connection ->
+                // The rule is V39's function, so the migration's self-test proves it.
+                connection.prepareStatement("select shop_session_in_progress(?::uuid)::text").use { statement ->
+                    statement.setString(1, userId)
+                    statement.executeQuery().use { rows -> if (rows.next()) rows.getString(1) else null }
+                }
+            }
+        }
+
+    override suspend fun blobInSession(userId: String, sessionId: String, sha: String): Boolean =
+        withContext(Dispatchers.IO) {
+            dataSource.connection.use { connection ->
+                connection.prepareStatement(
+                    """
+                    select exists (
+                        select 1
+                        from attachments a
+                        join messages m on m.id = a.message_id
+                        join sessions s on s.id = m.session_id
+                        where a.sha256 = ?
+                          and s.id = ?::uuid
+                          and s.user_id = ?::uuid
+                          and s.client_deleted_at is null
+                    )
+                    """.trimIndent()
+                ).use { statement ->
+                    statement.setString(1, sha)
+                    statement.setString(2, sessionId)
+                    statement.setString(3, userId)
+                    statement.executeQuery().use { rows -> rows.next() && rows.getBoolean(1) }
+                }
+            }
+        }
+
+    override suspend fun recordTabletEnd(userId: String, sessionId: String, end: TabletEnd): Boolean =
+        withContext(Dispatchers.IO) {
+            dataSource.connection.use { connection ->
+                // Written only while empty, so the first report stands; a repeat finds the
+                // row and is answered as accepted, which stops the tablet sending it again.
+                // The first report also moves updated_at, which the data API's incremental
+                // pull (`updated_since`) reads, so research sees the end without a full pull;
+                // a repeat changes nothing, updated_at included. Every value on the right is
+                // the row's value before this update.
+                connection.prepareStatement(
+                    """
+                    update sessions
+                       set tablet_ended = coalesce(tablet_ended, ?),
+                           tablet_ended_at = coalesce(tablet_ended_at, now()),
+                           updated_at = case when tablet_ended is null then now() else updated_at end
+                     where id = ?::uuid and user_id = ?::uuid and shop_tablet
+                    """.trimIndent()
+                ).use { statement ->
+                    statement.setString(1, end.id)
+                    statement.setString(2, sessionId)
+                    statement.setString(3, userId)
+                    statement.executeUpdate() > 0
                 }
             }
         }

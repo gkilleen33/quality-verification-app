@@ -17,4 +17,7 @@ class AccountActions(private val client: SyncClient) {
      * so this is the last authenticated call the phone will make.
      */
     suspend fun deleteAccount(): Boolean = client.deleteAccount()
+
+    /** The account's password, before a shop tablet opens the owner's controls (row 12). */
+    suspend fun checkPassword(password: String): PasswordCheck = client.checkPassword(password)
 }

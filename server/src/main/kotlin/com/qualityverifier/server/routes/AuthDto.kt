@@ -39,6 +39,8 @@ data class TokenResponse(
     @SerialName("expires_in") val expiresIn: Long,
     @SerialName("refresh_token") val refreshToken: String,
     @SerialName("user_id") val userId: String,
+    /** A Kagua account on a shop's tablet (V39, row 12). An app before v0.7.0 ignores it. */
+    @SerialName("shop_mode") val shopMode: Boolean = false,
 )
 
 @Serializable
@@ -72,6 +74,12 @@ data class MeResponse(
      */
     @SerialName("mpesa_read_agreed") val mpesaReadAgreed: Boolean = false,
     @SerialName("mpesa_send_agreed") val mpesaSendAgreed: Boolean = false,
+    /**
+     * A Kagua account on a shop's tablet (V39, row 12): the phone keeps no customer's
+     * assessment, shows no history and no Share, and asks for the password before the
+     * owner's controls. Fixed at registration by the invite code. An older build ignores it.
+     */
+    @SerialName("shop_mode") val shopMode: Boolean = false,
     /**
      * The account's own number, E.164, as stored. Fundi Bora's studio form refuses it
      * (row 52), so the phone keeps a copy; it is the number the person signed in with, so

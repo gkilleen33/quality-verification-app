@@ -62,6 +62,11 @@ class TermsGateTest {
         HttpMethod.Put to "/v1/fundi/sessions/$uuid/helpful",
         HttpMethod.Put to "/v1/sessions/$uuid/workers",
         HttpMethod.Post to "/v1/tester-feedback",
+        // v0.7.0 (V39, row 12): Kagua's shop tablet. Kagua has no terms, so the gate never
+        // refuses a Kagua account; neither route is opened for a Fundi Bora account, which
+        // has no use for either.
+        HttpMethod.Put to "/v1/sessions/$uuid/tablet-end",
+        HttpMethod.Post to "/v1/me/password-check",
     )
 
     /** The open list, called by path. */
@@ -296,6 +301,8 @@ class TermsGateTest {
             "PUT" to "/v1/fundi/sessions/x/helpful",
             "PUT" to "/v1/sessions/x/workers",
             "POST" to "/v1/tester-feedback",
+            "PUT" to "/v1/sessions/x/tablet-end",
+            "POST" to "/v1/me/password-check",
         )
         val unclassified = found.filterNot { (method, template) ->
             TermsGate.isOpen(HttpMethod.parse(method), sample(template)) ||
