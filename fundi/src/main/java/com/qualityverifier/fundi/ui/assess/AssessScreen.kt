@@ -364,7 +364,10 @@ fun AssessScreen(
                 onStartTests = { revisitingTest = null; stage = Stage.TESTING },
                 onSubmit = viewModel::submitRun,
                 onRetakeShot = { viewModel.retakeShot(it); stage = Stage.SHOOTING },
-                onChangeAnswer = { viewModel.answerTest(it, ""); revisitingTest = null; stage = Stage.TESTING },
+                // Opens that test with its answer selected, as Back does (row 40). Storing ""
+                // here, as before, left the run with no unanswered test, so the tests screen
+                // closed at once and the answer stayed blank.
+                onChangeAnswer = { revisitingTest = it; stage = Stage.TESTING },
                 onOpenPhoto = { viewing = it; marked = null },
                 onOpenMark = { path, mark ->
                     viewing = path

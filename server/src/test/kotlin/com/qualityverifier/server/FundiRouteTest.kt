@@ -438,6 +438,49 @@ class FundiRouteTest {
         assertTrue(store.studios.isEmpty())
     }
 
+    // Row 52 (Nathan, 23 November 2026): a studio entry on the account's own number could
+    // never link, so the route refuses it however the number is written, as the v0.7.0 form
+    // does. A phone older than v0.7.0 drops the change on this 400.
+    @Test
+    fun `row 52 - the studio route refuses the fundi's own number, in its local and +254 forms`() = testApplication {
+        val store = FakeFundiStore()
+        val app = withFundi(store, audience = Audience.FUNDI)
+
+        listOf("0711000222", "0711 000 222", "+254711000222", "254711000222", "+2540711000222").forEach { own ->
+            val refused = app.put("/v1/fundi/studios/$STUDIO") {
+                auth(FUNDI); contentType(ContentType.Application.Json)
+                setBody("""{"name":"My workshop","phone":"$own"}""")
+            }
+            assertEquals(own, HttpStatusCode.BadRequest, refused.status)
+            val body = refused.bodyAsText()
+            assertTrue(body, body.contains("\"error\":\"own_number\""))
+            assertTrue(body, body.contains("This is your own number. Your own workshop is already included."))
+        }
+        assertTrue("nothing saved", store.studios.isEmpty())
+
+        // Another number is saved as before.
+        val other = app.put("/v1/fundi/studios/$STUDIO") {
+            auth(FUNDI); contentType(ContentType.Application.Json)
+            setBody("""{"name":"Mama Njeri's workshop","phone":"0711000223"}""")
+        }
+        assertEquals(HttpStatusCode.NoContent, other.status)
+    }
+
+    @Test
+    fun `row 52 - an entry on the own number saved before v0_7_0 can still be archived`() = testApplication {
+        val store = FakeFundiStore().apply {
+            studios[STUDIO] = FakeFundiStore.FakeStudio("My workshop", OWN_PHONE, archived = false)
+        }
+        val app = withFundi(store, audience = Audience.FUNDI)
+
+        val archived = app.put("/v1/fundi/studios/$STUDIO") {
+            auth(FUNDI); contentType(ContentType.Application.Json)
+            setBody("""{"name":"My workshop","phone":"$OWN_PHONE","archived":true}""")
+        }
+        assertEquals(HttpStatusCode.NoContent, archived.status)
+        assertTrue(store.studios.getValue(STUDIO).archived)
+    }
+
     // Nobody can probe who uses the app. The store's answer says only whether the match
     // holds (V31's view, proved by its self-test); this holds the route to passing that
     // one bit through and nothing else, so two unlinked entries read alike field for
@@ -966,7 +1009,7 @@ class FundiRouteTest {
         override suspend fun register(registration: Registration) = RegisterOutcome.InviteUnusable
         override suspend fun findUser(userId: String) = UserRow(
             userId, "Antony", "individual", null,
-            disabled = false, isTester = false, audience = audience,
+            disabled = false, isTester = false, audience = audience, phone = OWN_PHONE,
         )
 
         override suspend fun issueRefresh(
@@ -989,5 +1032,7 @@ class FundiRouteTest {
         const val PIECE = "c0ffee00-0000-4000-8000-00000000001a"
         const val WORKER = "c0ffee00-0000-4000-8000-00000000001b"
         const val STUDIO = "c0ffee00-0000-4000-8000-00000000001c"
+        /** The signed-in account's own number, as FakeAuth reports it. */
+        const val OWN_PHONE = "+254711000222"
     }
 }

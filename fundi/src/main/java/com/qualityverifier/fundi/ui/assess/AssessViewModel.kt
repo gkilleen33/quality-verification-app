@@ -238,9 +238,22 @@ class AssessViewModel(
     init {
         if (!isFinal) {
             viewModelScope.launch {
-                _askFinished.value = !pieceMine || !runCatching { sessions.pieceIsForStudio(pieceId) }.getOrDefault(true)
+                _askFinished.value = !pieceMine || !runCatching { pieceIsForLinkedStudio() }.getOrDefault(true)
             }
         }
+    }
+
+    /**
+     * Whether the piece is labelled for a studio with a linked manager, who then makes the
+     * final assessment instead of the maker. Since v0.7.0 a studio with no linked manager
+     * leaves it to the maker (row 51), as the server's `FinalAssessment` rule does.
+     * "Linked" is the server's word at the last sync. With no studio list to read (tests about
+     * conversations), any studio label counts as linked, the rule before row 51.
+     */
+    private suspend fun pieceIsForLinkedStudio(): Boolean {
+        val studioId = sessions.pieceStudioId(pieceId) ?: return sessions.pieceIsForStudio(pieceId)
+        val list = studioList?.observeStudios()?.first() ?: return true
+        return list.any { it.id == studioId && it.linked && !it.archived }
     }
 
     private val _sending = MutableStateFlow(false)
