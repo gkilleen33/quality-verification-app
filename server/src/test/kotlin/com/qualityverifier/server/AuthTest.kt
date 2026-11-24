@@ -378,6 +378,34 @@ class AuthTest {
         assertEquals(listOf("+254712345678"), store.registeredPhones)
     }
 
+    // Row 47 (Nathan, 24 November 2026): testers outside Kenya. The phone sends the number
+    // with its +, as PhoneEntry.toE164 makes it; the server stores it unchanged and signs in
+    // with the same form. No SMS is sent to any number, so nothing else is involved.
+    @Test
+    fun `row 47 - a Ugandan number (+256…) signs up and signs in`() = testApplication {
+        val store = FakeAuthStore()
+        val app = withAuth(store)
+
+        val registered = app.post("/v1/auth/register") {
+            contentType(ContentType.Application.Json)
+            setBody(valid().copy(phone = "+256772123456"))
+        }
+        assertEquals(HttpStatusCode.Created, registered.status)
+        assertEquals(listOf("+256772123456"), store.registeredPhones)
+
+        // The fake keeps no account from register, so the stored number is seeded as the
+        // database would hold it, and signed into in the form the phone sends.
+        store.seedAccount(store.registeredPhones.single(), PASSWORD)
+        val signedIn = app.post("/v1/auth/sign-in") {
+            contentType(ContentType.Application.Json)
+            setBody(SignInRequest(phone = "+256772123456", password = PASSWORD))
+        }
+        assertEquals(HttpStatusCode.OK, signedIn.status)
+        assertTrue(signedIn.bodyAsText().contains("access_token"))
+        assertEquals("+256772123456", normalisePhone("+256 772 123 456"))
+        assertNull(validatePhone("+256772123456"))
+    }
+
     @Test
     fun `signing in with the right password issues tokens and clears the counter`() = testApplication {
         val store = FakeAuthStore().apply { seedAccount("+256700123456", PASSWORD) }

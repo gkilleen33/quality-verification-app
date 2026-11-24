@@ -25,6 +25,22 @@ class OwnNumberTest {
     }
 
     @Test
+    fun `row 47 - the own-number refusal holds for a number from another country`() {
+        val ugandan = "+256772123456"
+        listOf("+256772123456", "+256 772 123 456", "00256772123456").forEach { typed ->
+            assertTrue(typed, OwnNumber.isOwn(typed, ugandan))
+        }
+        assertFalse(OwnNumber.isOwn("+256772123457", ugandan))
+        // A Kenyan number is never a Ugandan account's own, in any form.
+        assertFalse(OwnNumber.isOwn("0772123456", ugandan))
+        assertFalse(OwnNumber.isOwn("+254772123456", ugandan))
+        // And a Kenyan account still sees its own number, whatever the studio's form.
+        assertTrue(OwnNumber.isOwn("+254 711 000 222", own))
+        assertEquals("+256772123456", OwnNumber.e164("+256 772-123-456"))
+        assertNull(OwnNumber.e164("+0772123456"))
+    }
+
+    @Test
     fun `a number that is not Kenyan in a form it reads is never called the own number`() {
         assertNull(OwnNumber.national("+44 20 7946 0000"))
         assertNull(OwnNumber.national("0011000222"))

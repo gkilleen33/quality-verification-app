@@ -32,6 +32,18 @@ data class AuthLabels(
     val phoneWrongStart: String,
     val phoneTooShort: String,
     val phoneNotKenyan: String,
+    // Another country code (v0.7.1, row 47): the hint and the reasons after a code other
+    // than 254, and the box the code is typed in. The Swahili is unreviewed.
+    val phoneHintAbroad: String,
+    val phoneBadCode: String,
+    val phoneLeadingZeroAbroad: String,
+    val phoneTooShortAbroad: String,
+    val phoneTooLong: String,
+    val phoneCodeTitle: String,
+    val phoneCodeBody: String,
+    val phoneCodeUse: String,
+    /** Read by TalkBack for the code button; {code} is the digits. */
+    private val phoneCodeDescriptionFormat: String,
     val passwordLabel: String,
     val signIn: String,
     val goToRegister: String,
@@ -125,13 +137,21 @@ data class AuthLabels(
     fun savedLocation(metres: Int): String =
         savedLocationFormat.replace("{m}", metres.toString())
 
-    /** The sentence the phone field shows for [problem]. */
-    fun phoneProblem(problem: KenyanPhone.Problem): String = when (problem) {
-        KenyanPhone.Problem.LEADING_ZERO -> phoneLeadingZero
+    /**
+     * The sentence the phone field shows for [problem]. [kenyan] false after another country
+     * code, where the Kenyan sentences, which name +254 and nine digits, would be wrong.
+     */
+    fun phoneProblem(problem: KenyanPhone.Problem, kenyan: Boolean = true): String = when (problem) {
+        KenyanPhone.Problem.LEADING_ZERO -> if (kenyan) phoneLeadingZero else phoneLeadingZeroAbroad
         KenyanPhone.Problem.WRONG_START -> phoneWrongStart
-        KenyanPhone.Problem.TOO_SHORT -> phoneTooShort
+        KenyanPhone.Problem.TOO_SHORT -> if (kenyan) phoneTooShort else phoneTooShortAbroad
         KenyanPhone.Problem.NOT_KENYAN -> phoneNotKenyan
+        KenyanPhone.Problem.BAD_CODE -> phoneBadCode
+        KenyanPhone.Problem.TOO_LONG -> phoneTooLong
     }
+
+    /** What TalkBack reads for the country code button: "Country code +254. Tap to change it." */
+    fun phoneCodeDescription(code: String): String = phoneCodeDescriptionFormat.replace("{code}", code)
 
     companion object {
         val ENGLISH = AuthLabels(
@@ -142,7 +162,18 @@ data class AuthLabels(
             phoneLeadingZero = "Leave out the 0 at the start: type 712345678, not 0712345678.",
             phoneWrongStart = "The number after +254 starts with 7, 1, or 2.",
             phoneTooShort = "Type all 9 digits after +254.",
-            phoneNotKenyan = "Only Kenyan numbers, starting +254, can be used.",
+            phoneNotKenyan = "This number is too long for Kenya. If it is from another country, " +
+                "type it with its country code, or tap +254 to change the code.",
+            phoneHintAbroad = "The number after the country code, for example 772123456",
+            phoneBadCode = "That is not a country code. Tap the code to change it: Kenya is 254.",
+            phoneLeadingZeroAbroad = "Leave out the 0 at the start of the number.",
+            phoneTooShortAbroad = "Type the whole number after the country code.",
+            phoneTooLong = "That number has too many digits to be a phone number.",
+            phoneCodeTitle = "Country code",
+            phoneCodeBody = "Type the code of the country your phone number is from. Kenya is " +
+                "254, Uganda 256, Tanzania 255.",
+            phoneCodeUse = "Use this code",
+            phoneCodeDescriptionFormat = "Country code +{code}. Tap to change it.",
             passwordLabel = "Password",
             signIn = "Sign in",
             goToRegister = "I have an invite code — create an account",
@@ -237,7 +268,19 @@ data class AuthLabels(
             phoneLeadingZero = "Usianze na 0: andika 712345678, si 0712345678.",
             phoneWrongStart = "Namba baada ya +254 inaanza na 7, 1 au 2.",
             phoneTooShort = "Andika tarakimu zote 9 baada ya +254.",
-            phoneNotKenyan = "Namba za Kenya tu, zinazoanza na +254, zinaweza kutumika.",
+            // Reworded for row 47; not yet reviewed by a Kiswahili speaker, nor the nine after it.
+            phoneNotKenyan = "Namba hii ni ndefu mno kwa Kenya. Kama ni ya nchi nyingine, " +
+                "iandike pamoja na msimbo wa nchi, au gusa +254 kubadilisha msimbo.",
+            phoneHintAbroad = "Namba baada ya msimbo wa nchi, mfano 772123456",
+            phoneBadCode = "Huo si msimbo wa nchi. Gusa msimbo kuubadilisha: Kenya ni 254.",
+            phoneLeadingZeroAbroad = "Usianze namba na 0.",
+            phoneTooShortAbroad = "Andika namba yote baada ya msimbo wa nchi.",
+            phoneTooLong = "Namba hiyo ina tarakimu nyingi mno kuwa namba ya simu.",
+            phoneCodeTitle = "Msimbo wa nchi",
+            phoneCodeBody = "Andika msimbo wa nchi ambayo namba yako ya simu inatoka. Kenya ni " +
+                "254, Uganda 256, Tanzania 255.",
+            phoneCodeUse = "Tumia msimbo huu",
+            phoneCodeDescriptionFormat = "Msimbo wa nchi +{code}. Gusa kuubadilisha.",
             passwordLabel = "Neno la siri",
             signIn = "Ingia",
             goToRegister = "Nina kodi ya mwaliko — fungua akaunti",

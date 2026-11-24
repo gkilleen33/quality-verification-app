@@ -9,11 +9,9 @@ package com.qualityverifier.domain
  * V21), which made the number stored differ from the number on the screen. Holding only
  * the nine digits, with the 0 refused at the start, removes the mismatch on the phone.
  *
- * Kenya only, because the pilot's testers all use Kenyan SIMs. The server still accepts
- * any E.164 number, so an older build, or a later one that lifts this, keeps working.
- *
- * One copy for both apps: Kagua and Fundi Bora draw the field from `:design`, and this is
- * the only place that decides what the field keeps and what it sends.
+ * These are the rules after +254. Since v0.7.1 (row 47) the field takes other country
+ * codes as well, through [PhoneEntry], which applies these rules whenever the code is 254.
+ * The server's CounterpartyCoder uses these rules alone: M-Pesa numbers are Kenyan.
  */
 object KenyanPhone {
 
@@ -36,8 +34,21 @@ object KenyanPhone {
         /** Fewer than [DIGITS] digits. */
         TOO_SHORT,
 
-        /** A pasted international number with a country code other than 254. */
+        /**
+         * A pasted international number with a country code other than 254. The phone field
+         * no longer shows it (row 47: such a paste fills the code instead, [PhoneEntry]); a
+         * contact's number too long for Kenya and with no code still gets it.
+         */
         NOT_KENYAN,
+
+        /** A country code that is not one (row 47, [PhoneEntry]): "25", or nothing at all. */
+        BAD_CODE,
+
+        /**
+         * A contact's number from another country with more digits than E.164 allows (row 47).
+         * The field itself refuses such an edit without a message, as a full field does.
+         */
+        TOO_LONG,
     }
 
     /**

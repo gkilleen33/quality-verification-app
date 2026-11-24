@@ -30,9 +30,9 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
-import com.qualityverifier.domain.KenyanPhone
+import com.qualityverifier.domain.PhoneEntry
 import com.qualityverifier.ui.appContainer
-import com.qualityverifier.ui.phone.KenyanPhoneField
+import com.qualityverifier.ui.phone.PhoneNumberField
 import com.qualityverifier.ui.rememberAuthLabels
 
 /**
@@ -52,9 +52,9 @@ fun SignInScreen(onSignedIn: () -> Unit, onRegister: () -> Unit) {
     val error by viewModel.error.collectAsState()
     val signedIn by viewModel.signedIn.collectAsState()
 
-    // The nine digits after +254; KenyanPhone.toE164 makes the number that is sent.
-    var phone by remember { mutableStateOf("") }
-    val e164 = KenyanPhone.toE164(phone)
+    // The country code and the digits after it (row 47); toE164 makes the number that is sent.
+    var phone by remember { mutableStateOf(PhoneEntry()) }
+    val e164 = phone.toE164()
     var password by remember { mutableStateOf("") }
 
     LaunchedEffect(signedIn) { if (signedIn) onSignedIn() }
@@ -75,12 +75,12 @@ fun SignInScreen(onSignedIn: () -> Unit, onRegister: () -> Unit) {
         )
         Spacer(Modifier.height(24.dp))
 
-        // A fixed +254 and the nine digits after it. A leading 0 cannot be typed, so the
-        // number on screen is the number the server stores.
-        KenyanPhoneField(
+        // +254, or the code the person typed, and the digits after it. A leading 0 cannot be
+        // typed, so the number on screen is the number the server stores.
+        PhoneNumberField(
             labels = labels,
-            digits = phone,
-            onDigitsChange = { phone = it },
+            entry = phone,
+            onEntryChange = { phone = it },
             modifier = Modifier.fillMaxWidth(),
         )
 

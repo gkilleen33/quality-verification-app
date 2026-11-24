@@ -1,40 +1,51 @@
 package com.qualityverifier.domain
 
-import com.qualityverifier.domain.KenyanPhone.Edit
 import com.qualityverifier.domain.KenyanPhone.Problem
 
 /**
  * A phone number as the system contact picker hands it over, read by the phone field's
- * rules ([KenyanPhone]) into the nine digits the field holds.
+ * rules ([PhoneEntry], and [KenyanPhone] after +254) into what the field holds.
  *
  * A picked number arrives whole, in whatever form the contact was saved: "0712 345 678",
  * "+254 712 345 678", "254712345678", or a number from another country. The field reads a
  * paste one edit at a time and answers "nothing happened" to a number it cannot hold; a
  * picked number needs a reason instead, so the person can correct it or add the worker
  * without one. So the forms are taken apart here, and the start rule and the E.164 form
- * stay [KenyanPhone]'s.
+ * stay [KenyanPhone]'s and [PhoneEntry]'s.
  *
- * The result is [Edit.digits] when the number is usable and [Edit.refused] when it is not;
- * [Edit.digits] is empty then, so the field below the picker starts blank for a correction.
+ * Since v0.7.1 (row 47) a number saved with another country's code fills the code and the
+ * digits, as a paste into the field does, rather than being refused as not Kenyan.
+ *
+ * The result is [PhoneEntry.Edit.entry] when the number is usable and
+ * [PhoneEntry.Edit.refused] when it is not; the entry then has no digits, so the field
+ * below the picker starts blank for a correction, under the number's own country code
+ * when one was read and Kenya's otherwise.
  */
 object ContactNumber {
 
-    fun read(raw: String): Edit {
+    fun read(raw: String): PhoneEntry.Edit {
         // Anything before the first digit or +: spaces, and the direction marks a contact
         // card often starts with, which KenyanPhone.edit drops the same way.
         val cleaned = raw.dropWhile { it != '+' && it !in '0'..'9' }
         val digits = cleaned.filter { it in '0'..'9' }
-        if (digits.isEmpty()) return Edit("", Problem.TOO_SHORT)
+        if (digits.isEmpty()) return refused(Problem.TOO_SHORT)
 
         // A + or 00 says the number carries its country code, whatever its length: a
         // foreign number shorter than a Kenyan one with its code is still foreign.
         val international = cleaned.startsWith("+") || digits.startsWith("00")
         val local = when {
             international -> {
-                val afterCode = digits.removePrefix("00")
-                if (!afterCode.startsWith(COUNTRY_DIGITS)) return Edit("", Problem.NOT_KENYAN)
-                // "+2540712…": the trunk 0 a number after +254 never has (see KenyanPhone).
-                afterCode.removePrefix(COUNTRY_DIGITS).removePrefix("0")
+                val whole = PhoneEntry.pasted(cleaned) ?: return refused(Problem.BAD_CODE)
+                if (!whole.kenyan) {
+                    val problem = whole.problem
+                        ?: Problem.TOO_LONG.takeIf { whole.toE164() == null }
+                    // Refused, the field keeps the country's code, so its reason and the
+                    // correction typed under it are that country's.
+                    return if (problem == null) PhoneEntry.Edit(whole) else refused(problem, whole.code)
+                }
+                // "+2540712…": the trunk 0 a number after +254 never has (see KenyanPhone);
+                // PhoneEntry.pasted has already dropped it.
+                whole.digits
             }
             digits.length == KenyanPhone.DIGITS + COUNTRY_DIGITS.length && digits.startsWith(COUNTRY_DIGITS) ->
                 digits.removePrefix(COUNTRY_DIGITS)
@@ -44,12 +55,15 @@ object ContactNumber {
 
         val problem = when {
             local.length < KenyanPhone.DIGITS -> Problem.TOO_SHORT
-            // Too many digits for a mobile number, and no code to say whose it is.
+            // Too many digits for a Kenyan mobile number, and no code to say whose it is.
             local.length > KenyanPhone.DIGITS -> Problem.NOT_KENYAN
             else -> KenyanPhone.problem(local)
         }
-        return if (problem == null) Edit(local) else Edit("", problem)
+        return if (problem == null) PhoneEntry.Edit(PhoneEntry(PhoneEntry.KENYA, local)) else refused(problem)
     }
+
+    private fun refused(problem: Problem, code: String = PhoneEntry.KENYA) =
+        PhoneEntry.Edit(PhoneEntry(code = code), problem)
 
     private const val COUNTRY_DIGITS = "254"
 }

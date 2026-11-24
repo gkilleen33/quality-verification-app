@@ -45,10 +45,10 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.viewmodel.compose.viewModel
-import com.qualityverifier.domain.KenyanPhone
+import com.qualityverifier.domain.PhoneEntry
 import com.qualityverifier.ui.appContainer
 import com.qualityverifier.ui.location.LocationOptIn
-import com.qualityverifier.ui.phone.KenyanPhoneField
+import com.qualityverifier.ui.phone.PhoneNumberField
 import com.qualityverifier.ui.rememberAuthLabels
 
 /**
@@ -73,9 +73,9 @@ fun RegisterScreen(onRegistered: () -> Unit, onSignIn: () -> Unit) {
 
     var invite by remember { mutableStateOf("") }
     var name by remember { mutableStateOf("") }
-    // The nine digits after +254; KenyanPhone.toE164 makes the number that is sent.
-    var phone by remember { mutableStateOf("") }
-    val e164 = KenyanPhone.toE164(phone)
+    // The country code and the digits after it (row 47); toE164 makes the number that is sent.
+    var phone by remember { mutableStateOf(PhoneEntry()) }
+    val e164 = phone.toE164()
     var password by remember { mutableStateOf("") }
     var isBusiness by remember { mutableStateOf(false) }
     var businessName by remember { mutableStateOf("") }
@@ -141,10 +141,10 @@ fun RegisterScreen(onRegistered: () -> Unit, onSignIn: () -> Unit) {
             keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next),
             modifier = Modifier.fillMaxWidth(),
         )
-        KenyanPhoneField(
+        PhoneNumberField(
             labels = labels,
-            digits = phone,
-            onDigitsChange = { phone = it },
+            entry = phone,
+            onEntryChange = { phone = it },
             modifier = Modifier.fillMaxWidth(),
         )
         OutlinedTextField(

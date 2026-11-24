@@ -466,6 +466,38 @@ class FundiRouteTest {
         assertEquals(HttpStatusCode.NoContent, other.status)
     }
 
+    // Row 47 (Nathan, 24 November 2026): an account may be on a number from another country.
+    // The route compares the normalised E.164 with users.phone, so the refusal holds for it.
+    @Test
+    fun `row 47 - the own-number refusal holds for a Ugandan account`() = testApplication {
+        val store = FakeFundiStore()
+        val app = withFundi(store, audience = Audience.FUNDI, ownPhone = "+256772123456")
+
+        listOf("+256772123456", "+256 772 123 456", "00256772123456").forEach { own ->
+            val refused = app.put("/v1/fundi/studios/$STUDIO") {
+                auth(FUNDI); contentType(ContentType.Application.Json)
+                setBody("""{"name":"My workshop","phone":"$own"}""")
+            }
+            assertEquals(own, HttpStatusCode.BadRequest, refused.status)
+            assertTrue(refused.bodyAsText().contains("\"error\":\"own_number\""))
+        }
+        assertTrue("nothing saved", store.studios.isEmpty())
+
+        // A Kenyan number with the same digits is another number, saved as before.
+        val kenyan = app.put("/v1/fundi/studios/$STUDIO") {
+            auth(FUNDI); contentType(ContentType.Application.Json)
+            setBody("""{"name":"Mama Njeri's workshop","phone":"+254772123456"}""")
+        }
+        assertEquals(HttpStatusCode.NoContent, kenyan.status)
+        // A studio owner's Ugandan number is stored as sent, with its +.
+        val ugandan = app.put("/v1/fundi/studios/$STUDIO") {
+            auth(FUNDI); contentType(ContentType.Application.Json)
+            setBody("""{"name":"Kampala workshop","phone":"+256 700 123 456"}""")
+        }
+        assertEquals(HttpStatusCode.NoContent, ugandan.status)
+        assertEquals("+256700123456", store.studios.getValue(STUDIO).phone)
+    }
+
     @Test
     fun `row 52 - an entry on the own number saved before v0_7_0 can still be archived`() = testApplication {
         val store = FakeFundiStore().apply {
@@ -866,12 +898,14 @@ class FundiRouteTest {
     private fun ApplicationTestBuilder.withFundi(
         store: FundiStore,
         audience: Audience,
+        /** The signed-in account's own number. */
+        ownPhone: String = OWN_PHONE,
     ) = run {
         application {
             module(
                 version = "test",
                 database = null,
-                auth = Auth(FakeAuth(audience), AccessTokens(KEY)),
+                auth = Auth(FakeAuth(audience, ownPhone), AccessTokens(KEY)),
                 fundi = Fundi(store),
             )
         }
@@ -1005,11 +1039,11 @@ class FundiRouteTest {
         }
     }
 
-    private class FakeAuth(private val audience: Audience) : AuthStore {
+    private class FakeAuth(private val audience: Audience, private val phone: String = OWN_PHONE) : AuthStore {
         override suspend fun register(registration: Registration) = RegisterOutcome.InviteUnusable
         override suspend fun findUser(userId: String) = UserRow(
             userId, "Antony", "individual", null,
-            disabled = false, isTester = false, audience = audience, phone = OWN_PHONE,
+            disabled = false, isTester = false, audience = audience, phone = phone,
         )
 
         override suspend fun issueRefresh(

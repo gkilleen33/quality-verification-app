@@ -30,11 +30,13 @@ import androidx.compose.ui.unit.dp
 import com.qualityverifier.domain.ContactNumber
 import com.qualityverifier.domain.Employment
 import com.qualityverifier.domain.KenyanPhone
+import com.qualityverifier.domain.PhoneEntry
 import com.qualityverifier.domain.WorkerDetails
 import com.qualityverifier.domain.WorkerNames
 import com.qualityverifier.text.AuthLabels
 import com.qualityverifier.text.FundiLabels
-import com.qualityverifier.ui.phone.KenyanPhoneField
+import com.qualityverifier.ui.phone.PhoneEntrySaver
+import com.qualityverifier.ui.phone.PhoneNumberField
 
 /**
  * The one form for a roster entry: name, number, employee or temporary. Used to add a
@@ -48,7 +50,7 @@ import com.qualityverifier.ui.phone.KenyanPhoneField
  * read, and the name only fills an empty name field.
  *
  * A picked number goes through [ContactNumber], which applies the phone field's rules
- * ([KenyanPhone]) and says why a number cannot be used, in the field's own words; the
+ * ([PhoneEntry]) and says why a number cannot be used, in the field's own words; the
  * person can then type a correction or save without a number.
  *
  * [current] null adds; otherwise the fields start as the entry is. [onArchive] is offered
@@ -63,19 +65,19 @@ fun WorkerForm(
     onDismiss: () -> Unit,
     onArchive: (() -> Unit)? = null,
 ) {
-    // A number stored by some other client in a form this field cannot hold (not +254).
-    // Kept as it is unless a number is typed or picked over it, since clearing it unseen
-    // would be a change the manager did not make.
-    val foreign = current?.phone?.takeUnless { it.startsWith(KenyanPhone.COUNTRY_CODE) }
+    // A number stored by some other client in a form this field cannot hold, such as one
+    // without its +. Kept as it is unless a number is typed or picked over it, since clearing
+    // it unseen would be a change the manager did not make. Any E.164 number, Kenyan or not
+    // (row 47), opens in the field.
+    val shown = PhoneEntry.fromE164(current?.phone).takeIf { it.toE164() == current?.phone }
+    val unreadable = current?.phone?.takeIf { shown == null }
 
     // Saveable, not remembered: the contacts app comes in front of this activity, and a
     // low-memory phone recreates it on the way back. The form and its picker launcher
     // then have to come back with it, or the picked number is dropped unseen.
     var name by rememberSaveable { mutableStateOf(current?.name.orEmpty()) }
-    // The field holds the nine digits, as the sign-in field does; the entry holds E.164.
-    var digits by rememberSaveable {
-        mutableStateOf(if (foreign == null) current?.phone?.removePrefix(KenyanPhone.COUNTRY_CODE).orEmpty() else "")
-    }
+    // The field holds the code and digits, as the sign-in field does; the entry holds E.164.
+    var phone by rememberSaveable(stateSaver = PhoneEntrySaver) { mutableStateOf(shown ?: PhoneEntry()) }
     var employmentId by rememberSaveable { mutableStateOf((current?.employment ?: Employment.EMPLOYEE).id) }
     val employment = Employment.fromId(employmentId) ?: Employment.EMPLOYEE
     // Why the last picked number was not taken, shown until the number changes.
@@ -87,7 +89,7 @@ fun WorkerForm(
             pickerFailed = false
             val read = ContactNumber.read(number)
             pickProblem = read.refused
-            digits = read.digits
+            phone = read.entry
             if (name.isBlank() && pickedName != null && WorkerNames.fits(pickedName)) name = pickedName
         },
         onUnavailable = { pickerFailed = true },
@@ -97,7 +99,7 @@ fun WorkerForm(
         AuthLabels.ENGLISH.copy(phoneLabel = labels.workerPhoneLabel, phoneHint = labels.workerPhoneHint)
     }
     // Saved with no number, or with a complete one; never with a half-typed one.
-    val numberOk = digits.isEmpty() || KenyanPhone.toE164(digits) != null
+    val numberOk = phone.digits.isEmpty() || phone.toE164() != null
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -127,11 +129,11 @@ fun WorkerForm(
                         color = MaterialTheme.colorScheme.error,
                     )
                 }
-                KenyanPhoneField(
+                PhoneNumberField(
                     labels = phoneLabels,
-                    digits = digits,
-                    onDigitsChange = {
-                        digits = it
+                    entry = phone,
+                    onEntryChange = {
+                        phone = it
                         pickProblem = null
                     },
                     modifier = Modifier.fillMaxWidth(),
@@ -140,7 +142,7 @@ fun WorkerForm(
                 // in the same words, because the field never saw the edit.
                 pickProblem?.let { problem ->
                     Text(
-                        phoneLabels.phoneProblem(problem),
+                        phoneLabels.phoneProblem(problem, phone.kenyan),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.error,
                     )
@@ -172,9 +174,9 @@ fun WorkerForm(
         confirmButton = {
             TextButton(
                 onClick = {
-                    // An empty field keeps a foreign number; anything typed replaces it.
-                    val phone = KenyanPhone.toE164(digits) ?: foreign.takeIf { digits.isEmpty() }
-                    onSave(WorkerDetails(name.trim(), phone, employment))
+                    // An empty field keeps an unreadable number; anything typed replaces it.
+                    val number = phone.toE164() ?: unreadable.takeIf { phone.digits.isEmpty() }
+                    onSave(WorkerDetails(name.trim(), number, employment))
                 },
                 enabled = accepts(name) && numberOk,
             ) { Text(labels.workerSave) }
