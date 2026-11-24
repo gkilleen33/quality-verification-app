@@ -32,8 +32,8 @@ data class ListenerStatus(
  * PesaLog's two answers on this phone, the withdrawals the server has still to hear, and
  * what the listener last did.
  *
- * The same rules as Fundi Bora's MpesaPreference, which is not reused because its constructor
- * is :core's own and its keys are Fundi Bora's: turning off works at once, online or not,
+ * The same rules Fundi Bora's M-Pesa answers had until v0.7.1 deleted its SMS reader (row 17):
+ * turning off works at once, online or not,
  * and the withdrawal waits in [pendingWithdrawals]; turning on needs the server, because the
  * agreement has to be on record before anything is read or sent.
  */

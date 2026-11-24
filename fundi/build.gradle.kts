@@ -137,9 +137,11 @@ abstract class CheckNoSmsReader : DefaultTask() {
         val manifest = mergedManifest.get().asFile.readText()
         // Built from parts, so the row's other check, a search of fundi/ for the permission
         // names, finds none in this module's sources, this list included.
-        val forbidden = listOf("READ", "RECEIVE", "SEND").map { "android.permission.${it}_SMS" } +
-            listOf("RECEIVE_MMS", "RECEIVE_WAP_PUSH", "BIND_NOTIFICATION_LISTENER_SERVICE").map { "android.permission.$it" } +
-            listOf("SMS_RECEIVED", "WAP_PUSH_RECEIVED").map { "android.provider.Telephony.$it" }
+        val forbidden = listOf("READ", "RECEIVE", "SEND", "BROADCAST").map { "android.permission.${it}_SMS" } +
+            listOf("RECEIVE_MMS", "RECEIVE_WAP_PUSH", "READ_CELL_BROADCASTS", "BIND_NOTIFICATION_LISTENER_SERVICE")
+                .map { "android.permission.$it" } +
+            listOf("SMS_RECEIVED", "SMS_DELIVER", "WAP_PUSH_RECEIVED", "WAP_PUSH_DELIVER")
+                .map { "android.provider.Telephony.$it" }
         val found = forbidden.filter { manifest.contains(it) }
         if (found.isNotEmpty()) {
             throw GradleException(
@@ -164,9 +166,12 @@ androidComponents {
     }
 }
 
-// Run with the unit tests, which is what CI and the local check run.
-tasks.matching { it.name == "testDebugUnitTest" }.configureEach { dependsOn("checkDebugNoSmsReader") }
-tasks.matching { it.name == "testReleaseUnitTest" }.configureEach { dependsOn("checkReleaseNoSmsReader") }
+// Run with the unit tests, which is what CI and the local check run, and before every APK is
+// assembled, so the release build the publish job makes is checked as well as the debug one.
+listOf("Debug", "Release").forEach { variant ->
+    tasks.matching { it.name == "test${variant}UnitTest" || it.name == "assemble$variant" }
+        .configureEach { dependsOn("check${variant}NoSmsReader") }
+}
 
 dependencies {
     implementation(project(":shared"))

@@ -1,6 +1,7 @@
 // Ported from Drew Burd's money-tracking-kenya (https://github.com/drewburd4/money-tracking-kenya),
 // commit 5355a31, android/app/src/main/java/com/utafiti/sms/MobileMoneyParser.kt. Changed only
-// in its package. Fundi Bora reads M-Pesa messages through it (MpesaReader); its Airtel Money
+// in its package. PesaLog reads M-Pesa and Airtel Money notifications through it (Fundi Bora's
+// own SMS reader used it until v0.7.1 deleted the reader); its Airtel Money
 // rules and RuleSet come along unchanged so that the ported tests run as written, and nothing
 // here fetches rules from anywhere. Used under the MIT licence below, which the licence
 // requires to travel with the file.

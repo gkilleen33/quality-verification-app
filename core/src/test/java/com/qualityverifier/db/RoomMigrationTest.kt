@@ -158,6 +158,7 @@ class RoomMigrationTest {
         listOf(
             "sessions", "messages", "attachments", "pieces", "workers", "worker_studios", "session_workers",
             "pending_session_workers", "studio_days", "review_helpful", "pending_tester_feedback",
+            "pending_remote_deletes", "dismissed_sessions",
         ).forEach { table ->
             assertEquals(table, createSql(17, table), createSql(18, table))
         }
