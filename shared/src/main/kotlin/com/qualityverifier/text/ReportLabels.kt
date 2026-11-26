@@ -110,6 +110,15 @@ data class ReportLabels(
     val intakeDepthRapid: String,
     val intakeDepthRapidDetail: String,
     val intakeSomethingElse: String,
+    /**
+     * The one page of questions (v0.7.1, release scope row 58): its title and line, the box
+     * "Something else: let me explain" opens, and the line under the greyed Start.
+     */
+    val intakePageTitle: String,
+    val intakePageLine: String,
+    val intakeOwnWords: String,
+    private val intakeLeftOne: String,
+    private val intakeLeftFormat: String,
     val openingShotInstruction: String,
     // Carrying one assessment into the next, and comparing the two.
     val intakeCarriedHeading: String,
@@ -154,8 +163,12 @@ data class ReportLabels(
     val intakeSaysUseLanguage: String,
     val intakeSaysFull: String,
     val intakeSaysRapid: String,
-    val intakeSaysTakeOver: String,
     private val intakeSaysPriceFormat: String,
+    /**
+     * A question answered in the customer's own words (row 58), one fixed sentence per
+     * question with their words after it, so the same answers always make the same turn.
+     */
+    private val intakeSaysAboutFormats: Map<com.qualityverifier.domain.IntakeTopic, String>,
     /**
      * These three name the piece in English and deliberately do not in Swahili.
      *
@@ -203,6 +216,13 @@ data class ReportLabels(
 
     fun intakeSaysPrice(price: String): String =
         intakeSaysPriceFormat.replace("{price}", price)
+
+    /** "About the price: <their words>" (row 58). */
+    fun intakeSaysAbout(topic: com.qualityverifier.domain.IntakeTopic, words: String): String =
+        intakeSaysAboutFormats.getValue(topic).replace("{words}", words)
+
+    /** "1 question left." or "3 questions left.", under the greyed Start (row 58). */
+    fun intakeLeft(n: Int): String = if (n == 1) intakeLeftOne else intakeLeftFormat.replace("{n}", n.toString())
 
     /** "Check another table", on the card that follows a verdict. */
     fun assessAnother(itemName: String): String =
@@ -363,7 +383,7 @@ data class ReportLabels(
             intakeBuying = "I'm buying it",
             intakeAlreadyOwn = "I already own it",
             intakePriceQuestion = "What price has the seller quoted?",
-            intakePriceHint = "Price",
+            intakePriceHint = "Price in KSh",
             intakePriceSkip = "I don't know",
             intakeUsageQuestion = "What will it be used for?",
             intakeUsageDaily = "Heavy daily use",
@@ -376,7 +396,12 @@ data class ReportLabels(
             intakeDepthFullDetail = "Guided photos and a few hands-on tests, a few minutes. Recommended.",
             intakeDepthRapid = "Rapid assessment",
             intakeDepthRapidDetail = "Two photos and a quick opinion. Likelier to miss something.",
-            intakeSomethingElse = "Something else — let me explain",
+            intakeSomethingElse = "Something else: let me explain",
+            intakePageTitle = "A few questions first",
+            intakePageLine = "Answer each one, then start.",
+            intakeOwnWords = "Tell us in your own words",
+            intakeLeftOne = "1 question left.",
+            intakeLeftFormat = "{n} questions left.",
             intakeCarriedHeading = "Same answers as last time",
             intakeStartOver = "Ask me all the questions again",
             nextStepsHeading = "What next?",
@@ -408,8 +433,14 @@ data class ReportLabels(
             intakeSaysUseLanguage = "Please answer me in English.",
             intakeSaysFull = "I would like the full assessment.",
             intakeSaysRapid = "I would like a rapid assessment.",
-            intakeSaysTakeOver = "I could not answer the rest with the buttons, so please ask me yourself.",
             intakeSaysPriceFormat = "The seller is asking {price}.",
+            intakeSaysAboutFormats = mapOf(
+                com.qualityverifier.domain.IntakeTopic.UPHOLSTERY to "About the cushioning: {words}",
+                com.qualityverifier.domain.IntakeTopic.OWNERSHIP to "About buying it: {words}",
+                com.qualityverifier.domain.IntakeTopic.PRICE to "About the price: {words}",
+                com.qualityverifier.domain.IntakeTopic.USAGE to "About how it will be used: {words}",
+                com.qualityverifier.domain.IntakeTopic.DEPTH to "About how thorough to be: {words}",
+            ),
             assessAnotherFormat = "Check another {item}",
             compareWithFormat = "Compare with the last {item}",
             compareIntroFormat = "Compare this one with the {item} I checked before. " +
@@ -514,7 +545,7 @@ data class ReportLabels(
             intakeBuying = "Ninanunua",
             intakeAlreadyOwn = "Ninayo tayari",
             intakePriceQuestion = "Muuzaji anataka bei gani?",
-            intakePriceHint = "Bei",
+            intakePriceHint = "Bei kwa KSh",
             intakePriceSkip = "Sijui",
             intakeUsageQuestion = "Itatumika kwa nini?",
             intakeUsageDaily = "Matumizi mazito ya kila siku",
@@ -527,7 +558,13 @@ data class ReportLabels(
             intakeDepthFullDetail = "Picha kwa maelekezo na majaribio kadhaa, dakika chache. Inapendekezwa.",
             intakeDepthRapid = "Ukaguzi wa haraka",
             intakeDepthRapidDetail = "Picha mbili na maoni ya haraka. Ni rahisi kukosa kitu.",
-            intakeSomethingElse = "Kitu kingine — niambie mwenyewe",
+            intakeSomethingElse = "Kitu kingine: niache nieleze",
+            // v0.7.1 (row 58): not yet reviewed by a Kiswahili speaker.
+            intakePageTitle = "Maswali machache kwanza",
+            intakePageLine = "Jibu kila moja, kisha anza.",
+            intakeOwnWords = "Tuambie kwa maneno yako",
+            intakeLeftOne = "Swali 1 limebaki.",
+            intakeLeftFormat = "Maswali {n} yamebaki.",
             intakeCarriedHeading = "Majibu yale yale ya mwisho",
             intakeStartOver = "Niulize maswali yote tena",
             nextStepsHeading = "Sasa nini?",
@@ -561,8 +598,15 @@ data class ReportLabels(
             intakeSaysUseLanguage = "Tafadhali nijibu kwa Kiswahili.",
             intakeSaysFull = "Nataka ukaguzi kamili.",
             intakeSaysRapid = "Nataka ukaguzi wa haraka.",
-            intakeSaysTakeOver = "Sikuweza kujibu mengine kwa vitufe, tafadhali niulize wewe mwenyewe.",
             intakeSaysPriceFormat = "Muuzaji anataka {price}.",
+            // v0.7.1 (row 58): not yet reviewed by a Kiswahili speaker.
+            intakeSaysAboutFormats = mapOf(
+                com.qualityverifier.domain.IntakeTopic.UPHOLSTERY to "Kuhusu sponji: {words}",
+                com.qualityverifier.domain.IntakeTopic.OWNERSHIP to "Kuhusu kununua: {words}",
+                com.qualityverifier.domain.IntakeTopic.PRICE to "Kuhusu bei: {words}",
+                com.qualityverifier.domain.IntakeTopic.USAGE to "Kuhusu matumizi yake: {words}",
+                com.qualityverifier.domain.IntakeTopic.DEPTH to "Kuhusu ukaguzi uwe wa kina kiasi gani: {words}",
+            ),
             assessAnotherFormat = "Anza ukaguzi mwingine wa aina hii",
             compareWithFormat = "Linganisha na ukaguzi uliopita",
             compareIntroFormat = "Linganisha hii na kipande nilichokagua awali. " +

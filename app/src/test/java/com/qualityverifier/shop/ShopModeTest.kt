@@ -17,8 +17,9 @@ import com.qualityverifier.domain.Ownership
 import com.qualityverifier.domain.TabletEnd
 import com.qualityverifier.domain.Usage
 import com.qualityverifier.ui.chat.ChatControls
-import com.qualityverifier.ui.intake.IntakeProgress
-import com.qualityverifier.ui.intake.IntakeQuestion
+import com.qualityverifier.domain.AssessmentDepth
+import com.qualityverifier.domain.IntakeTopic
+import com.qualityverifier.ui.intake.IntakePage
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
@@ -41,62 +42,19 @@ class ShopModeTest {
     // ---------------------------------------------------------------- the intake
 
     @Test
-    fun `row 12 - the intake skips the buying question and records buying`() {
-        var progress = IntakeProgress.start(needsUpholstery = false, fixedOwnership = Ownership.BUYING)
-
-        assertEquals(IntakeQuestion.LANGUAGE, progress.question)
-        progress = progress.copy(language = AssessmentLanguage.ENGLISH)
-        // Straight from the language to the price: the customer is buying.
-        assertEquals(IntakeQuestion.PRICE, progress.question)
-        progress = progress.copy(priceAnswered = true)
-        assertEquals(IntakeQuestion.USAGE, progress.question)
-        progress = progress.copy(usage = Usage.DAILY)
-        assertEquals(IntakeQuestion.DEPTH, progress.question)
-
-        assertEquals(Ownership.BUYING, progress.ownership)
-        // Language, price, usage, depth: four questions, none of them the buying one.
-        assertEquals(4, progress.totalSteps)
-    }
-
-    @Test
-    fun `row 12 - Back on the tablet's intake never reaches the buying question`() {
-        var progress: IntakeProgress? = IntakeProgress.start(needsUpholstery = true, fixedOwnership = Ownership.BUYING)
-            .copy(language = AssessmentLanguage.SWAHILI, upholstered = true, priceAnswered = true)
-        val seen = mutableListOf<IntakeQuestion>()
-        while (progress != null) {
-            seen += progress.question
-            assertEquals(Ownership.BUYING, progress.ownership)
-            progress = progress.back()
-        }
-        assertFalse(seen.toString(), IntakeQuestion.OWNERSHIP in seen)
-        assertEquals(IntakeQuestion.LANGUAGE, seen.last())
-    }
-
-    @Test
-    fun `row 12 - a personal intake asks the buying question, counted as in v0_6_1`() {
-        // v0.6.1 counted 4 + 1 for a price + 1 for the upholstery question, and showed the
-        // counter only once ownership was answered.
-        var progress = IntakeProgress.start(needsUpholstery = true, fixedOwnership = null)
-        assertFalse(progress.showCounter)
-        progress = progress.copy(language = AssessmentLanguage.ENGLISH)
-        assertEquals(IntakeQuestion.UPHOLSTERY, progress.question)
-        progress = progress.copy(upholstered = false)
-        assertEquals(IntakeQuestion.OWNERSHIP, progress.question)
-        assertEquals(3, progress.step)
-
-        val buying = progress.copy(ownership = Ownership.BUYING)
-        assertTrue(buying.showCounter)
-        assertEquals(IntakeQuestion.PRICE, buying.question)
-        assertEquals(6, buying.totalSteps)
-        assertEquals(buying.totalSteps - 2, buying.step)
-
-        val owning = progress.copy(ownership = Ownership.ALREADY_OWN, priceAnswered = true)
-        assertEquals(IntakeQuestion.USAGE, owning.question)
-        assertEquals(5, owning.totalSteps)
-        assertEquals(owning.totalSteps - 1, owning.step)
-
-        // Back from the price question returns to the buying question.
-        assertEquals(IntakeQuestion.OWNERSHIP, buying.back()!!.question)
+    fun `row 58 - the tablet's page has no buying card and records buying`() {
+        // v0.7.1 puts the questions on one page (row 58); a tablet still skips the buying
+        // question and records buying, so the price card is there from the start.
+        var page = IntakePage.start(AssessmentLanguage.ENGLISH, needsUpholstery = false, fixedOwnership = Ownership.BUYING)
+        assertEquals(listOf(IntakeTopic.PRICE, IntakeTopic.USAGE, IntakeTopic.DEPTH), page.cards)
+        assertEquals(2, page.left)
+        page = page.chooseUsage(Usage.DAILY).chooseDepth(AssessmentDepth.FULL)
+        assertTrue(page.canStart)
+        assertEquals(Ownership.BUYING, page.toContext().ownership)
+        // The recorded buying survives every change, even an explanation of the buying
+        // question the tablet never shows.
+        assertEquals(Ownership.BUYING, page.openExplain(IntakeTopic.OWNERSHIP).ownership)
+        assertEquals(Ownership.BUYING, page.explain(IntakeTopic.OWNERSHIP, "For the shop.").toContext().ownership)
     }
 
     // ---------------------------------------------------------------- after the verdict

@@ -2,11 +2,12 @@ package com.qualityverifier.text
 
 import com.qualityverifier.domain.AssessmentContext
 import com.qualityverifier.domain.AssessmentDepth
+import com.qualityverifier.domain.IntakeTopic
 import com.qualityverifier.domain.Ownership
 import com.qualityverifier.domain.Usage
 
 /**
- * The customer's opening turn, written from whatever the app managed to collect.
+ * The customer's opening turn, written from whatever the app collected.
  *
  * A plain-language message rather than a new field on
  * [com.qualityverifier.data.chat.ChatService]: the context is something the customer is
@@ -14,49 +15,83 @@ import com.qualityverifier.domain.Usage
  * keeping it out of the system prompt means every language shares one cached prefix
  * instead of splitting it.
  *
- * When the intake was abandoned part way, everything already chosen is still sent, plus a
- * line asking the assistant to take over the questions. Partial context is worth having:
- * a customer who gave up at the usage question has still told us they are buying, and
- * making them repeat that would be the second time the app failed them.
+ * Since v0.7.1 (release scope row 58) every question is on one page and each must be answered
+ * before the assessment starts, by a choice or in the customer's own words. A question
+ * answered in words is told in one fixed sentence per question ("About the price: …") at the
+ * place its choice would have been, so the same answers always make the same turn. That
+ * replaces the line that used to hand the rest of the questions to the assistant ("I could
+ * not answer the rest with the buttons, so please ask me yourself."): nothing is left
+ * unanswered now.
+ *
+ * Any question that is neither chosen nor explained, such as a carried intake's, is simply
+ * not mentioned.
  */
 fun buildIntakeMessage(context: AssessmentContext, labels: ReportLabels): String {
     val parts = mutableListOf<String>()
+    fun explained(topic: IntakeTopic) = context.explained[topic]?.let(::asSentence)
 
-    context.ownership?.let { ownership ->
+    // The cushioning decides the protocol, not the turn; only the customer's own words about
+    // it are told.
+    explained(IntakeTopic.UPHOLSTERY)?.let { parts += labels.intakeSaysAbout(IntakeTopic.UPHOLSTERY, it) }
+
+    val ownership = context.ownership
+    if (ownership != null) {
         parts += when (ownership) {
             Ownership.BUYING -> labels.intakeSaysBuying
             Ownership.ALREADY_OWN -> labels.intakeSaysAlreadyOwn
         }
         if (ownership == Ownership.BUYING) {
-            parts += if (context.quotedPrice.isBlank()) {
-                labels.intakeSaysPriceUnknown
-            } else {
-                labels.intakeSaysPrice(context.quotedPrice.trim())
-            }
+            parts += explained(IntakeTopic.PRICE)?.let { labels.intakeSaysAbout(IntakeTopic.PRICE, it) }
+                ?: if (context.quotedPrice.isBlank()) {
+                    labels.intakeSaysPriceUnknown
+                } else {
+                    labels.intakeSaysPrice(context.quotedPrice.trim())
+                }
         }
+    } else {
+        explained(IntakeTopic.OWNERSHIP)?.let { parts += labels.intakeSaysAbout(IntakeTopic.OWNERSHIP, it) }
+        // Buying told in words: the price card stays on the page, and anything given on it is
+        // told. Nothing is said for a blank one, since the words may not be about buying.
+        explained(IntakeTopic.PRICE)?.let { parts += labels.intakeSaysAbout(IntakeTopic.PRICE, it) }
+            ?: context.quotedPrice.trim().takeIf { it.isNotEmpty() }?.let { parts += labels.intakeSaysPrice(it) }
     }
 
-    context.usage?.let { usage ->
+    val usage = context.usage
+    if (usage != null) {
         parts += when (usage) {
             Usage.DAILY -> labels.intakeSaysDaily
             Usage.OCCASIONAL -> labels.intakeSaysOccasional
             Usage.BUSINESS -> labels.intakeSaysBusiness
         }
+    } else {
+        explained(IntakeTopic.USAGE)?.let { parts += labels.intakeSaysAbout(IntakeTopic.USAGE, it) }
     }
 
-    context.depth?.let { depth ->
+    val depth = context.depth
+    if (depth != null) {
         parts += when (depth) {
             AssessmentDepth.FULL -> labels.intakeSaysFull
             AssessmentDepth.RAPID -> labels.intakeSaysRapid
         }
+    } else {
+        explained(IntakeTopic.DEPTH)?.let { parts += labels.intakeSaysAbout(IntakeTopic.DEPTH, it) }
     }
 
     // Stated rather than inferred. Left to guesswork the assistant picked a language from
     // the item name and then would not change it when written to in the other one.
     context.language?.let { parts += labels.intakeSaysUseLanguage }
 
-    // The handover. Last, so it reads as the request it is rather than as an aside.
-    if (!context.isComplete) parts += labels.intakeSaysTakeOver
-
     return parts.joinToString(" ")
+}
+
+/**
+ * The customer's words as one sentence of the turn: line breaks and runs of spaces become one
+ * space, and a full stop closes words that end without one, so "maybe 5000" does not run into
+ * the next sentence. Null for words that are only space. The same words always give the same
+ * sentence.
+ */
+private fun asSentence(words: String): String? {
+    val flat = words.trim().split(Regex("\\s+")).joinToString(" ")
+    if (flat.isEmpty()) return null
+    return if (flat.last() in ".!?") flat else "$flat."
 }

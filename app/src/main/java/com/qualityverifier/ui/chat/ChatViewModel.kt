@@ -21,6 +21,7 @@ import com.qualityverifier.domain.AssessmentDepth
 import com.qualityverifier.domain.AssessmentPlan
 import com.qualityverifier.domain.Attachment
 import com.qualityverifier.domain.ChatMessage
+import com.qualityverifier.domain.IntakeTopic
 import com.qualityverifier.domain.ItemType
 import com.qualityverifier.domain.PlanRun
 import com.qualityverifier.domain.Role
@@ -373,9 +374,12 @@ class ChatViewModel(
         }
 
         // A full assessment collects its opening photo first. A rapid one does not: its
-        // whole point is speed, and its plan is two wide photos anyway. An abandoned
-        // intake does not either, since nobody has said which it is.
-        if (context.depth == AssessmentDepth.FULL) {
+        // whole point is speed, and its plan is two wide photos anyway. A thoroughness given
+        // in the customer's own words (v0.7.1, row 58) takes it too: the assistant may read
+        // the words as a full assessment, and the prompt then expects the photo. Backing out
+        // of the camera still starts without it.
+        val depthInWords = !context.explained[IntakeTopic.DEPTH].isNullOrBlank()
+        if (context.depth == AssessmentDepth.FULL || (context.depth == null && depthInWords)) {
             _awaitingOpeningPhoto.value = context
             return
         }
