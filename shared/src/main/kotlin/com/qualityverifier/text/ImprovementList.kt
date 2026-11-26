@@ -59,4 +59,24 @@ object ImprovementPaging {
 
     /** The position after [position] in a list of [total], or null on the last page. */
     fun next(position: Int, total: Int): Int? = (position + 1).takeIf { it < total }
+
+    /**
+     * Where the page's forward button goes (v0.7.1, row 56, P17): the next page, or, from the
+     * last, the closing screen. The last page's button is a filled "Done" rather than a greyed
+     * "Next improvement".
+     */
+    sealed interface Forward {
+        data class Page(val position: Int) : Forward
+        data object Closing : Forward
+    }
+
+    fun forward(position: Int, total: Int): Forward = next(position, total)?.let { Forward.Page(it) } ?: Forward.Closing
 }
+
+/**
+ * The improvements of a reply as the list draws them, whichever prompt wrote it: prompt E's
+ * reply as it is, and an older one by [olderReplyAsList] (row 54). Null when the reply has no
+ * diagnosis, or one with nothing to fix, which keeps the old card.
+ */
+fun AssistantContent.improvementList(): Diagnosis? =
+    diagnosis?.let { olderReplyAsList(verdict, it) }?.takeIf { it.isImprovementList }

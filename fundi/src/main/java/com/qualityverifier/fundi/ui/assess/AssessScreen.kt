@@ -66,6 +66,7 @@ import com.qualityverifier.fundi.ui.coach.DiagnosisCard
 import com.qualityverifier.fundi.ui.coach.FixPlanCard
 import com.qualityverifier.fundi.ui.coach.ImprovementList
 import com.qualityverifier.fundi.ui.coach.ImprovementPage
+import com.qualityverifier.fundi.ui.coach.ImprovementsDone
 import com.qualityverifier.fundi.ui.coach.VerdictCard
 import com.qualityverifier.fundi.ui.coach.verdictCardProblems
 import com.qualityverifier.fundi.ui.fundiContainer
@@ -76,8 +77,8 @@ import com.qualityverifier.text.PageQuestions
 import com.qualityverifier.text.ReportLabels
 import com.qualityverifier.text.RetryLabels
 import com.qualityverifier.text.detailAnswersOf
+import com.qualityverifier.text.improvementList
 import com.qualityverifier.text.improvementRows
-import com.qualityverifier.text.isImprovementList
 import com.qualityverifier.text.pageQuestionsOf
 import com.qualityverifier.text.markdownToPlainText
 import com.qualityverifier.text.parseAssistantContent
@@ -121,6 +122,10 @@ fun AssessScreen(
     givenLabel: String? = null,
     /** The studio chosen on New piece (v0.7.1, row 46); the intake then does not ask it. */
     presetStudio: PieceStudioChoice? = null,
+    /** "Send report" on the closing screen after the last improvement (v0.7.1, row 56). */
+    onSendReport: () -> Unit = {},
+    /** "Back to the <piece>" on the same screen: the piece's page. */
+    onBackToPiece: () -> Unit = onDone,
 ) {
     val container = fundiContainer()
     val viewModel: AssessViewModel = viewModel(
@@ -233,6 +238,8 @@ fun AssessScreen(
     // viewer is.
     var pageReply by rememberSaveable { mutableStateOf<String?>(null) }
     var pagePosition by rememberSaveable { mutableIntStateOf(0) }
+    // The closing screen after the last improvement (row 56): the reply whose list it ends.
+    var closingReply by rememberSaveable { mutableStateOf<String?>(null) }
     val viewingIndex = photos.indexOfFirst { it.path == viewing }
     // A photograph deleted while open — a shot retaken from the plan card cannot be,
     // but a list that no longer holds the path must close rather than show nothing.
@@ -406,6 +413,13 @@ fun AssessScreen(
                 openPage = pageReply?.let { it to pagePosition },
                 onOpenPage = { reply, position -> pageReply = reply; pagePosition = position },
                 onClosePage = { pageReply = null },
+                closing = closingReply,
+                onFinishList = { reply -> pageReply = null; closingReply = reply },
+                onCloseClosing = { closingReply = null },
+                // The piece as the closing screen names it, in the language shown.
+                pieceName = shownLabels.closingPiece(pieceName, itemType),
+                onBackToPiece = onBackToPiece,
+                onSendReport = onSendReport,
                 onRetry = viewModel::retry,
                 onDismissError = viewModel::dismissError,
                 onStartCamera = { stage = Stage.SHOOTING },
@@ -467,6 +481,13 @@ private fun Conversation(
     openPage: Pair<String, Int>?,
     onOpenPage: (String, Int) -> Unit,
     onClosePage: () -> Unit,
+    /** The reply whose closing screen is open (row 56), or null. */
+    closing: String?,
+    onFinishList: (String) -> Unit,
+    onCloseClosing: () -> Unit,
+    pieceName: String,
+    onBackToPiece: () -> Unit,
+    onSendReport: () -> Unit,
     onRetry: () -> Unit,
     onDismissError: () -> Unit,
     onStartCamera: () -> Unit,
@@ -537,13 +558,23 @@ private fun Conversation(
     // piece, and says so (row 43): each improvement has its own on its page.
     val listShown = remember(turns, latestDiagnosisId) {
         turns.firstOrNull { it.id == latestDiagnosisId }
-            ?.let { parseAssistantContent(it.text).diagnosis?.isImprovementList } == true
+            ?.let { parseAssistantContent(it.text).improvementList() } != null
     }
     // The page's reply and its list, read from the stored conversation, so it opens offline.
+    // A reply from before prompt E is drawn as the list too (row 54), by the phone alone.
     val pageRows = remember(shown, pages, openPage?.first) {
         openPage?.first?.let { id -> shown.firstOrNull { it.id == id } }
-            ?.let { parseAssistantContent(it.text).diagnosis }
+            ?.let { parseAssistantContent(it.text).improvementList() }
             ?.let { improvementRows(it, pages) }
+    }
+    // The closing screen's count (row 56): the rows of the list it ends.
+    val closingCount = remember(shown, closing) {
+        closing?.let { id -> shown.firstOrNull { it.id == id } }
+            ?.let { parseAssistantContent(it.text).improvementList() }
+            ?.let { improvementRows(it).size }
+    }
+    LaunchedEffect(closing, closingCount) {
+        if (closing != null && closingCount == null) onCloseClosing()
     }
     // A page whose reply or row is gone (a list that changed under it) closes rather than
     // showing nothing.
@@ -684,8 +715,21 @@ private fun Conversation(
             },
             sending = sending,
             onGoTo = { onOpenPage(replyId, it) },
+            onFinish = { onFinishList(replyId) },
             onClose = onClosePage,
             statusRows = { TurnStatusRows(error, unanswered, onRetry, onDismissError) },
+        )
+    }
+
+    // After the last improvement's "Done" (row 56), over the conversation as a page is.
+    if (closing != null && closingCount != null) {
+        ImprovementsDone(
+            count = closingCount,
+            pieceName = pieceName,
+            labels = labels,
+            onBackToList = onCloseClosing,
+            onBackToPiece = onBackToPiece,
+            onSendReport = onSendReport,
         )
     }
 }
@@ -783,7 +827,8 @@ private fun AssistantTurn(
     onOpenImprovement: (Int) -> Unit,
 ) {
     val content = parseAssistantContent(message.text)
-    val list = content.diagnosis?.takeIf { it.isImprovementList }
+    // Prompt E's list, or an older reply drawn as one by the phone (row 54).
+    val list = content.improvementList()
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
         // The list (row 43, mockup v2): the app's heading, then the opening Claude wrote, as
         // the overview. Shown beside a verdict too: in this layout the opening is the overview
@@ -801,7 +846,7 @@ private fun AssistantTurn(
         if (list != null) {
             ImprovementList(list, improvementRows(list, pages), labels, reportLabels, onOpen = onOpenImprovement)
         } else {
-            // A reply from before arm 1, with no fix_line, keeps the card it was drawn with.
+            // A reply with nothing to fix on any finding keeps the card it was drawn with.
             content.diagnosis?.let {
                 DiagnosisCard(
                     it, labels, reportLabels,

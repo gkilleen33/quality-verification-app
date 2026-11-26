@@ -683,17 +683,40 @@ fun FundiNav() {
             val sessionId = entry.arguments?.getString("sessionId").orEmpty()
             val itemType = ItemType.fromId(entry.arguments?.getString("itemTypeId").orEmpty())
                 ?: ItemType.OTHER
+            val pieceId = entry.arguments?.getString("piece")?.takeIf { it.isNotBlank() } ?: sessionId
+            val theirs = entry.arguments?.getBoolean("theirs") ?: false
+            val givenLabel = entry.arguments?.getString("label")?.takeIf { it.isNotBlank() }
             AssessScreen(
                 sessionId = sessionId,
                 itemType = itemType,
-                pieceId = entry.arguments?.getString("piece")?.takeIf { it.isNotBlank() }
-                    ?: sessionId,
+                pieceId = pieceId,
                 returning = entry.arguments?.getBoolean("returning") ?: false,
                 onDone = { navController.popBackStack() },
                 isFinal = entry.arguments?.getBoolean("final") ?: false,
-                pieceMine = !(entry.arguments?.getBoolean("theirs") ?: false),
-                givenLabel = entry.arguments?.getString("label")?.takeIf { it.isNotBlank() },
+                pieceMine = !theirs,
+                givenLabel = givenLabel,
                 presetStudio = Routes.studioOf(entry.arguments?.getString("studio")),
+                // "Back to the <piece>" on the closing screen (row 56): the piece's page, also
+                // when this final assessment was opened from Send report on top of it.
+                onBackToPiece = {
+                    if (!navController.popBackStack(Routes.PIECE, inclusive = false)) navController.popBackStack()
+                },
+                // "Send report" on the closing screen (row 56). The assessment leaves the stack
+                // first, so that after sharing the piece's page under Send report shows its
+                // green box. A final assessment opened from Send report goes back to it.
+                onSendReport = {
+                    val cameFromReport = navController.previousBackStackEntry?.destination?.route == Routes.SEND_REPORT
+                    navController.popBackStack()
+                    if (!cameFromReport) {
+                        navController.navigate(
+                            if (theirs) {
+                                Routes.sendReportOnTheirs(pieceId, itemType.id, givenLabel)
+                            } else {
+                                Routes.sendReport(pieceId)
+                            },
+                        )
+                    }
+                },
             )
         }
     }
