@@ -90,11 +90,18 @@ class AssessmentSync(
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
-            _status.value = SyncStatus(failedAt = now(), failed = listOf(SyncStep.PULL))
+            _status.value = SyncStatus(failedAt = now(), failed = listOf(SyncStep.PULL), lastSucceededAt = _status.value.lastSucceededAt)
             throw e
         }
         val failed = result.failed + listOfNotNull(SyncStep.PULL.takeUnless { result.reachedServer })
-        _status.value = if (failed.isEmpty()) SyncStatus() else SyncStatus(failedAt = now(), failed = failed)
+        // The pieces on the phone are the server's as of any sync that reached it, even one
+        // where a single row was refused.
+        val reached = if (result.reachedServer) now() else _status.value.lastSucceededAt
+        _status.value = if (failed.isEmpty()) {
+            SyncStatus(lastSucceededAt = reached)
+        } else {
+            SyncStatus(failedAt = now(), failed = failed, lastSucceededAt = reached)
+        }
         return result
     }
 
@@ -438,4 +445,13 @@ enum class SyncStep {
  * [failedAt] is when the most recent sync failed, or null once one has finished; [failed]
  * names what did not go. Kept in memory: a restarted app syncs again before it matters.
  */
-data class SyncStatus(val failedAt: Long? = null, val failed: List<SyncStep> = emptyList())
+data class SyncStatus(
+    val failedAt: Long? = null,
+    val failed: List<SyncStep> = emptyList(),
+    /**
+     * When a sync last reached the server in this process, or null (v0.7.1, row 56): Fundi
+     * Bora's red box says the pieces shown are the phone's own from then. Kept through a
+     * failure. In memory, so a restarted app has none until its first sync.
+     */
+    val lastSucceededAt: Long? = null,
+)

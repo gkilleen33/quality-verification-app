@@ -7,45 +7,122 @@ import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
 import com.qualityverifier.data.session.SessionRepository
 import com.qualityverifier.data.sync.AssessmentSync
+import com.qualityverifier.data.sync.SyncStatus
 import com.qualityverifier.data.workers.StudioRepository
 import com.qualityverifier.data.workers.WorkerRepository
 import com.qualityverifier.di.AppContainer
+import com.qualityverifier.domain.ChatMessage
+import com.qualityverifier.domain.FundiIntake
 import com.qualityverifier.domain.SessionSummary
 import com.qualityverifier.domain.Studio
-import kotlinx.coroutines.flow.flowOf
 import com.qualityverifier.domain.Worker
 import com.qualityverifier.domain.WorkerDetails
 import com.qualityverifier.domain.WorkerSlot
+import com.qualityverifier.fundi.ui.workers.WorkerPages
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.flowOn
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
 /**
- * Everything this maker has put through the app, newest first.
+ * Everything this maker has put through the app, one row per physical piece, newest first:
+ * what Home, "All my pieces" and a piece's page list (v0.7.1, rows 45, 55, 56).
  *
- * Not a nice-to-have. Fundi Bora's loop is assess, repair, **re-assess** — the mockup's
- * before-and-after of the same stool is the product — and with no way back to a piece the
- * second half of that loop is unreachable. The first version of this app had no list at
- * all, which also meant an assessment interrupted by a phone call was simply gone.
+ * Not a nice-to-have. Fundi Bora's loop is assess, repair, **re-assess**, and with no way back
+ * to a piece the second half of that loop is unreachable.
  *
  * Read from the local database, so it works with no signal: the assessments are on the
  * handset and the server copy is the backup, not the source.
  */
 class PiecesViewModel(
     private val sessions: SessionRepository,
-    private val sync: AssessmentSync,
+    private val sync: AssessmentSync?,
     private val workers: WorkerRepository,
-    /** "Studios I work for", for each card's studio line and its change (v0.6.0, rows 1 and 2). */
+    /** "Studios I work for", for the studio line and its change (v0.6.0, rows 1 and 2). */
     studioList: StudioRepository? = null,
+    summaries: Flow<List<SessionSummary>> = sessions.observeSummaries(),
+    private val messagesOf: suspend (String) -> List<ChatMessage> = sessions::messagesOnce,
+    private val intakeCodeOf: suspend (String) -> String? = { id -> sessions.startOf(id)?.intakeCode },
 ) : ViewModel() {
 
     /** Every entry of "Studios I work for", archived ones too, so an old label still has a name. */
     val studios: StateFlow<List<Studio>> =
         (studioList?.observeStudios() ?: flowOf(emptyList()))
             .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    /** The roster, for "Who worked on this?" and the "My workers" row. */
+    val roster: StateFlow<List<Worker>> =
+        workers.observeWorkers()
+            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    /** Each assessment read so far, by id and version; see [pieces]. */
+    private val read = java.util.concurrent.ConcurrentHashMap<Pair<String, Long>, PieceAssessment>()
+
+    /**
+     * One row per piece, newest first, with what each assessment found: the findings in prompt
+     * E's improvement list, or the problems an older reply lists, read by the same rules as a
+     * worker's page ([WorkerPages.problemsIn]). Null until the first read, so Home does not
+     * offer "Assess your first piece" to a maker whose pieces are still loading.
+     */
+    val pieces: StateFlow<List<PieceSummary>?> =
+        summaries.map { list ->
+            PieceLines.piecesOf(list) { summary ->
+                // Each assessment's replies are read and parsed once per version of it: a sync
+                // or a rename re-emits every summary, and most have not changed.
+                val key = summary.id to summary.updatedAt
+                read[key] ?: PieceAssessment(
+                    summary = summary,
+                    improvements = WorkerPages.problemsIn(messagesOf(summary.id))?.size,
+                    purpose = intakeCodeOf(summary.id)?.let(FundiIntake::decode)?.second,
+                ).also { read[key] = it }
+            }.map { piece ->
+                // The summary itself is always the newest: a rename or a stage changes it
+                // without touching the assessment's replies.
+                piece.copy(assessments = piece.assessments.map { a -> a.copy(summary = list.first { it.id == a.summary.id }) })
+            }
+        }
+            // Off the main thread: reading and parsing every reply is the slow part of Home.
+            .flowOn(Dispatchers.Default)
+            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
+
+    /** Pieces with a name or studio change still to send, tagged "Not sent yet" (row 6). */
+    val unsent: StateFlow<Set<String>> =
+        sessions.observeUnsentPieceIds()
+            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptySet())
+
+    /** How the last sync went, for the red box (row 56). */
+    val syncStatus: StateFlow<SyncStatus> = sync?.status ?: MutableStateFlow(SyncStatus())
+
+    private val _syncing = MutableStateFlow(false)
+    val syncing: StateFlow<Boolean> = _syncing.asStateFlow()
+
+    init {
+        refresh()
+    }
+
+    /**
+     * Pushes what the phone owes and pulls what it has not seen, as Kagua's reports list does
+     * on open. "Try again" in the red box calls it too.
+     */
+    fun refresh() {
+        val run = sync ?: return
+        if (_syncing.value) return
+        viewModelScope.launch {
+            _syncing.value = true
+            try {
+                runCatching { run.run() }
+            } finally {
+                _syncing.value = false
+            }
+        }
+    }
 
     /**
      * Labels one of this maker's pieces with a studio, or "My own job" with null: the first
@@ -58,11 +135,6 @@ class PiecesViewModel(
             refresh()
         }
     }
-
-    /** The roster, for the card's "Who worked on this?" edit. */
-    val roster: StateFlow<List<Worker>> =
-        workers.observeWorkers()
-            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
     /** Who is recorded on an assessment, for the edit's starting answer. */
     suspend fun workersOf(sessionId: String): List<WorkerSlot> = workers.workersOf(sessionId)
@@ -79,50 +151,10 @@ class PiecesViewModel(
         viewModelScope.launch { onAdded(workers.add(details)) }
     }
 
-    val pieces: StateFlow<List<SessionSummary>> =
-        sessions.observeSummaries()
-            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
-
-    /** Pieces with a name or studio change still to send, tagged "Not sent yet" (row 6). */
-    val unsent: StateFlow<Set<String>> =
-        sessions.observeUnsentPieceIds()
-            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptySet())
-
-    private val _syncing = MutableStateFlow(false)
-    val syncing: StateFlow<Boolean> = _syncing.asStateFlow()
-
-    init {
-        refresh()
-    }
-
-    /**
-     * Pushes what the phone owes (names, and later roster edits) and pulls what it has
-     * not seen, as Kagua's reports list does on open. Until this, Fundi Bora never ran
-     * the sync: a reinstalled phone showed no pieces, and a rename made offline would
-     * have waited for ever.
-     */
-    fun refresh() {
-        if (_syncing.value) return
-        viewModelScope.launch {
-            _syncing.value = true
-            try {
-                sync.run()
-            } finally {
-                _syncing.value = false
-            }
-        }
-    }
-
-    /**
-     * Renames a piece from its card, or clears the name with null.
-     *
-     * Written locally and shown at once; the server hears on the next sync. The list
-     * above re-emits from the database, so nothing here has to update it.
-     */
+    /** Renames a piece, or clears the name with null. Written locally; the server hears on the next sync. */
     fun rename(pieceId: String, label: String?) {
         viewModelScope.launch {
             sessions.setPieceLabel(pieceId, label)
-            // Sent now when there is signal; otherwise the next open sends it.
             refresh()
         }
     }

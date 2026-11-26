@@ -1,22 +1,18 @@
 package com.qualityverifier.fundi.ui.assess
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.systemBarsPadding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -36,6 +32,13 @@ import com.qualityverifier.domain.Worker
 import com.qualityverifier.domain.WorkerDetails
 import com.qualityverifier.domain.WorkerSlot
 import com.qualityverifier.text.FundiLabels
+import com.qualityverifier.ui.parts.ButtonState
+import com.qualityverifier.ui.parts.CardRow
+import com.qualityverifier.ui.parts.Parts
+import com.qualityverifier.ui.parts.PrimaryButton
+import com.qualityverifier.ui.parts.RowCard
+import com.qualityverifier.ui.parts.ScreenTitle
+import com.qualityverifier.ui.parts.SecondaryButton
 
 private enum class Step { NAME, STUDIO, WORKERS, FINISHED, LANGUAGE, PURPOSE, DETAILS }
 
@@ -96,11 +99,16 @@ fun IntakeFlow(
     askFinished: Boolean = false,
     /** The answer to "Is this piece finished?", given before [onComplete]. */
     onFinished: (Boolean) -> Unit = {},
+    /**
+     * The studio already chosen on New piece (v0.7.1, row 46), where the question moved; the
+     * intake then does not ask it. Null for a piece started any other way.
+     */
+    presetStudio: PieceStudioChoice? = null,
 ) {
     var step by remember { mutableStateOf(if (askName) Step.NAME else Step.WORKERS) }
-    val askStudio = !returning && studios.isNotEmpty()
+    val askStudio = !returning && studios.isNotEmpty() && presetStudio == null
     // Nothing chosen to begin with: the fundi picks, so a wrong label is never a default.
-    var studio by remember { mutableStateOf<PieceStudioChoice?>(null) }
+    var studio by remember { mutableStateOf(presetStudio) }
     // A studio with a linked manager makes the final assessment, so its maker is not asked;
     // one with no linked manager leaves it to the maker (row 51).
     val forLinkedStudio = (studio as? PieceStudioChoice.Studio)?.let { chosen ->
@@ -150,11 +158,9 @@ fun IntakeFlow(
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth(),
                 )
-                Button(
-                    onClick = { step = if (askStudio) Step.STUDIO else Step.WORKERS },
-                    enabled = name.isNotBlank(),
-                    modifier = Modifier.fillMaxWidth().height(56.dp),
-                ) { Text(labels.intakeContinue) }
+                Continue(labels.intakeContinue, enabled = name.isNotBlank()) {
+                    step = if (askStudio) Step.STUDIO else Step.WORKERS
+                }
                 // Skip keeps whatever the piece was called: a returning piece is not
                 // unnamed by a maker who did not want to type. Clearing is the card's job.
                 Secondary(labels.intakeNameSkip) {
@@ -168,14 +174,11 @@ fun IntakeFlow(
             // nothing chosen at first. The label decides which manager may see the piece.
             Step.STUDIO -> {
                 Title(labels.intakeStudioTitle)
-                studios.forEach { each ->
-                    Picked(each.name, selected = studio == PieceStudioChoice.Studio(each.id)) {
-                        studio = PieceStudioChoice.Studio(each.id)
-                    }
-                }
-                Picked(labels.studioOwnJob, selected = studio == PieceStudioChoice.OwnJob) {
-                    studio = PieceStudioChoice.OwnJob
-                }
+                Picks(
+                    studios.map { each ->
+                        Triple(each.name, studio == PieceStudioChoice.Studio(each.id)) { studio = PieceStudioChoice.Studio(each.id) }
+                    } + Triple(labels.studioOwnJob, studio == PieceStudioChoice.OwnJob) { studio = PieceStudioChoice.OwnJob },
+                )
                 // One sentence on who can see the assessments (Nathan, 16 November 2026).
                 (studio as? PieceStudioChoice.Studio)?.let { chosen ->
                     studios.firstOrNull { it.id == chosen.studioId }?.let {
@@ -186,11 +189,7 @@ fun IntakeFlow(
                         )
                     }
                 }
-                Button(
-                    onClick = { step = Step.WORKERS },
-                    enabled = studio != null,
-                    modifier = Modifier.fillMaxWidth().height(56.dp),
-                ) { Text(labels.intakeContinue) }
+                Continue(labels.intakeContinue, enabled = studio != null) { step = Step.WORKERS }
                 Secondary(labels.setupBack) { step = Step.NAME }
             }
 
@@ -205,10 +204,7 @@ fun IntakeFlow(
                     onChange = { workedOn = it },
                     onAddWorker = onAddWorker,
                 )
-                Button(
-                    onClick = { leaveWorkers() },
-                    modifier = Modifier.fillMaxWidth().height(56.dp),
-                ) { Text(labels.intakeContinue) }
+                Continue(labels.intakeContinue, enabled = true) { leaveWorkers() }
                 // Skip records nobody, which reads as "not said" rather than "nobody".
                 Secondary(labels.intakeNameSkip) {
                     workedOn = emptyList()
@@ -230,46 +226,55 @@ fun IntakeFlow(
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
-                Choice(labels.intakeFinishedYes) {
-                    onFinished(true)
-                    step = Step.LANGUAGE
-                }
-                Choice(labels.intakeFinishedNo) {
-                    onFinished(false)
-                    step = Step.LANGUAGE
-                }
+                Choices(
+                    listOf(
+                        labels.intakeFinishedYes to {
+                            onFinished(true)
+                            step = Step.LANGUAGE
+                        },
+                        labels.intakeFinishedNo to {
+                            onFinished(false)
+                            step = Step.LANGUAGE
+                        },
+                    ),
+                )
                 Secondary(labels.setupBack) { step = Step.WORKERS }
             }
 
             Step.LANGUAGE -> {
                 Title(labels.intakeLanguageTitle)
-                AssessmentLanguage.entries.forEach { choice ->
-                    // The language's own name — "Kiswahili", not "Swahili" — since the
-                    // person choosing it may not read the other.
-                    Choice(choice.ownName) {
-                        language = choice
-                        afterLanguage(choice)
-                    }
-                }
+                // The language's own name — "Kiswahili", not "Swahili" — since the person
+                // choosing it may not read the other.
+                Choices(
+                    AssessmentLanguage.entries.map { choice ->
+                        choice.ownName to {
+                            language = choice
+                            afterLanguage(choice)
+                        }
+                    },
+                )
                 Secondary(labels.setupBack) { step = afterWorkers.takeIf { it == Step.FINISHED } ?: Step.WORKERS }
             }
 
             Step.PURPOSE -> {
                 Title(if (returning) labels.intakeReturningTitle else labels.intakePurposeTitle)
                 val options = if (returning) FundiPurpose.forReturningPiece else FundiPurpose.forNewPiece
-                options.forEach { choice ->
-                    Choice(labels.nameOf(choice)) {
-                        purpose = choice
-                        val chosenLanguage = language ?: return@Choice
-                        // Straight through when there is nothing more to ask.
-                        if (!choice.needsDetails && choice != FundiPurpose.VERIFY_FIX) {
-                            finish(FundiIntake(chosenLanguage, choice))
-                        } else {
-                            details = ""
-                            step = Step.DETAILS
+                Choices(
+                    options.map { choice ->
+                        labels.nameOf(choice) to {
+                            purpose = choice
+                            language?.let { chosenLanguage ->
+                                // Straight through when there is nothing more to ask.
+                                if (!choice.needsDetails && choice != FundiPurpose.VERIFY_FIX) {
+                                    finish(FundiIntake(chosenLanguage, choice))
+                                } else {
+                                    details = ""
+                                    step = Step.DETAILS
+                                }
+                            }
                         }
-                    }
-                }
+                    },
+                )
                 Secondary(labels.setupBack) { step = Step.LANGUAGE }
             }
 
@@ -282,11 +287,7 @@ fun IntakeFlow(
                     // would describe it differently, and the check is only meaningful
                     // against what was actually found.
                     Title(labels.intakeIssueTitle)
-                    priorIssues.forEach { issue ->
-                        Choice(issue.title) {
-                            finish(FundiIntake(chosenLanguage, chosen, issue = issue))
-                        }
-                    }
+                    Choices(priorIssues.map { issue -> issue.title to { finish(FundiIntake(chosenLanguage, chosen, issue = issue)) } })
                 } else {
                     Title(labels.detailsPrompts[chosen] ?: labels.intakeIssueTitle)
                     if (chosen == FundiPurpose.VERIFY_FIX) {
@@ -304,11 +305,9 @@ fun IntakeFlow(
                         minLines = 3,
                         modifier = Modifier.fillMaxWidth(),
                     )
-                    Button(
-                        onClick = { finish(FundiIntake(chosenLanguage, chosen, details = details)) },
-                        enabled = details.isNotBlank(),
-                        modifier = Modifier.fillMaxWidth().height(56.dp),
-                    ) { Text(labels.intakeContinue) }
+                    Continue(labels.intakeContinue, enabled = details.isNotBlank()) {
+                        finish(FundiIntake(chosenLanguage, chosen, details = details))
+                    }
                 }
                 Secondary(labels.setupBack) { step = Step.PURPOSE }
             }
@@ -316,44 +315,54 @@ fun IntakeFlow(
     }
 }
 
+// v0.7.1 (row 46): the questions drawn as the rest of the app is, a title then one card of
+// tappable rows (P16), on the warm page, with the buttons the shared parts draw.
+
 @Composable
 private fun IntakeColumn(content: @Composable () -> Unit) {
     Column(
         Modifier
             .fillMaxSize()
+            .background(Parts.Page)
             .systemBarsPadding()
             .verticalScroll(rememberScrollState())
             .imePadding()
-            .padding(24.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp),
+            .padding(horizontal = 16.dp, vertical = 18.dp),
+        verticalArrangement = Arrangement.spacedBy(14.dp),
     ) { content() }
 }
 
 @Composable
 private fun Title(text: String) {
-    Text(text, style = MaterialTheme.typography.headlineMedium)
-    Spacer(Modifier.height(4.dp))
+    ScreenTitle(text)
 }
 
+/** One question's answers as one card, each a row that answers at a tap. */
 @Composable
-private fun Choice(label: String, onClick: () -> Unit) {
-    OutlinedButton(onClick = onClick, modifier = Modifier.fillMaxWidth().height(56.dp)) {
-        Text(label)
+private fun Choices(options: List<Pair<String, () -> Unit>>) {
+    RowCard {
+        options.forEachIndexed { i, (label, onClick) -> CardRow(label, onClick = onClick, divider = i > 0) }
     }
 }
 
 @Composable
 private fun Secondary(label: String, onClick: () -> Unit) {
-    TextButton(onClick = onClick, modifier = Modifier.fillMaxWidth()) { Text(label) }
+    SecondaryButton(label, onClick)
 }
 
-/** A choice that stays chosen until another is tapped, for a question with a Continue. */
+/** The step's one main button, greyed until it can be pressed. */
 @Composable
-private fun Picked(label: String, selected: Boolean, onClick: () -> Unit) {
-    if (selected) {
-        Button(onClick = onClick, modifier = Modifier.fillMaxWidth().height(56.dp)) { Text(label) }
-    } else {
-        OutlinedButton(onClick = onClick, modifier = Modifier.fillMaxWidth().height(56.dp)) { Text(label) }
+private fun Continue(label: String, enabled: Boolean, onClick: () -> Unit) {
+    PrimaryButton(label, onClick, state = if (enabled) ButtonState.Ready else ButtonState(""))
+}
+
+/** Answers that stay chosen until another is tapped, for a question with a Continue: radio rows (P25). */
+@Composable
+private fun Picks(options: List<Triple<String, Boolean, () -> Unit>>) {
+    RowCard {
+        options.forEachIndexed { i, (label, selected, onClick) ->
+            CardRow(label, radio = selected, onClick = onClick, divider = i > 0)
+        }
     }
 }
 
@@ -371,8 +380,7 @@ fun StudioTodayQuestion(
 ) {
     IntakeColumn {
         Title(labels.todayStudioTitle)
-        studios.forEach { each -> Choice(each.name) { onAnswer(each.id) } }
-        Choice(labels.todayStudioOwn) { onAnswer(null) }
+        Choices(studios.map { each -> each.name to { onAnswer(each.id) } } + (labels.todayStudioOwn to { onAnswer(null) }))
         Secondary(labels.setupBack, onCancel)
     }
 }

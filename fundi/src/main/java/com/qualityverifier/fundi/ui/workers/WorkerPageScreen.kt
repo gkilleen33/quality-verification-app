@@ -1,79 +1,76 @@
 package com.qualityverifier.fundi.ui.workers
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.systemBarsPadding
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.DatePicker
 import androidx.compose.material3.DatePickerDialog
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.HorizontalDivider
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberDatePickerState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
-import com.qualityverifier.domain.SessionSummary
+import com.qualityverifier.domain.ItemType
 import com.qualityverifier.domain.WorkerDetails
 import com.qualityverifier.domain.WorkerPiece
-import com.qualityverifier.fundi.ui.assess.partName
 import com.qualityverifier.fundi.ui.fundiContainer
+import com.qualityverifier.fundi.ui.home.PieceAssessment
+import com.qualityverifier.fundi.ui.home.PieceLines
 import com.qualityverifier.text.FundiLabels
-import com.qualityverifier.text.ReportLabels
+import com.qualityverifier.text.FundiScreenLabels
+import com.qualityverifier.ui.parts.BackBar
+import com.qualityverifier.ui.parts.ButtonState
+import com.qualityverifier.ui.parts.CardRow
+import com.qualityverifier.ui.parts.Parts
+import com.qualityverifier.ui.parts.RowCard
+import com.qualityverifier.ui.parts.ScreenTitle
+import com.qualityverifier.ui.parts.SecondaryButton
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 import java.util.TimeZone
 
 /**
- * One worker's page (plan v7 §4.6): the person at the top, then every piece they were
- * named on, newest first, with the parts they did and each assessment of the piece with
- * its date, purpose, verdict and the problems it found.
+ * One worker's page (v0.7.1, row 44): the name, "Employee · Linked · number", "Send report"
+ * while linked and "Edit", then two cards, "Their pieces for your studio" (while linked, from
+ * the server) and "Pieces you named them on" (this phone's own). Each piece is one row with its
+ * name and its line, "4 improvements · checked 20 Nov", and opens the piece's page. Nothing more
+ * per piece: no parts, verdicts or problems (Nathan, 24 November 2026).
  *
- * No score and no count: the problems are the piece's, listed as the assessment found
- * them, and the manager judges (Nathan, 4 November 2026). "Edit" opens the same form as
- * "My workers", with Archive; "Open" on a piece opens its newest assessment, as the piece
- * card's Open does. Filters narrow the list to one piece and a range of dates.
- *
- * Read from the phone's own tables, so it works with no signal.
+ * No score and no count of anyone's problems (Nathan, 4 November 2026). "Edit" opens the same
+ * form as "My workers", with Archive. The filters narrow the named pieces to one piece and a
+ * range of days, as before.
  */
 @Composable
 fun WorkerPageScreen(
     workerId: String,
+    backLabel: String,
     onBack: () -> Unit,
-    /** Opens a piece's newest assessment, as Home's "Open" does. */
-    onOpenPiece: (SessionSummary) -> Unit,
+    /** Opens the piece's page: [WorkerPageRows.Row.pieceId], and the worker for their own piece. */
+    onOpenPiece: (pieceId: String, theirsOf: String?) -> Unit,
     /** "Send report": the worker's work across pieces, offered only while the link holds. */
     onSendReport: (workerId: String) -> Unit = {},
-    /** "Assess piece" on one of the worker's own pieces labelled for this studio (row 11). */
-    onAssessPiece: (WorkerPiece) -> Unit = {},
-    /** "Send report" on one of those pieces: the customer report among them (row 27). */
-    onSendPieceReport: (WorkerPiece) -> Unit = {},
 ) {
     val container = fundiContainer()
     val model: WorkerPageViewModel = viewModel(
@@ -88,15 +85,14 @@ fun WorkerPageScreen(
     val filter by model.filter.collectAsState()
     val theirPieces by model.theirPieces.collectAsState()
     val labels = FundiLabels.ENGLISH
+    val words = FundiScreenLabels.ENGLISH
 
     // The worker's own pieces come from the server, and only while the link holds. Asked
-    // again each time the page comes back into view (the navigation host leaves it while
-    // an assessment is open), so an assessment just made shows.
+    // again each time the page comes back into view, so an assessment just made shows.
     val linkedNow = worker?.let { it.linked && !it.archived } == true
-    androidx.compose.runtime.LaunchedEffect(linkedNow) { if (linkedNow) model.loadTheirPieces() }
+    LaunchedEffect(linkedNow) { if (linkedNow) model.loadTheirPieces() }
 
-    // Saveable: the contacts app comes in front of the activity from the form, and the
-    // form must come back with it (see WorkerForm).
+    // Saveable: the contacts app comes in front of the activity from the form.
     var editing by rememberSaveable { mutableStateOf(false) }
     val current = worker
     if (editing && current != null) {
@@ -119,259 +115,99 @@ fun WorkerPageScreen(
         )
     }
 
-    LazyColumn(
-        Modifier.fillMaxSize().systemBarsPadding().padding(24.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp),
-    ) {
-        item {
-            Row(
-                Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Column(Modifier.weight(1f, fill = false)) {
-                    Text(current?.name.orEmpty(), style = MaterialTheme.typography.displaySmall)
-                    current?.let { person ->
-                        Text(
-                            listOfNotNull(
-                                labels.nameOf(person.employment),
-                                person.phone,
-                                labels.linkedTag.takeIf { person.linked && !person.archived },
-                                labels.workerPageArchived.takeIf { person.archived },
-                            ).joinToString(" · "),
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    }
-                }
-                TextButton(onClick = { editing = true }, enabled = current != null) {
-                    Text(labels.workerPageEdit)
-                }
+    Column(Modifier.fillMaxSize().background(Parts.Page).systemBarsPadding()) {
+        BackBar(backLabel, onBack)
+        Column(
+            Modifier.verticalScroll(rememberScrollState()).padding(horizontal = 16.dp, vertical = 18.dp),
+            verticalArrangement = Arrangement.spacedBy(14.dp),
+        ) {
+            ScreenTitle(
+                current?.name.orEmpty(),
+                line = current?.let { person ->
+                    listOfNotNull(
+                        labels.nameOf(person.employment),
+                        when {
+                            person.archived -> words.archived
+                            person.linked -> words.linked
+                            else -> words.notLinked
+                        },
+                        person.phone,
+                    ).joinToString(" · ")
+                },
+            )
+            // The report of this worker's work across pieces, only while the two-sided match
+            // holds: the server refuses it otherwise.
+            if (current != null && linkedNow) {
+                SecondaryButton(words.sendReport, onClick = { onSendReport(current.id) })
             }
-            // The report of this worker's work across pieces (Nathan, 12 November 2026),
-            // only while the two-sided match holds: the server refuses it otherwise.
-            if (current != null && current.linked && !current.archived) {
-                OutlinedButton(onClick = { onSendReport(current.id) }, modifier = Modifier.fillMaxWidth()) {
-                    Text(labels.workerPageSendReport)
-                }
-            }
-            Spacer(Modifier.height(8.dp))
-        }
+            // Greyed until the worker has loaded, as the old Edit button was.
+            SecondaryButton(
+                words.edit,
+                onClick = { editing = true },
+                state = if (current != null) ButtonState.Ready else ButtonState(""),
+            )
 
-        // Their own pieces labelled for this studio (rows 4 and 11), above the pieces this
-        // account named them on. Only while linked; the server refuses otherwise.
-        if (linkedNow) {
-            item {
-                Text(labels.workerPageTheirPieces, style = MaterialTheme.typography.titleLarge)
-                Text(
-                    labels.workerPageTheirPiecesHint,
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-            when (val state = theirPieces) {
-                WorkerPageViewModel.TheirPieces.Offline -> item {
-                    Text(labels.workerPageTheirPiecesOffline, style = MaterialTheme.typography.bodyMedium)
-                }
-                is WorkerPageViewModel.TheirPieces.Loaded -> {
-                    if (state.pieces.isEmpty()) {
-                        item {
-                            Text(
-                                labels.workerPageTheirPiecesNone,
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
+            if (linkedNow) {
+                when (val state = theirPieces) {
+                    WorkerPageViewModel.TheirPieces.Offline ->
+                        RowCard(heading = words.theirPiecesForYourStudio, hint = words.theirPiecesOffline)
+                    is WorkerPageViewModel.TheirPieces.Loaded -> {
+                        val rows = WorkerPageRows.theirs(state.pieces)
+                        RowCard(heading = words.theirPiecesForYourStudio, hint = words.noneYet.takeIf { rows.isEmpty() }) {
+                            rows.forEachIndexed { i, row ->
+                                CardRow(row.title, line = row.line, onClick = { onOpenPiece(row.pieceId, workerId) }, divider = i > 0)
+                            }
                         }
                     }
-                    items(state.pieces, key = { "theirs-" + it.id }) { piece ->
-                        TheirPieceCard(
-                            labels = labels,
-                            piece = piece,
-                            onAssess = { onAssessPiece(piece) },
-                            onSendReport = { onSendPieceReport(piece) },
-                        )
-                    }
+                    else -> RowCard(heading = words.theirPiecesForYourStudio, hint = words.loading)
                 }
-                else -> Unit
             }
-            item { Spacer(Modifier.height(8.dp)) }
-        }
 
-        if (pieces.isNotEmpty()) {
-            item {
-                Filters(
-                    labels = labels,
-                    pieces = pieces,
-                    filter = filter,
-                    onChange = model::setFilter,
-                )
+            if (pieces.isNotEmpty()) {
+                Filters(labels = labels, pieces = pieces, filter = filter, onChange = model::setFilter)
             }
-        }
-
-        if (loaded != null && pieces.isEmpty()) {
-            item {
-                Text(
-                    labels.workerPageNoPieces,
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
+            val named = WorkerPageRows.named(shown)
+            val hint = when {
+                loaded == null -> words.loading
+                pieces.isEmpty() -> words.noneYet
+                named.isEmpty() -> labels.workerPageNoMatch
+                else -> null
             }
-        } else if (loaded != null && shown.isEmpty()) {
-            item {
-                Text(
-                    labels.workerPageNoMatch,
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
+            RowCard(heading = words.piecesYouNamedThemOn, hint = hint) {
+                named.forEachIndexed { i, row ->
+                    CardRow(row.title, line = row.line, onClick = { onOpenPiece(row.pieceId, null) }, divider = i > 0)
+                }
             }
-        }
-
-        items(shown, key = { it.pieceId }) { piece ->
-            PieceCard(labels, piece, onOpen = { onOpenPiece(piece.latest) })
-        }
-
-        item {
-            TextButton(onClick = onBack, modifier = Modifier.fillMaxWidth()) { Text("Back") }
         }
     }
 }
 
-/**
- * One piece and the parts they did, with an Open button, then each assessment of the
- * piece, newest first.
- */
-@OptIn(ExperimentalLayoutApi::class)
-@Composable
-private fun PieceCard(labels: FundiLabels, piece: WorkerPages.Piece, onOpen: () -> Unit) {
-    val muted = MaterialTheme.colorScheme.onSurfaceVariant
-    Card(
-        Modifier.fillMaxWidth(),
-        colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
-        ),
-    ) {
-        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+/** The rows of a worker's page (row 44): one per piece, its name and its line, nothing more. */
+object WorkerPageRows {
+    data class Row(val pieceId: String, val title: String, val line: String)
+
+    /** The pieces this account named the worker on, one row each, newest first. */
+    fun named(pieces: List<WorkerPages.Piece>): List<Row> =
+        pieces.distinctBy { it.pieceId }.map { piece ->
+            val newest = piece.assessments.firstOrNull()
             Row(
-                Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                // The maker's own name for it, else the kind of thing it is, as the
-                // piece card shows it.
-                Text(
-                    piece.latest.pieceLabel ?: piece.latest.itemType.homeLabel,
-                    style = MaterialTheme.typography.titleMedium,
-                    modifier = Modifier.weight(1f, fill = false),
-                )
-                TextButton(onClick = onOpen) { Text(labels.workerPageOpen) }
-            }
-            // What this worker did on the piece: "Whole piece", or the parts, as the
-            // picker names them.
-            Text(
-                piece.parts.joinToString(", ") { part ->
-                    part?.let(::partName) ?: labels.workerPageWholePiece
-                },
-                style = MaterialTheme.typography.bodyMedium,
-                color = muted,
+                pieceId = piece.pieceId,
+                title = piece.latest.pieceLabel ?: piece.latest.itemType.homeLabel,
+                // The same line as Home's, "Not finished" for an assessment with no reply.
+                line = PieceLines.line(PieceAssessment(newest?.summary ?: piece.latest, newest?.problems?.size, newest?.purpose)),
             )
-            piece.assessments.forEach { assessment ->
-                HorizontalDivider(Modifier.padding(vertical = 4.dp))
-                AssessmentLines(labels, assessment)
-            }
         }
-    }
-}
 
-/**
- * One of the worker's own pieces labelled for this studio, with each assessment the
- * manager may read: the worker's and the manager's own, each with its date, whose it is,
- * its verdict and the problems it found. No score (Nathan, 4 November 2026).
- */
-@Composable
-private fun TheirPieceCard(
-    labels: FundiLabels,
-    piece: WorkerPiece,
-    onAssess: () -> Unit,
-    onSendReport: () -> Unit,
-) {
-    val muted = MaterialTheme.colorScheme.onSurfaceVariant
-    Card(
-        Modifier.fillMaxWidth(),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
-    ) {
-        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            Text(
-                piece.label ?: com.qualityverifier.domain.ItemType.fromId(piece.itemTypeId)?.homeLabel ?: piece.itemTypeId,
-                style = MaterialTheme.typography.titleMedium,
-            )
-            piece.assessments.asReversed().forEach { assessment ->
-                HorizontalDivider(Modifier.padding(vertical = 4.dp))
-                val verdict = assessment.verdictLevelId?.let(com.qualityverifier.domain.VerdictLevel::fromId)
-                    ?.let { ReportLabels.ENGLISH.verdictWord(it, false) } ?: labels.workerPageNoVerdict
-                Text(
-                    listOfNotNull(
-                        assessment.createdAt.asDay(),
-                        if (assessment.byWorker) labels.workerPageByThem else labels.workerPageByYou,
-                        labels.workerPageFinal.takeIf { assessment.final },
-                        verdict,
-                    ).joinToString(" · "),
-                    style = MaterialTheme.typography.bodyMedium,
-                )
-                when {
-                    !assessment.problemsKnown ->
-                        Text(labels.workerPageProblemsUnknown, style = MaterialTheme.typography.bodySmall, color = muted)
-                    assessment.problems.isEmpty() ->
-                        Text(labels.workerPageNoProblems, style = MaterialTheme.typography.bodySmall, color = muted)
-                    else -> assessment.problems.forEach { problem ->
-                        val severity = ReportLabels.ENGLISH.severity(com.qualityverifier.domain.Severity.fromId(problem.severity))
-                        Text(
-                            "• " + problem.title + if (severity.isNotBlank()) " ($severity)" else "",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = muted,
-                        )
-                    }
-                }
-            }
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedButton(onClick = onAssess) { Text(labels.workerPageAssessPiece) }
-                TextButton(onClick = onSendReport) { Text(labels.reportMenuItem) }
-            }
-        }
-    }
-}
-
-/** Date, purpose and verdict on one line, then the problems as found on the piece. */
-@Composable
-private fun AssessmentLines(labels: FundiLabels, assessment: WorkerPages.Assessment) {
-    val muted = MaterialTheme.colorScheme.onSurfaceVariant
-    val summary = assessment.summary
-    val verdict = summary.verdictLevel?.let { ReportLabels.ENGLISH.verdictWord(it, summary.anythingUnchecked) }
-        ?: labels.workerPageNoVerdict
-    Text(
-        listOf(
-            summary.createdAt.asDay(),
-            assessment.purpose?.let(labels::nameOf) ?: labels.workerPagePurposeUnknown,
-            verdict,
-        ).joinToString(" · "),
-        style = MaterialTheme.typography.bodyMedium,
-    )
-    val problems = assessment.problems
-    if (problems == null) {
-        // The newest diagnosis would not decode: the problems are not known, which is
-        // not the same as none.
-        Text(labels.workerPageProblemsUnknown, style = MaterialTheme.typography.bodySmall, color = muted)
-    } else if (problems.isEmpty()) {
-        Text(labels.workerPageNoProblems, style = MaterialTheme.typography.bodySmall, color = muted)
-    } else {
-        problems.forEach { problem ->
-            val severity = ReportLabels.ENGLISH.severity(problem.severity)
-            Text(
-                "• " + problem.title + if (severity.isNotBlank()) " ($severity)" else "",
-                style = MaterialTheme.typography.bodySmall,
-                color = muted,
-            )
-        }
-    }
+    /** The worker's own pieces labelled for this studio, from the server, one row each, newest first. */
+    fun theirs(pieces: List<WorkerPiece>): List<Row> =
+        pieces.distinctBy { it.id }.mapNotNull { piece ->
+            val newest = piece.assessments.maxByOrNull { it.createdAt } ?: return@mapNotNull null
+            Row(
+                pieceId = piece.id,
+                title = piece.label ?: ItemType.fromId(piece.itemTypeId)?.homeLabel ?: piece.itemTypeId,
+                line = PieceLines.line(if (newest.problemsKnown) newest.problems.size else null, newest.createdAt),
+            ) to newest.createdAt
+        }.sortedByDescending { it.second }.map { it.first }
 }
 
 /** A piece to narrow to, and a range of days; "Clear filters" once any is set. */

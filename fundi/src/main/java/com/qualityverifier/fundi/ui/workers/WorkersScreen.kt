@@ -1,23 +1,16 @@
 package com.qualityverifier.fundi.ui.workers
 
-import androidx.compose.foundation.clickable
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.systemBarsPadding
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
-import androidx.compose.material3.Button
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.MaterialTheme
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -29,37 +22,47 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.qualityverifier.domain.Worker
-import com.qualityverifier.fundi.ui.SyncFailedLine
 import com.qualityverifier.fundi.ui.fundiContainer
+import com.qualityverifier.fundi.ui.home.OfflineBox
+import com.qualityverifier.fundi.ui.home.PieceLines
+import com.qualityverifier.ui.parts.StatusBox
+import com.qualityverifier.ui.parts.StatusKind
 import com.qualityverifier.text.FundiLabels
+import com.qualityverifier.text.FundiScreenLabels
+import com.qualityverifier.ui.parts.BackBar
+import com.qualityverifier.ui.parts.CardRow
+import com.qualityverifier.ui.parts.Chip
+import com.qualityverifier.ui.parts.Parts
+import com.qualityverifier.ui.parts.PrimaryButton
+import com.qualityverifier.ui.parts.RowCard
+import com.qualityverifier.ui.parts.ScreenTitle
+import com.qualityverifier.ui.parts.SecondaryButton
+import com.qualityverifier.ui.parts.lineStyle
 
 /**
- * "My workers": the roster, one card per person. Archived workers are kept apart, below
- * the list, behind "Show archived" (Nathan, 17 November 2026).
+ * "My workers" (v0.7.1, row 44): one card of rows, each a worker with "Employee · 3 pieces"
+ * and a chip, "Linked" or "Not linked"; archived workers behind "Show archived (N)" (P26).
+ * "Add a worker" is a secondary button above the list, or the primary one when the list is
+ * empty (P20).
  *
- * Add opens the worker form ([WorkerForm]): name, a number from contacts or typed, and
- * employee or temporary. Tapping a card opens the worker's page ([WorkerPageScreen]),
- * where "Edit" opens the same form with "Archive" beside Save. There is no delete: a
- * past piece keeps the name of whoever worked on it, and an archived worker simply stops
- * appearing in the picker.
+ * Add opens the worker form ([WorkerForm]); a row opens the worker's page. There is no delete:
+ * a past piece keeps the name of whoever worked on it.
  */
 @Composable
-fun WorkersScreen(onBack: () -> Unit, onOpen: (Worker) -> Unit) {
+fun WorkersScreen(backLabel: String, onBack: () -> Unit, onOpen: (Worker) -> Unit) {
     val container = fundiContainer()
     val model: WorkersViewModel = viewModel(factory = WorkersViewModel.factory(container))
     val roster by model.roster.collectAsState()
     val unsent by model.unsent.collectAsState()
+    val counts by model.pieceCounts.collectAsState()
     val syncStatus by model.syncStatus.collectAsState()
-    val (active, archived) = remember(roster) {
-        roster.sortedBy { it.name.lowercase() }.partition { !it.archived }
-    }
+    val (active, archived) = remember(roster) { roster.sortedBy { it.name.lowercase() }.partition { !it.archived } }
     var showArchived by rememberSaveable { mutableStateOf(false) }
     val labels = FundiLabels.ENGLISH
+    val words = FundiScreenLabels.ENGLISH
 
-    // Saveable: the contacts app comes in front, and the form must come back with the
-    // activity.
+    // Saveable: the contacts app comes in front, and the form must come back with the activity.
     var adding by rememberSaveable { mutableStateOf(false) }
-
     if (adding) {
         WorkerForm(
             labels = labels,
@@ -73,95 +76,74 @@ fun WorkersScreen(onBack: () -> Unit, onOpen: (Worker) -> Unit) {
         )
     }
 
-    LazyColumn(
-        Modifier.fillMaxSize().systemBarsPadding().padding(24.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp),
-    ) {
-        item {
-            Text("My workers", style = MaterialTheme.typography.displaySmall)
-            Spacer(Modifier.height(8.dp))
-            SyncFailedLine(syncStatus, labels)
-        }
-        item {
-            Button(
-                onClick = { adding = true },
-                modifier = Modifier.fillMaxWidth().height(56.dp),
-            ) { Text(labels.workerAddTitle) }
-        }
-        if (roster.isEmpty()) {
-            item {
-                Text(
-                    "Nobody yet. Add the people who work with you, so a report can say " +
-                        "who did which part of a piece.",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-        }
-        items(active, key = { it.id }) { worker ->
-            WorkerRow(worker, labels, unsent = worker.id in unsent, onClick = { onOpen(worker) })
-        }
-        if (archived.isNotEmpty()) {
-            item {
-                ArchivedToggle(labels, archived.size, showArchived) { showArchived = !showArchived }
-            }
-            if (showArchived) {
-                items(archived, key = { it.id }) { worker ->
-                    WorkerRow(worker, labels, unsent = worker.id in unsent, onClick = { onOpen(worker) })
-                }
-            }
-        }
-        item {
-            TextButton(onClick = onBack, modifier = Modifier.fillMaxWidth()) { Text("Back") }
-        }
+    @Composable
+    fun row(worker: Worker, divider: Boolean) {
+        CardRow(
+            worker.name,
+            line = PieceLines.workerRowLine(labels.nameOf(worker.employment), counts[worker.id] ?: 0) +
+                if (worker.id in unsent) " · " + labels.notSentYet else "",
+            chip = when {
+                worker.archived -> Chip.notLinked(words.archived)
+                worker.linked -> Chip.linked(words.linked)
+                else -> Chip.notLinked(words.notLinked)
+            },
+            onClick = { onOpen(worker) },
+            divider = divider,
+        )
     }
-}
 
-@Composable
-private fun WorkerRow(worker: Worker, labels: FundiLabels, unsent: Boolean, onClick: () -> Unit) {
-    val muted = MaterialTheme.colorScheme.onSurfaceVariant
-    Card(
-        Modifier.fillMaxWidth().clickable(onClick = onClick),
-        colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
-        ),
-    ) {
-        Row(
-            Modifier.fillMaxWidth().padding(14.dp),
-            horizontalArrangement = Arrangement.SpaceBetween,
+    Column(Modifier.fillMaxSize().background(Parts.Page).systemBarsPadding()) {
+        BackBar(backLabel, onBack)
+        Column(
+            Modifier.verticalScroll(rememberScrollState()).padding(horizontal = 16.dp, vertical = 18.dp),
+            verticalArrangement = Arrangement.spacedBy(14.dp),
         ) {
-            Column(Modifier.weight(1f, fill = false)) {
-                Text(
-                    worker.name,
-                    style = MaterialTheme.typography.titleMedium,
-                    color = if (worker.archived) muted else MaterialTheme.colorScheme.onSurface,
+            ScreenTitle(words.myWorkers)
+            // P19: the roster's edits wait on this phone while the server cannot be reached.
+            if (OfflineBox.shows(syncStatus, syncing = false)) {
+                val since = syncStatus.lastSucceededAt
+                StatusBox(
+                    StatusKind.FAILURE,
+                    words.offlineTitle,
+                    words.offlineLine(since?.let(PieceLines::day), since?.let(PieceLines::time)),
+                    words.tryAgain,
+                    onButton = model::retry,
                 )
-                // The kind, and the number when there is one, so the list says what the
-                // roster holds without opening each page.
-                Text(
-                    listOfNotNull(labels.nameOf(worker.employment), worker.phone).joinToString(" · "),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = muted,
-                )
-                // An add or edit the server has not had yet (row 6): kept here, sent at the
-                // next sync. A link cannot form until it is sent.
-                if (unsent) {
-                    Text(labels.notSentYet, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+            }
+            if (active.isEmpty()) {
+                // P20: an empty list says what goes there and offers the first move, even
+                // when only archived workers are left.
+                RowCard(hint = words.workersEmpty) {
+                    if (archived.isNotEmpty()) {
+                        CardRow(
+                            if (showArchived) labels.archivedHide else words.showArchived(archived.size),
+                            onClick = { showArchived = !showArchived },
+                            chevron = false,
+                            titleColor = Parts.Brand,
+                            divider = true,
+                        )
+                    }
+                }
+                PrimaryButton(words.addWorker, onClick = { adding = true }, icon = Icons.Filled.Add)
+            } else {
+                SecondaryButton(words.addWorker, onClick = { adding = true })
+                RowCard {
+                    active.forEachIndexed { i, worker -> row(worker, divider = i > 0) }
+                    if (archived.isNotEmpty()) {
+                        CardRow(
+                            if (showArchived) labels.archivedHide else words.showArchived(archived.size),
+                            onClick = { showArchived = !showArchived },
+                            chevron = false,
+                            titleColor = Parts.Brand,
+                            divider = true,
+                        )
+                    }
                 }
             }
-            // "Linked" is the server's word (V31), from the last sync: this worker's own
-            // account lists this workshop too. "Archived" wins over it.
-            val tag = when {
-                worker.archived -> "Archived"
-                worker.linked -> labels.linkedTag
-                else -> null
-            }
-            tag?.let {
-                Text(
-                    it,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = if (worker.linked && !worker.archived) MaterialTheme.colorScheme.primary else muted,
-                )
+            if (showArchived && archived.isNotEmpty()) {
+                RowCard(heading = words.archived) {
+                    archived.forEachIndexed { i, worker -> row(worker, divider = i > 0) }
+                }
             }
         }
     }
