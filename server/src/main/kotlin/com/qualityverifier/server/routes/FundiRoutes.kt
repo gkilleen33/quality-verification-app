@@ -3,11 +3,13 @@ package com.qualityverifier.server.routes
 import com.qualityverifier.domain.AppVersionHeaders
 import com.qualityverifier.domain.Audience
 import com.qualityverifier.domain.Employment
+import com.qualityverifier.domain.PieceStage
 import com.qualityverifier.domain.ToolOwnership
 import com.qualityverifier.server.db.AuthStore
 import com.qualityverifier.server.db.FundiStore
 import com.qualityverifier.server.db.PhoneChange
 import com.qualityverifier.server.db.PieceLabels
+import com.qualityverifier.server.db.PieceStageChange
 import com.qualityverifier.server.db.PieceStudioChange
 import com.qualityverifier.server.db.StudioDayAnswer
 import io.ktor.http.HttpStatusCode
@@ -312,6 +314,32 @@ fun Route.fundiRoutes(store: FundiStore, auth: AuthStore) {
                 PieceStudioChange.NotYourStudio -> call.respond(HttpStatusCode.NotFound, ErrorResponse("no_such_studio"))
                 // 409 with a code the phone acts on: it stops offering the change.
                 PieceStudioChange.AlreadyCorrected -> call.respond(HttpStatusCode.Conflict, ErrorResponse("already_corrected"))
+            }
+        }
+
+        // Whether a piece is finished (V44, row 55; Nathan, 24 November 2026: "we need to save
+        // it in the server"). Only the piece's maker; a linked manager reads the piece but
+        // never sets its stage. Each answer is recorded; the newest is what the phone shows,
+        // unless an assessment started after it implies another. The stage decides nothing
+        // about reports: a customer report still needs a final assessment (row 27).
+        put("/v1/fundi/pieces/{id}/stage") {
+            val userId = call.principal<JWTPrincipal>()?.subject
+                ?: return@put call.respond(HttpStatusCode.Unauthorized, ErrorResponse("invalid_token"))
+            if (!call.requireFundi(auth, userId)) return@put
+            val pieceId = call.parameters["id"]?.takeIf(::isUuid)
+                ?: return@put call.respond(HttpStatusCode.NotFound, ErrorResponse("no_such_piece"))
+            val stage = call.receive<PieceStageDto>().stage
+            if (PieceStage.fromId(stage) == null) {
+                call.respond(
+                    HttpStatusCode.BadRequest,
+                    ErrorResponse("invalid_request", "stage must be one of ${PieceStage.ids.joinToString()}"),
+                )
+                return@put
+            }
+            when (val outcome = store.setPieceStage(userId, pieceId, stage)) {
+                is PieceStageChange.Set -> call.respond(PieceStageDto(outcome.stage, outcome.setAt))
+                // 404, never 403: a piece id is client-made, as for the rename.
+                PieceStageChange.NoSuchPiece -> call.respond(HttpStatusCode.NotFound, ErrorResponse("no_such_piece"))
             }
         }
 

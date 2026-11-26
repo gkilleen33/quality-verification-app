@@ -34,6 +34,13 @@ data class SessionSummaryDto(
     @SerialName("piece_studio_corrected") val pieceStudioCorrected: Boolean = false,
     /** The final assessment of the finished piece, before a customer report (row 27). */
     val final: Boolean = false,
+    /**
+     * The stage the maker last set on their own piece (V44, row 55): `in_progress` or
+     * `finished`, and when, epoch millis. Null when never set, and on a piece that is not the
+     * reader's. Older apps ignore both, as they ignore any field they do not know.
+     */
+    @SerialName("piece_stage") val pieceStage: String? = null,
+    @SerialName("piece_stage_set_at") val pieceStageSetAt: Long? = null,
 )
 
 @Serializable

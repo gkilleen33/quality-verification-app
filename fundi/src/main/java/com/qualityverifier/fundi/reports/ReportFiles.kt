@@ -49,8 +49,16 @@ object ReportFiles {
      * receiving app reads the file through the provider; the grant is for that one URI.
      */
     fun share(context: Context, file: File, chooserTitle: String) {
+        context.startActivity(chooser(context, file, chooserTitle))
+    }
+
+    /**
+     * The share sheet for [file], to launch for a result (v0.7.1, row 56): the screen hears when
+     * it closes, and opens the piece's page with "Report sent to …".
+     */
+    fun chooser(context: Context, file: File, chooserTitle: String): Intent {
         val uri = FileProvider.getUriForFile(context, AUTHORITY, file)
-        context.startActivity(Intent.createChooser(shareIntent(uri), chooserTitle))
+        return Intent.createChooser(shareIntent(uri), chooserTitle)
     }
 
     /** The intent alone, so a test can check its shape through [specOf]. */

@@ -70,6 +70,10 @@ data class SessionRow(
     val pieceStudio: PieceStudioLabel = PieceStudioLabel(),
     /** The final assessment of the finished piece (V34). */
     val isFinal: Boolean = false,
+    /** The stage the maker last set (V44, row 55): `in_progress` or `finished`; null if never, or not this account's piece. */
+    val pieceStage: String? = null,
+    /** When it was set, the server's clock, epoch millis; null with [pieceStage]. */
+    val pieceStageSetAt: Long? = null,
 )
 
 /** One `session_workers` row. A null [workerId] is the manager; a null [part], the whole piece. */
@@ -1332,6 +1336,10 @@ class PostgresChatStore(private val dataSource: DataSource) : ChatStore {
             PieceStudioLabel()
         },
         isFinal = getBoolean(17),
+        // The fundi's answer to "Is this piece finished?" (V44, row 55), on its own piece
+        // only: a manager never sees or sets a worker's.
+        pieceStage = if (getBoolean(13)) getString(18) else null,
+        pieceStageSetAt = if (getBoolean(13)) getLong(19).takeUnless { wasNull() } else null,
     )
 
     private companion object {
@@ -1347,10 +1355,11 @@ class PostgresChatStore(private val dataSource: DataSource) : ChatStore {
                  then p.label end"""
 
         /**
-         * Columns 13 to 17 of a session row (V34), after the label: whether the piece is the
-         * reader's own (one bind, the reader's id), its label, whether it was ever chosen,
-         * whether its one correction is used, and whether the session is final. Needs
-         * `pieces p` left-joined and `p.id` in the GROUP BY.
+         * Columns 13 to 19 of a session row (V34, V44), after the label: whether the piece is
+         * the reader's own (one bind, the reader's id), its label, whether it was ever chosen,
+         * whether its one correction is used, whether the session is final, and the piece's
+         * stage and its time (read only for the reader's own piece). Needs `pieces p`
+         * left-joined and `p.id` in the GROUP BY.
          */
         const val PIECE_COLUMNS = """
             (p.id is null or p.user_id = ?::uuid),
@@ -1359,7 +1368,8 @@ class PostgresChatStore(private val dataSource: DataSource) : ChatStore {
                 select 1 from piece_studio_changes c
                  where c.piece_id = p.id and c.kind = 'correction'
             ),
-            s.is_final"""
+            s.is_final,
+            p.stage, (extract(epoch from p.stage_set_at) * 1000)::bigint"""
     }
 
     private fun touch(connection: Connection, sessionId: String, preview: String) {

@@ -24,6 +24,7 @@ import com.qualityverifier.server.db.ReportPiece
 import com.qualityverifier.server.db.ReportRow
 import com.qualityverifier.server.db.ReportSession
 import com.qualityverifier.server.db.ReportStore
+import com.qualityverifier.server.db.SentReport
 import com.qualityverifier.server.db.StoredRefresh
 import com.qualityverifier.server.db.UserRow
 import com.qualityverifier.server.reports.PdfRenderer
@@ -110,6 +111,51 @@ class ReportRouteTest {
         val text = ReportFixtures.text(bytes)
         assertFalse(text, text.contains("Kamau"))
         assertFalse(text, text.contains("Joinery"))
+    }
+
+    // Row 56 (Nathan, 24 November 2026: "we need to record all of this"): "Reports sent" on a
+    // piece's page reads the rows V32 already keeps.
+    @Test
+    fun `row 56 - a piece's sent reports are listed newest first, each with its recipient`() = testApplication {
+        val store = FakeReportStore(sessions = listOf(table, fixed))
+        val app = withReports(store)
+
+        // Nothing sent yet: an empty list, not a 404.
+        val none = app.get("/v1/fundi/pieces/$PIECE_ID/reports") { auth(MAKER) }
+        assertEquals(HttpStatusCode.OK, none.status)
+        assertEquals("""{"reports":[]}""", none.bodyAsText())
+
+        listOf("customer", "full").forEach { kind ->
+            val sent = app.post("/v1/fundi/pieces/$PIECE_ID/reports") {
+                auth(MAKER); contentType(ContentType.Application.Json); setBody("""{"kind":"$kind"}""")
+            }
+            assertEquals(kind, HttpStatusCode.Created, sent.status)
+        }
+
+        val listed = app.get("/v1/fundi/pieces/$PIECE_ID/reports") { auth(MAKER) }
+        assertEquals(HttpStatusCode.OK, listed.status)
+        val body = listed.bodyAsText()
+        // The kind says who it was for (the phone words it), and the newest comes first.
+        assertTrue(body, body.indexOf("\"kind\":\"full\"") in 0 until body.indexOf("\"kind\":\"customer\""))
+        assertEquals(2, Regex("\"issued_at\":").findAll(body).count())
+    }
+
+    @Test
+    fun `row 56 - another account cannot list a piece's reports`() = testApplication {
+        // The maker has sent one; neither a stranger nor the studio's linked manager may list it.
+        val store = FakeReportStore(piece = labelledPiece, sessions = listOf(table, managersFinal))
+        val app = withReports(store)
+        app.post("/v1/fundi/pieces/$PIECE_ID/reports") {
+            auth(MAKER); contentType(ContentType.Application.Json); setBody("""{"kind":"full"}""")
+        }
+
+        listOf("22222222-2222-3333-4444-555555555555", MANAGER).forEach { reader ->
+            val refused = app.get("/v1/fundi/pieces/$PIECE_ID/reports") { auth(reader) }
+            assertEquals(reader, HttpStatusCode.NotFound, refused.status)
+            assertTrue(refused.bodyAsText().contains("no_such_piece"))
+        }
+        assertEquals(HttpStatusCode.NotFound, app.get("/v1/fundi/pieces/not-a-uuid/reports") { auth(MAKER) }.status)
+        assertEquals(HttpStatusCode.OK, app.get("/v1/fundi/pieces/$PIECE_ID/reports") { auth(MAKER) }.status)
     }
 
     @Test
@@ -843,9 +889,23 @@ class ReportRouteTest {
 
         override suspend fun record(row: ReportRow): String {
             rows += row
+            issuedAt += 1_000L * rows.size
             val id = "d0000000-0000-4000-8000-${rows.size.toString().padStart(12, '0')}"
             ids += id
             return id
+        }
+
+        /** Each recorded row's issue time, one second apart, in [rows]' order. */
+        val issuedAt = mutableListOf<Long>()
+
+        /** The maker's own piece only, as the SQL's rule; newest first. */
+        override suspend fun sentReports(userId: String, pieceId: String): List<SentReport>? {
+            val made = (listOf(piece) + labelled.map { it.piece }).firstOrNull { it.id == pieceId && it.userId == userId }
+                ?: return null
+            return rows.indices
+                .filter { rows[it].pieceId == made.id && rows[it].userId == userId }
+                .sortedByDescending { issuedAt[it] }
+                .map { SentReport(rows[it].kind, issuedAt[it]) }
         }
     }
 

@@ -26,6 +26,10 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.qualityverifier.data.reports.WorkerPiecesOutcome
+import com.qualityverifier.data.sync.RemoteSentReport
+import com.qualityverifier.domain.PieceStage
+import com.qualityverifier.ui.parts.StatusBox
+import com.qualityverifier.ui.parts.StatusKind
 import com.qualityverifier.domain.ItemType
 import com.qualityverifier.domain.PieceNames
 import com.qualityverifier.domain.SessionSummary
@@ -78,8 +82,10 @@ fun PieceScreen(
     onAssessTheirs: (WorkerPiece) -> Unit,
     onSendReport: (PieceSummary) -> Unit,
     onSendReportOnTheirs: (WorkerPiece) -> Unit,
-    /** PR 5's Status and Reports sent, under "About this piece". */
-    below: @Composable (PieceSummary?) -> Unit = {},
+    /** The kind of report just handed to the share sheet (row 56), for the green box; null for none. */
+    sentKind: String? = null,
+    /** The green box's OK. */
+    onSentSeen: () -> Unit = {},
 ) {
     val container = fundiContainer()
     val words = FundiScreenLabels.ENGLISH
@@ -115,9 +121,21 @@ fun PieceScreen(
         }
     }
 
+    // "Reports sent" (row 56): read when the page opens and again after a report is sent.
+    var sent by remember(ref) { mutableStateOf<List<RemoteSentReport>?>(null) }
+    LaunchedEffect(ref, sentKind) { if (ref.workerId == null) sent = model.sentReports(ref.pieceId) }
+    var stageFailed by remember { mutableStateOf(false) }
+    var stageSaving by remember { mutableStateOf(false) }
+
     val mine = ref.workerId == null && (piece?.latest?.pieceMine ?: true)
     val name = piece?.let(::pieceName) ?: theirs?.let { it.label ?: ItemType.fromId(it.itemTypeId)?.homeLabel }.orEmpty()
     var editing by remember { mutableStateOf<Edit?>(null) }
+
+    // Row 56: what the server issued for this fundi on this piece. A row means the server made
+    // the PDF and the phone handed it to the share sheet; whether the fundi then sent it from
+    // WhatsApp is not known. Listed only on the fundi's own piece, once there is one.
+    val reports = sent.orEmpty().mapNotNull { report -> ReportRecipient.of(report.kind)?.let { it to report } }
+    val listed = mine && reports.isNotEmpty()
 
     Column(Modifier.fillMaxSize().background(Parts.Page).systemBarsPadding()) {
         BackBar(backLabel, onBack)
@@ -125,6 +143,19 @@ fun PieceScreen(
             Modifier.verticalScroll(rememberScrollState()).padding(horizontal = 16.dp, vertical = 18.dp),
             verticalArrangement = Arrangement.spacedBy(14.dp),
         ) {
+            // P17: the result of sending shows where the fundi expects it, on the piece. "It is
+            // listed under Reports sent" only where that card is on screen: not on a linked
+            // worker's piece, whose reports the server lists for its maker only, and not when
+            // the list could not be read.
+            sentKind?.let(ReportRecipient::of)?.let { recipient ->
+                StatusBox(
+                    StatusKind.CONFIRMATION,
+                    words.reportSentTo(recipient.inSentence),
+                    if (listed) words.reportSentLine else "",
+                    words.ok,
+                    onButton = onSentSeen,
+                )
+            }
             ScreenTitle(
                 name,
                 line = if (mine) words.pieceFor(studioName(piece?.latest, studios, words)) else words.madeBy(workerName),
@@ -163,6 +194,14 @@ fun PieceScreen(
                 }
             }
 
+            if (listed) {
+                RowCard(heading = words.reportsSent) {
+                    reports.forEachIndexed { i, (recipient, report) ->
+                        CardRow(recipient.row, line = words.sentOn(PieceLines.day(report.issuedAt)), divider = i > 0)
+                    }
+                }
+            }
+
             if (mine && piece != null) {
                 val latest = piece.latest
                 val onServer = piece.assessments.any { it.summary.messageCount > 1 }
@@ -186,6 +225,16 @@ fun PieceScreen(
                         divider = true,
                     )
                     WhoRow(latest.id, model, roster, words, editing, divider = true) { editing = Edit.WORKERS }
+                    // Row 55: where the value came from, the fundi or the last assessment.
+                    val shown = PieceStatus.of(piece)
+                    CardRow(
+                        words.status,
+                        line = words.statusLine(stageName(shown.stage, words), shown.setByFundi),
+                        chip = Chip.neutral(words.edit),
+                        chevron = false,
+                        onClick = { editing = Edit.STAGE },
+                        divider = true,
+                    )
                 }
                 if (latest.piece in unsent) {
                     Text(labels.notSentYet, style = lineStyle, color = Parts.Danger)
@@ -198,7 +247,6 @@ fun PieceScreen(
                     WhoRow(piece.latest.id, model, roster, words, editing) { editing = Edit.WORKERS }
                 }
             }
-            below(piece)
         }
     }
 
@@ -221,6 +269,25 @@ fun PieceScreen(
                 // Unchanged, nothing is written and the correction is not spent.
                 if (!latest.pieceStudioChosen || studioId != latest.pieceStudioId) model.setStudio(latest.piece, studioId)
             }
+            Edit.STAGE -> StageDialog(
+                words = words,
+                current = PieceStatus.of(piece).stage,
+                failed = stageFailed,
+                saving = stageSaving,
+                onDismiss = {
+                    editing = null
+                    stageFailed = false
+                },
+            ) { stage ->
+                stageSaving = true
+                model.setStage(latest.piece, stage) { stored ->
+                    // Kept open with a line when the server did not take it: the answer is the
+                    // server's record, so it is never kept on the phone alone.
+                    stageSaving = false
+                    stageFailed = !stored
+                    if (stored) editing = null
+                }
+            }
             Edit.WORKERS -> WorkersDialog(
                 words = words,
                 itemType = latest.itemType,
@@ -237,7 +304,13 @@ fun PieceScreen(
     }
 }
 
-private enum class Edit { NAME, STUDIO, WORKERS }
+private enum class Edit { NAME, STUDIO, WORKERS, STAGE }
+
+/** "In progress" or "Finished", as the Status row and "All my pieces" say it. */
+internal fun stageName(stage: PieceStage, words: FundiScreenLabels): String = when (stage) {
+    PieceStage.IN_PROGRESS -> words.inProgress
+    PieceStage.FINISHED -> words.finished
+}
 
 /** "Who worked on this?" for the latest assessment, read again after each edit. */
 @Composable

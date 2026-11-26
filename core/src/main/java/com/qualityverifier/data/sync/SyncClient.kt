@@ -47,6 +47,9 @@ data class RemoteSession(
     @SerialName("piece_studio_id") val pieceStudioId: String? = null,
     @SerialName("piece_studio_chosen") val pieceStudioChosen: Boolean = false,
     @SerialName("piece_studio_corrected") val pieceStudioCorrected: Boolean = false,
+    /** The maker's last answer to "Is this piece finished?" (V44, row 55), and when; null from older servers. */
+    @SerialName("piece_stage") val pieceStage: String? = null,
+    @SerialName("piece_stage_set_at") val pieceStageSetAt: Long? = null,
     val final: Boolean = false,
 )
 
@@ -125,6 +128,33 @@ data class RemoteMessage(
     val composed: Boolean = false,
 )
 
+/**
+ * A piece's stage and its sent reports (V44 and V32; rows 55 and 56), the two server calls a
+ * Fundi Bora piece's page makes. An interface so the page's view model can be tested without
+ * an HTTP client.
+ */
+interface PieceApi {
+    suspend fun setPieceStage(pieceId: String, stage: String): RemoteStage?
+    suspend fun sentReports(pieceId: String): List<RemoteSentReport>?
+}
+
+/** A piece's stage, sent and answered (V44, row 55); [setAt] is the server's time. */
+@Serializable
+data class RemoteStage(
+    val stage: String,
+    @SerialName("set_at") val setAt: Long? = null,
+)
+
+/** One report issued on a piece (row 56): its V32 kind and when. */
+@Serializable
+data class RemoteSentReport(
+    val kind: String,
+    @SerialName("issued_at") val issuedAt: Long,
+)
+
+@Serializable
+private data class RemoteSentReports(val reports: List<RemoteSentReport> = emptyList())
+
 @Serializable
 data class RemoteSessionDetail(val session: RemoteSession, val messages: List<RemoteMessage>)
 
@@ -165,7 +195,7 @@ class SyncClient(
     private val baseUrl: String,
     private val json: Json,
     private val io: CoroutineDispatcher = Dispatchers.IO,
-) : TabletEndApi, ShopReportLinkApi {
+) : TabletEndApi, ShopReportLinkApi, PieceApi {
 
     /** Null means the list could not be fetched — offline, or the server is unwell. */
     suspend fun sessions(): List<RemoteSession>? = withContext(io) {
@@ -357,6 +387,37 @@ class SyncClient(
                 else -> false
             }
         } ?: false
+    }
+
+    /**
+     * Stores the maker's answer to "Is this piece finished?" (V44, row 55) and returns the
+     * stage and the server's time of it, or null when it could not be stored (offline, the
+     * server unwell, or not this account's piece). Online only: the answer is the server's
+     * record, so it is not queued.
+     */
+    override suspend fun setPieceStage(pieceId: String, stage: String): RemoteStage? = withContext(io) {
+        val body = json.encodeToString(RemoteStage(stage)).toRequestBody(JSON)
+        authenticated { token ->
+            Request.Builder().url(baseUrl + "v1/fundi/pieces/" + pieceId + "/stage")
+                .addHeader("Authorization", "Bearer $token").put(body).build()
+        }?.use { response ->
+            if (!response.isSuccessful) return@use null
+            runCatching { json.decodeFromString<RemoteStage>(response.body?.string().orEmpty()) }.getOrNull()
+        }
+    }
+
+    /**
+     * "Reports sent" on a piece's page (row 56): the reports this account was issued on its
+     * own piece, newest first. Null when they could not be fetched.
+     */
+    override suspend fun sentReports(pieceId: String): List<RemoteSentReport>? = withContext(io) {
+        authenticated { token ->
+            Request.Builder().url(baseUrl + "v1/fundi/pieces/" + pieceId + "/reports")
+                .addHeader("Authorization", "Bearer $token").get().build()
+        }?.use { response ->
+            if (!response.isSuccessful) return@use null
+            runCatching { json.decodeFromString<RemoteSentReports>(response.body?.string().orEmpty()).reports }.getOrNull()
+        }
     }
 
     /**

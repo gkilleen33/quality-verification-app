@@ -166,6 +166,13 @@ class SendReportViewModel(
     }
 
     /**
+     * The kind of the report [share] holds (a V32 kind: `customer`, `full` and so on), so the
+     * piece's page can say who it went to once the share sheet closes (row 56).
+     */
+    var shareKind: String? = null
+        private set
+
+    /**
      * The kinds the first step offers, in the order shown. [ReportKind.PART_ISSUES] stands
      * for "A worker"; issues or fixes is chosen later.
      *
@@ -418,6 +425,7 @@ class SendReportViewModel(
             when (outcome) {
                 is ReportOutcome.Done -> {
                     _step.value = lastPreview ?: Step.WhoFor
+                    shareKind = request.kind
                     _share.value = outcome.file
                 }
                 ReportOutcome.Busy -> _step.value = Step.Failed(request, busy = true)

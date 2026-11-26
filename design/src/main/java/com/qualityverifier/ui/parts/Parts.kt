@@ -300,7 +300,7 @@ fun StatusBox(
             Icon(kind.icon, contentDescription = null, tint = kind.content, modifier = Modifier.size(24.dp))
             Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 Text(title, color = kind.content, fontSize = 17.sp, lineHeight = 24.sp, fontWeight = FontWeight.Bold)
-                Text(line, color = kind.content, style = lineStyle)
+                if (line.isNotBlank()) Text(line, color = kind.content, style = lineStyle)
             }
         }
         OutlinedButton(

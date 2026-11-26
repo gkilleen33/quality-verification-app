@@ -24,6 +24,12 @@ interface SessionRepository {
     suspend fun messagesOnce(sessionId: String): List<ChatMessage>
 
     /**
+     * A piece's stage as the server stored it (V44, row 55), kept only when newer than the
+     * phone's. A default no-op for fakes that have no pieces.
+     */
+    suspend fun applyPieceStage(pieceId: String, stage: String, setAt: Long) {}
+
+    /**
      * What an existing assessment was started with. Null when there is no row yet, which
      * is the normal state until the first send.
      */

@@ -164,6 +164,15 @@ class AssessmentSync(
         var fetched = 0
         for (summary in remote) {
             if (summary.id in dismissed) continue
+            // A piece's stage (V44, row 55) changes without its assessments changing, so it is
+            // read from every summary, not only from the ones fetched below. Kept only when
+            // newer than the phone's, which also covers a set made on this phone a moment ago.
+            val stagedPiece = summary.pieceId
+            val stage = summary.pieceStage
+            val stageAt = summary.pieceStageSetAt
+            if (stagedPiece != null && stage != null && stageAt != null) {
+                sessions.applyPieceStage(stagedPiece, stage, stageAt)
+            }
             val localStamp = known[summary.id]
             // Skip anything the phone already has at the same age or newer. The common
             // case is a phone that created the assessment itself, so most of a list will
@@ -220,6 +229,10 @@ class AssessmentSync(
                 ),
                 messages,
             )
+            // A piece first seen in this sync has its row only now.
+            if (stagedPiece != null && stage != null && stageAt != null) {
+                sessions.applyPieceStage(stagedPiece, stage, stageAt)
+            }
             if (rosterEnabled) workers.applySynced(
                 detail.session.id,
                 detail.session.workers.map { WorkerSlot(it.workerId, part = it.part?.let(WorkPart::fromId)) },

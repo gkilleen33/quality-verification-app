@@ -45,6 +45,11 @@ data class SessionSummaryRow(
     val pieceStudioCorrected: Boolean = false,
     val pieceMine: Boolean = true,
     val isFinal: Boolean = false,
+    /** From `pieces` (server V44, row 55): the maker's last answer, and the server's time of it. */
+    val pieceStage: String? = null,
+    val pieceStageSetAt: Long? = null,
+    /** When this phone stored [pieceStage], on its own clock. */
+    val pieceStageSeenAt: Long? = null,
 )
 
 @Dao
@@ -67,6 +72,9 @@ interface SessionDao {
                COALESCE(p.studioCorrected, 0) AS pieceStudioCorrected,
                COALESCE(p.mine, 1) AS pieceMine,
                s.isFinal AS isFinal,
+               p.stage AS pieceStage,
+               p.stageSetAt AS pieceStageSetAt,
+               p.stageSeenAt AS pieceStageSeenAt,
                COUNT(m.id) AS messageCount
         FROM sessions s
         LEFT JOIN messages m ON m.sessionId = s.id
@@ -251,6 +259,26 @@ interface SessionDao {
             "studioChosen = 1, studioPendingAt = :at WHERE id = :pieceId AND mine"
     )
     suspend fun setPieceStudio(pieceId: String, studioId: String?, at: Long)
+
+    /**
+     * A piece's stage as the server stored it (V44, row 55), from the answer to a set or from a
+     * sync, kept only when newer than what the phone holds, so an older answer arriving late
+     * never replaces a newer one. [seenAt] is the phone's clock as it stores it.
+     *
+     * The row is made first when the phone has none (a piece from before Room 11 has none), so
+     * an answer the server accepted always shows.
+     */
+    @Transaction
+    suspend fun applyPieceStage(pieceId: String, stage: String, setAt: Long, seenAt: Long) {
+        insertPieceIfAbsent(PieceEntity(id = pieceId))
+        updatePieceStage(pieceId, stage, setAt, seenAt)
+    }
+
+    @Query(
+        "UPDATE pieces SET stage = :stage, stageSetAt = :setAt, stageSeenAt = :seenAt " +
+            "WHERE id = :pieceId AND (stageSetAt IS NULL OR stageSetAt < :setAt)"
+    )
+    suspend fun updatePieceStage(pieceId: String, stage: String, setAt: Long, seenAt: Long)
 
     @Query("SELECT * FROM pieces WHERE studioPendingAt IS NOT NULL ORDER BY studioPendingAt")
     suspend fun unsyncedPieceStudios(): List<PieceEntity>

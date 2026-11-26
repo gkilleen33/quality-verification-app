@@ -5,6 +5,7 @@ import com.qualityverifier.server.api.ApiAssessmentDetail
 import com.qualityverifier.server.api.ApiKeyRow
 import com.qualityverifier.server.api.ApiKeyStore
 import com.qualityverifier.server.api.ApiPiece
+import com.qualityverifier.server.api.ApiPieceStageChange
 import com.qualityverifier.server.api.ApiPieceStudioChange
 import com.qualityverifier.server.api.ApiReport
 import com.qualityverifier.server.api.ApiStore
@@ -147,6 +148,13 @@ class FakeApiStore(
     override suspend fun pieceStudioChanges(limit: Int, offset: Int): List<ApiPieceStudioChange> {
         lastLimit = limit
         return studioChanges
+    }
+
+    var stageChanges = listOf<ApiPieceStageChange>()
+
+    override suspend fun pieceStageChanges(limit: Int, offset: Int): List<ApiPieceStageChange> {
+        lastLimit = limit
+        return stageChanges
     }
 
     override suspend fun studioDays(limit: Int, offset: Int): List<ApiStudioDay> {

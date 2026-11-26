@@ -187,6 +187,30 @@ data class PieceLabelDto(val label: String? = null)
 data class PieceStudioDto(@SerialName("studio_id") val studioId: String? = null)
 
 /**
+ * "Is this piece finished?" (V44, row 55). The body of PUT /v1/fundi/pieces/{id}/stage, with
+ * [stage] one of `PieceStage.ids`, and its answer, with [setAt] the server's time in epoch
+ * millis.
+ */
+@Serializable
+data class PieceStageDto(
+    val stage: String,
+    @SerialName("set_at") val setAt: Long? = null,
+)
+
+/**
+ * One report the server issued on a piece for its maker (V32, row 56): its [kind] and when,
+ * for "Reports sent" on the piece's page. The answer of GET /v1/fundi/pieces/{id}/reports.
+ */
+@Serializable
+data class SentReportDto(
+    val kind: String,
+    @SerialName("issued_at") val issuedAt: Long,
+)
+
+@Serializable
+data class SentReportsDto(val reports: List<SentReportDto>)
+
+/**
  * "Which studio are you at today?" (V34, row 9). The body of PUT /v1/fundi/studio-today, and
  * the answer to both routes. [studioId] null is the account's own workshop; [answered] says
  * whether today has an answer at all, and [day] is the Nairobi day it is for.

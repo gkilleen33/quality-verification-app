@@ -33,23 +33,6 @@ data class PieceAssessment(
     val purpose: FundiPurpose?,
 )
 
-/** In progress or finished, as "All my pieces" groups a piece and its Status row reads (rows 55, 56). */
-enum class PieceStage(val id: String) {
-    IN_PROGRESS("in_progress"),
-    FINISHED("finished");
-
-    companion object {
-        fun fromId(id: String?): PieceStage? = entries.firstOrNull { it.id == id }
-
-        /**
-         * The stage an assessment's purpose implies: checking work in progress means the
-         * piece is being made; any other purpose means it is finished (Nathan, 24 November
-         * 2026). Null when the purpose is not known, which reads as finished on the page.
-         */
-        fun impliedBy(purpose: FundiPurpose?): PieceStage =
-            if (purpose == FundiPurpose.WORK_IN_PROGRESS) IN_PROGRESS else FINISHED
-    }
-}
 
 /**
  * The words and the rules of the piece lists, kept pure so they can be tested without a

@@ -382,6 +382,31 @@ data class ApiPiece(
      * made before v0.6.0. Null for a piece never asked, which is not "My own job".
      */
     @SerialName("studio_chosen_at") val studioChosenAt: Long? = null,
+    /**
+     * The maker's last answer to "Is this piece finished?" on the piece's page (V44, row 55):
+     * `in_progress` or `finished`; null if never answered. Not what the phone shows: it shows
+     * the newer of this and the stage the latest assessment's purpose implies.
+     */
+    val stage: String? = null,
+    /** When [stage] was set, the server's clock; null with it. */
+    @SerialName("stage_set_at") val stageSetAt: Long? = null,
+)
+
+/**
+ * One answer to "Is this piece finished?" (V44, row 55), a repeat included. Append-only.
+ */
+@Serializable
+data class ApiPieceStageChange(
+    val id: Long,
+    @SerialName("piece_id") val pieceId: String,
+    /** The maker, who answered. */
+    @SerialName("user_id") val userId: String,
+    /** Null for the first answer. */
+    @SerialName("old_stage") val oldStage: String?,
+    /** `in_progress` or `finished`. */
+    @SerialName("new_stage") val newStage: String,
+    /** The server's clock. */
+    val at: Long,
 )
 
 /**

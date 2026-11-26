@@ -8,7 +8,7 @@ import com.qualityverifier.domain.SessionSummary
 import com.qualityverifier.fundi.ui.home.OfflineBox
 import com.qualityverifier.fundi.ui.home.PieceAssessment
 import com.qualityverifier.fundi.ui.home.PieceLines
-import com.qualityverifier.fundi.ui.home.PieceStage
+import com.qualityverifier.domain.PieceStage
 import com.qualityverifier.text.FundiScreenLabels
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals

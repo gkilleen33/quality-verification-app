@@ -35,10 +35,15 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -79,6 +84,8 @@ fun SendReportScreen(
     onAssessFinal: (pieceId: String, itemType: com.qualityverifier.domain.ItemType, pieceMine: Boolean, label: String?) -> Unit = { _, _, _, _ -> },
     /** What is known of a linked worker's piece opened from the worker's page; null from the pieces list. */
     hint: SendReportViewModel.PieceHint? = null,
+    /** The share sheet closed on a new report of [kind] (row 56). */
+    onShared: (kind: String) -> Unit = {},
 ) {
     val context = LocalContext.current
     val container = fundiContainer()
@@ -94,11 +101,24 @@ fun SendReportScreen(
     val offered by model.offered.collectAsState()
     val labels = FundiLabels.ENGLISH
 
+    // The kind handed to the share sheet, until it closes (row 56). Saveable: the share sheet
+    // and the app chosen from it come in front, and a low-memory phone recreates this activity.
+    var sharing by rememberSaveable { mutableStateOf<String?>(null) }
+    val chooser = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) {
+        // Closed, whether the fundi sent it or backed out: the server issued the report either
+        // way, and the piece's page lists it.
+        sharing?.let { kind ->
+            sharing = null
+            onShared(kind)
+        }
+    }
+
     // Taken from the view model once opened, so a recreated screen does not open it twice
     // and a file that finished while the screen was away still opens it once.
     LaunchedEffect(toShare) {
         toShare?.let { file ->
-            ReportFiles.share(context, file, labels.reportShareWith)
+            sharing = model.shareKind
+            chooser.launch(ReportFiles.chooser(context, file, labels.reportShareWith))
             model.shared(file)
         }
     }

@@ -491,9 +491,13 @@ fun FundiNav() {
                 pieceId = entry.arguments?.getString("pieceId").orEmpty(),
                 workerId = entry.arguments?.getString("worker")?.takeIf { it.isNotBlank() },
             )
+            // The kind of a report Send report just handed to the share sheet (row 56).
+            val sentKind by entry.savedStateHandle.getStateFlow<String?>(SENT_KIND, null).collectAsState()
             PieceScreen(
                 ref = ref,
                 model = piecesViewModel(navController, entry),
+                sentKind = sentKind,
+                onSentSeen = { entry.savedStateHandle[SENT_KIND] = null },
                 backLabel = backLabel(navController, entry),
                 onBack = back,
                 onOpenAssessment = openAssessment,
@@ -583,6 +587,15 @@ fun FundiNav() {
                     )
                 },
                 onBack = { navController.popBackStack() },
+                // After the share sheet closes on a new report, the piece's page under this
+                // screen opens with "Report sent to …" (row 56, P17).
+                onShared = { kind ->
+                    val under = navController.previousBackStackEntry
+                    if (under?.destination?.route == Routes.PIECE) {
+                        under.savedStateHandle[SENT_KIND] = kind
+                        navController.popBackStack()
+                    }
+                },
                 // The final assessment a customer report needs (row 27): a new session on the
                 // same piece, as any re-assessment is. Done, it comes back here.
                 onAssessFinal = { pieceId, itemType, mine, label ->
@@ -685,6 +698,9 @@ fun FundiNav() {
         }
     }
 }
+
+/** The saved-state key a piece's page reads for its green "Report sent to …" box (row 56). */
+private const val SENT_KIND = "sentKind"
 
 /**
  * The pieces, shared by Home, a piece's page and "All my pieces": scoped to Home's entry, so

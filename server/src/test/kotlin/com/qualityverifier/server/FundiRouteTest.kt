@@ -18,6 +18,7 @@ import com.qualityverifier.server.db.AuthStore
 import com.qualityverifier.server.db.Credentials
 import com.qualityverifier.server.db.FundiStore
 import com.qualityverifier.server.db.PhoneChange
+import com.qualityverifier.server.db.PieceStageChange
 import com.qualityverifier.server.db.PieceStudioChange
 import com.qualityverifier.server.db.RecordedToolChange
 import com.qualityverifier.server.db.StudioDay
@@ -464,6 +465,77 @@ class FundiRouteTest {
             setBody("""{"name":"Mama Njeri's workshop","phone":"0711000223"}""")
         }
         assertEquals(HttpStatusCode.NoContent, other.status)
+    }
+
+    // Row 55 (Nathan, 24 November 2026: "we need to save it in the server"): a piece's stage.
+    @Test
+    fun `row 55 - a fundi's stage change is stored and its history kept`() = testApplication {
+        val store = FakeFundiStore().apply { pieces[PIECE] = "Daybed" }
+        val app = withFundi(store, audience = Audience.FUNDI)
+
+        val first = app.put("/v1/fundi/pieces/$PIECE/stage") {
+            auth(FUNDI); contentType(ContentType.Application.Json)
+            setBody("""{"stage":"finished"}""")
+        }
+        assertEquals(HttpStatusCode.OK, first.status)
+        val body = first.bodyAsText()
+        assertTrue(body, body.contains("\"stage\":\"finished\""))
+        assertTrue(body, body.contains("\"set_at\":"))
+
+        val second = app.put("/v1/fundi/pieces/$PIECE/stage") {
+            auth(FUNDI); contentType(ContentType.Application.Json)
+            setBody("""{"stage":"in_progress"}""")
+        }
+        assertEquals(HttpStatusCode.OK, second.status)
+        assertEquals("in_progress", store.stages.getValue(PIECE).first)
+        // Every answer kept, with the old stage each replaced.
+        assertEquals(
+            listOf(Triple(FUNDI, null, "finished"), Triple(FUNDI, "finished", "in_progress")),
+            store.stageChanges.getValue(PIECE),
+        )
+
+        // A stage outside the vocabulary is refused, and nothing is written.
+        val bad = app.put("/v1/fundi/pieces/$PIECE/stage") {
+            auth(FUNDI); contentType(ContentType.Application.Json)
+            setBody("""{"stage":"sold"}""")
+        }
+        assertEquals(HttpStatusCode.BadRequest, bad.status)
+        assertEquals(2, store.stageChanges.getValue(PIECE).size)
+    }
+
+    @Test
+    fun `row 55 - only the piece's maker may set its stage`() = testApplication {
+        val other = "c0ffee00-0000-4000-8000-0000000000ff"
+        val store = FakeFundiStore().apply {
+            pieces[PIECE] = "Daybed"
+            // A linked worker's piece this account reads as the studio's manager, and a
+            // stranger's: neither is this account's to set.
+            pieces[other] = "Their table"
+            makers[other] = "c0ffee00-0000-4000-8000-0000000000aa"
+        }
+        val app = withFundi(store, audience = Audience.FUNDI)
+
+        listOf(other, "c0ffee00-0000-4000-8000-0000000000fe", "not-a-uuid").forEach { id ->
+            val refused = app.put("/v1/fundi/pieces/$id/stage") {
+                auth(FUNDI); contentType(ContentType.Application.Json)
+                setBody("""{"stage":"finished"}""")
+            }
+            // 404 for all three, so nobody learns which ids exist.
+            assertEquals(id, HttpStatusCode.NotFound, refused.status)
+        }
+        assertTrue(store.stageChanges.isEmpty())
+    }
+
+    @Test
+    fun `row 55 - a Kagua account may not set a piece's stage`() = testApplication {
+        val store = FakeFundiStore().apply { pieces[PIECE] = null }
+        val app = withFundi(store, audience = Audience.BUYER)
+        val refused = app.put("/v1/fundi/pieces/$PIECE/stage") {
+            auth(FUNDI); contentType(ContentType.Application.Json)
+            setBody("""{"stage":"finished"}""")
+        }
+        assertEquals(HttpStatusCode.Forbidden, refused.status)
+        assertTrue(store.stageChanges.isEmpty())
     }
 
     // Row 47 (Nathan, 24 November 2026): an account may be on a number from another country.
@@ -988,6 +1060,24 @@ class FundiRouteTest {
             // Null leaves the kind, or makes a new entry an employee: the SQL's COALESCEs.
             employments[workerId] = employment ?: employments[workerId] ?: Employment.EMPLOYEE
             return true
+        }
+
+        /**
+         * Each piece's stage and its history as the SQL keeps them (V44): the current
+         * (stage, set_at), and every answer, oldest first, as (account, old, new). A piece
+         * takes a stage only from its maker, as the SQL's `where user_id = ?` has it: the
+         * maker is [makers]' entry, or FUNDI for a piece with none.
+         */
+        val stages = mutableMapOf<String, Pair<String, Long>>()
+        val stageChanges = mutableMapOf<String, MutableList<Triple<String, String?, String>>>()
+        val makers = mutableMapOf<String, String>()
+        private var clock = 1_000L
+        override suspend fun setPieceStage(userId: String, pieceId: String, stage: String): PieceStageChange {
+            if (pieceId !in pieces || (makers[pieceId] ?: FUNDI) != userId) return PieceStageChange.NoSuchPiece
+            stageChanges.getOrPut(pieceId) { mutableListOf() } += Triple(userId, stages[pieceId]?.first, stage)
+            val at = ++clock
+            stages[pieceId] = stage to at
+            return PieceStageChange.Set(stage, at)
         }
 
         /** Pieces this fake owns, by id, with their current name. */
