@@ -37,13 +37,13 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
 import com.qualityverifier.data.auth.AuthResult
-import com.qualityverifier.domain.KenyanPhone
+import com.qualityverifier.domain.PhoneEntry
 import com.qualityverifier.text.AuthLabels
 import com.qualityverifier.text.TrackerLabels
 import com.qualityverifier.tracker.TrackerContainer
 import com.qualityverifier.tracker.data.AccountCheck
 import com.qualityverifier.tracker.trackerContainer
-import com.qualityverifier.ui.phone.KenyanPhoneField
+import com.qualityverifier.ui.phone.PhoneNumberField
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -148,8 +148,8 @@ fun SignInScreen(viewModel: AuthViewModel, labels: TrackerLabels, onSignedIn: ()
     val error by viewModel.error.collectAsState()
     val signedIn by viewModel.signedIn.collectAsState()
 
-    var phone by remember { mutableStateOf("") }
-    val e164 = KenyanPhone.toE164(phone)
+    var phone by remember { mutableStateOf(PhoneEntry()) }
+    val e164 = phone.toE164()
     var password by remember { mutableStateOf("") }
 
     LaunchedEffect(signedIn) { if (signedIn) onSignedIn() }
@@ -174,8 +174,8 @@ fun PhoneScreen(viewModel: AuthViewModel, labels: TrackerLabels, onProceed: () -
     val held by viewModel.details.collectAsState()
     var inviteCode by remember { mutableStateOf(held?.code.orEmpty()) }
     var name by remember { mutableStateOf(held?.name.orEmpty()) }
-    var phone by remember { mutableStateOf(held?.phone?.removePrefix(KenyanPhone.COUNTRY_CODE).orEmpty()) }
-    val e164 = KenyanPhone.toE164(phone)
+    var phone by remember { mutableStateOf(PhoneEntry.fromE164(held?.phone)) }
+    val e164 = phone.toE164()
 
     AuthColumn {
         Text(labels.appName, style = MaterialTheme.typography.displaySmall)
@@ -261,8 +261,8 @@ private fun AuthColumn(content: @Composable () -> Unit) {
 }
 
 @Composable
-private fun PhoneField(digits: String, onChange: (String) -> Unit) {
-    KenyanPhoneField(labels = AuthLabels.ENGLISH, digits = digits, onDigitsChange = onChange, modifier = Modifier.fillMaxWidth())
+private fun PhoneField(entry: PhoneEntry, onChange: (PhoneEntry) -> Unit) {
+    PhoneNumberField(labels = AuthLabels.ENGLISH, entry = entry, onEntryChange = onChange, modifier = Modifier.fillMaxWidth())
 }
 
 @Composable

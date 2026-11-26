@@ -22,11 +22,13 @@ import androidx.compose.ui.unit.dp
 import com.qualityverifier.domain.ContactNumber
 import com.qualityverifier.domain.KenyanPhone
 import com.qualityverifier.domain.OwnNumber
+import com.qualityverifier.domain.PhoneEntry
 import com.qualityverifier.domain.StudioDetails
 import com.qualityverifier.domain.WorkerNames
 import com.qualityverifier.text.AuthLabels
 import com.qualityverifier.text.FundiLabels
-import com.qualityverifier.ui.phone.KenyanPhoneField
+import com.qualityverifier.ui.phone.PhoneEntrySaver
+import com.qualityverifier.ui.phone.PhoneNumberField
 
 /**
  * The form for a studio this account works at (V31): the studio's name, and the studio
@@ -49,13 +51,13 @@ fun StudioForm(
 ) {
     // Saveable, as the worker form's are: the contacts app comes in front of this
     // activity, and a low-memory phone recreates it on the way back.
-    // A number stored by some other client in a form this field cannot hold (not +254),
-    // kept unless replaced, as the worker form keeps one.
-    val foreign = current?.phone?.takeUnless { it.startsWith(KenyanPhone.COUNTRY_CODE) }
+    // A number stored by some other client in a form this field cannot hold, such as one
+    // without its +, kept unless replaced, as the worker form keeps one. Any E.164 number,
+    // Kenyan or not (row 47), opens in the field.
+    val shown = PhoneEntry.fromE164(current?.phone).takeIf { it.toE164() == current?.phone }
+    val unreadable = current?.phone?.takeIf { shown == null }
     var name by rememberSaveable { mutableStateOf(current?.name.orEmpty()) }
-    var digits by rememberSaveable {
-        mutableStateOf(if (foreign == null) current?.phone?.removePrefix(KenyanPhone.COUNTRY_CODE).orEmpty() else "")
-    }
+    var phone by rememberSaveable(stateSaver = PhoneEntrySaver) { mutableStateOf(shown ?: PhoneEntry()) }
     var pickProblem by remember { mutableStateOf<KenyanPhone.Problem?>(null) }
     var pickerFailed by remember { mutableStateOf(false) }
 
@@ -64,7 +66,7 @@ fun StudioForm(
             pickerFailed = false
             val read = ContactNumber.read(number)
             pickProblem = read.refused
-            digits = read.digits
+            phone = read.entry
             if (name.isBlank() && pickedName != null && WorkerNames.fits(pickedName)) name = pickedName
         },
         onUnavailable = { pickerFailed = true },
@@ -74,8 +76,8 @@ fun StudioForm(
         AuthLabels.ENGLISH.copy(phoneLabel = labels.studioPhoneLabel, phoneHint = labels.workerPhoneHint)
     }
     val nameOk = WorkerNames.fits(name.trim()) && name.isNotBlank()
-    // An empty field keeps a foreign number; anything typed replaces it.
-    val number = KenyanPhone.toE164(digits) ?: foreign.takeIf { digits.isEmpty() }
+    // An empty field keeps an unreadable number; anything typed replaces it.
+    val number = phone.toE164() ?: unreadable.takeIf { phone.digits.isEmpty() }
     // The account's own workshop is already on the list (row 52): an entry on its own number
     // could never link, and a piece labelled for it would have no final assessment.
     val ownNumberTyped = OwnNumber.isOwn(number, ownNumber)
@@ -106,18 +108,18 @@ fun StudioForm(
                         color = MaterialTheme.colorScheme.error,
                     )
                 }
-                KenyanPhoneField(
+                PhoneNumberField(
                     labels = phoneLabels,
-                    digits = digits,
-                    onDigitsChange = {
-                        digits = it
+                    entry = phone,
+                    onEntryChange = {
+                        phone = it
                         pickProblem = null
                     },
                     modifier = Modifier.fillMaxWidth(),
                 )
                 pickProblem?.let { problem ->
                     Text(
-                        phoneLabels.phoneProblem(problem),
+                        phoneLabels.phoneProblem(problem, phone.kenyan),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.error,
                     )

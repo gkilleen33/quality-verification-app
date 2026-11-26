@@ -31,10 +31,10 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
-import com.qualityverifier.domain.KenyanPhone
+import com.qualityverifier.domain.PhoneEntry
 import com.qualityverifier.fundi.ui.fundiContainer
 import com.qualityverifier.text.AuthLabels
-import com.qualityverifier.ui.phone.KenyanPhoneField
+import com.qualityverifier.ui.phone.PhoneNumberField
 
 /** The shortest password the server will take. Refused there too; this only saves a round trip. */
 private const val MIN_PASSWORD = 8
@@ -49,10 +49,10 @@ fun FundiSignInScreen(onSignedIn: () -> Unit, onRegister: () -> Unit) {
     val error by viewModel.error.collectAsState()
     val signedIn by viewModel.signedIn.collectAsState()
 
-    // The nine digits after a fixed +254. A leading 0 cannot be typed, so the number on
-    // screen is the number the server stores; KenyanPhone.toE164 makes the one sent.
-    var phone by remember { mutableStateOf("") }
-    val e164 = KenyanPhone.toE164(phone)
+    // +254, or the code the fundi typed (row 47), and the digits after it. A leading 0
+    // cannot be typed, so the number on screen is the number the server stores.
+    var phone by remember { mutableStateOf(PhoneEntry()) }
+    val e164 = phone.toE164()
     var password by remember { mutableStateOf("") }
 
     LaunchedEffect(signedIn) { if (signedIn) onSignedIn() }
@@ -98,8 +98,8 @@ fun FundiPhoneScreen(viewModel: FundiAuthViewModel, onProceed: () -> Unit, onSig
     // Kept across a trip to the password screen and back, so "Change details" edits them.
     var inviteCode by remember { mutableStateOf(held?.code.orEmpty()) }
     var name by remember { mutableStateOf(held?.name.orEmpty()) }
-    var phone by remember { mutableStateOf(held?.phone?.removePrefix(KenyanPhone.COUNTRY_CODE).orEmpty()) }
-    val e164 = KenyanPhone.toE164(phone)
+    var phone by remember { mutableStateOf(PhoneEntry.fromE164(held?.phone)) }
+    val e164 = phone.toE164()
 
     AuthColumn {
         Text("Fundi Bora", style = MaterialTheme.typography.displaySmall)
@@ -223,11 +223,11 @@ private fun AuthColumn(content: @Composable () -> Unit) {
  * screens is in English. One copy of the rule and its messages serves both apps.
  */
 @Composable
-private fun PhoneField(digits: String, onChange: (String) -> Unit) {
-    KenyanPhoneField(
+private fun PhoneField(entry: PhoneEntry, onChange: (PhoneEntry) -> Unit) {
+    PhoneNumberField(
         labels = AuthLabels.ENGLISH,
-        digits = digits,
-        onDigitsChange = onChange,
+        entry = entry,
+        onEntryChange = onChange,
         modifier = Modifier.fillMaxWidth(),
     )
 }
