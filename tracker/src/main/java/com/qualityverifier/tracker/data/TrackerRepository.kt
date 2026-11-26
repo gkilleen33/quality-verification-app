@@ -40,8 +40,8 @@ enum class TakeOutcome {
  * PesaLog's records on the phone: what the listener stores, what the log shows, the two
  * questions, the push to the server, and deleting the server's copy.
  *
- * The same shape as Fundi Bora's MpesaRepository, which is not reused because it is bound to
- * Fundi Bora's tables and its routes, and reads M-Pesa only.
+ * The same shape Fundi Bora's M-Pesa records had until v0.7.1 deleted its SMS reader (row 17),
+ * with PesaLog's own tables and routes, and Airtel Money as well as M-Pesa.
  */
 class TrackerRepository(
     private val dao: TrackerDao,

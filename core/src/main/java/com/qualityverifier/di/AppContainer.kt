@@ -23,9 +23,6 @@ import com.qualityverifier.data.fundi.TranslationApi
 import com.qualityverifier.data.fundi.TranslationClient
 import com.qualityverifier.data.location.LocationCapture
 import com.qualityverifier.data.location.LocationPreference
-import com.qualityverifier.data.mpesa.MpesaClient
-import com.qualityverifier.data.mpesa.MpesaPreference
-import com.qualityverifier.data.mpesa.MpesaRepository
 import com.qualityverifier.data.reports.ReportApi
 import com.qualityverifier.data.reports.ReportClient
 import com.qualityverifier.data.session.ReviewAnswers
@@ -175,8 +172,14 @@ class AppContainer(
 
     val tokenStore: TokenStore = EncryptedPrefsTokenStore(appContext, shopTabletFlag)
 
-    /** Fundi Bora's two M-Pesa answers. Declared before [localAccount], whose clear forgets them. */
-    private val mpesaPreference = MpesaPreference(appContext)
+    init {
+        // Fundi Bora's M-Pesa answers on this phone (v0.5.0 to v0.7.0): when the fundi agreed
+        // to reading and sending, and any withdrawal not yet sent. The reading was deleted in
+        // v0.7.1 (row 17), so the answers apply to nothing; the file goes. Every sync since
+        // v0.6.0 sent pending withdrawals, and the server keeps the consent records (V28).
+        // A no-op once the file is gone, and in Kagua, which never had one.
+        appContext.deleteSharedPreferences(RETIRED_MPESA_PREFS)
+    }
 
     /**
      * Clears the local data when a different account signs in (see [LocalAccountGuard]).
@@ -193,9 +196,6 @@ class AppContainer(
             database.clearAllTables()
             images.deleteAll()
             if (locationAnswerRequired) locationPreference.forget()
-            // The M-Pesa answers are one person's, like the transactions the clear above
-            // removed: the next account starts with reading and sending off.
-            mpesaPreference.forget()
         },
     ).also {
         // An install from v0.3.0 still signed in: its tokens name the owner, so record it
@@ -285,17 +285,6 @@ class AppContainer(
     private val rosterEnabled = chatPath.startsWith("v1/fundi")
 
     /**
-     * Fundi Bora's M-Pesa records and their push. Kagua links it and never calls it: only
-     * Fundi Bora declares the SMS permissions and the receiver, and nothing is read until a
-     * fundi agrees.
-     */
-    val mpesa: MpesaRepository = MpesaRepository(
-        dao = database.mpesaDao(),
-        prefs = mpesaPreference,
-        api = MpesaClient(client = httpClient, tokens = tokenProvider, baseUrl = baseUrl, json = json),
-    )
-
-    /**
      * "Which studio are you at today?" (V34). Fundi Bora's, as the studio list is; Kagua
      * links it and never asks.
      */
@@ -312,8 +301,6 @@ class AppContainer(
         workers = workerRepository,
         studios = studioRepository,
         rosterEnabled = rosterEnabled,
-        // Same rule as the roster: an app on Fundi Bora's endpoint is the one that reads.
-        mpesa = if (rosterEnabled) mpesa::push else null,
         studioDays = studioDays.takeIf { rosterEnabled },
         reviewAnswers = reviewAnswers.takeIf { rosterEnabled },
     )
@@ -498,12 +485,6 @@ class AppContainer(
             deviceName = "",
         )
         val tokens = TokenProvider(store = held, refresher = refresher::refresh)
-        // The same tables and answers, sent as the account leaving.
-        val mpesaAs = MpesaRepository(
-            dao = database.mpesaDao(),
-            prefs = mpesaPreference,
-            api = MpesaClient(client = pushHttpClient, tokens = tokens, baseUrl = baseUrl, json = json),
-        )
         val client = SyncClient(client = pushHttpClient, tokens = tokens, baseUrl = baseUrl, json = json)
         return AssessmentSync(
             client = client,
@@ -513,7 +494,6 @@ class AppContainer(
             workers = workerRepository,
             studios = studioRepository,
             rosterEnabled = rosterEnabled,
-            mpesa = if (rosterEnabled) mpesaAs::push else null,
             studioDays = StudioDays(database.sessionDao(), client).takeIf { rosterEnabled },
             reviewAnswers = ReviewAnswers(database.sessionDao(), client).takeIf { rosterEnabled },
         )
@@ -532,5 +512,8 @@ class AppContainer(
 
         /** A report download, end to end. See [reports]. */
         const val REPORT_CALL_SECONDS = 150L
+
+        /** The SharedPreferences file Fundi Bora's M-Pesa answers lived in until v0.7.1. */
+        const val RETIRED_MPESA_PREFS = "fundi_mpesa"
     }
 }

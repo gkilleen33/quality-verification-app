@@ -1,10 +1,8 @@
 package com.qualityverifier.fundi
 
 import android.app.Application
-import android.util.Log
 import com.qualityverifier.di.AppContainer
 import com.qualityverifier.domain.AppId
-import com.qualityverifier.fundi.mpesa.MpesaReader
 import com.qualityverifier.fundi.reports.ReportFiles
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -50,33 +48,8 @@ class FundiBoraApp : Application() {
         // Any report left from the last session goes now, so no PDF outlives one app
         // session on the phone (plan v7 §5.4). Also cleared before each new report.
         background.launch { ReportFiles.clear(this@FundiBoraApp) }
-
-        // Nothing M-Pesa runs while the build has the reading off (build.gradle.kts,
-        // mpesaSmsReading): the receiver is not in the manifest, so switching it would fail.
-        if (!BuildConfig.MPESA_SMS_READING) return
-
-        // The M-Pesa receiver follows the reading switch for as long as the process lives,
-        // so turning reading off in Settings disables it at once.
-        background.launch {
-            container.mpesa.switches.collect { MpesaReader.applySwitch(this@FundiBoraApp, it.reading) }
-        }
-        // At start, the M-Pesa messages that arrived while the app was not running: only
-        // those received after the agreement and not yet stored (MpesaReader.scan). Then
-        // whatever the phone owes the server, if sending is on.
-        background.launch {
-            try {
-                if (container.mpesa.switches.value.reading) MpesaReader.scan(this@FundiBoraApp, container.mpesa)
-                if (container.isSignedIn) container.mpesa.push()
-            } catch (e: Exception) {
-                Log.w(TAG, "M-Pesa scan at start failed; the next start tries again", e)
-            }
-        }
     }
 
-    /** Work that outlives every screen: the M-Pesa scan at start and the receiver's pushes. */
-    val background = CoroutineScope(SupervisorJob() + Dispatchers.IO)
-
-    private companion object {
-        const val TAG = "FundiBoraApp"
-    }
+    /** Work that outlives every screen: clearing the last session's reports at start. */
+    private val background = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 }
