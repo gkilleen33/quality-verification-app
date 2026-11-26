@@ -24,12 +24,17 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.PhotoCamera
 import androidx.compose.material.icons.filled.PhotoLibrary
-import androidx.compose.material.icons.filled.Share
+import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.runtime.mutableIntStateOf
+import com.qualityverifier.ui.parts.BackBar
+import com.qualityverifier.ui.parts.Parts
+import com.qualityverifier.ui.rememberAuthLabels
+import com.qualityverifier.ui.rememberKaguaLabels
+import com.qualityverifier.ui.reports.DeleteReportDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -41,7 +46,6 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -66,6 +70,7 @@ import coil.compose.AsyncImage
 import com.qualityverifier.data.chat.ChatErrorKind
 import com.qualityverifier.domain.AssessmentContext
 import com.qualityverifier.domain.ChatMessage
+import com.qualityverifier.domain.Defect
 import com.qualityverifier.domain.ItemType
 import com.qualityverifier.domain.Role
 import com.qualityverifier.domain.TestNavigation
@@ -111,12 +116,14 @@ fun ChatScreen(
     intakePrefill: AssessmentContext? = null,
     /** The assessment this one was started from, which it can be compared against. */
     previousSessionId: String? = null,
+    /** The screen Back returns to, by name (P27); null says "Back". */
+    backLabel: String? = null,
     onBack: () -> Unit,
     onOpenSettings: () -> Unit,
     /** Starts another assessment of the same kind, carrying this one's answers. */
     onAssessAnother: (ItemType, AssessmentContext?) -> Unit = { _, _ -> },
-    /** Back to the grid: a different kind of piece needs its own intake. */
-    onAssessDifferent: () -> Unit = {},
+    /** "Delete this report" chose and done (v0.7.1, row 57): the report is gone, and so is this screen. */
+    onDeleted: () -> Unit = {},
     /**
      * A shop's tablet (row 12). The customer reads the notice first; the intake records
      * buying without asking; the result has one button, [onDone], instead of the next-steps
@@ -191,6 +198,12 @@ fun ChatScreen(
 
     var draft by remember { mutableStateOf("") }
     var capturing by remember { mutableStateOf(false) }
+    // A problem's page over the report (row 57): the reply it is from, and its place among the
+    // report's problems. The closing screen after the last one: the reply whose problems it ends.
+    var problemReply by rememberSaveable { mutableStateOf<String?>(null) }
+    var problemPosition by rememberSaveable { mutableIntStateOf(0) }
+    var problemsDoneFor by rememberSaveable { mutableStateOf<String?>(null) }
+    var deleting by remember { mutableStateOf(false) }
     // The shop tablet's notice (row 12), read once per assessment before the intake.
     var noticeRead by rememberSaveable(sessionId) { mutableStateOf(false) }
     // Which part of a collection run is on screen. Kept here rather than in the view
@@ -221,6 +234,8 @@ fun ChatScreen(
     // Resolved here rather than in the click handler, so it reads the device language
     // in composable scope.
     val shareLabels = rememberReportLabels(shareable?.second?.language)
+    // The report's own words (row 57) follow the assessment's language, as its headings do.
+    val kagua = rememberKaguaLabels(shareable?.second?.language)
     val testerLabels = rememberTesterLabels(shareable?.second?.language)
     val runLabels = rememberReportLabels(run?.plan?.language)
     // Drawn as the last item in the list rather than under the verdict, so follow-up
@@ -429,36 +444,14 @@ fun ChatScreen(
     }
 
     Scaffold(
+        containerColor = Parts.Page,
         topBar = {
-            TopAppBar(
-                title = { Text(resolvedItemType?.displayName ?: "Assessment") },
-                navigationIcon = {
-                    IconButton(onClick = onBack) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
-                    }
-                },
-                actions = {
-                    // Only offered once there is a verdict: sharing a half-finished
-                    // walkthrough would send somebody a report that says nothing. Never on a
-                    // shop's tablet (row 12), where it would go out through the shop's own
-                    // apps.
-                    if (shareable != null && controls.share) {
-                        IconButton(
-                            onClick = {
-                                shareReport(
-                                    context = context,
-                                    itemType = resolvedItemType ?: ItemType.OTHER,
-                                    verdict = shareable.second,
-                                    at = shareable.first.createdAt,
-                                    labels = shareLabels,
-                                )
-                            },
-                        ) {
-                            Icon(Icons.Filled.Share, contentDescription = "Share this report")
-                        }
-                    }
-                },
-            )
+            // The screen Back returns to, by name (P27), then the furniture type (row 57).
+            // Share has moved to the report's "This report" card.
+            Column(Modifier.statusBarsPadding()) {
+                BackBar(backLabel ?: kagua.back, onBack)
+                FurnitureKicker(shareLabels.itemName(resolvedItemType ?: ItemType.OTHER))
+            }
         },
     ) { padding ->
         Column(
@@ -491,6 +484,10 @@ fun ChatScreen(
                                 content = parsed[message.id],
                                 onAskQuestion = { question -> viewModel.send(question) },
                                 onOpenPhoto = { viewingPhoto = it },
+                                onOpenProblem = { position ->
+                                    problemReply = message.id
+                                    problemPosition = position
+                                },
                             )
                             if (active != null && message.id == active.sourceMessageId) {
                                 Spacer(Modifier.height(10.dp))
@@ -537,23 +534,37 @@ fun ChatScreen(
                             }
                         }
 
-                        if (controls.nextSteps) {
+                        // "What next?" and "This report" (row 57), a personal account's only.
+                        val whatNext = WhatNext.of(
+                            shopMode = shopMode,
+                            afterVerdict = controls.afterVerdict,
+                            startedFromAnother = viewModel.startedFromAnother,
+                            previousHasVerdict = previousVerdict != null,
+                            comparisonRequested = comparisonRequested,
+                            hasVerdict = shareable != null,
+                            hasConversation = messages.isNotEmpty(),
+                        )
+                        if (whatNext.checkAnother || whatNext.share || whatNext.delete) {
                             item(key = "next-steps") {
                                 Spacer(Modifier.height(6.dp))
-                                NextStepsCard(
-                                    itemName = shareLabels.itemName(
-                                        resolvedItemType ?: ItemType.OTHER,
-                                    ),
-                                    canCompare = previousVerdict != null && !comparisonRequested,
-                                    labels = shareLabels,
-                                    onAssessAnother = {
-                                        onAssessAnother(
-                                            resolvedItemType ?: ItemType.OTHER,
-                                            carryForward,
-                                        )
-                                    },
+                                ReportActions(
+                                    next = whatNext,
+                                    itemName = shareLabels.itemName(resolvedItemType ?: ItemType.OTHER).lowercase(),
+                                    words = kagua,
+                                    onCheckAnother = { onAssessAnother(resolvedItemType ?: ItemType.OTHER, carryForward) },
                                     onCompare = { viewModel.compareWithPrevious(shareLabels) },
-                                    onAssessDifferent = onAssessDifferent,
+                                    onShare = {
+                                        shareable?.let { (message, verdict) ->
+                                            shareReport(
+                                                context = context,
+                                                itemType = resolvedItemType ?: ItemType.OTHER,
+                                                verdict = verdict,
+                                                at = message.createdAt,
+                                                labels = shareLabels,
+                                            )
+                                        }
+                                    },
+                                    onDelete = { deleting = true },
                                 )
                             }
                         }
@@ -756,6 +767,78 @@ fun ChatScreen(
             onClose = { viewingPhoto = null },
         )
     }
+
+    // A problem's page, over the report (row 57). Read from the stored reply, so it opens
+    // offline; a reply gone from under it closes the page.
+    val itemName = shareLabels.itemName(resolvedItemType ?: ItemType.OTHER)
+    val pageVerdict = problemReply?.let { parsed[it]?.verdict }
+    val pageRows = pageVerdict?.let(KaguaReport::problems).orEmpty()
+    if (problemReply != null && problemPosition !in pageRows.indices) {
+        LaunchedEffect(problemReply) { problemReply = null }
+    }
+    if (problemReply != null && problemPosition in pageRows.indices) {
+        val replyId = problemReply
+        ProblemPage(
+            rows = pageRows,
+            position = problemPosition,
+            itemName = itemName,
+            labels = rememberReportLabels(pageVerdict?.language),
+            words = rememberKaguaLabels(pageVerdict?.language),
+            // The question goes into the conversation, under the report, where its answer
+            // comes; the page closes so the customer sees it arrive.
+            onAsk = if (!sending && run == null) {
+                { defect: Defect, question: String ->
+                    viewModel.send(KaguaReport.questionAbout(defect, question))
+                    problemReply = null
+                }
+            } else {
+                null
+            },
+            onGoTo = { problemPosition = it },
+            onFinish = {
+                problemReply = null
+                problemsDoneFor = replyId
+            },
+            onClose = { problemReply = null },
+        )
+    }
+
+    // After the last problem's "Done" (row 57, P17).
+    val doneCount = problemsDoneFor?.let { parsed[it]?.verdict }?.let { KaguaReport.problems(it).size }
+    if (problemsDoneFor != null && doneCount == null) {
+        LaunchedEffect(problemsDoneFor) { problemsDoneFor = null }
+    }
+    if (problemsDoneFor != null && doneCount != null) {
+        ProblemsDone(
+            count = doneCount,
+            itemName = itemName,
+            words = kagua,
+            onCheckAnother = if (shopMode) {
+                null
+            } else {
+                { onAssessAnother(resolvedItemType ?: ItemType.OTHER, carryForward) }
+            },
+            onBackToReport = { problemsDoneFor = null },
+        )
+    }
+
+    // "Delete this report" (row 57): on the report's page now, not on its row in My reports.
+    if (deleting) {
+        DeleteReportDialog(
+            labels = rememberAuthLabels(),
+            onKeepOnServer = {
+                deleting = false
+                container.deleteReport(sessionId, alsoFromServer = false)
+                onDeleted()
+            },
+            onDeleteFromServer = {
+                deleting = false
+                container.deleteReport(sessionId, alsoFromServer = true)
+                onDeleted()
+            },
+            onDismiss = { deleting = false },
+        )
+    }
 }
 
 /**
@@ -806,6 +889,8 @@ private fun MessageBubble(
     onAskQuestion: (String) -> Unit,
     /** A tap on a photo, by its path: opens it full screen. */
     onOpenPhoto: (String) -> Unit,
+    /** A tap on a problem of the report, by its place: opens its page (row 57). */
+    onOpenProblem: (Int) -> Unit,
 ) {
     val fromUser = message.role == Role.USER
     Column(
@@ -828,15 +913,17 @@ private fun MessageBubble(
             }
             Spacer(Modifier.height(6.dp))
         }
-        // An assistant turn is shown as the verdict cards when it carries one, and as a
-        // bubble otherwise. The prose duplicate the prompt also produced is only used
-        // when the structured block failed to parse — see AssistantContent.
+        // An assistant turn is shown as the report when it carries a verdict (v0.7.1, row 57),
+        // and as a bubble otherwise. The prose duplicate the prompt also produced is only
+        // used when the structured block failed to parse — see AssistantContent.
         val verdict = if (fromUser) null else content?.verdict
         if (verdict != null) {
-            VerdictCards(
+            ReportView(
                 verdict = verdict,
+                labels = rememberReportLabels(verdict.language),
+                words = rememberKaguaLabels(verdict.language),
+                onOpenProblem = onOpenProblem,
                 onAskQuestion = onAskQuestion,
-                modifier = Modifier.fillMaxWidth(),
             )
             return@Column
         }

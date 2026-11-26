@@ -12,6 +12,8 @@ import com.qualityverifier.data.location.LocationSource
 import com.qualityverifier.data.chat.ChatService
 import com.qualityverifier.data.db.SessionImageStore
 import com.qualityverifier.data.session.LocalTesterFeedback
+import com.qualityverifier.data.session.RunProgress
+import com.qualityverifier.data.session.RunProgressStore
 import com.qualityverifier.data.session.SessionRepository
 import com.qualityverifier.di.AppContainer
 import com.qualityverifier.domain.AssessmentContext
@@ -40,6 +42,8 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import java.io.File
 import java.util.UUID
@@ -118,6 +122,11 @@ class ChatViewModel(
      * for it.
      */
     private val io: CoroutineDispatcher = Dispatchers.IO,
+    /**
+     * Where a plan's photos and answers are kept while they are collected (v0.7.1, row 57), so
+     * an assessment left before it was sent reopens with them. Nothing kept by default.
+     */
+    private val progress: RunProgressStore = RunProgressStore.None,
 ) : ViewModel() {
 
     val messages: StateFlow<List<ChatMessage>> = sessions.observeMessages(sessionId)
@@ -202,6 +211,9 @@ class ChatViewModel(
     /** Plans already collected against, so a run is never offered twice. */
     private val fulfilled = mutableSetOf<String>()
 
+    /** Orders the kept run's saves and clears (row 57). */
+    private val progressLock = Mutex()
+
     /**
      * True when this conversation has not started yet, so the app should ask its own
      * questions before sending anything.
@@ -258,6 +270,12 @@ class ChatViewModel(
      */
     private var previousSessionId: String? = declaredPreviousSessionId
 
+    /**
+     * Whether this check was started from "Check another" on an earlier one (v0.7.1, row 57):
+     * only then does "What next?" offer "Compare with the last …".
+     */
+    val startedFromAnother: Boolean get() = previousSessionId != null
+
     /** What kind of piece that earlier assessment was, so a like-for-like check can be redone. */
     private var previousItemType: ItemType? = null
 
@@ -297,7 +315,26 @@ class ChatViewModel(
                 if (last.role != Role.ASSISTANT || last.id in fulfilled) return@collect
                 if (_run.value?.sourceMessageId == last.id) return@collect
                 val plan = parseAssistantContent(last.text).plan ?: return@collect
-                _run.value = PlanRun(plan, last.id)
+                // Carries on where the customer stopped (row 57): the photos already taken for
+                // this plan, and the answers already given, kept from before they left.
+                val fresh = PlanRun(plan, last.id)
+                val restored = withContext(io) { progress.load(sessionId)?.restore(fresh) }
+                if (_run.value?.sourceMessageId == last.id || last.id in fulfilled) return@collect
+                _run.value = restored ?: fresh
+            }
+        }
+        // Every change to the run is kept as it happens, so leaving at any moment loses
+        // nothing. A run that ends (sent or abandoned) clears it where it ends. Saves and
+        // clears take one lock, and a save checks the run is still the one on screen, so a
+        // save that was under way when the run ended can never write it back.
+        viewModelScope.launch {
+            _run.collect { run ->
+                if (run == null) return@collect
+                withContext(io) {
+                    progressLock.withLock {
+                        if (_run.value?.sourceMessageId == run.sourceMessageId) progress.save(sessionId, RunProgress.of(run))
+                    }
+                }
             }
         }
     }
@@ -503,6 +540,7 @@ class ChatViewModel(
                 // not re-offer a plan whose photos are already attached to a sent turn.
                 fulfilled += current.sourceMessageId
                 _run.value = null
+                withContext(io) { progressLock.withLock { progress.clear(sessionId) } }
                 deliver(type)
             } finally {
                 _sending.value = false
@@ -519,7 +557,10 @@ class ChatViewModel(
         _run.value = null
         val paths = current.takenPaths
         viewModelScope.launch {
-            withContext(io) { paths.forEach { images.delete(File(it)) } }
+            withContext(io) {
+                progressLock.withLock { progress.clear(sessionId) }
+                paths.forEach { images.delete(File(it)) }
+            }
         }
     }
 
@@ -779,6 +820,7 @@ class ChatViewModel(
                     isTester = { container.isTester },
                     pushReviews = { container.assessmentSync.pushReviews() },
                     captureFix = container.locationCapture,
+                    progress = container.runProgress,
                 )
             }
         }

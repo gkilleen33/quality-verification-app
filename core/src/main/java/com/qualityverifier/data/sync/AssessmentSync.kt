@@ -23,6 +23,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 
 /**
@@ -83,8 +85,17 @@ class AssessmentSync(
      * Pushes what the phone owes, then fetches anything it does not have, and records in
      * [status] whether it all went. A step that failed is named there, and the rest of the
      * sync still ran.
+     *
+     * One at a time (v0.7.1): Kagua's Home and My reports both sync when they open, and two
+     * runs at once each read the phone's list before the other wrote to it, so both fetched
+     * every report and its photos. A second caller waits, then runs against what the first
+     * wrote, which costs one list request.
      */
-    suspend fun run(): Result {
+    suspend fun run(): Result = runLock.withLock { runOnce() }
+
+    private val runLock = Mutex()
+
+    private suspend fun runOnce(): Result {
         val result = try {
             pushAndPull()
         } catch (e: CancellationException) {

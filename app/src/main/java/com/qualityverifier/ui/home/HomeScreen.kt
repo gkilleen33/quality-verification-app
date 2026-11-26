@@ -1,96 +1,96 @@
 package com.qualityverifier.ui.home
 
-import android.annotation.SuppressLint
-import android.content.Context
-import androidx.annotation.DrawableRes
-import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.aspectRatio
-import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.lazy.grid.GridCells
-import androidx.compose.foundation.lazy.grid.GridItemSpan
-import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
-import androidx.compose.foundation.lazy.grid.items
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
-import androidx.compose.material.icons.filled.Bed
-import androidx.compose.material.icons.filled.Category
-import androidx.compose.material.icons.filled.Chair
-import androidx.compose.material.icons.filled.ChairAlt
-import androidx.compose.material.icons.filled.DoorSliding
-import androidx.compose.material.icons.filled.Lock
 import androidx.compose.foundation.layout.width
-import androidx.compose.material3.TextButton
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.setValue
-import com.qualityverifier.ui.rememberAuthLabels
-import com.qualityverifier.ui.shop.OwnerPasswordDialog
-import androidx.compose.material.icons.filled.TableBar
-import androidx.compose.material.icons.filled.TableRestaurant
-import androidx.compose.material.icons.filled.Weekend
-import androidx.compose.material3.Card
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material3.Icon
-import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.qualityverifier.BuildConfig
 import com.qualityverifier.R
 import com.qualityverifier.domain.ItemType
 import com.qualityverifier.domain.UpdatePrompt
+import com.qualityverifier.text.KaguaScreenLabels
 import com.qualityverifier.ui.appContainer
+import com.qualityverifier.ui.parts.CardRow
+import com.qualityverifier.ui.parts.Parts
+import com.qualityverifier.ui.parts.RowCard
+import com.qualityverifier.ui.parts.StatusBox
+import com.qualityverifier.ui.parts.StatusKind
+import com.qualityverifier.ui.parts.Wordmark
+import com.qualityverifier.ui.parts.lineStyle
+import com.qualityverifier.ui.rememberAuthLabels
+import com.qualityverifier.ui.rememberKaguaLabels
 import com.qualityverifier.ui.rememberUpdateLabels
+import com.qualityverifier.ui.settings.AccountMenu
+import com.qualityverifier.ui.settings.AccountMenuWords
+import com.qualityverifier.ui.shop.OwnerPasswordDialog
 import com.qualityverifier.ui.update.UpdateBanner
 
 /**
- * The starting point: the wordmark, and the question the whole app answers.
+ * Kagua's Home (v0.7.1, row 57; Kagua v2 mockup): the wordmark and tagline, the gear that opens
+ * the Settings menu, "Karibu. What are you looking at today?", and each kind of furniture as a
+ * row in one card, English with its Kiswahili under it. A tap starts an assessment of that kind.
  *
- * The category grid lives here rather than behind a button because choosing what you are
- * looking at is the first thing that happens in a shop, and one fewer tap matters when
- * the phone is in one hand and a stool is in the other.
+ * No "My reports" card: the tab at the bottom opens it (P25). When the server cannot be reached,
+ * a red box says so and stays until it can (P19).
+ *
+ * A shop's tablet (row 12) does not use this screen: it keeps v0.7.0's grid ([ShopHomeScreen]).
+ * [shopMode] still holds this screen to the tablet's rules (no gear, no sync, the owner's row)
+ * should anything draw it there.
  */
 @Composable
 fun HomeScreen(
     contentPadding: PaddingValues,
     onItemChosen: (ItemType) -> Unit,
-    onOpenReports: () -> Unit,
-    /**
-     * A shop's tablet (row 12): no "My reports", and a "Shop owner" row behind the account's
-     * password in its place. False is the personal Kagua home, as in v0.6.1.
-     */
     shopMode: Boolean = false,
-    /** The owner typed the right password. */
+    /** The owner typed the right password (shop tablet only). */
     onOwnerUnlocked: () -> Unit = {},
+    onChangePassword: () -> Unit = {},
+    onSignOut: () -> Unit = {},
+    onAccountDeleted: () -> Unit = {},
 ) {
     val container = appContainer()
+    val words = rememberKaguaLabels()
+    val authLabels = rememberAuthLabels()
+    val viewModel: HomeViewModel = viewModel(factory = HomeViewModel.factory(container, shopMode))
+    val offline by viewModel.offline.collectAsState()
+    val update by container.appVersionCheck.state.collectAsState()
+    val updateLabels = rememberUpdateLabels()
     var askingOwner by remember { mutableStateOf(false) }
+    var menuOpen by rememberSaveable { mutableStateOf(false) }
+    val chrome = HomeChrome.of(shopMode)
+
     if (askingOwner) {
         OwnerPasswordDialog(
-            labels = rememberAuthLabels(),
+            labels = authLabels,
             check = container.account::checkPassword,
             onOpened = {
                 askingOwner = false
@@ -99,218 +99,98 @@ fun HomeScreen(
             onDismiss = { askingOwner = false },
         )
     }
-    val viewModel: HomeViewModel = viewModel(factory = HomeViewModel.factory(container))
-    val reportCount by viewModel.reportCount.collectAsState()
-    val update by container.appVersionCheck.state.collectAsState()
-    val updateLabels = rememberUpdateLabels()
 
-    val context = LocalContext.current
-    // Resolved once per composition: the set of drawables cannot change at runtime.
-    val artwork = remember(context) {
-        ItemType.homeChoices.associateWith { context.itemDrawableOrNull(it) }
+    if (menuOpen && chrome.gear) {
+        AccountMenu(
+            container = container,
+            labels = authLabels,
+            words = accountMenuWords(words),
+            onDismiss = { menuOpen = false },
+            onChangePassword = {
+                menuOpen = false
+                onChangePassword()
+            },
+            onSignOut = onSignOut,
+            onAccountDeleted = onAccountDeleted,
+            // What the Profile screen said under "Account", and its version line.
+            foot = {
+                Text(authLabels.humanReviewNotice, style = lineStyle, color = Parts.Muted)
+                Spacer(Modifier.height(8.dp))
+                Text(words.version(BuildConfig.VERSION_NAME), style = lineStyle, color = Parts.Muted)
+            },
+        )
     }
 
-    LazyVerticalGrid(
-        columns = GridCells.Fixed(2),
-        modifier = Modifier.fillMaxSize(),
+    LazyColumn(
+        Modifier.fillMaxSize().background(Parts.Page),
         contentPadding = PaddingValues(
             start = 16.dp,
             end = 16.dp,
-            top = contentPadding.calculateTopPadding() + 16.dp,
-            bottom = contentPadding.calculateBottomPadding() + 16.dp,
+            top = contentPadding.calculateTopPadding() + 18.dp,
+            bottom = contentPadding.calculateBottomPadding() + 24.dp,
         ),
-        horizontalArrangement = Arrangement.spacedBy(12.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp),
+        verticalArrangement = Arrangement.spacedBy(14.dp),
     ) {
-        // Above everything, so it is seen; dismissible, so it is not in the way.
+        item {
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Wordmark(
+                    stringResource(R.string.app_name).uppercase(),
+                    Modifier.weight(1f),
+                    tagline = stringResource(R.string.app_tagline),
+                )
+                if (chrome.gear) {
+                    IconButton(onClick = { menuOpen = true }) {
+                        Icon(Icons.Outlined.Settings, contentDescription = words.settings, tint = Parts.Brand, modifier = Modifier.size(26.dp))
+                    }
+                }
+            }
+        }
+        // Above everything else, so it is seen; dismissible, so it is not in the way.
         if (update.prompt == UpdatePrompt.AVAILABLE) {
-            item(span = { GridItemSpan(maxLineSpan) }) {
-                UpdateBanner(
-                    labels = updateLabels,
-                    downloadUrl = update.downloadUrl,
-                    onDismiss = container.appVersionCheck::dismissBanner,
-                )
+            item { UpdateBanner(labels = updateLabels, downloadUrl = update.downloadUrl, onDismiss = container.appVersionCheck::dismissBanner) }
+        }
+        if (offline) {
+            item {
+                StatusBox(StatusKind.FAILURE, words.offlineTitle, words.offlineLine, words.tryAgain, onButton = viewModel::refresh)
             }
         }
-
-        item(span = { GridItemSpan(maxLineSpan) }) {
-            Column {
-                Text(
-                    text = stringResource(R.string.app_name).uppercase(),
-                    style = MaterialTheme.typography.displaySmall,
-                    color = MaterialTheme.colorScheme.primary,
-                )
-                Spacer(Modifier.height(4.dp))
-                Text(
-                    text = stringResource(R.string.app_tagline),
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                Spacer(Modifier.height(20.dp))
-                Text(
-                    text = "Karibu. What are you looking at today?",
-                    style = MaterialTheme.typography.titleMedium,
-                )
-                Spacer(Modifier.height(4.dp))
-            }
+        item {
+            Text(words.homeQuestion, color = Parts.Ink, fontSize = 22.sp, lineHeight = 28.sp, fontWeight = FontWeight.Bold)
         }
-
-        items(ItemType.homeChoices, key = { it.id }) { itemType ->
-            ItemCard(
-                itemType = itemType,
-                imageRes = artwork[itemType],
-                onClick = { onItemChosen(itemType) },
-            )
-        }
-
-        item(span = { GridItemSpan(maxLineSpan) }) {
-            // A shop's tablet shows no earlier customer's assessment, not even a count.
-            if (shopMode) {
-                OwnerRow(label = rememberAuthLabels().ownerControls, onClick = { askingOwner = true })
-            } else {
-                MyReportsRow(count = reportCount, onClick = onOpenReports)
-            }
-        }
-    }
-}
-
-/** The way into the account on a shop's tablet, quieter than the grid a customer uses. */
-@Composable
-private fun OwnerRow(label: String, onClick: () -> Unit) {
-    TextButton(
-        onClick = onClick,
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(top = 8.dp)
-            .height(56.dp),
-    ) {
-        Icon(Icons.Filled.Lock, contentDescription = null, modifier = Modifier.size(18.dp))
-        Spacer(Modifier.width(8.dp))
-        Text(label, style = MaterialTheme.typography.bodyLarge)
-    }
-}
-
-@Composable
-private fun MyReportsRow(count: Int, onClick: () -> Unit) {
-    Card(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(top = 8.dp)
-            .clickable(onClick = onClick),
-    ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(64.dp)
-                .padding(horizontal = 16.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Text(
-                text = if (count == 0) "My reports" else "My reports  $count",
-                style = MaterialTheme.typography.titleMedium,
-                modifier = Modifier.weight(1f),
-            )
-            Icon(
-                Icons.AutoMirrored.Filled.KeyboardArrowRight,
-                contentDescription = null,
-                tint = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        }
-    }
-}
-
-@Composable
-private fun ItemCard(
-    itemType: ItemType,
-    @DrawableRes imageRes: Int?,
-    onClick: () -> Unit,
-) {
-    Card(
-        modifier = Modifier
-            .fillMaxHeight()
-            .clickable(onClick = onClick),
-    ) {
-        Column(Modifier.fillMaxWidth()) {
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .aspectRatio(4f / 3f)
-                    .background(MaterialTheme.colorScheme.surfaceVariant),
-                contentAlignment = Alignment.Center,
-            ) {
-                if (imageRes != null) {
-                    Image(
-                        painter = painterResource(imageRes),
-                        contentDescription = itemType.displayName,
-                        contentScale = ContentScale.Crop,
-                        modifier = Modifier.fillMaxSize(),
-                    )
-                } else {
-                    // No photo supplied yet — a neutral placeholder rather than a
-                    // broken-image box. Drop `item_<slug>.jpg` into res/drawable to fill it.
-                    Icon(
-                        imageVector = itemType.placeholderIcon(),
-                        contentDescription = null,
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.size(48.dp),
+        item {
+            RowCard {
+                ItemType.homeChoices.forEachIndexed { i, itemType ->
+                    CardRow(
+                        itemType.homeLabel,
+                        line = itemType.swahiliName,
+                        onClick = { onItemChosen(itemType) },
+                        divider = i > 0,
                     )
                 }
             }
-            // The Swahili line is rendered whether or not it has a term, so a card
-            // without one does not sit shorter than its neighbours. Height differences
-            // from a wrapping English label are absorbed by the card filling its grid
-            // row instead — reserving a second title line here would leave a visible
-            // gap under every one-line label.
-            Column(
-                Modifier
-                    .fillMaxWidth()
-                    .padding(vertical = 10.dp, horizontal = 8.dp),
-            ) {
-                Text(
-                    text = itemType.homeLabel,
-                    style = MaterialTheme.typography.titleMedium,
-                    textAlign = TextAlign.Center,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.fillMaxWidth(),
-                )
-                // Rendered even when absent, so the row keeps its height. A term is only
-                // shown where one could be sourced — see ItemType.swahiliName.
-                Text(
-                    text = itemType.swahiliName.orEmpty(),
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    textAlign = TextAlign.Center,
-                    minLines = 1,
-                    maxLines = 1,
-                    modifier = Modifier.fillMaxWidth(),
-                )
+        }
+        // A shop's tablet shows no earlier customer's assessment, not even a count.
+        if (chrome.ownerControls) {
+            item {
+                TextButton(onClick = { askingOwner = true }, modifier = Modifier.fillMaxWidth().height(56.dp)) {
+                    Icon(Icons.Filled.Lock, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.width(8.dp))
+                    Text(authLabels.ownerControls)
+                }
             }
         }
     }
 }
 
-/** Distinct glyph per category, so the grid is scannable before real photos exist. */
-private fun ItemType.placeholderIcon(): ImageVector = when (this) {
-    ItemType.WOODEN_TABLE -> Icons.Filled.TableRestaurant
-    ItemType.WOODEN_CHAIR -> Icons.Filled.ChairAlt
-    ItemType.WOODEN_STOOL -> Icons.Filled.TableBar
-    ItemType.WOODEN_BED -> Icons.Filled.Bed
-    ItemType.WOODEN_CABINET -> Icons.Filled.DoorSliding
-    ItemType.UPHOLSTERED_CHAIR -> Icons.Filled.Chair
-    ItemType.UPHOLSTERED_SOFA -> Icons.Filled.Weekend
-    ItemType.OTHER -> Icons.Filled.Category
-}
-
-/**
- * Looks up `res/drawable/item_<slug>` by name, returning null when the photo has not
- * been added yet.
- *
- * Resolving by name rather than through `R.drawable.*` is deliberate: the project
- * compiles with no item photos present, and adding one later is a pure asset drop with
- * no code change.
- */
-@SuppressLint("DiscouragedApi")
-private fun Context.itemDrawableOrNull(itemType: ItemType): Int? =
-    resources.getIdentifier(itemType.drawableName, "drawable", packageName)
-        .takeIf { it != 0 }
+/** The Settings menu's words in Kagua (row 57): the phone's language. */
+internal fun accountMenuWords(words: KaguaScreenLabels) = AccountMenuWords(
+    title = words.settings,
+    changePassword = words.changePassword,
+    location = words.recordGps,
+    locationLine = words.recordGpsLine,
+    on = words.on,
+    off = words.off,
+    signOut = words.signOut,
+    deleteAccount = words.deleteAccount,
+    close = words.close,
+)

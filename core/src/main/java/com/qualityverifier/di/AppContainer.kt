@@ -25,8 +25,10 @@ import com.qualityverifier.data.location.LocationCapture
 import com.qualityverifier.data.location.LocationPreference
 import com.qualityverifier.data.reports.ReportApi
 import com.qualityverifier.data.reports.ReportClient
+import com.qualityverifier.data.session.FileRunProgressStore
 import com.qualityverifier.data.session.ReviewAnswers
 import com.qualityverifier.data.session.RoomSessionRepository
+import com.qualityverifier.data.session.RunProgressStore
 import com.qualityverifier.data.session.SessionRepository
 import com.qualityverifier.data.shop.PrefsTabletEndQueue
 import com.qualityverifier.data.shop.ShopTabletFlag
@@ -164,6 +166,9 @@ class AppContainer(
      * whether a photo's own GPS is kept: off means the camera's point is never sent either.
      */
     val images: ImageFileStore = ImageFileStore(appContext, mayRecordLocation = { locationPreference.records })
+
+    /** A Kagua plan's photos and answers while they are collected, beside the photos (row 57). */
+    val runProgress: RunProgressStore = FileRunProgressStore(images::sessionDir)
 
     /**
      * Whether the handset is a shop's tablet (row 12). Its own file, which signing out and a
@@ -458,6 +463,19 @@ class AppContainer(
 
     /** Outlives every screen, so navigating away from sign-out does not cancel its push. */
     private val background = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
+    /**
+     * Deletes a Kagua report from the phone, and from the server when [alsoFromServer], as My
+     * reports' delete does (v0.7.1, row 57: delete is on the report's page now). Run here so
+     * leaving the page, which goes with the report, does not cancel it.
+     */
+    fun deleteReport(sessionId: String, alsoFromServer: Boolean) {
+        background.launch {
+            if (alsoFromServer) sessionRepository.recordPendingRemoteDelete(sessionId) else sessionRepository.dismissLocally(sessionId)
+            sessionRepository.deleteSession(sessionId)
+            runCatching { assessmentSync.run() }
+        }
+    }
 
     /** The latest push at sign-out, which the next sign-in waits for. */
     @Volatile private var signOutPush: Job? = null

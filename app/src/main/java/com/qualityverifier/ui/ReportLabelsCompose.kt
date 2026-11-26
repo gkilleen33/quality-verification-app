@@ -3,6 +3,7 @@ package com.qualityverifier.ui
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.platform.LocalConfiguration
+import com.qualityverifier.text.KaguaScreenLabels
 import com.qualityverifier.text.ReportLabels
 import com.qualityverifier.text.TesterLabels
 
@@ -18,6 +19,18 @@ fun rememberReportLabels(assessmentLanguage: String?): ReportLabels {
     val deviceLanguage = LocalConfiguration.current.locales[0].language
     return remember(assessmentLanguage, deviceLanguage) {
         ReportLabels.forLanguage(assessmentLanguage, deviceLanguage)
+    }
+}
+
+/**
+ * The words of Kagua's v2 screens (v0.7.1, rows 45, 46 and 57): in [assessmentLanguage] on a
+ * report and its problems, as the report's headings are, and otherwise in the phone's.
+ */
+@Composable
+fun rememberKaguaLabels(assessmentLanguage: String? = null): KaguaScreenLabels {
+    val deviceLanguage = LocalConfiguration.current.locales[0].language
+    return remember(assessmentLanguage, deviceLanguage) {
+        KaguaScreenLabels.forLanguage(assessmentLanguage?.takeIf { it.isNotBlank() } ?: deviceLanguage)
     }
 }
 
